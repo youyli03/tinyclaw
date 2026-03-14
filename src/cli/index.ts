@@ -23,6 +23,7 @@ import { run as configRun, description as configDesc, usage as configUsage } fro
 import { run as authRun, description as authDesc, usage as authUsage } from "./commands/auth.js";
 import { run as statusRun, description as statusDesc, usage as statusUsage } from "./commands/status.js";
 import { run as restartRun, description as restartDesc, usage as restartUsage } from "./commands/restart.js";
+import { run as completionsRun, description as completionsDesc, usage as completionsUsage } from "./commands/completions.js";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
@@ -38,12 +39,60 @@ interface CommandModule {
  * 添加新命令只需在此处插入一行。
  */
 const COMMANDS: Record<string, CommandModule> = {
-  model:   { description: modelDesc,   usage: modelUsage,   run: modelRun },
-  config:  { description: configDesc,  usage: configUsage,  run: configRun },
-  auth:    { description: authDesc,    usage: authUsage,    run: authRun },
-  status:  { description: statusDesc,  usage: statusUsage,  run: statusRun },
-  restart: { description: restartDesc, usage: restartUsage, run: restartRun },
+  model:       { description: modelDesc,       usage: modelUsage,       run: modelRun },
+  config:      { description: configDesc,      usage: configUsage,      run: configRun },
+  auth:        { description: authDesc,        usage: authUsage,        run: authRun },
+  status:      { description: statusDesc,      usage: statusUsage,      run: statusRun },
+  restart:     { description: restartDesc,     usage: restartUsage,     run: restartRun },
+  completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
+
+// ── Tab 补全候选词表 ──────────────────────────────────────────────────────────
+
+/** 每个命令的子命令列表，供 --complete 模式使用 */
+const SUBCOMMANDS: Record<string, string[]> = {
+  model:       ["show", "list", "set", "help"],
+  config:      ["show", "edit", "path", "set", "help"],
+  auth:        ["github", "status", "help"],
+  status:      [],
+  restart:     [],
+  completions: ["bash", "zsh", "fish", "install", "help"],
+};
+
+const BACKENDS = ["daily", "code", "summarizer"];
+
+/**
+ * --complete 模式：根据已输入的 words（不含 'tinyclaw'），输出补全候选词（每行一个）。
+ * Shell 脚本通过 compgen -W 过滤前缀，此处输出全量候选即可。
+ */
+function outputCompletions(words: string[]): void {
+  // 最后一个 word 是当前正在输入的（可能为空字符串）
+  // 之前的 words 是已完成的上下文
+  const prev = words.slice(0, -1);
+  const cmd = prev[0];
+  const sub = prev[1];
+
+  let candidates: string[];
+
+  if (!cmd) {
+    // 补全命令名
+    candidates = Object.keys(COMMANDS);
+  } else if (!sub) {
+    // 补全子命令
+    candidates = SUBCOMMANDS[cmd] ?? [];
+  } else if (cmd === "model" && (sub === "list" || sub === "set")) {
+    // 补全 backend 名
+    candidates = BACKENDS;
+  } else if (cmd === "completions" && sub === "install") {
+    candidates = ["bash", "zsh", "fish"];
+  } else {
+    candidates = [];
+  }
+
+  if (candidates.length > 0) {
+    process.stdout.write(candidates.join("\n") + "\n");
+  }
+}
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
@@ -73,6 +122,7 @@ ${bold("示例：")}
   bun run cli auth github             # 重新授权 GitHub Copilot
   bun run cli status                  # 服务运行状态
   bun run cli restart                 # 重启 tinyclaw
+  bun run cli completions install     # 安装 tab 补全（bash/zsh/fish）
 
 ${dim("每个命令支持 `help` 子命令查看详细说明，如：bun run cli model help")}
   `);
@@ -82,6 +132,12 @@ ${dim("每个命令支持 `help` 子命令查看详细说明，如：bun run cli
 
 async function main(): Promise<void> {
   const [, , cmdName, ...rest] = process.argv;
+
+  // ── --complete 模式（供 shell completion 调用，不打印 UI） ────────────────
+  if (cmdName === "--complete") {
+    outputCompletions(rest);
+    return;
+  }
 
   if (!cmdName || cmdName === "help" || cmdName === "--help" || cmdName === "-h") {
     printHelp();
