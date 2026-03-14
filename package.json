@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Minimal modular AI agent with QMD memory, MFA auth, and QQBot",
   "type": "module",
+  "bin": {
+    "tinyclaw": "bin/tinyclaw.ts"
+  },
   "scripts": {
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
