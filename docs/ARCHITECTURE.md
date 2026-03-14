@@ -53,13 +53,26 @@ tinyclaw/
 │   │   ├── scheduler.ts      # 轮询 jobs.json，到时触发
 │   │   ├── runner.ts         # 启动独立 Agent 会话执行 message
 │   │   └── tools.ts          # cron_add / cron_list / cron_remove
+│   ├── cli/
+│   │   ├── index.ts          # 主入口：COMMANDS 注册表 + --complete 补全处理器
+│   │   ├── ui.ts             # 终端 UI 工具（ANSI 颜色、对齐表格、prompt/select/confirm）
+│   │   └── commands/
+│   │       ├── model.ts      # model show / list / set
+│   │       ├── config.ts     # config show / edit / path / set
+│   │       ├── auth.ts       # auth github / status
+│   │       ├── status.ts     # 运行状态概览
+│   │       ├── restart.ts    # SIGTERM 重启
+│   │       └── completions.ts # bash/zsh/fish 补全脚本生成与安装
 │   └── config/
 │       ├── schema.ts         # Zod schema（全部配置的类型定义）
-│       └── loader.ts         # 读 ~/.tinyclaw/config.toml，不存在时自动复制模板
+│       ├── loader.ts         # 读 ~/.tinyclaw/config.toml，不存在时自动复制模板
+│       └── writer.ts         # 保留注释的 TOML 行级补丁（供 CLI config set 使用）
+├── bin/
+│   └── tinyclaw.ts           # 全局命令入口（bun link 后注册为 tinyclaw）
 ├── docs/
 │   └── ARCHITECTURE.md       # 本文件
 ├── config.example.toml       # 配置模板，无真实值，供参考
-└── package.json
+└── package.json              # bin.tinyclaw 字段声明全局命令
 ```
 
 ### 运行时数据（`~/.tinyclaw/`，不进仓库）
@@ -67,6 +80,8 @@ tinyclaw/
 ```
 ~/.tinyclaw/
 ├── config.toml               # 所有敏感配置（API key、Azure ID、QQ secret）
+├── .service_pid              # 主进程 PID（tinyclaw restart 读取）
+├── .github_token             # GitHub OAuth token（0600 权限，由 Device Flow 写入）
 ├── auth/
 │   └── msal-cache.json       # MSAL token 缓存（自动维护）
 ├── memory/
@@ -217,7 +232,51 @@ export interface Connector {
 | 5 | 工具层：registry · codex · copilot · system | ✅ 完成 |
 | 6 | Agent 主循环：session · router · agent | ✅ 完成 |
 | 7 | QQBot：api · outbound · gateway · index + main.ts | ✅ 完成 |
-| 8 | Cron：scheduler · runner · tools | ⏸ 预留，不实现 || 9 | GitHub Copilot 后端：token 换取 · 模型发现 · 乘数表 | ✅ 完成 |
+| 8 | Cron：scheduler · runner · tools | ⏸ 预留，不实现 |
+| 9 | GitHub Copilot 后端：token 换取 · 模型发现 · 乘数表 | ✅ 完成 |
+| 10 | CLI 配置入口：model/config/auth/status/restart/completions | ✅ 完成 |
+---
+
+## CLI 配置工具（`tinyclaw`）
+
+通过 `bun link` 将项目注册为全局命令，无需每次用 `bun run` 调用。
+
+**安装：**
+```bash
+cd /path/to/tinyclaw && bun link
+tinyclaw completions install && source ~/.bashrc
+```
+
+**命令列表：**
+
+| 命令 | 说明 |
+|------|------|
+| `tinyclaw model show` | 显示三个后端当前模型 |
+| `tinyclaw model list [backend]` | 列出可用模型（Copilot 后端实时查 API） |
+| `tinyclaw model set [backend]` | 交互式数字菜单选模型 → 写入 config.toml → 可选 restart |
+| `tinyclaw config show` | 格式化显示配置（密钥脱敏） |
+| `tinyclaw config edit` | 用 `$EDITOR` 打开 config.toml |
+| `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string） |
+| `tinyclaw auth github` | 重新执行 Device Flow OAuth |
+| `tinyclaw auth status` | 检查 token 有效性 |
+| `tinyclaw status` | 服务进程 + 配置摘要 + channel 状态 |
+| `tinyclaw restart` | 向 `.service_pid` 指向的进程发送 SIGTERM |
+| `tinyclaw completions install` | 自动写入 `~/.bashrc` / `~/.zshrc` / fish completions |
+
+**扩展方式（注册新命令）：**
+
+在 `src/cli/index.ts` 的 `COMMANDS` 对象和 `SUBCOMMANDS` 表各加一行即可，Tab 补全自动生效。
+
+**Tab 补全机制：**
+```
+tinyclaw mo<Tab>
+  → shell 调用 tinyclaw --complete "mo"
+  → 输出全量候选（model config auth ...）
+  → compgen -W 按前缀过滤 → 显示 model
+```
+
+补全覆盖层级：顶层命令 → 子命令 → backend 名（model set/list）→ shell 类型（completions install）
+
 ---
 
 ## 配置文件示例（`config.example.toml`）

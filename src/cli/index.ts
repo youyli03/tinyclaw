@@ -2,13 +2,14 @@
 /**
  * tinyclaw CLI 全局配置入口
  *
- * 用法：bun run cli [command] [subcommand] [args...]
+ * 用法：tinyclaw [command] [subcommand] [args...]
  *
  *   model show/list/set   LLM 模型管理
  *   config show/edit/set  配置文件管理
  *   auth github/status    认证管理
  *   status                运行状态概览
  *   restart               重启主服务
+ *   completions install   安装 tab 补全
  *   help                  显示帮助
  *
  * 设计原则
@@ -103,7 +104,7 @@ function printHelp(): void {
 ${bold("tinyclaw CLI")}  —  配置与管理工具
 
 ${bold("用法：")}
-  bun run cli <command> [subcommand] [args...]
+  tinyclaw <command> [subcommand] [args...]
 
 ${bold("命令：")}`,
   );
@@ -115,16 +116,16 @@ ${bold("命令：")}`,
 
   console.log(`
 ${bold("示例：")}
-  bun run cli model list              # 列出 Copilot 可用模型
-  bun run cli model set daily         # 交互式选择 daily 后端模型
-  bun run cli config show             # 显示当前配置（密钥脱敏）
-  bun run cli config set llm.backends.daily.model gpt-4o
-  bun run cli auth github             # 重新授权 GitHub Copilot
-  bun run cli status                  # 服务运行状态
-  bun run cli restart                 # 重启 tinyclaw
-  bun run cli completions install     # 安装 tab 补全（bash/zsh/fish）
+  tinyclaw model list              # 列出 Copilot 可用模型
+  tinyclaw model set daily         # 交互式选择 daily 后端模型
+  tinyclaw config show             # 显示当前配置（密钥脱敏）
+  tinyclaw config set llm.backends.daily.model gpt-4o
+  tinyclaw auth github             # 重新授权 GitHub Copilot
+  tinyclaw status                  # 服务运行状态
+  tinyclaw restart                 # 重启 tinyclaw
+  tinyclaw completions install     # 安装 tab 补全（bash/zsh/fish）
 
-${dim("每个命令支持 `help` 子命令查看详细说明，如：bun run cli model help")}
+${dim("每个命令支持 `help` 子命令查看详细说明，如：tinyclaw model help")}
   `);
 }
 

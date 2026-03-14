@@ -10,6 +10,7 @@
 - **代码/日常分离**：代码任务 spawn codex/copilot 子进程，不污染主 Agent 上下文
 - **内置 QQBot**：无需插件，填配置即用；三档权限自动降级，自动重连，每用户串行消息队列
 - **GitHub Copilot 后端**：凭 Copilot 订阅自动发现所有可用模型，无需手动填 apiKey / baseUrl
+- **CLI 配置工具**：`tinyclaw` 全局命令，交互式切换模型、编辑配置、重启服务；支持 bash/zsh/fish tab 补全
 - **可扩展**：`Connector` 接口预留 TG / WhatsApp 等平台接入点
 
 ## 快速开始
@@ -18,15 +19,23 @@
 # 1. 安装依赖
 bun install
 
-# 2. 启动（首次自动复制配置模板）
+# 2. 注册全局命令（一次性）
+bun link
+# → 创建 ~/.bun/bin/tinyclaw 快捷命令
+
+# 3. 安装 tab 补全（可选）
+tinyclaw completions install && source ~/.bashrc
+
+# 4. 启动（首次自动复制配置模板）
 bun src/main.ts
 # → 提示：配置文件已复制到 ~/.tinyclaw/config.toml，请填入真实值后重启
 
-# 3. 编辑配置
-nano ~/.tinyclaw/config.toml
+# 5. 查看/编辑配置
+tinyclaw config show      # 脱敏预览
+tinyclaw config edit      # 用 $EDITOR 打开
 
-# 4. 重启
-bun src/main.ts
+# 6. 重启
+tinyclaw restart          # 或 bun src/main.ts
 ```
 
 ## 配置
@@ -70,9 +79,21 @@ clientSecret = "你的 ClientSecret"
 ## 目录结构
 
 ```
+bin/
+└── tinyclaw.ts               # 全局命令入口（bun link 注册为 tinyclaw）
 src/
-├── main.ts                   # 入口
-├── config/                   # Zod schema + config loader
+├── main.ts                   # 服务入口（写 .service_pid，供 restart 使用）
+├── cli/                      # tinyclaw CLI 配置工具
+│   ├── index.ts              # 主入口 + COMMANDS 注册表 + --complete 补全处理
+│   ├── ui.ts                 # ANSI 颜色、对齐表格、prompt/select/confirm
+│   └── commands/
+│       ├── model.ts          # model show/list/set
+│       ├── config.ts         # config show/edit/path/set
+│       ├── auth.ts           # auth github/status
+│       ├── status.ts         # 运行状态概览
+│       ├── restart.ts        # 发送 SIGTERM 重启
+│       └── completions.ts    # 生成并安装 bash/zsh/fish 补全脚本
+├── config/                   # Zod schema + config loader + TOML writer
 ├── llm/                      # LLM 多后端（OpenAI-compatible + Copilot）
 │   ├── client.ts             # OpenAI-compatible 统一接口
 │   ├── registry.ts           # 多后端注册 + 异步 init()
@@ -96,10 +117,38 @@ src/
 ```
 ~/.tinyclaw/
 ├── config.toml               # 所有敏感配置
+├── .service_pid              # 主进程 PID（供 tinyclaw restart 使用）
+├── .github_token             # GitHub OAuth token（权限 0600）
 ├── auth/msal-cache.json      # MSAL token 缓存
 ├── memory/                   # QMD 向量数据库 + 对话记录
 ├── qqbot/session.json        # WS Session 持久化（断线续传）
 └── qqbot/downloads/          # 附件临时文件
+```
+
+## CLI 命令速查
+
+```bash
+# 模型管理
+tinyclaw model show                    # 查看三个后端当前模型
+tinyclaw model list [daily|code|summarizer]  # 列出可用模型（Copilot 后端查 API）
+tinyclaw model set  [daily|code|summarizer]  # 交互式选择模型并写入配置
+
+# 配置管理
+tinyclaw config show                   # 格式化显示配置（密钥脱敏）
+tinyclaw config edit                   # 用 $EDITOR 打开配置文件
+tinyclaw config set llm.backends.daily.model gpt-4o  # 直接设置字段
+
+# 认证
+tinyclaw auth github                   # 重新执行 GitHub Device Flow OAuth
+tinyclaw auth status                   # 检查 token 有效性
+
+# 服务管理
+tinyclaw status                        # 服务状态 + 配置摘要
+tinyclaw restart                       # 发送 SIGTERM（bun dev 自动重启）
+
+# Tab 补全
+tinyclaw completions install           # 自动写入 ~/.bashrc 或 ~/.zshrc
+tinyclaw completions bash/zsh/fish     # 输出补全脚本（手动 eval）
 ```
 
 ## 接入新平台

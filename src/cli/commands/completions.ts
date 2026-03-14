@@ -10,9 +10,7 @@
  *   completions install [shell]   自动检测 shell，追加 eval 行到 rc 文件
  *
  * 用户安装示例：
- *   eval "$(bun run --cwd /path/to/tinyclaw cli completions bash)"
- *   # 或
- *   bun run cli completions install
+ *   tinyclaw completions install
  */
 
 import * as fs from "node:fs";
@@ -37,9 +35,9 @@ const CLI_ENTRY = path.join(PROJECT_ROOT, "src", "cli", "index.ts");
  */
 function bashScript(): string {
   return `# tinyclaw bash completion
-# 由 \`bun run cli completions bash\` 生成
+# 由 \`tinyclaw completions bash\` 生成
 # 安装：在 ~/.bashrc 末尾添加：
-#   eval "$(bun run --cwd ${PROJECT_ROOT} cli completions bash)"
+#   eval "$(tinyclaw completions bash)"
 
 _tinyclaw_complete() {
     local cur="\${COMP_WORDS[COMP_CWORD]}"
@@ -59,9 +57,9 @@ alias tinyclaw='bun "${CLI_ENTRY}"'
  */
 function zshScript(): string {
   return `# tinyclaw zsh completion
-# 由 \`bun run cli completions zsh\` 生成
+# 由 \`tinyclaw completions zsh\` 生成
 # 安装：在 ~/.zshrc 末尾添加：
-#   eval "$(bun run --cwd ${PROJECT_ROOT} cli completions zsh)"
+#   eval "$(tinyclaw completions zsh)"
 
 _tinyclaw_complete() {
     local -a words=(\${words[2,-1]})
@@ -81,9 +79,9 @@ alias tinyclaw='bun "${CLI_ENTRY}"'
  */
 function fishScript(): string {
   return `# tinyclaw fish completion
-# 由 \`bun run cli completions fish\` 生成
+# 由 \`tinyclaw completions fish\` 生成
 # 安装：保存到 ~/.config/fish/completions/tinyclaw.fish
-# 或运行：bun run --cwd ${PROJECT_ROOT} cli completions fish > ~/.config/fish/completions/tinyclaw.fish
+# 或运行：tinyclaw completions fish > ~/.config/fish/completions/tinyclaw.fish
 
 alias tinyclaw='bun "${CLI_ENTRY}"'
 
@@ -120,7 +118,7 @@ function getRcFile(shell: ShellType): string {
 
 function getEvalLine(shell: ShellType): string {
   const flag = shell === "bash" ? "bash" : shell === "zsh" ? "zsh" : "fish";
-  return `eval "$(bun run --cwd ${PROJECT_ROOT} cli completions ${flag})"`;
+  return `eval "$(tinyclaw completions ${flag})"`;
 }
 
 async function install(shellArg: string | undefined): Promise<void> {
@@ -179,16 +177,16 @@ ${bold("用法：")}
   completions install [shell]   自动安装（默认根据 $SHELL 检测）
 
 ${bold("快速安装：")}
-  bun run cli completions install
+  tinyclaw completions install
 
 ${bold("手动安装（bash）：")}
   # 在 ~/.bashrc 末尾添加：
-  eval "$(bun run --cwd ${PROJECT_ROOT} cli completions bash)"
+  eval "$(tinyclaw completions bash)"
   source ~/.bashrc
 
 ${bold("手动安装（zsh）：")}
   # 在 ~/.zshrc 末尾添加：
-  eval "$(bun run --cwd ${PROJECT_ROOT} cli completions zsh)"
+  eval "$(tinyclaw completions zsh)"
   source ~/.zshrc
 `);
 }
