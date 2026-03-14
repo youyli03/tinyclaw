@@ -3,6 +3,8 @@ import { llmRegistry } from "../llm/registry.js";
 import { searchMemory } from "../memory/qmd.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError } from "../auth/guard.js";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 
 // 确保所有工具在模块加载时注册
 import "../tools/codex.js";
@@ -11,13 +13,32 @@ import "../tools/system.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 
-const DEFAULT_SYSTEM = `你是 tinyclaw，一个简洁高效的 AI 助手。
+/**
+ * 内置系统提示词（写死，始终生效）。
+ * 描述 tinyclaw 的核心能力边界，不应被用户完全覆盖。
+ */
+const BUILTIN_SYSTEM = `你是 tinyclaw，一个简洁高效的 AI 助手。
 - 需要执行代码任务时，优先调用 codex 或 copilot 工具，不要自己生成大段代码
 - 执行高危操作（exec_shell / write_file / delete_file）前会触发 MFA 验证
 - 用中文回复，简洁明了`;
 
+/** 读取 ~/.tinyclaw/SYSTEM.md 作为用户自定义 prompt（文件不存在时返回 undefined） */
+function loadUserSystemPrompt(): string | undefined {
+  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
+  const path = join(home, ".tinyclaw", "SYSTEM.md");
+  if (!existsSync(path)) return undefined;
+  const content = readFileSync(path, "utf-8").trim();
+  return content.length > 0 ? content : undefined;
+}
+
+/** 构建最终 system prompt：内置 + 用户自定义（如有） */
+function buildSystemPrompt(extra?: string): string {
+  const userPrompt = extra ?? loadUserSystemPrompt();
+  return userPrompt ? `${BUILTIN_SYSTEM}\n\n${userPrompt}` : BUILTIN_SYSTEM;
+}
+
 export interface AgentRunOptions {
-  /** 覆盖默认 system prompt */
+  /** 追加到内置 prompt 之后的用户自定义 prompt（优先级高于 config.toml [agent].systemPrompt） */
   systemPrompt?: string;
   /** 收到流式 chunk 时的回调（不提供则等待完整响应） */
   onChunk?: (delta: string) => void;
@@ -46,7 +67,7 @@ export async function runAgent(
   // 1. 新 session 时注入 system prompt
   const messages = session.getMessages();
   if (messages.length === 0 || messages[0]?.role !== "system") {
-    session.addSystemMessage(opts.systemPrompt ?? DEFAULT_SYSTEM);
+    session.addSystemMessage(buildSystemPrompt(opts.systemPrompt));
   }
 
   // 2. 搜索相关历史记忆，注入为 system 消息
