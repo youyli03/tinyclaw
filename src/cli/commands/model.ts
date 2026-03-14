@@ -43,37 +43,16 @@ async function cmdShow(): Promise<void> {
   printTable(["后端", "Provider", "模型"], rows);
 }
 
-async function cmdList(args: string[]): Promise<void> {
-  const cfg = loadConfig();
-
-  // 解析 --all / -a flag（可出现在任意位置）
-  const showAll = args.includes("--all") || args.includes("-a");
-  const rest = args.filter((a) => a !== "--all" && a !== "-a");
-  const target = (rest[0] as BackendName | undefined) ?? "daily";
-
-  if (!BACKEND_NAMES.includes(target)) {
-    console.error(red(`未知后端 "${target}"，可选：daily / code / summarizer`));
-    return;
-  }
-
-  const b: AnyLLMBackend | undefined =
-    target === "daily" ? cfg.llm.backends.daily
-    : target === "code" ? cfg.llm.backends.code
-    : cfg.llm.backends.summarizer;
-
-  if (!b) {
-    console.log(dim(`后端 '${target}' 未配置（回退到 daily）`));
-    return;
-  }
-
+async function listOneBackend(target: BackendName, b: AnyLLMBackend, showAll: boolean): Promise<void> {
   if (b.provider === "copilot") {
-    console.log(`\n正在获取 Copilot 模型列表……`);
+    process.stdout.write(`\n正在获取 Copilot 模型列表（后端: ${target}）……`);
     const models = await getCopilotModels(b.githubToken);
     const display = showAll ? models : models.filter((m) => m.isPickerEnabled);
     const title = showAll
-      ? `Copilot 全部模型（后端: ${target}，共 ${models.length} 个）`
-      : `Copilot 可用模型（model_picker_enabled，后端: ${target}）`;
+      ? `Copilot 全部模型（后端: ${bold(target)}，共 ${models.length} 个）`
+      : `Copilot 可用模型（model_picker_enabled，后端: ${bold(target)}）`;
 
+    console.log(` ${green("OK")}`);
     section(title);
     printTable(
       ["#", "ID", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
@@ -95,9 +74,9 @@ async function cmdList(args: string[]): Promise<void> {
       console.log(dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`));
     }
   } else {
-    // OpenAI-compatible 后端：尝试调用 /models 端点
+    // OpenAI-compatible 后端
     if (showAll) {
-      process.stdout.write(`\n正在调用 ${b.baseUrl}/models……`);
+      process.stdout.write(`\n正在调用 ${b.baseUrl}/models（后端: ${target}）……`);
       try {
         const resp = await fetch(`${b.baseUrl}/models`, {
           headers: {
@@ -106,19 +85,20 @@ async function cmdList(args: string[]): Promise<void> {
           },
         });
         if (!resp.ok) {
+          console.log(` ${red("失败")}`);
           if (resp.status === 401) {
-            console.log(` ${red("失败")}`);
             console.error(red(`  API Key 认证失败（HTTP 401）`));
             console.log(dim(`  请检查 config.toml 中 [llm.backends.${target}] 的 apiKey 是否正确`));
-            console.log(dim(`  当前配置模型：${b.model}`));
-            return;
+          } else {
+            console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
           }
-          throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+          console.log(dim(`  当前配置模型：${b.model}`));
+          return;
         }
         const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
         const list = data.data ?? [];
-        console.log(` ${green("OK")}\n`);
-        section(`${b.baseUrl} 可用模型（后端: ${target}，共 ${list.length} 个）`);
+        console.log(` ${green("OK")}`);
+        section(`${b.baseUrl} 可用模型（后端: ${bold(target)}，共 ${list.length} 个）`);
         printTable(
           ["#", "ID", "创建方"],
           list.map((m, i) => [String(i + 1), m.id, m.owned_by ?? "-"])
@@ -129,10 +109,38 @@ async function cmdList(args: string[]): Promise<void> {
         console.log(dim(`  当前配置模型：${b.model}`));
       }
     } else {
-      console.log(`\n后端 '${target}' 使用 OpenAI-compatible 接口`);
+      console.log(`\n后端 '${bold(target)}' 使用 OpenAI-compatible 接口`);
       console.log(`当前模型：${cyan(b.model)}`);
       console.log(dim("加 -a / --all 参数调用 /models 端点获取全部可用模型"));
     }
+  }
+}
+
+async function cmdList(args: string[]): Promise<void> {
+  const cfg = loadConfig();
+
+  // 解析 --all / -a flag（可出现在任意位置）
+  const showAll = args.includes("--all") || args.includes("-a");
+  const rest = args.filter((a) => a !== "--all" && a !== "-a");
+
+  // 未指定后端时：遍历所有已配置的后端
+  const targets: BackendName[] = rest.length > 0 ? [rest[0] as BackendName] : BACKEND_NAMES;
+
+  for (const target of targets) {
+    if (!BACKEND_NAMES.includes(target)) {
+      console.error(red(`未知后端 "${target}"，可选：daily / code / summarizer`));
+      return;
+    }
+    const b: AnyLLMBackend | undefined =
+      target === "daily" ? cfg.llm.backends.daily
+      : target === "code" ? cfg.llm.backends.code
+      : cfg.llm.backends.summarizer;
+
+    if (!b) {
+      console.log(dim(`\n后端 '${target}' 未配置，跳过`));
+      continue;
+    }
+    await listOneBackend(target, b, showAll);
   }
 }
 
