@@ -26,6 +26,8 @@ import { run as statusRun, description as statusDesc, usage as statusUsage } fro
 import { run as restartRun, description as restartDesc, usage as restartUsage } from "./commands/restart.js";
 import { run as completionsRun, description as completionsDesc, usage as completionsUsage } from "./commands/completions.js";
 import { run as chatRun, description as chatDesc, usage as chatUsage } from "./commands/chat.js";
+import { run as startRun, description as startDesc, usage as startUsage } from "./commands/start.js";
+import { run as logsRun, description as logsDesc, usage as logsUsage } from "./commands/logs.js";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
@@ -46,7 +48,9 @@ const COMMANDS: Record<string, CommandModule> = {
   auth:        { description: authDesc,        usage: authUsage,        run: authRun },
   status:      { description: statusDesc,      usage: statusUsage,      run: statusRun },
   restart:     { description: restartDesc,     usage: restartUsage,     run: restartRun },
+  start:       { description: startDesc,       usage: startUsage,       run: startRun },
   chat:        { description: chatDesc,        usage: chatUsage,        run: chatRun },
+  logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
 
@@ -59,7 +63,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   auth:        ["github", "status", "help"],
   status:      [],
   restart:     [],
+  start:       [],
   chat:        ["-s", "--session", "help"],
+  logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
 
