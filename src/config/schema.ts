@@ -107,13 +107,20 @@ const ChannelsSchema = z.object({
 
 const MemorySchema = z.object({
   /**
+   * 是否启用向量记忆（需要下载 embedding 模型，首次约 380MB）。
+   * 默认关闭，避免首次启动时触发大文件下载。
+   * 开启方式：在 config.toml 里设 [memory] enabled = true
+   */
+  enabled: z.boolean().default(false),
+  /**
    * QMD embedding 模型（HuggingFace URI）
-   * 默认 Qwen3-Embedding-0.6B，中文优化，~640MB 首次自动下载
+   * 默认 Qwen3-Embedding-0.6B Q4_K_M，中文优化，~380MB
+   * 如需更高精度可改为 Q8_0（~640MB）
    */
   embedModel: z
     .string()
     .default(
-      "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
+      "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q4_K_M.gguf"
     ),
   /**
    * 触发摘要的 token 使用率阈值（0-1），默认 0.8

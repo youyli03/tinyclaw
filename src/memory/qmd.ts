@@ -6,13 +6,15 @@ let store: QMDStore | null = null;
 
 /**
  * 获取（或初始化）QMD store 单例。
+ * 当 config.memory.enabled = false 时返回 null，所有上层函数视作 no-op。
  * dbPath 固定在 ~/.tinyclaw/memory/index.sqlite
  * embedding 模型从 config.memory.embedModel 读取。
  */
-export async function getQMDStore(): Promise<QMDStore> {
+async function getQMDStore(): Promise<QMDStore | null> {
+  const cfg = loadConfig();
+  if (!cfg.memory.enabled) return null;
   if (store) return store;
 
-  const cfg = loadConfig();
   // 确保目录存在
   getDataPath("memory");
 
@@ -40,6 +42,7 @@ export async function getQMDStore(): Promise<QMDStore> {
  */
 export async function searchMemory(query: string, limit = 5): Promise<string> {
   const s = await getQMDStore();
+  if (!s) return ""; // memory disabled
   const results = await s.search({ query, limit, minScore: 0.3 });
 
   if (results.length === 0) return "";
@@ -58,6 +61,7 @@ export async function searchMemory(query: string, limit = 5): Promise<string> {
  */
 export async function updateMemoryIndex(): Promise<void> {
   const s = await getQMDStore();
+  if (!s) return; // memory disabled
   await s.update({ collections: ["sessions"] });
 }
 
