@@ -22,6 +22,11 @@ function getPCA(): PublicClientApplication {
   if (pca) return pca;
 
   const cfg = loadConfig().auth.mfa;
+  if (!cfg) {
+    throw new Error(
+      "MFA 未配置：请在 config.toml 中填入 [auth.mfa] tenantId 和 clientId（Azure AD App Registration）"
+    );
+  }
   const cachePath = getMSALCachePath();
 
   // 持久化 token 缓存：读取已有 cache
@@ -70,7 +75,7 @@ function getPCA(): PublicClientApplication {
 export async function requireMFA(
   displayFn: (message: string) => void = console.log
 ): Promise<AuthenticationResult> {
-  const cfg = loadConfig().auth.mfa;
+  const cfg = loadConfig().auth.mfa!;  // getPCA() 已确保 mfa 已配置
   const app = getPCA();
 
   // 尝试静默获取（缓存中有有效 token 时直接返回）

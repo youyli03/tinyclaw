@@ -62,14 +62,14 @@ const LLMSchema = z.object({
 // ── Microsoft MFA ─────────────────────────────────────────────────────────────
 
 const MFASchema = z.object({
-  tenantId: z.string().uuid("auth.mfa.tenantId 必须是有效的 UUID"),
-  clientId: z.string().uuid("auth.mfa.clientId 必须是有效的 UUID"),
+  tenantId: z.string().min(1),
+  clientId: z.string().min(1),
   /** MFA 确认超时（秒），默认 60 */
   timeoutSecs: z.number().int().positive().default(60),
 });
 
 const AuthSchema = z.object({
-  mfa: MFASchema,
+  mfa: MFASchema.optional(),
 });
 
 // ── QQBot ─────────────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ const MemorySchema = z.object({
 
 export const ConfigSchema = z.object({
   llm: LLMSchema,
-  auth: AuthSchema,
+  auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
 });
