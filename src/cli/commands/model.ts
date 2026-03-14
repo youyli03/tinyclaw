@@ -53,19 +53,13 @@ async function listCopilot(githubToken: string, showAll: boolean): Promise<void>
   console.log(` ${green("OK")}`);
   section(title);
   printTable(
-    ["#", "Symbol", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
+    ["#", "Symbol", "乘数"],
     display.map((m, i) => [
       String(i + 1),
       cyan(`copilot/${m.id}`),
-      m.name,
-      m.vendor,
-      m.category ?? "-",
-      m.isPickerEnabled ? green("✓") : dim("-"),
-      m.isDefault ? green("✓") : "",
       m.multiplier === undefined ? "-"
         : m.multiplier === 0 ? green("free")
         : yellow(`×${m.multiplier}`),
-      m.preview ? dim("preview") : "",
     ])
   );
   if (!showAll) {
