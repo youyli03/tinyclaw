@@ -1,0 +1,58 @@
+# tinyclaw 配置模板
+# 复制本文件到 ~/.tinyclaw/config.toml 并填入真实值
+# 警告：config.toml 已加入 .gitignore，请勿提交真实密钥
+
+# ── LLM 后端 ──────────────────────────────────────────────────────────────────
+# 至少需要配置 daily（日常对话）
+# code 和 summarizer 不配置时回退到 daily
+
+[llm.backends.daily]
+baseUrl   = "https://api.openai.com/v1"
+apiKey    = "sk-..."
+model     = "gpt-4o"
+# maxTokens = 4096    # 可选，默认 4096
+# timeoutMs = 60000   # 可选，默认 60000ms
+
+[llm.backends.code]
+baseUrl   = "https://api.openai.com/v1"
+apiKey    = "sk-..."
+model     = "o4-mini"
+
+[llm.backends.summarizer]
+baseUrl   = "https://api.openai.com/v1"
+apiKey    = "sk-..."
+model     = "gpt-4o-mini"
+
+# ── Microsoft MFA ──────────────────────────────────────────────────────────────
+# 用于高危操作（exec_shell / delete_file 等）的 number-matching 推送确认
+# 注册步骤：
+#   1. 访问 https://portal.azure.com → App registrations → New registration
+#   2. 平台选 "Mobile and desktop applications"，Redirect URI 填 http://localhost
+#   3. 复制 Application (client) ID 和 Directory (tenant) ID 填入下方
+
+[auth.mfa]
+tenantId    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+clientId    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# timeoutSecs = 60   # 可选，默认 60 秒
+
+# ── QQ Bot ─────────────────────────────────────────────────────────────────────
+# 官方 QQ 开放平台 https://q.qq.com/ 申请机器人后获取
+
+[channels.qqbot]
+appId        = "102xxxxx"
+clientSecret = "your-client-secret"
+
+# allowFrom = []                  # 空表示全部用户可私信，非空则白名单
+# systemPrompt = ""               # 账户级系统提示词（追加在默认 prompt 后）
+# imageServerBaseUrl = ""         # 图床公网地址，如 http://your-ip:18765（发图必填）
+# markdownSupport = true          # 是否启用 markdown 消息格式
+# imageServerPort = 18765         # 图床本地端口
+
+# ── 向量记忆 ───────────────────────────────────────────────────────────────────
+# embedModel 首次运行自动从 HuggingFace 下载
+# 切换模型后需删除 ~/.tinyclaw/memory/index.sqlite 重新索引
+
+[memory]
+embedModel     = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
+tokenThreshold = 0.8    # 达到 contextWindow 的 80% 时触发摘要压缩
+# contextWindow = 128000  # 可选，默认 128000
