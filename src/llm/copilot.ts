@@ -123,6 +123,68 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
   return data.token;
 }
 
+// ── 模型乘数静态表 ────────────────────────────────────────────────────────────
+//
+// 来源：https://github.com/github/docs/blob/main/data/tables/copilot/model-multipliers.yml
+// 含义：付费计划（Pro/Pro+/Business/Enterprise）中每次请求消耗的 premium request 倍数
+//   0     = 包含模型，不消耗 premium requests（GPT-4o / GPT-4.1 / GPT-5 mini）
+//   0.25  = 消耗 0.25× （Grok Code Fast 1）
+//   0.33  = 消耗 0.33× （Claude Haiku 4.5 / Gemini 3 Flash / GPT-5.1-Codex-Mini）
+//   1     = 消耗 1×    （Claude Sonnet 系列 / GPT-5.1 / Gemini 2.5 Pro 等）
+//   3     = 消耗 3×    （Claude Opus 4.5 / Claude Opus 4.6）
+//  30     = 消耗 30×   （Claude Opus 4.6 fast mode preview）
+//
+// 注意：
+// - 名称匹配基于 API 返回的 model.name 字段（区分大小写不敏感）
+// - Free 计划下的乘数不同（所有模型均记作 1×），此表仅用于付费计划显示
+// - 若模型名称不在表中，则 multiplier 为 undefined（显示为 "-"）
+
+const MODEL_MULTIPLIERS_PAID: Record<string, number> = {
+  "Claude Haiku 4.5":                          0.33,
+  "Claude Opus 4.5":                           3,
+  "Claude Opus 4.6":                           3,
+  "Claude Opus 4.6 (fast mode) (preview)":     30,
+  "Claude Sonnet 4":                           1,
+  "Claude Sonnet 4.5":                         1,
+  "Claude Sonnet 4.6":                         1,
+  "Gemini 2.5 Pro":                            1,
+  "Gemini 3 Flash":                            0.33,
+  "Gemini 3 Pro":                              1,
+  "Gemini 3.1 Pro":                            1,
+  "GPT-4.1":                                   0,
+  "GPT-4o":                                    0,
+  "GPT-5 mini":                                0,
+  "GPT-5.1":                                   1,
+  "GPT-5.1-Codex":                             1,
+  "GPT-5.1-Codex-Mini":                        0.33,
+  "GPT-5.1-Codex-Max":                         1,
+  "GPT-5.2":                                   1,
+  "GPT-5.2-Codex":                             1,
+  "GPT-5.3-Codex":                             1,
+  "GPT-5.4":                                   1,
+  "Grok Code Fast 1":                          0.25,
+  "Raptor mini":                               0,
+};
+
+/**
+ * 根据模型名称查找付费计划下的 premium request 乘数。
+ * 匹配策略（按优先级）：
+ * 1. 精确匹配
+ * 2. 大小写不敏感匹配
+ * 3. 双向去掉 " (Preview)" 后缀再匹配（API 与文档互有差异）
+ */
+function lookupMultiplier(name: string): number | undefined {
+  if (name in MODEL_MULTIPLIERS_PAID) return MODEL_MULTIPLIERS_PAID[name];
+  const lower = name.toLowerCase();
+  const stripPreview = (s: string) => s.replace(/\s*\(preview\)/gi, "").trim().toLowerCase();
+  const nameLower = stripPreview(name);
+  for (const [k, v] of Object.entries(MODEL_MULTIPLIERS_PAID)) {
+    if (k.toLowerCase() === lower) return v;
+    if (stripPreview(k) === nameLower) return v;
+  }
+  return undefined;
+}
+
 // ── 模型发现 ──────────────────────────────────────────────────────────────────
 
 /** Copilot /models 接口原始响应中的单条模型 */
@@ -226,20 +288,26 @@ export async function getCopilotModels(
   }
 
   const data = (await resp.json()) as { data: RawCopilotModel[] };
-  const models: CopilotModelInfo[] = data.data.map((m) => ({
-    id: m.id,
-    name: m.name ?? m.id,
-    vendor: m.vendor ?? "Unknown",
-    category: m.model_picker_category,
-    preview: m.preview ?? false,
-    maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
-    maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
-    supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
-    isPickerEnabled: m.model_picker_enabled,
-    isDefault: m.is_chat_default ?? false,
-    isPremium: m.billing?.is_premium ?? false,
-    multiplier: m.billing?.multiplier,
-  }));
+  const models: CopilotModelInfo[] = data.data.map((m) => {
+    const name = m.name ?? m.id;
+    // 优先使用服务端返回的 billing.multiplier（企业账户），
+    // 否则查静态表（个人 Pro/Pro+ 账户）
+    const multiplier = m.billing?.multiplier ?? lookupMultiplier(name);
+    return {
+      id: m.id,
+      name,
+      vendor: m.vendor ?? "Unknown",
+      category: m.model_picker_category,
+      preview: m.preview ?? false,
+      maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
+      maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
+      supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
+      isPickerEnabled: m.model_picker_enabled,
+      isDefault: m.is_chat_default ?? false,
+      isPremium: m.billing?.is_premium ?? (multiplier != null && multiplier > 0),
+      multiplier,
+    };
+  });
 
   modelsCache.set(githubTokenSource, { models, ts: nowSecs() });
   return models;

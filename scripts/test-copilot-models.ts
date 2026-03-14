@@ -72,11 +72,17 @@ console.log(header);
 console.log("-".repeat(header.length + 10));
 
 for (const m of models) {
+  const multiplierStr =
+    m.multiplier === 0
+      ? "free"
+      : m.multiplier != null
+      ? `×${m.multiplier}`
+      : "";
   const flags = [
     m.isDefault ? "★default" : "",
     m.preview ? "preview" : "",
     !m.isPickerEnabled ? "hidden" : "",
-    m.isPremium ? `premium×${m.multiplier ?? "?"}` : "",
+    multiplierStr ? `(${multiplierStr})` : "",
   ].filter(Boolean).join(" ");
 
   console.log(
