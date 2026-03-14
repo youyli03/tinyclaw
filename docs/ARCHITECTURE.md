@@ -27,7 +27,9 @@ tinyclaw/
 │   │   └── router.ts         # 意图路由：daily-ops / code
 │   ├── llm/
 │   │   ├── client.ts         # OpenAI-compatible 统一接口（chat / streamChat）
-│   │   └── registry.ts       # 多后端注册，get(name) 运行时切换
+│   │   ├── registry.ts       # 多后端注册，get(name) 运行时切换；async init() 预初始化 Copilot
+│   │   ├── copilot.ts        # GitHub Copilot 后端：token 换取（缓存）+ 模型发现 + LLMClient 构建
+│   │   └── copilotSetup.ts   # RFC 8628 Device Flow OAuth + ~/.tinyclaw/.github_token 持久化
 │   ├── memory/
 │   │   ├── qmd.ts            # @tobilu/qmd SDK 封装（search / updateIndex）
 │   │   ├── store.ts          # 对话 → ~/.tinyclaw/memory/sessions/YYYY-MM-DD.md
@@ -84,9 +86,43 @@ tinyclaw/
 
 ### LLM 多后端
 
-- 统一 OpenAI-compatible 接口
+- 统一 OpenAI-compatible 接口（`LLMClient`）
 - 三个命名后端：`daily`（对话）/ `code`（代码任务）/ `summarizer`（摘要压缩）
-- `registry.use(name)` 运行时切换，无需重启
+- `registry.get(name)` 运行时取后端实例，`registry.init()` 在 main.ts 中异步预初始化所有后端
+- 支持两种 backend 类型（由 `CopilotBackendSchema` / `OpenAIBackendSchema` 区分）：
+
+#### OpenAI-compatible（`provider` 不填 / 为 `"openai"`）
+
+手动提供 `baseUrl` + `apiKey` + `model`，方便对接任意兼容 API。
+
+#### GitHub Copilot（`provider = "copilot"`）
+
+| 步骤 | 实现 | 说明 |
+|------|------|------|
+| 1. GitHub OAuth 认证 | `copilotSetup.ts` | RFC 8628 Device Flow，首次跳出浏览器授权，令牌写入 `~/.tinyclaw/.github_token`（0600） |
+| 2. Token 解析优先级 | `copilot.ts` `resolveGitHubToken()` | token 文件 → `gh` CLI → Device Flow（同进程内缓存，不重复触发） |
+| 3. Copilot token 换取 | `copilot.ts` `getCopilotToken()` | `GET /copilot_internal/v2/token`，TTL 缓存自动刷新 |
+| 4. 模型动态发现 | `copilot.ts` `getCopilotModels()` | `GET /models`，回传 vendor / category / maxOutput / contextWindow 等 |
+| 5. 乘数查表 | `copilot.ts` `MODEL_MULTIPLIERS_PAID` | 按官方文档静态表查 premium request 倍数；企业账号优先用 API 返回值 |
+| 6. LLMClient 构建 | `copilot.ts` `buildCopilotClient()` | 注入自刷新 copilotFetch，每请求动态换 token |
+
+**模型选择（`model = "auto"` 时）：**
+```
+is_chat_default → versatile+picker → powerful+picker → any picker → 第一个
+```
+
+**premium request 乘数表（付费计划）：**
+
+| 乘数 | 模型 |
+|------|------|
+| free (×0) | GPT-4o · GPT-4.1 · GPT-5 mini · Raptor mini |
+| ×0.25 | Grok Code Fast 1 |
+| ×0.33 | Claude Haiku 4.5 · Gemini 3 Flash · GPT-5.1-Codex-Mini |
+| ×1 | Claude Sonnet 系列 · GPT-5.x · Gemini 2.5/3 Pro 系列 |
+| ×3 | Claude Opus 4.5 / 4.6 |
+| ×30 | Claude Opus 4.6 (fast mode, preview) |
+
+来源：[github/docs `data/tables/copilot/model-multipliers.yml`](https://github.com/github/docs/blob/main/data/tables/copilot/model-multipliers.yml)
 
 ### QMD 向量记忆
 
@@ -181,14 +217,13 @@ export interface Connector {
 | 5 | 工具层：registry · codex · copilot · system | ✅ 完成 |
 | 6 | Agent 主循环：session · router · agent | ✅ 完成 |
 | 7 | QQBot：api · outbound · gateway · index + main.ts | ✅ 完成 |
-| 8 | Cron：scheduler · runner · tools | ⏸ 预留，不实现 |
-
+| 8 | Cron：scheduler · runner · tools | ⏸ 预留，不实现 || 9 | GitHub Copilot 后端：token 换取 · 模型发现 · 乘数表 | ✅ 完成 |
 ---
 
 ## 配置文件示例（`config.example.toml`）
 
 ```toml
-# ── LLM 后端 ──────────────────────────────────────────────────────────────────
+# ── LLM 后端（方案 A：OpenAI-compatible） ────────────────────────────────────
 
 [llm.backends.daily]
 baseUrl = "https://api.openai.com/v1"
@@ -204,6 +239,15 @@ model   = "o4-mini"
 baseUrl = "https://api.openai.com/v1"
 apiKey  = "sk-..."
 model   = "gpt-4o-mini"
+
+# ── LLM 后端（方案 B：GitHub Copilot 订阅） ──────────────────────────────────
+# 需先运行 `gh auth login`，或通过首次启动的 Device Flow 完成授权
+# token 持久化在 ~/.tinyclaw/.github_token，后续无需重新授权
+
+# [llm.backends.daily]
+# provider    = "copilot"
+# githubToken = "gh_cli"   # "gh_cli" | "env"（$GITHUB_TOKEN）| 直接填 token
+# model       = "auto"     # "auto" 或具体 model ID，如 "claude-sonnet-4.6"
 
 # ── Microsoft MFA ──────────────────────────────────────────────────────────────
 # 需要一个 Azure AD App Registration
