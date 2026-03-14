@@ -45,7 +45,11 @@ async function cmdShow(): Promise<void> {
 
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
-  const target = (args[0] as BackendName | undefined) ?? "daily";
+
+  // 解析 --all / -a flag（可出现在任意位置）
+  const showAll = args.includes("--all") || args.includes("-a");
+  const rest = args.filter((a) => a !== "--all" && a !== "-a");
+  const target = (rest[0] as BackendName | undefined) ?? "daily";
 
   if (!BACKEND_NAMES.includes(target)) {
     console.error(red(`未知后端 "${target}"，可选：daily / code / summarizer`));
@@ -65,17 +69,21 @@ async function cmdList(args: string[]): Promise<void> {
   if (b.provider === "copilot") {
     console.log(`\n正在获取 Copilot 模型列表……`);
     const models = await getCopilotModels(b.githubToken);
-    const picker = models.filter((m) => m.isPickerEnabled);
+    const display = showAll ? models : models.filter((m) => m.isPickerEnabled);
+    const title = showAll
+      ? `Copilot 全部模型（后端: ${target}，共 ${models.length} 个）`
+      : `Copilot 可用模型（model_picker_enabled，后端: ${target}）`;
 
-    section(`Copilot 可用模型（model_picker_enabled，后端: ${target}）`);
+    section(title);
     printTable(
-      ["#", "ID", "名称", "供应商", "分类", "默认", "乘数", "预览"],
-      picker.map((m, i) => [
+      ["#", "ID", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
+      display.map((m, i) => [
         String(i + 1),
         m.id,
         m.name,
         m.vendor,
         m.category ?? "-",
+        m.isPickerEnabled ? green("✓") : dim("-"),
         m.isDefault ? green("✓") : "",
         m.multiplier === undefined ? "-"
           : m.multiplier === 0 ? green("free")
@@ -83,11 +91,39 @@ async function cmdList(args: string[]): Promise<void> {
         m.preview ? dim("preview") : "",
       ])
     );
-    console.log(`\n共 ${picker.length} 个可选模型（总计 ${models.length} 个）`);
+    if (!showAll) {
+      console.log(dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`));
+    }
   } else {
-    console.log(`\n后端 '${target}' 使用 OpenAI-compatible 接口`);
-    console.log(`当前模型：${cyan(b.model)}`);
-    console.log(dim("OpenAI-compatible 后端不支持自动枚举模型列表，请手动填写 model ID"));
+    // OpenAI-compatible 后端：尝试调用 /models 端点
+    if (showAll) {
+      process.stdout.write(`\n正在调用 ${b.baseUrl}/models……`);
+      try {
+        const resp = await fetch(`${b.baseUrl}/models`, {
+          headers: {
+            Authorization: `Bearer ${b.apiKey}`,
+            Accept: "application/json",
+          },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
+        const list = data.data ?? [];
+        console.log(` ${green("OK")}\n`);
+        section(`${b.baseUrl} 可用模型（后端: ${target}，共 ${list.length} 个）`);
+        printTable(
+          ["#", "ID", "创建方"],
+          list.map((m, i) => [String(i + 1), m.id, m.owned_by ?? "-"])
+        );
+      } catch (e) {
+        console.log(` ${red("失败")}`);
+        console.error(red(`  无法获取模型列表：${e}`));
+        console.log(dim(`  当前配置模型：${b.model}`));
+      }
+    } else {
+      console.log(`\n后端 '${target}' 使用 OpenAI-compatible 接口`);
+      console.log(`当前模型：${cyan(b.model)}`);
+      console.log(dim("加 -a / --all 参数调用 /models 端点获取全部可用模型"));
+    }
   }
 }
 
@@ -187,11 +223,16 @@ async function cmdSet(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
-  model show                  显示当前模型配置
-  model list [backend]        列出可用模型（默认后端: daily）
-  model set  [backend]        交互式选择模型（默认后端: daily）
+  model show                     显示当前模型配置
+  model list [backend] [-a]      列出可用模型（默认后端: daily）
+  model set  [backend]           交互式选择模型（默认后端: daily）
 
 ${bold("后端名：")}  daily | code | summarizer
+
+${bold("参数：")}
+  -a, --all   list 时显示全量模型
+              · Copilot 后端：包含 model_picker_enabled=false 的模型
+              · OpenAI 后端：调用 /models 端点枚举所有可用模型
 `);
 }
 
