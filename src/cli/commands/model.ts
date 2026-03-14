@@ -105,7 +105,16 @@ async function cmdList(args: string[]): Promise<void> {
             Accept: "application/json",
           },
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            console.log(` ${red("失败")}`);
+            console.error(red(`  API Key 认证失败（HTTP 401）`));
+            console.log(dim(`  请检查 config.toml 中 [llm.backends.${target}] 的 apiKey 是否正确`));
+            console.log(dim(`  当前配置模型：${b.model}`));
+            return;
+          }
+          throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        }
         const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
         const list = data.data ?? [];
         console.log(` ${green("OK")}\n`);
