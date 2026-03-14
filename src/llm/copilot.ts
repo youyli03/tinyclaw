@@ -8,8 +8,39 @@
  */
 
 import { execSync } from "child_process";
+import { readFileSync, existsSync } from "fs";
 import { LLMClient } from "./client.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
+
+// ── 系统 CA 证书（修复 Bun 在 Linux 上的 UNKNOWN_CERTIFICATE_VERIFICATION_ERROR）
+
+const CA_CANDIDATES = [
+  "/etc/ssl/certs/ca-certificates.crt",  // Debian / Ubuntu
+  "/etc/pki/tls/certs/ca-bundle.crt",    // RHEL / CentOS
+  "/etc/ssl/ca-bundle.pem",              // openSUSE
+  "/etc/ssl/cert.pem",                   // Alpine / macOS
+];
+
+let _systemCA: string | null | undefined; // undefined=未初始化, null=找不到
+
+function systemCA(): string | undefined {
+  if (_systemCA !== undefined) return _systemCA ?? undefined;
+  for (const p of CA_CANDIDATES) {
+    if (existsSync(p)) {
+      _systemCA = readFileSync(p, "utf-8");
+      return _systemCA;
+    }
+  }
+  _systemCA = null;
+  return undefined;
+}
+
+/** 将系统 CA 注入 Bun fetch options（仅 Bun 支持 tls 扩展字段） */
+function withCA(init?: RequestInit): RequestInit {
+  const ca = systemCA();
+  if (!ca) return init ?? {};
+  return { ...init, tls: { ca } } as RequestInit;
+}
 
 const COPILOT_API = "https://api.githubcopilot.com";
 const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
@@ -96,13 +127,13 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
   }
 
   const ghToken = await resolveGitHubToken(githubTokenSource);
-  const resp = await fetch(TOKEN_URL, {
+  const resp = await fetch(TOKEN_URL, withCA({
     headers: {
       Authorization: `token ${ghToken}`,
       Accept: "application/json",
       ...COPILOT_HEADERS,
     },
-  });
+  }));
 
   if (!resp.ok) {
     throw new Error(
@@ -274,13 +305,13 @@ export async function getCopilotModels(
   if (cached && nowSecs() - cached.ts < MODELS_CACHE_TTL) return cached.models;
 
   const token = await getCopilotToken(githubTokenSource);
-  const resp = await fetch(`${COPILOT_API}/models`, {
+  const resp = await fetch(`${COPILOT_API}/models`, withCA({
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
       ...COPILOT_HEADERS,
     },
-  });
+  }));
 
   if (!resp.ok) {
     throw new Error(`Copilot 模型列表获取失败：${resp.status} ${resp.statusText}`);
@@ -374,7 +405,7 @@ export async function buildCopilotClient(
     for (const [k, v] of Object.entries(COPILOT_HEADERS)) {
       headers.set(k, v);
     }
-    return globalThis.fetch(input, { ...init, headers });
+    return globalThis.fetch(input, withCA({ ...init, headers }));
   };
 
   const client = new LLMClient(
