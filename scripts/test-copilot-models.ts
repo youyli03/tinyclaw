@@ -9,7 +9,7 @@
 
 import { getCopilotToken, getCopilotModels } from "../src/llm/copilot.js";
 
-const tokenSource = process.argv[2] ?? "env";
+const tokenSource = process.argv[2] ?? "gh_cli";
 
 console.log("=".repeat(60));
 console.log("Copilot 模型发现测试");
@@ -39,9 +39,17 @@ try {
 
 console.log(`✓ 共获取到 ${models.length} 个模型\n`);
 
-// 3. 输出表格
-const defaultModel = models.find((m) => m.isDefault);
-console.log(`默认模型：${defaultModel?.id ?? "(无)"}\n`);
+// 3. 输出 auto 会选的模型
+import { buildCopilotClient } from "../src/llm/copilot.js";
+import type { CopilotBackendConfig } from "../src/config/schema.js";
+const autoConfig: CopilotBackendConfig = {
+  provider: "copilot",
+  githubToken: tokenSource,
+  model: "auto",
+  timeoutMs: 60000,
+};
+const { client: autoClient } = await buildCopilotClient(autoConfig);
+console.log(`auto 选择的模型：${autoClient.model}\n`);
 
 // 标题行
 const cols = {
@@ -49,27 +57,36 @@ const cols = {
   maxOut: 12,
   maxCtx: 14,
   tools: 8,
-  picker: 8,
-  default: 9,
+  vendor: 12,
+  category: 12,
 };
 const header =
   "模型 ID".padEnd(cols.id) +
   "maxOutput".padEnd(cols.maxOut) +
   "contextWindow".padEnd(cols.maxCtx) +
   "tools".padEnd(cols.tools) +
-  "picker".padEnd(cols.picker) +
-  "default";
+  "vendor".padEnd(cols.vendor) +
+  "category   " +
+  "flags";
 console.log(header);
-console.log("-".repeat(header.length));
+console.log("-".repeat(header.length + 10));
 
 for (const m of models) {
+  const flags = [
+    m.isDefault ? "★default" : "",
+    m.preview ? "preview" : "",
+    !m.isPickerEnabled ? "hidden" : "",
+    m.isPremium ? `premium×${m.multiplier ?? "?"}` : "",
+  ].filter(Boolean).join(" ");
+
   console.log(
     m.id.padEnd(cols.id) +
       String(m.maxOutputTokens).padEnd(cols.maxOut) +
       String(m.maxContextWindow).padEnd(cols.maxCtx) +
       (m.supportsToolCalls ? "yes" : "no").padEnd(cols.tools) +
-      (m.isPickerEnabled ? "yes" : "no").padEnd(cols.picker) +
-      (m.isDefault ? "★" : "")
+      (m.vendor).padEnd(cols.vendor) +
+      (m.category ?? "-").padEnd(cols.category) +
+      flags
   );
 }
 

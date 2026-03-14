@@ -10,7 +10,7 @@
 import { execSync } from "child_process";
 import type { CopilotBackendConfig } from "../config/schema.js";
 import { LLMClient } from "./client.js";
-import { runCopilotSetup } from "./copilotSetup.js";
+import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 
 const COPILOT_API = "https://api.githubcopilot.com";
 const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
@@ -22,25 +22,55 @@ const COPILOT_HEADERS = {
 
 // ── GitHub token 解析 ─────────────────────────────────────────────────────────
 
+/** 内存缓存：同一进程内避免对同一 source 重复触发 device flow */
+const ghTokenCache = new Map<string, string>();
+
 async function resolveGitHubToken(source: string): Promise<string> {
+  // 同一进程内命中缓存，直接返回（device flow 只触发一次）
+  const mem = ghTokenCache.get(source);
+  if (mem) return mem;
+
+  let token: string;
+
   if (source === "gh_cli") {
-    try {
-      const token = execSync("gh auth token", { encoding: "utf-8" }).trim();
-      if (token && token.length > 0) return token;
-    } catch {
-      // gh 未登录，跌入引导流程
+    // 优先：已保存的 token 文件
+    const saved = loadSavedGitHubToken();
+    if (saved) {
+      ghTokenCache.set(source, saved);
+      return saved;
     }
-    // gh 未登录或返回空 → 首次引导
-    return runCopilotSetup();
-  }
-  if (source === "env") {
+    // 次之：gh CLI
+    try {
+      const t = execSync("gh auth token", { encoding: "utf-8" }).trim();
+      if (t && t.length > 0) {
+        ghTokenCache.set(source, t);
+        return t;
+      }
+    } catch {
+      // gh 未登录，跌入 device flow
+    }
+    token = await runCopilotSetup();
+  } else if (source === "env") {
     const t = process.env["GITHUB_TOKEN"];
-    if (t && t.length > 0) return t;
-    // 环境变量未设置 → 首次引导
+    if (t && t.length > 0) {
+      ghTokenCache.set(source, t);
+      return t;
+    }
+    // 优先：已保存的 token 文件（env 未设置时也尝试读）
+    const saved = loadSavedGitHubToken();
+    if (saved) {
+      ghTokenCache.set(source, saved);
+      return saved;
+    }
     console.log("[tinyclaw] $GITHUB_TOKEN 未设置，启动 Token 配置向导...");
-    return runCopilotSetup();
+    token = await runCopilotSetup();
+  } else {
+    return source; // 直接作为 token 使用，无需缓存
   }
-  return source; // 直接作为 token 使用
+
+  // device flow 成功后缓存，避免同进程重复授权
+  ghTokenCache.set(source, token);
+  return token;
 }
 
 // ── Copilot token 换取与缓存 ──────────────────────────────────────────────────
@@ -99,8 +129,20 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
 interface RawCopilotModel {
   id: string;
   name?: string;
+  vendor?: string;
+  version?: string;
+  preview?: boolean;
   model_picker_enabled: boolean;
+  /** "powerful" | "versatile" | "lightweight"，嵌入模型无此字段 */
+  model_picker_category?: string;
   is_chat_default?: boolean;
+  is_chat_fallback?: boolean;
+  policy?: { state?: string; terms?: string };
+  billing?: {
+    is_premium: boolean;
+    multiplier: number;
+    restricted_to?: string[];
+  };
   capabilities: {
     type?: string;
     family?: string;
@@ -126,16 +168,35 @@ interface RawCopilotModel {
 export interface CopilotModelInfo {
   id: string;
   name: string;
+  /** 模型供应商，如 "OpenAI"、"Anthropic"、"Google" */
+  vendor: string;
+  /**
+   * 模型选择器分类：
+   * - "powerful"    高能力模型（Claude Opus、GPT-5 codex 等）
+   * - "versatile"   通用模型（GPT-4o、GPT-5.1 等）
+   * - "lightweight" 轻量快速模型
+   * - undefined     嵌入/非聊天模型
+   */
+  category: string | undefined;
+  /** 是否为预览版 */
+  preview: boolean;
   /** 最大输出 token 数（对应 LLMClient.maxTokens） */
   maxOutputTokens: number;
   /** 完整上下文窗口大小（对应 summarizer 阈值计算） */
   maxContextWindow: number;
   /** 是否支持 tool_calls（function calling） */
   supportsToolCalls: boolean;
-  /** 是否为 Copilot 默认聊天模型 */
-  isDefault: boolean;
   /** 是否出现在 Copilot 模型选择器中 */
   isPickerEnabled: boolean;
+  /** 是否为 Copilot 标记的默认聊天模型（个人账户通常不返回此字段） */
+  isDefault: boolean;
+  /** 是否为 premium 模型（企业账户返回，个人账户为 false） */
+  isPremium: boolean;
+  /**
+   * premium 配额消耗倍数（企业账户返回，个人账户为 undefined）。
+   * 0 = 免费；1 = 1×；3 = 3×，以此类推。
+   */
+  multiplier: number | undefined;
 }
 
 // 模型列表缓存（TTL = 1h，按 githubTokenSource 分别缓存）
@@ -168,11 +229,16 @@ export async function getCopilotModels(
   const models: CopilotModelInfo[] = data.data.map((m) => ({
     id: m.id,
     name: m.name ?? m.id,
+    vendor: m.vendor ?? "Unknown",
+    category: m.model_picker_category,
+    preview: m.preview ?? false,
     maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
     maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
     supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
-    isDefault: m.is_chat_default ?? false,
     isPickerEnabled: m.model_picker_enabled,
+    isDefault: m.is_chat_default ?? false,
+    isPremium: m.billing?.is_premium ?? false,
+    multiplier: m.billing?.multiplier,
   }));
 
   modelsCache.set(githubTokenSource, { models, ts: nowSecs() });
@@ -202,7 +268,13 @@ export async function buildCopilotClient(
 
   let model: CopilotModelInfo | undefined;
   if (config.model === "auto") {
-    model = models.find((m) => m.isDefault) ?? models[0];
+    // 优先级：is_chat_default → versatile+picker → powerful+picker → 任意picker → 第一个
+    model =
+      models.find((m) => m.isDefault) ??
+      models.find((m) => m.isPickerEnabled && m.category === "versatile") ??
+      models.find((m) => m.isPickerEnabled && m.category === "powerful") ??
+      models.find((m) => m.isPickerEnabled) ??
+      models[0];
   } else {
     model = models.find((m) => m.id === config.model);
     if (!model) {

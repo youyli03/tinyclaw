@@ -24,7 +24,10 @@ const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 // Copilot API 需要 read:user 即可换取 Copilot token
 const SCOPE = "read:user";
 
-const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
+const DATA_DIR = path.join(os.homedir(), ".tinyclaw");
+const CONFIG_PATH = path.join(DATA_DIR, "config.toml");
+/** 持久化 GitHub OAuth token 的专用文件（权限 0600） */
+const TOKEN_FILE = path.join(DATA_DIR, ".github_token");
 
 // ── 浏览器打开 ────────────────────────────────────────────────────────────────
 
@@ -40,6 +43,38 @@ function openBrowser(url: string): void {
   } catch {
     // 忽略打开失败，用户可手动复制链接
   }
+}
+
+// ── Token 文件持久化 ───────────────────────────────────────────────────────────
+
+/**
+ * 从 ~/.tinyclaw/.github_token 读取已保存的 GitHub OAuth token。
+ * 返回 token 字符串，或 undefined（文件不存在 / 内容为空）。
+ */
+export function loadSavedGitHubToken(): string | undefined {
+  try {
+    const t = fs.readFileSync(TOKEN_FILE, "utf-8").trim();
+    return t.length > 0 ? t : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 将 GitHub OAuth token 写入 ~/.tinyclaw/.github_token（权限 0600）。
+ * 同时更新 config.toml 中所有 provider=copilot 且 githubToken 为占位符的 backend。
+ */
+export function persistGitHubToken(token: string): void {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(TOKEN_FILE, token + "\n", { encoding: "utf-8", mode: 0o600 });
+    console.log(`[tinyclaw] ✓ GitHub token 已写入 ${TOKEN_FILE}`);
+  } catch (e) {
+    console.warn(`[tinyclaw] 警告：无法写入 token 文件：${e}`);
+  }
+
+  // 同时更新 config.toml（如果存在）
+  persistTokenToConfig(token);
 }
 
 // ── 写回 config.toml ──────────────────────────────────────────────────────────
@@ -159,7 +194,7 @@ export async function runCopilotSetup(): Promise<string> {
 
     if (data.access_token) {
       console.log("\n✓ 授权成功！\n");
-      persistTokenToConfig(data.access_token);
+      persistGitHubToken(data.access_token);
       return data.access_token;
     }
 
