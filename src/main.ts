@@ -17,23 +17,26 @@ import { Session } from "./core/session.js";
 import { runAgent } from "./core/agent.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
+import { startIpcServer } from "./ipc/server.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 
-// ── 每个 peerId 维护一个独立的 Session ────────────────────────────────────────
+// ── Session 注册表（key 为 sessionId，格式：qqbot:<type>:<peerId>）────────────
 
 const sessions = new Map<string, Session>();
 
-function getSession(peerId: string): Session {
-  let s = sessions.get(peerId);
-  if (!s) { s = new Session(); sessions.set(peerId, s); }
+function getSession(sessionId: string): Session {
+  let s = sessions.get(sessionId);
+  if (!s) { s = new Session(); sessions.set(sessionId, s); }
   return s;
 }
 
-// ── 消息处理 ──────────────────────────────────────────────────────────────────
+// ── QQBot 消息处理 ────────────────────────────────────────────────────────────
 
 async function handleMessage(msg: InboundMessage): Promise<string> {
-  const session = getSession(msg.peerId);
+  // 将 peerId + 消息类型编码为全局唯一的 sessionId
+  const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
+  const session = getSession(sessionId);
   const opts = {
     onMFAPrompt: (prompt: string) => console.log("[MFA]", prompt),
   };
@@ -69,9 +72,14 @@ async function main(): Promise<void> {
   const connector = new QQBotConnector();
   connector.onMessage(handleMessage);
 
-  // 4. 优雅退出
+  // 4. 启动 IPC server（供 CLI chat 命令通过 Unix socket 接入）
+  const ipcServer = startIpcServer(sessions, connector);
+  console.log("[tinyclaw] IPC server listening");
+
+  // 5. 优雅退出
   const handleExit = async (signal: string) => {
     console.log(`\n[tinyclaw] Received ${signal}, shutting down...`);
+    ipcServer.close();
     await connector.stop();
     try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
     process.exit(0);

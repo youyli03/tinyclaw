@@ -25,6 +25,7 @@ import { run as authRun, description as authDesc, usage as authUsage } from "./c
 import { run as statusRun, description as statusDesc, usage as statusUsage } from "./commands/status.js";
 import { run as restartRun, description as restartDesc, usage as restartUsage } from "./commands/restart.js";
 import { run as completionsRun, description as completionsDesc, usage as completionsUsage } from "./commands/completions.js";
+import { run as chatRun, description as chatDesc, usage as chatUsage } from "./commands/chat.js";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ const COMMANDS: Record<string, CommandModule> = {
   auth:        { description: authDesc,        usage: authUsage,        run: authRun },
   status:      { description: statusDesc,      usage: statusUsage,      run: statusRun },
   restart:     { description: restartDesc,     usage: restartUsage,     run: restartRun },
+  chat:        { description: chatDesc,        usage: chatUsage,        run: chatRun },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
 
@@ -57,6 +59,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   auth:        ["github", "status", "help"],
   status:      [],
   restart:     [],
+  chat:        ["-s", "--session", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
 
