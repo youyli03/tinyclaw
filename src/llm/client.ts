@@ -20,17 +20,24 @@ export interface ChatResult {
 /**
  * OpenAI-compatible LLM 客户端，封装单个后端。
  * 所有调用方通过 LLMRegistry 获取实例，不直接 new LLMClient。
+ *
+ * @param fetchFn 可选的自定义 fetch 实现（Copilot 后端用于动态注入 token 和请求头）
  */
+
+/** 与 OpenAI SDK 兼容的最小 fetch 函数类型 */
+export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
+
 export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: LLMBackend;
 
-  constructor(backend: LLMBackend) {
+  constructor(backend: LLMBackend, fetchFn?: FetchFn) {
     this.backend = backend;
     this.client = new OpenAI({
       baseURL: backend.baseUrl,
       apiKey: backend.apiKey,
       timeout: backend.timeoutMs,
+      ...(fetchFn ? { fetch: fetchFn } : {}),
     });
   }
 

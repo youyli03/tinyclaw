@@ -5,23 +5,52 @@
 # ── LLM 后端 ──────────────────────────────────────────────────────────────────
 # 至少需要配置 daily（日常对话）
 # code 和 summarizer 不配置时回退到 daily
+#
+# 支持两种后端类型：
+#
+# 1. OpenAI-compatible（显式指定 baseUrl + apiKey）：
+#
+#   [llm.backends.daily]
+#   baseUrl = "https://api.openai.com/v1"
+#   apiKey  = "sk-..."
+#   model   = "gpt-4o"
+#   # maxTokens = 4096    # 可选，默认 4096
+#   # timeoutMs = 60000   # 可选，默认 60000ms
+#
+# 2. GitHub Copilot（自动发现模型和能力参数）：
+#
+#   [llm.backends.daily]
+#   provider    = "copilot"
+#   githubToken = "gh_cli"   # "gh_cli"=自动, "env"=$GITHUB_TOKEN, 或直接填 token
+#   model       = "auto"     # "auto"=默认模型, 或填具体 model ID（如 "gpt-4o"）
+#   # timeoutMs = 60000   # 可选，默认 60000ms
+#
+# Copilot 后端会从 https://api.githubcopilot.com/models 自动获取所有可用模型，
+# 并将 max_output_tokens / max_context_window_tokens 等参数一一对应到 tinyclaw 配置。
+# model = "auto" 时使用 Copilot 标记的 is_chat_default 模型。
 
 [llm.backends.daily]
-baseUrl   = "https://api.openai.com/v1"
-apiKey    = "sk-..."
-model     = "gpt-4o"
+baseUrl = "https://api.openai.com/v1"
+apiKey  = "sk-..."
+model   = "gpt-4o"
 # maxTokens = 4096    # 可选，默认 4096
 # timeoutMs = 60000   # 可选，默认 60000ms
 
+# 使用 GitHub Copilot 账号示例（取消注释并删除上方 openai 配置）：
+# [llm.backends.daily]
+# provider    = "copilot"
+# githubToken = "gh_cli"   # 需先运行 `gh auth login`
+# model       = "auto"     # 自动选择 Copilot 的默认模型
+
 [llm.backends.code]
-baseUrl   = "https://api.openai.com/v1"
-apiKey    = "sk-..."
-model     = "o4-mini"
+baseUrl = "https://api.openai.com/v1"
+apiKey  = "sk-..."
+model   = "o4-mini"
 
 [llm.backends.summarizer]
-baseUrl   = "https://api.openai.com/v1"
-apiKey    = "sk-..."
-model     = "gpt-4o-mini"
+baseUrl = "https://api.openai.com/v1"
+apiKey  = "sk-..."
+model   = "gpt-4o-mini"
 
 # ── Microsoft MFA ──────────────────────────────────────────────────────────────
 # 用于高危操作（exec_shell / delete_file 等）的 number-matching 推送确认

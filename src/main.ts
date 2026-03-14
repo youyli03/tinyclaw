@@ -43,9 +43,9 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   console.log("[tinyclaw] Config loaded");
 
-  // 2. 验证 LLM 后端可访问（可选：ping）
-  const daily = llmRegistry.get("daily");
-  void daily; // 触发注册初始化
+  // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
+  await llmRegistry.init();
+  console.log(`[tinyclaw] LLM backend ready (model=${llmRegistry.get("daily").model})`);
 
   // 3. 启动 QQBot
   if (!cfg.channels.qqbot) {

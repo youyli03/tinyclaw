@@ -2,7 +2,10 @@ import { z } from "zod";
 
 // ── LLM 后端 ─────────────────────────────────────────────────────────────────
 
-const LLMBackendSchema = z.object({
+/** OpenAI-compatible 后端（显式 baseUrl + apiKey） */
+const OpenAIBackendSchema = z.object({
+  /** 区分器，缺省时默认视为 openai */
+  provider: z.literal("openai").optional(),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
   model: z.string().min(1),
@@ -12,15 +15,44 @@ const LLMBackendSchema = z.object({
   timeoutMs: z.number().int().positive().default(60_000),
 });
 
-export type LLMBackend = z.infer<typeof LLMBackendSchema>;
+/** 向后兼容：OpenAI 后端的推导类型 */
+export type LLMBackend = z.infer<typeof OpenAIBackendSchema>;
+
+/** GitHub Copilot 后端（自动发现模型和能力参数） */
+export const CopilotBackendSchema = z.object({
+  provider: z.literal("copilot"),
+  /**
+   * GitHub OAuth token 来源：
+   * - `"gh_cli"` → 运行 `gh auth token` 动态获取（默认）
+   * - `"env"`    → 读取 `$GITHUB_TOKEN` 环境变量
+   * - 其他字符串  → 直接作为 token 使用
+   */
+  githubToken: z.string().min(1).default("gh_cli"),
+  /**
+   * 模型 ID，或 `"auto"`（默认）：使用 Copilot 标记的 is_chat_default 模型。
+   * 运行时从 /models 接口动态发现所有可用模型。
+   */
+  model: z.string().default("auto"),
+  /** 请求超时（毫秒），默认 60000 */
+  timeoutMs: z.number().int().positive().default(60_000),
+});
+
+export type CopilotBackendConfig = z.infer<typeof CopilotBackendSchema>;
+
+/**
+ * 任意后端联合类型。
+ * Zod 先尝试 CopilotBackendSchema（要求 provider=copilot），失败则尝试 OpenAIBackendSchema。
+ */
+const AnyBackendSchema = z.union([CopilotBackendSchema, OpenAIBackendSchema]);
+export type AnyLLMBackend = z.infer<typeof AnyBackendSchema>;
 
 const LLMBackendsSchema = z.object({
   /** 日常对话后端 */
-  daily: LLMBackendSchema,
+  daily: AnyBackendSchema,
   /** 代码任务后端（供 codex/copilot router 使用） */
-  code: LLMBackendSchema.optional(),
+  code: AnyBackendSchema.optional(),
   /** 摘要压缩后端 */
-  summarizer: LLMBackendSchema.optional(),
+  summarizer: AnyBackendSchema.optional(),
 });
 
 const LLMSchema = z.object({
