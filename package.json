@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
+    "cli": "bun src/cli/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

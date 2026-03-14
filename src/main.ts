@@ -8,12 +8,17 @@
  * 4. 监听信号，优雅退出
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { loadConfig } from "./config/loader.js";
 import { llmRegistry } from "./llm/registry.js";
 import { Session } from "./core/session.js";
 import { runAgent } from "./core/agent.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
+
+const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 
 // ── 每个 peerId 维护一个独立的 Session ────────────────────────────────────────
 
@@ -39,6 +44,14 @@ async function handleMessage(msg: InboundMessage): Promise<string> {
 // ── 主函数 ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // 0. 写 PID 文件（供 CLI restart 使用）
+  try {
+    fs.mkdirSync(path.dirname(SERVICE_PID_FILE), { recursive: true });
+    fs.writeFileSync(SERVICE_PID_FILE, String(process.pid), "utf-8");
+  } catch {
+    // 非致命，忽略
+  }
+
   // 1. 验证配置（fail-fast）
   const cfg = loadConfig();
   console.log("[tinyclaw] Config loaded");
@@ -60,6 +73,7 @@ async function main(): Promise<void> {
   const handleExit = async (signal: string) => {
     console.log(`\n[tinyclaw] Received ${signal}, shutting down...`);
     await connector.stop();
+    try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
     process.exit(0);
   };
 
