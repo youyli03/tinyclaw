@@ -43,104 +43,127 @@ async function cmdShow(): Promise<void> {
   printTable(["后端", "Provider", "模型"], rows);
 }
 
-async function listOneBackend(target: BackendName, b: AnyLLMBackend, showAll: boolean): Promise<void> {
-  if (b.provider === "copilot") {
-    process.stdout.write(`\n正在获取 Copilot 模型列表（后端: ${target}）……`);
-    const models = await getCopilotModels(b.githubToken);
-    const display = showAll ? models : models.filter((m) => m.isPickerEnabled);
-    const title = showAll
-      ? `Copilot 全部模型（后端: ${bold(target)}，共 ${models.length} 个）`
-      : `Copilot 可用模型（model_picker_enabled，后端: ${bold(target)}）`;
+async function listCopilot(githubToken: string, usedByBackends: BackendName[], showAll: boolean): Promise<void> {
+  process.stdout.write(`\n正在获取 Copilot 模型列表……`);
+  const models = await getCopilotModels(githubToken);
+  const display = showAll ? models : models.filter((m) => m.isPickerEnabled);
+  const title = showAll
+    ? `Copilot 全部模型（共 ${models.length} 个，使用后端: ${usedByBackends.join(", ")}）`
+    : `Copilot 可用模型（model_picker_enabled，使用后端: ${usedByBackends.join(", ")}）`;
 
-    console.log(` ${green("OK")}`);
-    section(title);
-    printTable(
-      ["#", "ID", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
-      display.map((m, i) => [
-        String(i + 1),
-        m.id,
-        m.name,
-        m.vendor,
-        m.category ?? "-",
-        m.isPickerEnabled ? green("✓") : dim("-"),
-        m.isDefault ? green("✓") : "",
-        m.multiplier === undefined ? "-"
-          : m.multiplier === 0 ? green("free")
-          : yellow(`×${m.multiplier}`),
-        m.preview ? dim("preview") : "",
-      ])
-    );
-    if (!showAll) {
-      console.log(dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`));
+  console.log(` ${green("OK")}`);
+  section(title);
+  printTable(
+    ["#", "ID", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
+    display.map((m, i) => [
+      String(i + 1),
+      m.id,
+      m.name,
+      m.vendor,
+      m.category ?? "-",
+      m.isPickerEnabled ? green("✓") : dim("-"),
+      m.isDefault ? green("✓") : "",
+      m.multiplier === undefined ? "-"
+        : m.multiplier === 0 ? green("free")
+        : yellow(`×${m.multiplier}`),
+      m.preview ? dim("preview") : "",
+    ])
+  );
+  if (!showAll) {
+    console.log(dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`));
+  }
+}
+
+async function listOpenAI(baseUrl: string, apiKey: string, usedByBackends: BackendName[], showAll: boolean): Promise<void> {
+  if (!showAll) {
+    // 非 --all 时不枚举，只提示
+    for (const name of usedByBackends) {
+      console.log(dim(`\n后端 '${bold(name)}' 使用 OpenAI-compatible 接口（${baseUrl}），加 -a 枚举全部模型`));
     }
-  } else {
-    // OpenAI-compatible 后端
-    if (showAll) {
-      process.stdout.write(`\n正在调用 ${b.baseUrl}/models（后端: ${target}）……`);
-      try {
-        const resp = await fetch(`${b.baseUrl}/models`, {
-          headers: {
-            Authorization: `Bearer ${b.apiKey}`,
-            Accept: "application/json",
-          },
-        });
-        if (!resp.ok) {
-          console.log(` ${red("失败")}`);
-          if (resp.status === 401) {
-            console.error(red(`  API Key 认证失败（HTTP 401）`));
-            console.log(dim(`  请检查 config.toml 中 [llm.backends.${target}] 的 apiKey 是否正确`));
-          } else {
-            console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
-          }
-          console.log(dim(`  当前配置模型：${b.model}`));
-          return;
-        }
-        const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
-        const list = data.data ?? [];
-        console.log(` ${green("OK")}`);
-        section(`${b.baseUrl} 可用模型（后端: ${bold(target)}，共 ${list.length} 个）`);
-        printTable(
-          ["#", "ID", "创建方"],
-          list.map((m, i) => [String(i + 1), m.id, m.owned_by ?? "-"])
-        );
-      } catch (e) {
-        console.log(` ${red("失败")}`);
-        console.error(red(`  无法获取模型列表：${e}`));
-        console.log(dim(`  当前配置模型：${b.model}`));
+    return;
+  }
+  process.stdout.write(`\n正在调用 ${baseUrl}/models（使用后端: ${usedByBackends.join(", ")}）……`);
+  try {
+    const resp = await fetch(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!resp.ok) {
+      console.log(` ${red("失败")}`);
+      if (resp.status === 401) {
+        console.error(red(`  API Key 认证失败（HTTP 401）`));
+        console.log(dim(`  请检查 config.toml 中对应后端的 apiKey 是否正确（后端: ${usedByBackends.join(", ")}）`));
+      } else {
+        console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
       }
-    } else {
-      console.log(`\n后端 '${bold(target)}' 使用 OpenAI-compatible 接口`);
-      console.log(`当前模型：${cyan(b.model)}`);
-      console.log(dim("加 -a / --all 参数调用 /models 端点获取全部可用模型"));
+      return;
     }
+    const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
+    const list = data.data ?? [];
+    console.log(` ${green("OK")}`);
+    section(`${baseUrl} 可用模型（共 ${list.length} 个）`);
+    printTable(
+      ["#", "ID", "创建方"],
+      list.map((m, i) => [String(i + 1), m.id, m.owned_by ?? "-"])
+    );
+  } catch (e) {
+    console.log(` ${red("失败")}`);
+    console.error(red(`  无法获取模型列表：${e}`));
   }
 }
 
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
 
-  // 解析 --all / -a flag（可出现在任意位置）
   const showAll = args.includes("--all") || args.includes("-a");
   const rest = args.filter((a) => a !== "--all" && a !== "-a");
+  const filterBackends = rest.length > 0 ? [rest[0] as BackendName] : BACKEND_NAMES;
 
-  // 未指定后端时：遍历所有已配置的后端
-  const targets: BackendName[] = rest.length > 0 ? [rest[0] as BackendName] : BACKEND_NAMES;
-
-  for (const target of targets) {
-    if (!BACKEND_NAMES.includes(target)) {
-      console.error(red(`未知后端 "${target}"，可选：daily / code / summarizer`));
+  // 验证指定后端名
+  for (const t of filterBackends) {
+    if (!BACKEND_NAMES.includes(t)) {
+      console.error(red(`未知后端 "${t}"，可选：daily / code / summarizer`));
       return;
     }
-    const b: AnyLLMBackend | undefined =
-      target === "daily" ? cfg.llm.backends.daily
-      : target === "code" ? cfg.llm.backends.code
-      : cfg.llm.backends.summarizer;
+  }
 
-    if (!b) {
-      console.log(dim(`\n后端 '${target}' 未配置，跳过`));
-      continue;
+  // 收集已配置的后端
+  const configured: { name: BackendName; b: AnyLLMBackend }[] = [];
+  for (const name of filterBackends) {
+    const b: AnyLLMBackend | undefined =
+      name === "daily" ? cfg.llm.backends.daily
+      : name === "code" ? cfg.llm.backends.code
+      : cfg.llm.backends.summarizer;
+    if (b) configured.push({ name, b });
+    else console.log(dim(`\n后端 '${name}' 未配置，跳过`));
+  }
+
+  // ── 按 provider + endpoint 去重，避免同一接口枚举多次 ──────────────────────
+
+  // Copilot：按 githubToken 去重
+  const copilotGroups = new Map<string, BackendName[]>();
+  // OpenAI-compatible：按 baseUrl+apiKey 去重
+  const openaiGroups = new Map<string, { baseUrl: string; apiKey: string; backends: BackendName[] }>();
+
+  for (const { name, b } of configured) {
+    if (b.provider === "copilot") {
+      const key = b.githubToken;
+      if (!copilotGroups.has(key)) copilotGroups.set(key, []);
+      copilotGroups.get(key)!.push(name);
+    } else {
+      const key = `${b.baseUrl}::${b.apiKey}`;
+      if (!openaiGroups.has(key)) openaiGroups.set(key, { baseUrl: b.baseUrl, apiKey: b.apiKey, backends: [] });
+      openaiGroups.get(key)!.backends.push(name);
     }
-    await listOneBackend(target, b, showAll);
+  }
+
+  for (const [token, backends] of copilotGroups) {
+    await listCopilot(token, backends, showAll);
+  }
+  for (const { baseUrl, apiKey, backends } of openaiGroups.values()) {
+    await listOpenAI(baseUrl, apiKey, backends, showAll);
   }
 }
 
