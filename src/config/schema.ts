@@ -1,26 +1,22 @@
 import { z } from "zod";
 
-// ── LLM 后端 ─────────────────────────────────────────────────────────────────
+// ── Provider 认证配置 ─────────────────────────────────────────────────────────
+// 凭证与后端角色分离：providers.* 管理认证信息，后端只引用模型 symbol。
 
-/** OpenAI-compatible 后端（显式 baseUrl + apiKey） */
-const OpenAIBackendSchema = z.object({
-  /** 区分器，缺省时默认视为 openai */
-  provider: z.literal("openai").optional(),
-  baseUrl: z.string().url(),
+/** OpenAI-compatible 提供商（显式 baseUrl + apiKey） */
+const OpenAIProviderSchema = z.object({
   apiKey: z.string().min(1),
-  model: z.string().min(1),
-  /** 最大输出 token 数，默认 4096 */
+  /** API base URL，默认 https://api.openai.com/v1 */
+  baseUrl: z.string().url().default("https://api.openai.com/v1"),
+  /** 最大输出 token 数，默认 4096（可被后端角色覆盖） */
   maxTokens: z.number().int().positive().default(4096),
-  /** 请求超时（毫秒），默认 60000 */
+  /** 请求超时（毫秒），默认 60000（可被后端角色覆盖） */
   timeoutMs: z.number().int().positive().default(60_000),
 });
+export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderSchema>;
 
-/** 向后兼容：OpenAI 后端的推导类型 */
-export type LLMBackend = z.infer<typeof OpenAIBackendSchema>;
-
-/** GitHub Copilot 后端（自动发现模型和能力参数） */
-export const CopilotBackendSchema = z.object({
-  provider: z.literal("copilot"),
+/** GitHub Copilot 提供商（自动获取 token，动态发现模型） */
+const CopilotProviderSchema = z.object({
   /**
    * GitHub OAuth token 来源：
    * - `"gh_cli"` → 运行 `gh auth token` 动态获取（默认）
@@ -28,31 +24,45 @@ export const CopilotBackendSchema = z.object({
    * - 其他字符串  → 直接作为 token 使用
    */
   githubToken: z.string().min(1).default("gh_cli"),
-  /**
-   * 模型 ID，或 `"auto"`（默认）：使用 Copilot 标记的 is_chat_default 模型。
-   * 运行时从 /models 接口动态发现所有可用模型。
-   */
-  model: z.string().default("auto"),
-  /** 请求超时（毫秒），默认 60000 */
+  /** 请求超时（毫秒），默认 60000（可被后端角色覆盖） */
   timeoutMs: z.number().int().positive().default(60_000),
 });
+export type CopilotProviderConfig = z.infer<typeof CopilotProviderSchema>;
 
-export type CopilotBackendConfig = z.infer<typeof CopilotBackendSchema>;
+const ProvidersSchema = z.object({
+  openai: OpenAIProviderSchema.optional(),
+  copilot: CopilotProviderSchema.optional(),
+}).default({});
+export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
+
+// ── 后端角色配置 ──────────────────────────────────────────────────────────────
+// 每个角色（daily / code / summarizer）只需声明使用哪个模型 symbol。
+// 凭证统一由 providers.* 管理，后端可选覆盖超时和 token 上限。
 
 /**
- * 任意后端联合类型。
- * Zod 先尝试 CopilotBackendSchema（要求 provider=copilot），失败则尝试 OpenAIBackendSchema。
+ * 后端角色：指定模型 symbol 及可选参数覆盖。
+ *
+ * 模型 symbol 格式：`"provider/model-id"`
+ * 示例：`"copilot/gpt-4o"`、`"openai/gpt-4o-mini"`、`"copilot/auto"`
+ *
+ * `provider` 必须在 `[providers.*]` 中配置了对应凭证。
  */
-const AnyBackendSchema = z.union([CopilotBackendSchema, OpenAIBackendSchema]);
-export type AnyLLMBackend = z.infer<typeof AnyBackendSchema>;
+const BackendRoleSchema = z.object({
+  model: z.string().min(1),
+  /** 覆盖 provider 级 maxTokens（可选） */
+  maxTokens: z.number().int().positive().optional(),
+  /** 覆盖 provider 级 timeoutMs（可选） */
+  timeoutMs: z.number().int().positive().optional(),
+});
+export type BackendRole = z.infer<typeof BackendRoleSchema>;
 
 const LLMBackendsSchema = z.object({
   /** 日常对话后端 */
-  daily: AnyBackendSchema,
-  /** 代码任务后端（供 codex/copilot router 使用） */
-  code: AnyBackendSchema.optional(),
-  /** 摘要压缩后端 */
-  summarizer: AnyBackendSchema.optional(),
+  daily: BackendRoleSchema,
+  /** 代码任务后端（未配置时回退到 daily） */
+  code: BackendRoleSchema.optional(),
+  /** 摘要压缩后端（未配置时回退到 daily） */
+  summarizer: BackendRoleSchema.optional(),
 });
 
 const LLMSchema = z.object({
@@ -117,6 +127,7 @@ const MemorySchema = z.object({
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
+  providers: ProvidersSchema,
   llm: LLMSchema,
   auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),

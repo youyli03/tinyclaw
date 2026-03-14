@@ -8,7 +8,6 @@
  */
 
 import { execSync } from "child_process";
-import type { CopilotBackendConfig } from "../config/schema.js";
 import { LLMClient } from "./client.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 
@@ -315,6 +314,13 @@ export async function getCopilotModels(
 
 // ── LLMClient 构建 ────────────────────────────────────────────────────────────
 
+export interface CopilotBuildParams {
+  githubToken: string;
+  /** 模型 ID，或 "auto"（使用 Copilot 标记的默认模型） */
+  model: string;
+  timeoutMs: number;
+}
+
 export interface CopilotClientResult {
   client: LLMClient;
   /** 模型实际上下文窗口大小，用于摘要阈值计算 */
@@ -322,14 +328,14 @@ export interface CopilotClientResult {
 }
 
 /**
- * 根据 CopilotBackendConfig 异步构建 LLMClient。
+ * 根据 CopilotBuildParams 异步构建 LLMClient。
  *
  * - 自动解析模型（"auto" → is_chat_default）
  * - 从模型元数据自动设置 maxTokens / contextWindow
  * - 注入自刷新的 Copilot token（每次请求动态获取）
  */
 export async function buildCopilotClient(
-  config: CopilotBackendConfig
+  config: CopilotBuildParams
 ): Promise<CopilotClientResult> {
   const models = await getCopilotModels(config.githubToken);
   if (models.length === 0) throw new Error("该 Copilot 账号暂无可用模型");

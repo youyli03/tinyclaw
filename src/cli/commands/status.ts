@@ -77,15 +77,21 @@ export async function run(_args: string[]): Promise<void> {
 
   const rows = entries.map(([name, b]) => {
     if (!b) return [name, dim("(未配置，回退 daily)")];
-    const provider = b.provider === "copilot" ? cyan("copilot") : "openai";
-    const modelStr = b.model === "auto" ? yellow("auto") : cyan(b.model);
-    return [bold(name), provider, modelStr];
+    const { provider, modelId } = (() => {
+      const slash = b.model.indexOf("/");
+      return slash === -1
+        ? { provider: b.model, modelId: "" }
+        : { provider: b.model.slice(0, slash), modelId: b.model.slice(slash + 1) };
+    })();
+    const providerStr = provider === "copilot" ? cyan("copilot") : provider === "openai" ? "openai" : dim(provider);
+    const modelStr = modelId === "auto" || modelId === "" ? yellow(b.model) : cyan(b.model);
+    return [bold(name), providerStr, modelStr];
   });
 
-  printTable(["后端", "Provider", "模型"], rows);
+  printTable(["后端", "Provider", "模型 Symbol"], rows);
 
-  // ── GitHub Token（仅 Copilot 后端） ───────────────────────────────────────────
-  const hasCopilot = entries.some(([, b]) => b?.provider === "copilot");
+  // ── GitHub Token（仅 Copilot 提供商） ─────────────────────────────────────────
+  const hasCopilot = !!cfg.providers.copilot;
   if (hasCopilot) {
     const saved = loadSavedGitHubToken();
     if (saved) {

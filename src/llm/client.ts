@@ -1,5 +1,13 @@
 import OpenAI from "openai";
-import type { LLMBackend } from "../config/schema.js";
+
+/** 运行时已解析的后端参数（与 provider 无关的统一结构） */
+export interface ResolvedBackend {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  maxTokens: number;
+  timeoutMs: number;
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -29,9 +37,9 @@ export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof f
 
 export class LLMClient {
   private readonly client: OpenAI;
-  private readonly backend: LLMBackend;
+  private readonly backend: ResolvedBackend;
 
-  constructor(backend: LLMBackend, fetchFn?: FetchFn) {
+  constructor(backend: ResolvedBackend, fetchFn?: FetchFn) {
     this.backend = backend;
     this.client = new OpenAI({
       baseURL: backend.baseUrl,

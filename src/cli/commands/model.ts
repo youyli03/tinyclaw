@@ -2,9 +2,11 @@
  * CLI 命令：model
  *
  * 子命令：
- *   model list [backend]        列出所有可用模型（Copilot 后端调用 API；OpenAI 显示当前）
- *   model show                  显示三个后端当前配置的模型
- *   model set [daily|code|summarizer]  交互式选择并写入配置，可选是否重启
+ *   model list [-a]             列出所有 provider 的可用模型
+ *   model show                  显示三个后端当前配置的模型 symbol
+ *   model set [daily|code|summarizer]  交互式选择并写入配置
+ *
+ * 模型 symbol 格式：provider/model-id，如 "copilot/gpt-4o"、"openai/gpt-4o-mini"
  */
 
 import { loadConfig } from "../../config/loader.js";
@@ -14,7 +16,6 @@ import {
   printTable, select, confirm, prompt,
   bold, dim, green, yellow, cyan, red, section,
 } from "../ui.js";
-import type { AnyLLMBackend } from "../../config/schema.js";
 
 type BackendName = "daily" | "code" | "summarizer";
 const BACKEND_NAMES: BackendName[] = ["daily", "code", "summarizer"];
@@ -27,37 +28,35 @@ async function cmdShow(): Promise<void> {
 
   const rows: string[][] = [];
   for (const name of BACKEND_NAMES) {
-    const b: AnyLLMBackend | undefined =
+    const role =
       name === "daily" ? cfg.llm.backends.daily
       : name === "code" ? cfg.llm.backends.code
       : cfg.llm.backends.summarizer;
 
-    if (!b) {
+    if (!role) {
       rows.push([name, dim("(未配置，回退到 daily)")]);
       continue;
     }
-    const provider = b.provider === "copilot" ? cyan("copilot") : "openai";
-    const model = b.model === "auto" ? yellow("auto") : cyan(b.model);
-    rows.push([bold(name), provider, model]);
+    rows.push([bold(name), cyan(role.model)]);
   }
-  printTable(["后端", "Provider", "模型"], rows);
+  printTable(["后端", "模型 Symbol"], rows);
 }
 
-async function listCopilot(githubToken: string, usedByBackends: BackendName[], showAll: boolean): Promise<void> {
+async function listCopilot(githubToken: string, showAll: boolean): Promise<void> {
   process.stdout.write(`\n正在获取 Copilot 模型列表……`);
   const models = await getCopilotModels(githubToken);
   const display = showAll ? models : models.filter((m) => m.isPickerEnabled);
   const title = showAll
-    ? `Copilot 全部模型（共 ${models.length} 个，使用后端: ${usedByBackends.join(", ")}）`
-    : `Copilot 可用模型（model_picker_enabled，使用后端: ${usedByBackends.join(", ")}）`;
+    ? `Copilot 全部模型（共 ${models.length} 个）`
+    : `Copilot 可用模型（model_picker_enabled）`;
 
   console.log(` ${green("OK")}`);
   section(title);
   printTable(
-    ["#", "ID", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
+    ["#", "Symbol", "名称", "供应商", "分类", "选择器", "默认", "乘数", "预览"],
     display.map((m, i) => [
       String(i + 1),
-      m.id,
+      cyan(`copilot/${m.id}`),
       m.name,
       m.vendor,
       m.category ?? "-",
@@ -74,15 +73,12 @@ async function listCopilot(githubToken: string, usedByBackends: BackendName[], s
   }
 }
 
-async function listOpenAI(baseUrl: string, apiKey: string, usedByBackends: BackendName[], showAll: boolean): Promise<void> {
+async function listOpenAI(baseUrl: string, apiKey: string, showAll: boolean): Promise<void> {
   if (!showAll) {
-    // 非 --all 时不枚举，只提示
-    for (const name of usedByBackends) {
-      console.log(dim(`\n后端 '${bold(name)}' 使用 OpenAI-compatible 接口（${baseUrl}），加 -a 枚举全部模型`));
-    }
+    console.log(dim(`\n[providers.openai] ${baseUrl}，加 -a 枚举全部可用模型`));
     return;
   }
-  process.stdout.write(`\n正在调用 ${baseUrl}/models（使用后端: ${usedByBackends.join(", ")}）……`);
+  process.stdout.write(`\n正在调用 ${baseUrl}/models……`);
   try {
     const resp = await fetch(`${baseUrl}/models`, {
       headers: {
@@ -94,7 +90,7 @@ async function listOpenAI(baseUrl: string, apiKey: string, usedByBackends: Backe
       console.log(` ${red("失败")}`);
       if (resp.status === 401) {
         console.error(red(`  API Key 认证失败（HTTP 401）`));
-        console.log(dim(`  请检查 config.toml 中对应后端的 apiKey 是否正确（后端: ${usedByBackends.join(", ")}）`));
+        console.log(dim(`  请检查 config.toml 中 [providers.openai].apiKey 是否正确`));
       } else {
         console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
       }
@@ -103,10 +99,10 @@ async function listOpenAI(baseUrl: string, apiKey: string, usedByBackends: Backe
     const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
     const list = data.data ?? [];
     console.log(` ${green("OK")}`);
-    section(`${baseUrl} 可用模型（共 ${list.length} 个）`);
+    section(`OpenAI 可用模型（${baseUrl}，共 ${list.length} 个）`);
     printTable(
-      ["#", "ID", "创建方"],
-      list.map((m, i) => [String(i + 1), m.id, m.owned_by ?? "-"])
+      ["#", "Symbol", "创建方"],
+      list.map((m, i) => [String(i + 1), cyan(`openai/${m.id}`), m.owned_by ?? "-"])
     );
   } catch (e) {
     console.log(` ${red("失败")}`);
@@ -116,54 +112,21 @@ async function listOpenAI(baseUrl: string, apiKey: string, usedByBackends: Backe
 
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
-
   const showAll = args.includes("--all") || args.includes("-a");
-  const rest = args.filter((a) => a !== "--all" && a !== "-a");
-  const filterBackends = rest.length > 0 ? [rest[0] as BackendName] : BACKEND_NAMES;
 
-  // 验证指定后端名
-  for (const t of filterBackends) {
-    if (!BACKEND_NAMES.includes(t)) {
-      console.error(red(`未知后端 "${t}"，可选：daily / code / summarizer`));
-      return;
-    }
+  // 遍历所有已配置的 provider，与后端角色无关
+  const { copilot, openai } = cfg.providers;
+
+  if (!copilot && !openai) {
+    console.log(red("\n未配置任何 provider，请在 config.toml 中添加 [providers.openai] 或 [providers.copilot]"));
+    return;
   }
 
-  // 收集已配置的后端
-  const configured: { name: BackendName; b: AnyLLMBackend }[] = [];
-  for (const name of filterBackends) {
-    const b: AnyLLMBackend | undefined =
-      name === "daily" ? cfg.llm.backends.daily
-      : name === "code" ? cfg.llm.backends.code
-      : cfg.llm.backends.summarizer;
-    if (b) configured.push({ name, b });
-    else console.log(dim(`\n后端 '${name}' 未配置，跳过`));
+  if (copilot) {
+    await listCopilot(copilot.githubToken, showAll);
   }
-
-  // ── 按 provider + endpoint 去重，避免同一接口枚举多次 ──────────────────────
-
-  // Copilot：按 githubToken 去重
-  const copilotGroups = new Map<string, BackendName[]>();
-  // OpenAI-compatible：按 baseUrl+apiKey 去重
-  const openaiGroups = new Map<string, { baseUrl: string; apiKey: string; backends: BackendName[] }>();
-
-  for (const { name, b } of configured) {
-    if (b.provider === "copilot") {
-      const key = b.githubToken;
-      if (!copilotGroups.has(key)) copilotGroups.set(key, []);
-      copilotGroups.get(key)!.push(name);
-    } else {
-      const key = `${b.baseUrl}::${b.apiKey}`;
-      if (!openaiGroups.has(key)) openaiGroups.set(key, { baseUrl: b.baseUrl, apiKey: b.apiKey, backends: [] });
-      openaiGroups.get(key)!.backends.push(name);
-    }
-  }
-
-  for (const [token, backends] of copilotGroups) {
-    await listCopilot(token, backends, showAll);
-  }
-  for (const { baseUrl, apiKey, backends } of openaiGroups.values()) {
-    await listOpenAI(baseUrl, apiKey, backends, showAll);
+  if (openai) {
+    await listOpenAI(openai.baseUrl, openai.apiKey, showAll);
   }
 }
 
@@ -175,82 +138,81 @@ async function cmdSet(args: string[]): Promise<void> {
   if (args[0] && BACKEND_NAMES.includes(args[0] as BackendName)) {
     backendName = args[0] as BackendName;
   } else if (args[0]) {
-    // 非 flag 参数但不是合法后端名，提示用法
     console.error(red(`未知后端 "${args[0]}"，可选：daily / code / summarizer`));
     console.log(dim("用法：model set [daily|code|summarizer]"));
     return;
   }
 
-  const b: AnyLLMBackend | undefined =
+  const currentRole =
     backendName === "daily" ? cfg.llm.backends.daily
     : backendName === "code" ? cfg.llm.backends.code
     : cfg.llm.backends.summarizer;
 
-  if (!b) {
-    // 后端未配置，询问是否使用 daily
-    console.log(yellow(`后端 '${backendName}' 未配置，将修改 'daily' 后端`));
-    backendName = "daily";
+  const currentSymbol = currentRole?.model ?? dim("(未配置)");
+
+  // 收集所有可选的 symbol
+  interface PickItem { label: string; value: string; note: string }
+  const items: PickItem[] = [];
+
+  if (cfg.providers.copilot) {
+    console.log(`\n正在获取 Copilot 可用模型……`);
+    const models = await getCopilotModels(cfg.providers.copilot.githubToken);
+    const picker = models.filter((m) => m.isPickerEnabled);
+    for (const m of picker) {
+      const symbol = `copilot/${m.id}`;
+      items.push({
+        label: m.isDefault ? `${m.name} ${green("(默认)")}` : m.name,
+        value: symbol,
+        note: [
+          cyan(symbol),
+          m.vendor,
+          m.category ?? "",
+          m.multiplier === undefined ? ""
+            : m.multiplier === 0 ? "free"
+            : `×${m.multiplier}`,
+          m.preview ? "[preview]" : "",
+          currentSymbol === symbol ? "← 当前" : "",
+        ].filter(Boolean).join(" · "),
+      });
+    }
+    // auto 选项
+    items.push({
+      label: bold("copilot/auto") + dim("（自动选择 Copilot 默认模型）"),
+      value: "copilot/auto",
+      note: currentSymbol === "copilot/auto" ? "← 当前" : "",
+    });
   }
 
-  const activeCfg: AnyLLMBackend =
-    backendName === "daily" ? cfg.llm.backends.daily
-    : backendName === "code" ? cfg.llm.backends.code ?? cfg.llm.backends.daily
-    : cfg.llm.backends.summarizer ?? cfg.llm.backends.daily;
-
-  let newModelId: string;
-
-  if (activeCfg.provider === "copilot") {
-    // Copilot 后端：拉取模型列表，交互式选择
-    console.log(`\n正在获取 Copilot 可用模型……`);
-    const models = await getCopilotModels(activeCfg.githubToken);
-    const picker = models.filter((m) => m.isPickerEnabled);
-
-    if (picker.length === 0) {
-      console.error(red("该账号暂无 picker-enabled 模型"));
-      return;
-    }
-
-    const currentModel = activeCfg.model;
-    const items = picker.map((m) => ({
-      label: m.isDefault ? `${m.name} ${green("(当前默认)")}` : m.name,
-      value: m.id,
-      note: [
-        m.vendor,
-        m.category ?? "",
-        m.multiplier === undefined ? ""
-          : m.multiplier === 0 ? "free"
-          : `×${m.multiplier}`,
-        m.preview ? "[preview]" : "",
-        currentModel !== "auto" && currentModel === m.id ? "← 当前" : "",
-      ].filter(Boolean).join(" · "),
-    }));
-
-    // 在列表末尾加入 "auto" 选项
+  if (cfg.providers.openai) {
+    // OpenAI 无法列举，提供手动输入路径
     items.push({
-      label: bold("auto") + dim("（自动选择默认模型）"),
-      value: "auto",
+      label: bold("openai/...") + dim("（手动输入 model ID）"),
+      value: "__openai_manual__",
       note: "",
     });
-
-    newModelId = await select(`选择 [${backendName}] 使用的模型`, items);
-  } else {
-    // OpenAI-compatible：直接输入
-    const current = activeCfg.model;
-    console.log(`\n后端 [${backendName}] 当前模型：${cyan(current)}`);
-    const input = await prompt("输入新模型 ID（留空取消）: ");
-    const trimmed = input.trim();
-    if (!trimmed) {
-      console.log(dim("已取消"));
-      return;
-    }
-    newModelId = trimmed;
   }
 
-  // 写回配置文件
-  patchTomlField(["llm", "backends", backendName], "model", JSON.stringify(newModelId));
-  console.log(`\n${green("✓")} 已将 [${backendName}] 模型更新为 ${cyan(newModelId)}`);
+  if (items.length === 0) {
+    console.error(red("未配置任何 provider，无法选择模型"));
+    return;
+  }
 
-  // 询问是否重启
+  console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(String(currentSymbol))}`);
+  const selected = await select(`选择新的模型 Symbol`, items);
+
+  let newSymbol: string;
+  if (selected === "__openai_manual__") {
+    const input = await prompt("输入 OpenAI model ID（如 gpt-4o-mini）: ");
+    const trimmed = input.trim();
+    if (!trimmed) { console.log(dim("已取消")); return; }
+    newSymbol = `openai/${trimmed}`;
+  } else {
+    newSymbol = selected;
+  }
+
+  patchTomlField(["llm", "backends", backendName], "model", JSON.stringify(newSymbol));
+  console.log(`\n${green("✓")} 已将 [${backendName}] 模型更新为 ${cyan(newSymbol)}`);
+
   const shouldRestart = await confirm("是否重启 tinyclaw 服务？");
   if (shouldRestart) {
     const { run: restartRun } = await import("./restart.js");
@@ -263,16 +225,25 @@ async function cmdSet(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
-  model show                     显示当前模型配置
-  model list [backend] [-a]      列出可用模型（默认后端: daily）
-  model set  [backend]           交互式选择模型（默认后端: daily）
+  model show               显示各后端当前使用的模型 symbol
+  model list [-a]          列出所有 provider 的可用模型
+  model set  [backend]     交互式选择模型（默认后端: daily）
 
 ${bold("后端名：")}  daily | code | summarizer
 
+${bold("模型 Symbol 格式：")}  provider/model-id
+  示例：copilot/gpt-4o  copilot/auto  openai/gpt-4o-mini
+
 ${bold("参数：")}
-  -a, --all   list 时显示全量模型
-              · Copilot 后端：包含 model_picker_enabled=false 的模型
-              · OpenAI 后端：调用 /models 端点枚举所有可用模型
+  -a, --all   list 时显示全量模型（Copilot 含 picker_disabled；OpenAI 调用 /models）
+
+${bold("Provider 配置（~/.tinyclaw/config.toml）：")}
+  [providers.copilot]
+  githubToken = "gh_cli"
+
+  [providers.openai]
+  apiKey  = "sk-..."
+  baseUrl = "https://api.openai.com/v1"
 `);
 }
 
@@ -297,3 +268,5 @@ export async function run(args: string[]): Promise<void> {
       printHelp();
   }
 }
+
+

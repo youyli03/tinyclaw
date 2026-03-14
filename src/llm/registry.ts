@@ -1,9 +1,24 @@
 import { LLMClient } from "./client.js";
-import type { LLMBackend, AnyLLMBackend } from "../config/schema.js";
+import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
 
 export type BackendName = "daily" | "code" | "summarizer";
+
+/**
+ * 解析模型 symbol，格式为 "provider/model-id"。
+ * 例如："copilot/gpt-4o" → { provider: "copilot", modelId: "gpt-4o" }
+ *      "openai/gpt-4o-mini" → { provider: "openai", modelId: "gpt-4o-mini" }
+ */
+export function parseModelSymbol(symbol: string): { provider: string; modelId: string } {
+  const slash = symbol.indexOf("/");
+  if (slash === -1) {
+    throw new Error(
+      `模型 symbol 格式无效 "${symbol}"，应为 "provider/model-id"（如 "copilot/gpt-4o"）`
+    );
+  }
+  return { provider: symbol.slice(0, slash), modelId: symbol.slice(slash + 1) };
+}
 
 /**
  * LLM 后端注册表。
@@ -23,18 +38,31 @@ class LLMRegistry {
    * OpenAI 后端仍为懒加载，此方法对其无副作用。
    */
   async init(): Promise<void> {
-    const cfg = loadConfig().llm.backends;
-    const entries: [BackendName, AnyLLMBackend | undefined][] = [
-      ["daily", cfg.daily],
-      ["code", cfg.code],
-      ["summarizer", cfg.summarizer],
+    const config = loadConfig();
+    const backends = config.llm.backends;
+    const entries: [BackendName, BackendRole | undefined][] = [
+      ["daily", backends.daily],
+      ["code", backends.code],
+      ["summarizer", backends.summarizer],
     ];
 
-    for (const [name, backendCfg] of entries) {
-      if (!backendCfg) continue;
-      if (backendCfg.provider !== "copilot") continue;
+    for (const [name, role] of entries) {
+      if (!role) continue;
+      const { provider, modelId } = parseModelSymbol(role.model);
+      if (provider !== "copilot") continue;
 
-      const { client, contextWindow } = await buildCopilotClient(backendCfg);
+      const copilotCfg = config.providers.copilot;
+      if (!copilotCfg) {
+        throw new Error(
+          `后端 '${name}' 使用 copilot 模型，但 [providers.copilot] 未配置`
+        );
+      }
+
+      const { client, contextWindow } = await buildCopilotClient({
+        githubToken: copilotCfg.githubToken,
+        model: modelId,
+        timeoutMs: role.timeoutMs ?? copilotCfg.timeoutMs,
+      });
       this.clients.set(name, client);
       this.contextWindows.set(name, contextWindow);
       console.log(
@@ -54,21 +82,20 @@ class LLMRegistry {
     const cached = this.clients.get(name);
     if (cached) return cached;
 
-    const cfg = loadConfig().llm.backends;
-    // 获取该 name 对应的原始配置（未配置则 fallback 到 daily 的配置对象）
-    const rawCfg: AnyLLMBackend | undefined =
-      name === "daily"
-        ? cfg.daily
-        : (name === "code" ? cfg.code : cfg.summarizer);
+    const config = loadConfig();
+    const backends = config.llm.backends;
+    const role: BackendRole | undefined =
+      name === "daily" ? backends.daily
+      : name === "code" ? backends.code
+      : backends.summarizer;
 
-    if (!rawCfg) {
-      // 未配置，回退到 daily（可能已经缓存了 daily 的 client）
+    if (!role) {
       return this.get("daily");
     }
 
-    if (rawCfg.provider === "copilot") {
-      // Copilot 回退路径：如果 daily 已初始化且当前 name 未配置，
-      // 直接返回 daily client（上层 !rawCfg 分支已处理；此处 rawCfg 存在但未初始化）
+    const { provider, modelId } = parseModelSymbol(role.model);
+
+    if (provider === "copilot") {
       const dailyClient = this.clients.get("daily");
       if (name !== "daily" && dailyClient) return dailyClient;
       throw new Error(
@@ -76,10 +103,25 @@ class LLMRegistry {
       );
     }
 
-    // OpenAI 后端：懒加载
-    const client = new LLMClient(rawCfg as LLMBackend);
-    this.clients.set(name, client);
-    return client;
+    if (provider === "openai") {
+      const openaiCfg = config.providers.openai;
+      if (!openaiCfg) {
+        throw new Error(
+          `后端 '${name}' 使用 openai 模型，但 [providers.openai] 未配置`
+        );
+      }
+      const client = new LLMClient({
+        baseUrl: openaiCfg.baseUrl,
+        apiKey: openaiCfg.apiKey,
+        model: modelId,
+        maxTokens: role.maxTokens ?? openaiCfg.maxTokens,
+        timeoutMs: role.timeoutMs ?? openaiCfg.timeoutMs,
+      });
+      this.clients.set(name, client);
+      return client;
+    }
+
+    throw new Error(`未知 provider "${provider}"（来自模型 symbol "${role.model}"）`);
   }
 
   /**
@@ -92,15 +134,7 @@ class LLMRegistry {
     );
   }
 
-  /**
-   * 运行时替换某个 OpenAI 后端（热更新 config 后调用）。
-   */
-  replace(name: BackendName, backend: LLMBackend): void {
-    this.clients.set(name, new LLMClient(backend));
-    this.contextWindows.delete(name);
-  }
-
-  /** 清除所有缓存的 client（测试用） */
+  /** 清除所有缓存的 client（用于配置热重载） */
   _reset(): void {
     this.clients.clear();
     this.contextWindows.clear();
@@ -108,3 +142,4 @@ class LLMRegistry {
 }
 
 export const llmRegistry = new LLMRegistry();
+
