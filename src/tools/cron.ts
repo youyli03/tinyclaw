@@ -28,11 +28,20 @@ registerTool({
     type: "function",
     function: {
       name: "cron_add",
-      description: "创建定时任务。output.sessionId 自动绑定当前对话，运行结果会推送到本对话。",
+      description: `创建定时任务。
+
+⚠️ 调用此工具前，必须先向用户确认以下信息，不得跳过：
+1. 任务要做什么（操作对象、范围、期望输出格式）
+2. 调度时间（具体时间点 / 间隔 / 一次性时间）
+3. 是否需要推送到 QQ（若是，推送给谁）
+4. 通知策略（每次推送 / 仅变化时 / 仅出错时 / 不推送）
+
+只有在用户明确回答了以上关键信息后，才能调用此工具创建任务。
+若用户描述模糊（如"帮我设置个天气提醒"），须追问细节后再创建。`,
       parameters: {
         type: "object",
         properties: {
-          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须是可自主完成的操作（例如：查询上海今日天气并汇报结果、检查磁盘空间并写入日志）。禁止写委托性语句（如'帮我设置提醒'、'创建定时任务'）——cron agent 运行时无上下文，会将此类语句递归创建新 job。" },
+          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须自包含完整背景（地点、数据来源偏好、期望输出格式等），无需任何额外上下文即可独立执行。示例好指令：'使用 exec_shell 调用 curl wttr.in/Shanghai 查询上海今日天气，提取天气状况和最高/最低温度，用中文简洁汇报（2-3 行）'。示例坏指令：'帮我提醒天气'——cron agent 无上下文，会误解为委托性任务并递归创建新 job。" },
           type:          { type: "string",  enum: ["once", "every", "daily"], description: "调度类型" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
