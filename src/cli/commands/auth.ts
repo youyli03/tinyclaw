@@ -70,6 +70,10 @@ async function cmdStatus(): Promise<void> {
     if (mfaCfg.tools?.length) {
       console.log(`  tools        = ${dim(JSON.stringify(mfaCfg.tools))}`);
     }
+    const shellPatterns = mfaCfg.exec_shell_patterns?.patterns;
+    if (shellPatterns?.length) {
+      console.log(`  exec_shell   = ${dim(JSON.stringify(shellPatterns))}`);
+    }
 
     if (iface === "totp") {
       const { join } = await import("node:path");
