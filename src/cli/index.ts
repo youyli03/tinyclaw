@@ -64,7 +64,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   status:      [],
   restart:     [],
   start:       [],
-  chat:        ["-s", "--session", "help"],
+  chat:        ["list"],
   logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
