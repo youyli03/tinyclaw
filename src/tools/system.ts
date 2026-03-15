@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { registerTool } from "./registry.js";
-import { withMFA } from "../auth/guard.js";
 
 // ── exec_shell ────────────────────────────────────────────────────────────────
 
@@ -55,7 +54,7 @@ registerTool({
       },
     },
   },
-  execute: withMFA(execShellImpl),
+  execute: execShellImpl,
 });
 
 // ── write_file ────────────────────────────────────────────────────────────────
@@ -88,7 +87,7 @@ registerTool({
       },
     },
   },
-  execute: withMFA(writeFileImpl),
+  execute: writeFileImpl,
 });
 
 // ── delete_file ───────────────────────────────────────────────────────────────
@@ -121,7 +120,7 @@ registerTool({
       },
     },
   },
-  execute: withMFA(deleteFileImpl),
+  execute: deleteFileImpl,
 });
 
 // ── read_file ─────────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import * as path from "node:path";
 import { loadConfig } from "./config/loader.js";
 import { llmRegistry } from "./llm/registry.js";
 import { Session } from "./core/session.js";
-import { runAgent } from "./core/agent.js";
+import { runAgent, type AgentRunOptions } from "./core/agent.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { startIpcServer } from "./ipc/server.js";
@@ -27,21 +27,8 @@ const sessions = new Map<string, Session>();
 
 function getSession(sessionId: string): Session {
   let s = sessions.get(sessionId);
-  if (!s) { s = new Session(); sessions.set(sessionId, s); }
+  if (!s) { s = new Session(sessionId); sessions.set(sessionId, s); }
   return s;
-}
-
-// ── QQBot 消息处理 ────────────────────────────────────────────────────────────
-
-async function handleMessage(msg: InboundMessage): Promise<string> {
-  // 将 peerId + 消息类型编码为全局唯一的 sessionId
-  const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
-  const session = getSession(sessionId);
-  const opts = {
-    onMFAPrompt: (prompt: string) => console.log("[MFA]", prompt),
-  };
-  const result = await runAgent(session, msg.content, opts);
-  return result.content;
 }
 
 // ── 主函数 ────────────────────────────────────────────────────────────────────
@@ -70,6 +57,76 @@ async function main(): Promise<void> {
   }
 
   const connector = new QQBotConnector();
+
+  // ── QQBot 消息处理 ──────────────────────────────────────────────────────
+
+  async function handleMessage(msg: InboundMessage): Promise<string> {
+    const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
+    const session = getSession(sessionId);
+
+    // ── Interface A：检测 MFA 确认消息 ──────────────────────────────────
+    if (session.pendingApproval) {
+      const trimmed = msg.content.trim();
+      if (trimmed === "确认") {
+        session.pendingApproval.resolve(true);
+        // "已收到，执行中..." 由 onMFARequest 的调用方在 resolve 后发送
+        void connector.send(msg.peerId, msg.type, "已收到，执行中...", msg.messageId);
+      } else {
+        // 任何非"确认"的回复视为取消
+        session.pendingApproval.resolve(false);
+      }
+      return "";
+    }
+
+    // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
+    if (session.running) {
+      session.abortRequested = true;
+      session.llmAbortController?.abort();
+      session.abortPendingApproval();
+      // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
+      await session.currentRunPromise?.catch(() => {});
+    }
+
+    // ── 构建 MFA callbacks ─────────────────────────────────────────────
+    const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 60;
+    const opts: AgentRunOptions = {
+      onMFARequest: async (warningMsg: string) => {
+        await connector.send(msg.peerId, msg.type, warningMsg);
+        return session.waitForApproval(mfaTimeoutSecs);
+      },
+      onMFAPrompt: (statusMsg: string) => {
+        void connector.send(msg.peerId, msg.type, statusMsg);
+      },
+    };
+
+    // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
+    session.running = true;
+    const runPromise = runAgent(session, msg.content, opts);
+    session.currentRunPromise = runPromise;
+
+    void runPromise
+      .then((result) => {
+        if (result.content) {
+          return connector.send(msg.peerId, msg.type, result.content, msg.messageId);
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("[qqbot] runAgent error:", err);
+        return connector
+          .send(msg.peerId, msg.type, "抱歉，处理消息时出现错误")
+          .catch(() => {});
+      })
+      .finally(() => {
+        session.running = false;
+        session.currentRunPromise = null;
+      });
+
+    // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
+    return "";
+  }
+
+  // ── 注册处理器并启动 ───────────────────────────────────────────────────
+
   connector.onMessage(handleMessage);
 
   // 4. 启动 IPC server（供 CLI chat 命令通过 Unix socket 接入）

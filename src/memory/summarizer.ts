@@ -1,6 +1,6 @@
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
-import { persistMessages } from "./store.js";
+import { persistSummary } from "./store.js";
 import type { ChatMessage } from "../llm/client.js";
 
 const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。
@@ -34,10 +34,7 @@ export function shouldSummarize(messages: ChatMessage[]): boolean {
 export async function summarizeAndCompress(
   messages: ChatMessage[]
 ): Promise<ChatMessage[]> {
-  // 1. 存档原始对话到 QMD
-  await persistMessages(messages);
-
-  // 2. 生成摘要
+  // 1. 生成摘要
   const client = llmRegistry.get("summarizer");
   const historyText = messages
     .filter((m) => m.role !== "system")
@@ -49,8 +46,14 @@ export async function summarizeAndCompress(
     { role: "user", content: historyText },
   ]);
 
-  // 3. 保留原始 system message（如有），注入摘要作为新起点
-  const systemMessages = messages.filter((m) => m.role === "system");
+  // 2. 将摘要持久化到 QMD（仅摘要内容，不再逐轮写入）
+  persistSummary(result.content);
+
+  // 3. 保留永久性 system messages（BUILTIN_SYSTEM、SYSTEM.md），
+  //    过滤掉 QMD 召回注入的临时 system messages
+  const systemMessages = messages.filter(
+    (m) => m.role === "system" && !m.content.startsWith("## 相关历史记忆")
+  );
   const compressed: ChatMessage[] = [
     ...systemMessages,
     {

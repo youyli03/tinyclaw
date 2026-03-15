@@ -17,6 +17,8 @@ export interface ChatMessage {
 export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
+  /** AbortSignal：用于在 runAgent() 被中断时取消当前 LLM HTTP 请求 */
+  signal?: AbortSignal;
 }
 
 export interface ChatResult {
@@ -54,12 +56,15 @@ export class LLMClient {
   }
 
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
-    const response = await this.client.chat.completions.create({
-      model: this.backend.model,
-      messages,
-      max_tokens: opts.maxTokens ?? this.backend.maxTokens,
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-    });
+    const response = await this.client.chat.completions.create(
+      {
+        model: this.backend.model,
+        messages,
+        max_tokens: opts.maxTokens ?? this.backend.maxTokens,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+      },
+      opts.signal ? { signal: opts.signal } : undefined
+    );
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");

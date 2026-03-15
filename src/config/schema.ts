@@ -71,11 +71,30 @@ const LLMSchema = z.object({
 
 // ── Microsoft MFA ─────────────────────────────────────────────────────────────
 
+const ExecShellPatternsSchema = z.object({
+  /** exec_shell 命令中包含这些关键词时触发 MFA（word-boundary 匹配） */
+  patterns: z
+    .array(z.string())
+    .default(["rm", "sudo", "chmod", "chown", "dd", "mv"]),
+});
+
 const MFASchema = z.object({
-  tenantId: z.string().min(1),
-  clientId: z.string().min(1),
+  /**
+   * MFA 接口类型：
+   * - `"simple"` — Interface A：发送文字警告，等待用户回复 确认/取消（默认）
+   * - `"msal"`   — Interface B：Microsoft Authenticator number-matching 推送
+   */
+  interface: z.enum(["simple", "msal"]).default("simple"),
+  /** 整工具黑名单：列出的工具名总是触发 MFA */
+  tools: z.array(z.string()).default(["delete_file", "write_file"]),
+  /** exec_shell 命令级黑名单 */
+  exec_shell_patterns: ExecShellPatternsSchema.default({}),
   /** MFA 确认超时（秒），默认 60 */
   timeoutSecs: z.number().int().positive().default(60),
+  /** MSAL Interface B 专用：Azure AD 租户 ID */
+  tenantId: z.string().min(1).optional(),
+  /** MSAL Interface B 专用：Azure AD 应用客户端 ID */
+  clientId: z.string().min(1).optional(),
 });
 
 const AuthSchema = z.object({

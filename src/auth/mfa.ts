@@ -27,6 +27,11 @@ function getPCA(): PublicClientApplication {
       "MFA 未配置：请在 config.toml 中填入 [auth.mfa] tenantId 和 clientId（Azure AD App Registration）"
     );
   }
+  if (!cfg.tenantId || !cfg.clientId) {
+    throw new Error(
+      "MFA Interface B 需要配置 auth.mfa.tenantId 和 auth.mfa.clientId"
+    );
+  }
   const cachePath = getMSALCachePath();
 
   // 持久化 token 缓存：读取已有 cache

@@ -75,7 +75,7 @@ async function handleRequest(
   // 获取或创建 session
   let session = sessions.get(sessionId);
   if (!session) {
-    session = new Session();
+    session = new Session(sessionId);
     sessions.set(sessionId, session);
   }
 
