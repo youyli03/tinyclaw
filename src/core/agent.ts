@@ -15,6 +15,7 @@ import { agentManager } from "./agent-manager.js";
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
 import "../tools/system.js";
+import "../tools/cron.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 
@@ -355,7 +356,7 @@ export async function runAgent(
       // ── 执行工具 ──────────────────────────────────────────────────────
       let result: string;
       try {
-        result = await executeTool(call.name, call.args, { cwd: agentManager.workspaceDir(session.agentId) });
+        result = await executeTool(call.name, call.args, { cwd: agentManager.workspaceDir(session.agentId), sessionId: session.sessionId });
       } catch (err) {
         if (err instanceof MFAError) {
           result = `操作被取消：${err.message}`;

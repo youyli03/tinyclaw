@@ -19,6 +19,7 @@ import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { startIpcServer } from "./ipc/server.js";
+import { cronScheduler } from "./cron/scheduler.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 
@@ -145,10 +146,14 @@ async function main(): Promise<void> {
   const ipcServer = startIpcServer(sessions, connector);
   console.log("[tinyclaw] IPC server listening");
 
-  // 5. 优雅退出
+  // 5. 启动 Cron 调度器
+  await cronScheduler.start(connector);
+
+  // 6. 优雅退出
   const handleExit = async (signal: string) => {
     console.log(`\n[tinyclaw] Received ${signal}, shutting down...`);
     ipcServer.close();
+    cronScheduler.stop();
     await connector.stop();
     try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
     process.exit(0);

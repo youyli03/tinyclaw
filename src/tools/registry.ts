@@ -4,6 +4,8 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 export interface ToolContext {
   /** exec_shell 的默认工作目录 */
   cwd?: string;
+  /** 当前 session 的 ID（供 cron_add 等工具自动绑定 output.sessionId） */
+  sessionId?: string;
 }
 
 export interface ToolDef {
