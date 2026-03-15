@@ -58,17 +58,27 @@ export class QQBotConnector implements Connector {
             const digits = text.replace(/\s/g, "");
             if (/^\d{6}$/.test(digits) && pending.verifyCode(digits)) {
               pending.resolve(true);
+              void this.send(msg.peerId, msg.type, "✓ TOTP 验证通过，继续执行", msg.messageId);
               return "✓ TOTP 验证通过，继续执行";
             } else {
               pending.resolve(false);
+              void this.send(msg.peerId, msg.type, "✗ TOTP 验证失败，操作已取消", msg.messageId);
               return "✗ TOTP 验证失败，操作已取消";
             }
           } else {
             // simple 模式：匹配 确认/取消
             const yes = /^确认$|^y$|^yes$/i.test(text);
             const no = /^取消$|^n$|^no$/i.test(text);
-            if (yes) { pending.resolve(true); return "✓ 已确认，继续执行"; }
-            if (no)  { pending.resolve(false); return "✗ 已取消，操作未执行"; }
+            if (yes) {
+              pending.resolve(true);
+              void this.send(msg.peerId, msg.type, "✓ 已确认，继续执行", msg.messageId);
+              return "✓ 已确认，继续执行";
+            }
+            if (no) {
+              pending.resolve(false);
+              void this.send(msg.peerId, msg.type, "✗ 已取消，操作未执行", msg.messageId);
+              return "✗ 已取消，操作未执行";
+            }
             // 无法识别——提示重试
             pendingMFAMap.set(msg.peerId, pending);
             return "请回复 **确认** 或 **取消**";

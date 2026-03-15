@@ -116,8 +116,11 @@ async function main(): Promise<void> {
 
     void runPromise
       .then((result) => {
-        if (result.content) {
-          return connector.send(msg.peerId, msg.type, result.content, msg.messageId);
+        // 工具执行完但 LLM 最终返回空 content 时（非中断），发送兜底消息
+        const toSend = result.content ||
+          (result.toolsUsed.length > 0 && !session.abortRequested ? "✅ 已完成" : "");
+        if (toSend) {
+          return connector.send(msg.peerId, msg.type, toSend, msg.messageId);
         }
       })
       .catch((err: unknown) => {
