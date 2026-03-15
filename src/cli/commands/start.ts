@@ -16,8 +16,8 @@ const TINYCLAW_DIR    = path.join(os.homedir(), ".tinyclaw");
 const SERVICE_PID_FILE = path.join(TINYCLAW_DIR, ".service_pid");
 export const SERVICE_LOG_FILE = path.join(TINYCLAW_DIR, "service.log");
 
-// src/cli/commands/start.ts  →  ../../main.ts  →  src/main.ts
-const MAIN_SCRIPT = new URL("../../main.ts", import.meta.url).pathname;
+// src/cli/commands/start.ts  →  ../../main-supervisor.ts  →  src/main-supervisor.ts
+const MAIN_SCRIPT = new URL("../../main-supervisor.ts", import.meta.url).pathname;
 
 export const description = "在后台启动 tinyclaw 主服务";
 export const usage = "start";

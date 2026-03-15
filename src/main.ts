@@ -21,7 +21,10 @@ import type { InboundMessage } from "./connectors/base.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 
-const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
+// ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
+
+let _activeConnector: import("./connectors/qqbot/index.js").QQBotConnector | null = null;
+let _activeSessions: Map<string, Session> | null = null;
 
 // ── Session 注册表（key 为 sessionId，格式：qqbot:<type>:<peerId>）────────────
 
@@ -40,14 +43,6 @@ function getSession(sessionId: string): Session {
 // ── 主函数 ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // 0. 写 PID 文件（供 CLI restart 使用）
-  try {
-    fs.mkdirSync(path.dirname(SERVICE_PID_FILE), { recursive: true });
-    fs.writeFileSync(SERVICE_PID_FILE, String(process.pid), "utf-8");
-  } catch {
-    // 非致命，忽略
-  }
-
   // 1. 验证配置（fail-fast）
   const cfg = loadConfig();
   console.log("[tinyclaw] Config loaded");
@@ -67,6 +62,8 @@ async function main(): Promise<void> {
   }
 
   const connector = new QQBotConnector();
+  _activeConnector = connector;
+  _activeSessions  = sessions;
 
   // ── QQBot 消息处理 ──────────────────────────────────────────────────────
 
@@ -155,7 +152,6 @@ async function main(): Promise<void> {
     ipcServer.close();
     cronScheduler.stop();
     await connector.stop();
-    try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
     process.exit(0);
   };
 
@@ -166,7 +162,24 @@ async function main(): Promise<void> {
   await connector.start(); // 阻塞直到 abort
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("[tinyclaw] Fatal:", err);
+
+  // 通知所有活跃 QQ session
+  if (_activeConnector && _activeSessions) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const notice = `⚠️ tinyclaw 服务发生致命错误，正在自动重启…\n${errMsg}`;
+    const notifyAll = [..._activeSessions.keys()]
+      .filter((id) => id.startsWith("qqbot:"))
+      .map((id) => {
+        const parts = id.split(":");
+        if (parts.length < 3) return Promise.resolve();
+        const type = parts[1] as "c2c" | "group" | "guild" | "dm";
+        const peerId = parts.slice(2).join(":");
+        return _activeConnector!.send(peerId, type, notice).catch(() => {});
+      });
+    await Promise.allSettled(notifyAll);
+  }
+
   process.exit(1);
 });
