@@ -67,7 +67,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   restart:     [],
   start:       [],
   chat:        ["list", "new"],
-  agent:       ["list", "new", "show", "edit", "delete"],
+  agent:       ["list", "new", "show", "edit", "delete", "repair"],
   logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };

@@ -144,6 +144,8 @@ tinyclaw agent edit work             # 用 $EDITOR 编辑 work 的系统提示
 tinyclaw agent list                  # 列出所有 Agent
 tinyclaw agent show work             # 查看 work 的详情与绑定
 tinyclaw agent delete work           # 删除 work（含记忆）
+tinyclaw agent repair                # 补全所有 Agent 缺失的目录与模板文件
+tinyclaw agent repair work           # 只补全 work Agent
 
 # 会话管理
 tinyclaw chat new                    # 新建终端会话（默认 Agent）
