@@ -47,9 +47,9 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
  * 返回格式化好的字符串，可直接注入 system prompt。
  * 无结果时返回空字符串。
  */
-export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string> {
+export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string | null> {
   const s = await getQMDStore(agentId);
-  if (!s) return "";
+  if (!s) return null;  // memory 未启用
   const results = await s.search({ query, limit, minScore: 0.3 });
 
   if (results.length === 0) return "";

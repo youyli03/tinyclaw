@@ -14,6 +14,7 @@ import * as os from "node:os";
 import { bold, dim, green, red, cyan, yellow, section } from "../ui.js";
 import { listSessions, memorizeSession } from "../../ipc/client.js";
 import { searchMemory, updateMemoryIndex } from "../../memory/qmd.js";
+import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 
 export const description = "管理 Agent 长期记忆（摘要、搜索、向量索引）";
@@ -139,8 +140,12 @@ async function cmdSearch(args: string[]): Promise<void> {
   console.log(`\n${dim(`搜索：${query}  agent: ${agentId}  top-${limit}`)}\n`);
 
   const result = await searchMemory(query, agentId, limit);
-  if (!result) {
-    console.log(yellow("没有找到相关记忆（QMD 可能尚未索引任何文件，请先运行 memory index）"));
+  if (result === null || result === undefined) {
+    console.log(yellow("向量记忆功能未启用，请在 config.toml 中设置 [memory] enabled = true"));
+    return;
+  }
+  if (result === "") {
+    console.log(yellow("没有找到相关记忆（索引可能为空，请先运行 memory index 或 memory save）"));
     return;
   }
 
@@ -153,6 +158,10 @@ async function cmdSearch(args: string[]): Promise<void> {
 
 async function cmdIndex(args: string[]): Promise<void> {
   const { agentId } = parseAgent(args);
+  if (!loadConfig().memory.enabled) {
+    console.log(yellow("向量记忆功能未启用，请在 config.toml 中设置 [memory] enabled = true"));
+    return;
+  }
   console.log(`\n${dim(`正在重建向量索引... agent: ${agentId}`)}\n`);
   const t0 = Date.now();
   await updateMemoryIndex(agentId);
