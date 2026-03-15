@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createStore, type QMDStore } from "@tobilu/qmd";
+import { createStore, type QMDStore, type UpdateProgress, type UpdateResult } from "@tobilu/qmd";
 import { loadConfig } from "../config/loader.js";
 
 const storeMap = new Map<string, QMDStore>();
@@ -70,6 +70,22 @@ export async function updateMemoryIndex(agentId = "default"): Promise<void> {
   const s = await getQMDStore(agentId);
   if (!s) return;
   await s.update({ collections: ["memory"] });
+}
+
+/**
+ * 带进度回调的全量重建索引，供 CLI `memory index` 命令使用。
+ * @returns UpdateResult 汇总，memory 未启用时返回 null
+ */
+export async function rebuildMemoryIndex(
+  agentId = "default",
+  onProgress?: (info: UpdateProgress) => void
+): Promise<UpdateResult | null> {
+  const s = await getQMDStore(agentId);
+  if (!s) return null;
+  return s.update({
+    collections: ["memory"],
+    ...(onProgress ? { onProgress } : {}),
+  });
 }
 
 export async function closeQMDStore(): Promise<void> {

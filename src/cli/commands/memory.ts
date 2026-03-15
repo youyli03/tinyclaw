@@ -13,7 +13,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { bold, dim, green, red, cyan, yellow, section } from "../ui.js";
 import { listSessions, memorizeSession } from "../../ipc/client.js";
-import { searchMemory, updateMemoryIndex } from "../../memory/qmd.js";
+import { searchMemory, updateMemoryIndex, rebuildMemoryIndex } from "../../memory/qmd.js";
 import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 
@@ -162,11 +162,32 @@ async function cmdIndex(args: string[]): Promise<void> {
     console.log(yellow("向量记忆功能未启用，请在 config.toml 中设置 [memory] enabled = true"));
     return;
   }
-  console.log(`\n${dim(`正在重建向量索引... agent: ${agentId}`)}\n`);
+  console.log(`\n${dim(`重建向量索引... agent: ${agentId}`)}\n`);
   const t0 = Date.now();
-  await updateMemoryIndex(agentId);
+
+  let lastTotal = 0;
+  const result = await rebuildMemoryIndex(agentId, (info) => {
+    lastTotal = info.total;
+    const pct = info.total > 0 ? Math.round((info.current / info.total) * 100) : 0;
+    const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+    process.stdout.write(
+      `\r  ${bar} ${String(info.current).padStart(String(info.total).length)}/${info.total}  ${dim(info.file.slice(-50))}`
+    );
+  });
+
+  if (lastTotal > 0) process.stdout.write("\n");
+
+  if (!result) {
+    console.log(yellow("向量记忆功能未启用"));
+    return;
+  }
+
   const ms = Date.now() - t0;
-  console.log(green(`✅ 索引已更新（耗时 ${ms}ms）\n`));
+  console.log(`\n${green("✅ 索引已更新")}  耗时 ${ms}ms`);
+  console.log(
+    dim(`  已索引 ${result.indexed}  更新 ${result.updated}  未变 ${result.unchanged}  移除 ${result.removed}`)
+  );
+  console.log();
 }
 
 // ── help ─────────────────────────────────────────────────────────────────────
