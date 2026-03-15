@@ -32,7 +32,8 @@ export function shouldSummarize(messages: ChatMessage[]): boolean {
  * 3. 返回只含 system + 摘要消息的新 messages[]，对用户无感
  */
 export async function summarizeAndCompress(
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  agentId = "default"
 ): Promise<ChatMessage[]> {
   // 1. 生成摘要
   const client = llmRegistry.get("summarizer");

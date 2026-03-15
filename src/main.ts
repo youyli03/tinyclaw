@@ -15,6 +15,7 @@ import { loadConfig } from "./config/loader.js";
 import { llmRegistry } from "./llm/registry.js";
 import { Session } from "./core/session.js";
 import { runAgent, type AgentRunOptions } from "./core/agent.js";
+import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { startIpcServer } from "./ipc/server.js";
@@ -27,7 +28,11 @@ const sessions = new Map<string, Session>();
 
 function getSession(sessionId: string): Session {
   let s = sessions.get(sessionId);
-  if (!s) { s = new Session(sessionId); sessions.set(sessionId, s); }
+  if (!s) {
+    const agentId = agentManager.resolveAgent(sessionId);
+    s = new Session(sessionId, { agentId });
+    sessions.set(sessionId, s);
+  }
   return s;
 }
 
@@ -49,6 +54,10 @@ async function main(): Promise<void> {
   // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
   await llmRegistry.init();
   console.log(`[tinyclaw] LLM backend ready (model=${llmRegistry.get("daily").model})`);
+
+  // 初始化 Agent 工作区（确保 default agent 存在）
+  agentManager.ensureDefault();
+  console.log("[tinyclaw] Agent workspace ready");
 
   // 3. 启动 QQBot
   if (!cfg.channels.qqbot) {

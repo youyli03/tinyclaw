@@ -13,6 +13,7 @@ interface PendingApproval {
 
 export interface SessionOptions {
   systemPrompt?: string;
+  agentId?: string;
 }
 
 /**
@@ -20,6 +21,8 @@ export interface SessionOptions {
  */
 export class Session {
   readonly sessionId: string;
+  /** 当前会话绑定的 Agent ID（未绑定时为 "default"） */
+  readonly agentId: string;
   private messages: ChatMessage[] = [];
 
   // ── 并发控制 ──────────────────────────────────────────────────────────────
@@ -40,6 +43,7 @@ export class Session {
 
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
+    this.agentId = opts.agentId ?? "default";
 
     // 尝试从 JSONL 恢复（进程崩溃后重启）
     const restored = Session.loadFromJsonl(sessionId);
@@ -72,7 +76,7 @@ export class Session {
    */
   async maybeCompress(): Promise<void> {
     if (shouldSummarize(this.messages)) {
-      this.messages = await summarizeAndCompress(this.messages);
+      this.messages = await summarizeAndCompress(this.messages, this.agentId);
       this.rewriteJsonl();
     }
   }

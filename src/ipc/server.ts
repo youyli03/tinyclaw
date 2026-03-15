@@ -8,9 +8,11 @@
 
 import { createServer, type Server } from "net";
 import { unlinkSync, existsSync } from "fs";
+import { randomUUID } from "node:crypto";
 import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type SessionInfo } from "./protocol.js";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
+import { agentManager } from "../core/agent-manager.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 
@@ -70,6 +72,17 @@ async function handleRequest(
     return;
   }
 
+  // ── new 请求：创建新会话 ─────────────────────────────────────────────────
+  if (req.type === "new") {
+    const newReq = req as { type: "new"; agentId?: string };
+    const agentId = newReq.agentId ?? "default";
+    const sessionId = `cli:${randomUUID()}`;
+    const session = new Session(sessionId, { agentId });
+    sessions.set(sessionId, session);
+    send({ type: "created", sessionId });
+    return;
+  }
+
   // ── list 请求：返回所有会话信息 ─────────────────────────────────────────────
   if (req.type === "list") {
     try {
@@ -101,27 +114,37 @@ async function handleRequest(
     return;
   }
 
-  // 获取或创建 session
+  // 获取或创建 session（解析 agentId 绑定）
   let session = sessions.get(sessionId);
   if (!session) {
-    session = new Session(sessionId);
+    const agentId = agentManager.resolveAgent(sessionId);
+    session = new Session(sessionId, { agentId });
     sessions.set(sessionId, session);
   }
 
+  // 并发控制：若当前有 runAgent() 正在运行，软中断并等待完成
+  if (session.running) {
+    session.abortRequested = true;
+    session.llmAbortController?.abort();
+    session.abortPendingApproval();
+    await session.currentRunPromise?.catch(() => {});
+  }
+
   let fullContent = "";
+  session.running = true;
+  const runPromise = runAgent(session, message, {
+    onChunk: (delta) => {
+      fullContent += delta;
+      send({ type: "chunk", delta });
+    },
+    onMFAPrompt: (prompt) => {
+      send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
+    },
+  });
+  session.currentRunPromise = runPromise;
 
   try {
-    const result = await runAgent(session, message, {
-      onChunk: (delta) => {
-        fullContent += delta;
-        send({ type: "chunk", delta });
-      },
-      onMFAPrompt: (prompt) => {
-        // MFA 提示作为特殊 chunk 发回 CLI
-        send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
-      },
-    });
-    // 若没有流式（不支持 streaming 的 provider），一次性发送
+    const result = await runPromise;
     if (!fullContent) {
       fullContent = result.content;
       send({ type: "chunk", delta: fullContent });
@@ -129,7 +152,9 @@ async function handleRequest(
     send({ type: "done" });
   } catch (e) {
     send({ type: "error", message: String(e) });
-    return;
+  } finally {
+    session.running = false;
+    session.currentRunPromise = null;
   }
 
   // ── 路由到 QQBot（如果 sessionId 编码了 QQ 频道信息）────────────────────────

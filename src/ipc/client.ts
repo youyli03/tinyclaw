@@ -76,6 +76,51 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
 }
 
 /**
+ * 向正在运行的 tinyclaw 服务请求创建新会话。
+ * @returns 新会话的 sessionId
+ */
+export async function createSession(agentId?: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = agentId ? { type: "new", agentId } : { type: "new" };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "created") {
+          settle(() => resolve(resp.sessionId));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+/**
  * 向正在运行的 tinyclaw 服务请求所有会话列表。
  * @returns SessionInfo 数组
  */

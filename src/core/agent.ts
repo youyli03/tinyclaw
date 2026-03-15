@@ -24,19 +24,35 @@ const BUILTIN_SYSTEM = `你是 tinyclaw，一个简洁高效的 AI 助手。
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
 - 用中文回复，简洁明了`;
 
-/** 读取 ~/.tinyclaw/SYSTEM.md 作为用户自定义 prompt（文件不存在时返回 undefined） */
+/** 读取 ~/.tinyclaw/SYSTEM.md 作为全局自定义 prompt（文件不存在时返回 undefined） */
 function loadUserSystemPrompt(): string | undefined {
   const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const path = join(home, ".tinyclaw", "SYSTEM.md");
-  if (!existsSync(path)) return undefined;
-  const content = readFileSync(path, "utf-8").trim();
+  const p = join(home, ".tinyclaw", "SYSTEM.md");
+  if (!existsSync(p)) return undefined;
+  const content = readFileSync(p, "utf-8").trim();
   return content.length > 0 ? content : undefined;
 }
 
-/** 构建最终 system prompt：内置 + 用户自定义（如有） */
-function buildSystemPrompt(extra?: string): string {
-  const userPrompt = extra ?? loadUserSystemPrompt();
-  return userPrompt ? `${BUILTIN_SYSTEM}\n\n${userPrompt}` : BUILTIN_SYSTEM;
+/** 读取 Agent 的 SYSTEM.md（文件不存在时返回 undefined） */
+function loadAgentSystemPrompt(agentId: string): string | undefined {
+  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
+  const p = join(home, ".tinyclaw", "agents", agentId, "SYSTEM.md");
+  if (!existsSync(p)) return undefined;
+  const content = readFileSync(p, "utf-8").trim();
+  return content.length > 0 ? content : undefined;
+}
+
+/**
+ * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）
+ * opts.systemPrompt 优先于从文件读取的 Agent 提示。
+ */
+function buildSystemPrompt(agentId = "default", extra?: string): string {
+  const parts: string[] = [BUILTIN_SYSTEM];
+  const userPrompt = loadUserSystemPrompt();
+  if (userPrompt) parts.push(userPrompt);
+  const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
+  if (agentPrompt) parts.push(agentPrompt);
+  return parts.join("\n\n");
 }
 
 /** 格式化工具调用描述（用于 MFA 警告消息） */
@@ -86,14 +102,14 @@ export async function runAgent(
   const llmAc = new AbortController();
   session.llmAbortController = llmAc;
 
-  // 1. 新 session 时注入 system prompt
+  // 1. 新 session 时注入 system prompt（三层堆叠：内置 + 全局 + Agent）
   const messages = session.getMessages();
   if (messages.length === 0 || messages[0]?.role !== "system") {
-    session.addSystemMessage(buildSystemPrompt(opts.systemPrompt));
+    session.addSystemMessage(buildSystemPrompt(session.agentId, opts.systemPrompt));
   }
 
   // 2. 搜索相关历史记忆，注入为 system 消息
-  const memoryContext = await searchMemory(userContent);
+  const memoryContext = await searchMemory(userContent, session.agentId);
   if (memoryContext) {
     session.addSystemMessage(memoryContext);
   }

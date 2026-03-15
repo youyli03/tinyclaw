@@ -38,10 +38,12 @@ export interface SessionInfo {
 
 export type IpcRequest =
   | { type: "chat"; sessionId: string; message: string }
-  | { type: "list" };
+  | { type: "list" }
+  | { type: "new"; agentId?: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
   | { type: "done" }
   | { type: "error"; message: string }
-  | { type: "sessions"; sessions: SessionInfo[] };
+  | { type: "sessions"; sessions: SessionInfo[] }
+  | { type: "created"; sessionId: string };
