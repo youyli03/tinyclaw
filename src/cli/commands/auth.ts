@@ -7,10 +7,12 @@
  *   auth mfa-setup      生成/绑定 TOTP 密钥，终端显示二维码
  */
 
-import { bold, dim, green, red, yellow, section } from "../ui.js";
+import { bold, dim, green, red, yellow, cyan, section } from "../ui.js";
 import { loadSavedGitHubToken } from "../../llm/copilotSetup.js";
 import { getCopilotToken } from "../../llm/copilot.js";
 import { setupTOTP } from "../../auth/totp.js";
+import { existsSync } from "node:fs";
+import { loadConfig, getDataPath } from "../../config/loader.js";
 
 // ── 子命令 ────────────────────────────────────────────────────────────────────
 
@@ -32,14 +34,13 @@ async function cmdGithub(): Promise<void> {
 }
 
 async function cmdStatus(): Promise<void> {
-  section("GitHub Token 状态");
+  // ── GitHub Token ──────────────────────────────────────────────────────
+  section("GitHub Copilot Token");
 
   const saved = loadSavedGitHubToken();
   if (saved) {
     const masked = saved.slice(0, 8) + "…" + saved.slice(-4);
     console.log(`${green("✓")} 已保存 Token：${dim(masked)}`);
-
-    // 尝试换取 Copilot token 验证有效性
     process.stdout.write("  验证 Copilot API 可达性……");
     try {
       await getCopilotToken(saved);
@@ -54,16 +55,47 @@ async function cmdStatus(): Promise<void> {
     console.log(dim("  · 如已配置 `githubToken = \"gh_cli\"`，请确认 `gh auth login` 已完成"));
     console.log(dim("  · 或运行 `auth github` 通过 Device Flow 授权"));
   }
+
+  // ── MFA ──────────────────────────────────────────────────────────────
+  section("MFA 配置");
+
+  const mfaCfg = loadConfig().auth?.mfa;
+  if (!mfaCfg) {
+    console.log(dim("未配置 [auth.mfa]，MFA 关闭"));
+    console.log(dim("  · 在 config.toml 中添加 [auth.mfa] 并设置 interface = \"totp\" 可启用"));
+  } else {
+    const iface = mfaCfg.interface ?? "simple";
+    console.log(`  interface    = ${cyan(iface)}`);
+    console.log(`  timeoutSecs  = ${dim(String(mfaCfg.timeoutSecs ?? 60))}`);
+    if (mfaCfg.tools?.length) {
+      console.log(`  tools        = ${dim(JSON.stringify(mfaCfg.tools))}`);
+    }
+
+    if (iface === "totp") {
+      const { join } = await import("node:path");
+      const secretPath = mfaCfg.totpSecretPath ?? join(getDataPath("auth"), "totp.key");
+      const bound = existsSync(secretPath);
+      console.log(`  TOTP secret  = ${bound
+        ? green("✓ 已绑定 (" + secretPath + ")")
+        : red("✗ 未绑定 — 请运行 `tinyclaw auth mfa-setup`")}`);
+    } else if (iface === "msal") {
+      const hasTenant = !!mfaCfg.tenantId && !mfaCfg.tenantId.includes("xxxx");
+      const hasClient = !!mfaCfg.clientId && !mfaCfg.clientId.includes("xxxx");
+      console.log(`  tenantId     = ${hasTenant ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`);
+      console.log(`  clientId     = ${hasClient ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`);
+    }
+  }
+  console.log();
 }
 
 async function cmdMFASetup(): Promise<void> {
   console.log(`\n${bold("TOTP MFA 绑定")}`);
   console.log(dim("生成 TOTP 密钥并在终端显示二维码\n"));
   try {
-    const { loadConfig } = await import("../../config/loader.js");
-    const secretPath = loadConfig().auth.mfa?.totpSecretPath;
+    const secretPath = loadConfig().auth?.mfa?.totpSecretPath;
     setupTOTP(secretPath);
-    console.log(green("✓ TOTP 绑定完成，将 config.toml 中 [auth.mfa] interface 设为 \"totp\" 即可启用"));
+    console.log(green("✓ TOTP 绑定完成"));
+    console.log(dim("  如需启用，在 config.toml [auth.mfa] 中设置 interface = \"totp\""));
   } catch (e) {
     console.error(red(`绑定失败：${e}`));
   }
