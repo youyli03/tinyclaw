@@ -34,6 +34,12 @@ const SAMPLE_SKILLS = `# 技能目录
 -->
 `;
 
+const SAMPLE_SYSTEM = (id: string) =>
+  `# ${id} 系统提示
+
+在此描述该 Agent 的角色、风格和专业方向。
+`;
+
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
@@ -219,6 +225,7 @@ function repairOne(mgr: AgentManager, id: string): void {
   }
   let createdFiles = 0;
   const templates: Array<[string, string]> = [
+    [mgr.systemPromptPath(id), SAMPLE_SYSTEM(id)],
     [mgr.memPath(id), SAMPLE_MEM],
     [mgr.skillsPath(id), SAMPLE_SKILLS],
   ];
