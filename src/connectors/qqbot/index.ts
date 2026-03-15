@@ -9,6 +9,8 @@ import { sendMessage } from "./outbound.js";
 import { initMarkdownSupport } from "./api.js";
 import { loadConfig } from "../../config/loader.js";
 
+const ts = () => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+
 export class QQBotConnector implements Connector {
   private handler: ((msg: InboundMessage) => Promise<string>) | null = null;
   private abortController: AbortController | null = null;
@@ -42,11 +44,11 @@ export class QQBotConnector implements Connector {
           return "";
         }
       },
-      onReady: () => console.log("[qqbot] Ready"),
+      onReady: () => console.log(`[${ts()}] [qqbot] Ready`),
       log: {
-        info: (m) => console.log(m),
-        error: (m) => console.error(m),
-        debug: (m) => console.debug(m),
+        info:  (m) => console.log(`[${ts()}] ${m}`),
+        error: (m) => console.error(`[${ts()}] ${m}`),
+        ...(process.env["QQBOT_DEBUG"] ? { debug: (m: string) => console.debug(`[${ts()}] ${m}`) } : {}),
       },
     });
   }
