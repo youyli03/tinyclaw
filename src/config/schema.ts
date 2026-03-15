@@ -140,7 +140,7 @@ const MemorySchema = z.object({
   embedModel: z
     .string()
     .default(
-      "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q4_K_M.gguf"
+      "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
     ),
   /**
    * 触发摘要的 token 使用率阈值（0-1），默认 0.8

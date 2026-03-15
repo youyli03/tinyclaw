@@ -24,6 +24,8 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
   fs.mkdirSync(agentMemDir, { recursive: true });
 
+  // 禁用 Vulkan 编译尝试（此机器无 Vulkan，避免每次启动触发 cmake 噪音）
+  process.env["NODE_LLAMA_CPP_GPU"] = "false";
   process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
 
   const s = await createStore({
