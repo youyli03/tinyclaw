@@ -127,21 +127,34 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
   }
 
   const ghToken = await resolveGitHubToken(githubTokenSource);
-  const resp = await fetch(TOKEN_URL, withCA({
-    headers: {
-      Authorization: `token ${ghToken}`,
-      Accept: "application/json",
-      ...COPILOT_HEADERS,
-    },
-  }));
 
-  if (!resp.ok) {
+  const RETRIES = 3;
+  let resp: Response | undefined;
+  for (let attempt = 1; attempt <= RETRIES; attempt++) {
+    try {
+      resp = await fetch(TOKEN_URL, withCA({
+        headers: {
+          Authorization: `token ${ghToken}`,
+          Accept: "application/json",
+          ...COPILOT_HEADERS,
+        },
+      }));
+      break; // 成功，退出重试循环
+    } catch (err: unknown) {
+      if (attempt === RETRIES) throw err;
+      const waitMs = 500 * 2 ** (attempt - 1); // 500 / 1000 / 2000 ms
+      console.warn(`[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${waitMs}ms 后重试…`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+
+  if (!resp!.ok) {
     throw new Error(
-      `Copilot token 换取失败：${resp.status} ${resp.statusText}，请检查 GitHub token 是否有 copilot 权限`
+      `Copilot token 换取失败：${resp!.status} ${resp!.statusText}，请检查 GitHub token 是否有 copilot 权限`
     );
   }
 
-  const data = (await resp.json()) as {
+  const data = (await resp!.json()) as {
     token: string;
     refresh_in?: number;
   };
