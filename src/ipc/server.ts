@@ -11,6 +11,7 @@ import { unlinkSync, existsSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
 import { Session } from "../core/session.js";
+import { cronScheduler } from "../cron/scheduler.js";
 import { runAgent } from "../core/agent.js";
 import { agentManager } from "../core/agent-manager.js";
 import { loadConfig } from "../config/loader.js";
@@ -84,6 +85,18 @@ async function handleRequest(
     req = JSON.parse(line) as IpcRequest;
   } catch {
     send({ type: "error", message: "invalid JSON request" });
+    return;
+  }
+
+  // ── cron_trigger 请求：委托守护进程触发 cron job ──────────────────────────
+  if (req.type === "cron_trigger") {
+    const { jobId } = req as { type: "cron_trigger"; jobId: string };
+    const ok = cronScheduler.triggerJob(jobId);
+    if (ok) {
+      send({ type: "cron_triggered", jobId });
+    } else {
+      send({ type: "error", message: `未找到 job "${jobId}"` });
+    }
     return;
   }
 

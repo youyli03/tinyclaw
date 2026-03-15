@@ -39,7 +39,8 @@ export interface SessionInfo {
 export type IpcRequest =
   | { type: "chat"; sessionId: string; message: string }
   | { type: "list" }
-  | { type: "new"; agentId?: string };
+  | { type: "new"; agentId?: string }
+  | { type: "cron_trigger"; jobId: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
@@ -48,7 +49,8 @@ export type IpcResponse =
   | { type: "sessions"; sessions: SessionInfo[] }
   | { type: "created"; sessionId: string }
   /** MFA 确认请求：服务端向客户端发送，等待用户回复 */
-  | { type: "mfa_request"; warningMessage: string };
+  | { type: "mfa_request"; warningMessage: string }
+  | { type: "cron_triggered"; jobId: string };
 
 export type IpcClientMessage =
   | IpcRequest

@@ -11,9 +11,13 @@
  *   cron logs    <id> [-n N]  查看运行日志
  */
 
+import { connect } from "net";
+import { existsSync } from "node:fs";
 import { loadJobs, addJob, removeJob, updateJob, getJob, readLogs } from "../../cron/store.js";
 import { runJob } from "../../cron/runner.js";
 import { cronScheduler } from "../../cron/scheduler.js";
+import { IPC_SOCKET_PATH, type IpcResponse } from "../../ipc/protocol.js";
+import { llmRegistry } from "../../llm/registry.js";
 import { bold, dim, green, red, yellow, cyan, section } from "../ui.js";
 import { prompt, select, confirm, printTable, closeRl } from "../ui.js";
 import type { CronJob } from "../../cron/schema.js";
@@ -191,7 +195,49 @@ function cmdDisable(id: string): void {
 async function cmdRun(id: string): Promise<void> {
   const job = getJob(id);
   if (!job) { console.log(red(`未找到 job "${id}"`)); return; }
-  console.log(dim(`立即触发 job ${id}…`));
+
+  // 优先通过 IPC 委托守护进程执行（无需重新初始化 LLM）
+  if (existsSync(IPC_SOCKET_PATH)) {
+    let delegated = false;
+    await new Promise<void>((resolve) => {
+      const socket = connect(IPC_SOCKET_PATH);
+      socket.on("connect", () => {
+        socket.write(JSON.stringify({ type: "cron_trigger", jobId: id }) + "\n");
+      });
+      let buf = "";
+      socket.on("data", (data: Buffer) => {
+        buf += data.toString("utf-8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const resp = JSON.parse(line) as IpcResponse;
+            if (resp.type === "cron_triggered") {
+              console.log(green(`✓ 已通知守护进程触发 job ${id}，结果将按通知策略推送`));
+              delegated = true;
+            } else if (resp.type === "error") {
+              console.log(red(`✗ ${(resp as { type: "error"; message: string }).message}`));
+              delegated = true;
+            }
+          } catch { /* ignore */ }
+          socket.destroy();
+          resolve();
+        }
+      });
+      socket.on("error", (err: Error) => {
+        console.log(yellow(`守护进程连接失败：${err.message}，将本地执行`));
+        socket.destroy();
+        resolve();
+      });
+      socket.on("close", resolve);
+    });
+    if (delegated) return;
+  }
+
+  // 守护进程未运行，本地执行（需要初始化 LLM）
+  console.log(dim(`守护进程未运行，本地执行 job ${id}…`));
+  await llmRegistry.init();
   await runJob(job, null);
   const updated = getJob(id);
   if (updated?.lastRunStatus === "error") {
