@@ -103,10 +103,16 @@ async function handleRequest(
   // ── memorize 请求：手动触发 session 摘要 → 持久化 → QMD 向量化 ───────────
   if (req.type === "memorize") {
     const { sessionId: memSid } = req as { type: "memorize"; sessionId: string };
-    const memSession = sessions.get(memSid);
+    // 若 session 不在内存中（如服务刚重启还未收到消息），从 JSONL 恢复
+    let memSession = sessions.get(memSid);
     if (!memSession) {
-      send({ type: "error", message: `未找到 session "${memSid}"` });
-      return;
+      const agentId = agentManager.resolveAgent(memSid);
+      memSession = new Session(memSid, { agentId });
+      if (memSession.getMessages().length === 0) {
+        send({ type: "error", message: `找不到 session "${memSid}" 的历史记录` });
+        return;
+      }
+      sessions.set(memSid, memSession);
     }
     // 通知 qqbot session 的用户：开始
     if (connector && memSid.startsWith("qqbot:")) {
