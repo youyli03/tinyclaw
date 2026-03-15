@@ -32,7 +32,7 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
       collections: {
         memory: {
           path: agentMemDir,
-          pattern: "*.md",
+          pattern: "**/*.md",
         },
       },
     },

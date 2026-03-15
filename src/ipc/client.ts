@@ -175,3 +175,48 @@ export async function listSessions(): Promise<SessionInfo[]> {
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
+
+/**
+ * 向正在运行的 tinyclaw 服务请求对指定 session 执行摘要 → 持久化 → QMD 向量化。
+ * @returns 生成的摘要文本
+ */
+export async function memorizeSession(sessionId: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "memorize", sessionId };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "memorized") {
+          settle(() => resolve(resp.summary));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}

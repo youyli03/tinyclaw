@@ -3,6 +3,7 @@ import { llmRegistry } from "../llm/registry.js";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { searchMemory } from "../memory/qmd.js";
+import { shouldSummarize } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
@@ -185,8 +186,15 @@ export interface AgentRunOptions {
    * 未提供时（CLI 模式）自动通过。
    */
   onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
-  /** Interface B MFA / 状态通知：展示文字消息的回调 */
+  /**
+   * Interface B MFA / 状态通知：展示文字消息的回调
+   */
   onMFAPrompt?: (message: string) => void;
+  /**
+   * 触发记忆压缩时的通知回调。
+   * phase="start" 在压缩开始前调用，phase="done" 完成后调用（含摘要文本）。
+   */
+  onCompress?: (phase: "start" | "done", summary?: string) => void;
 }
 
 export interface AgentRunResult {
@@ -422,7 +430,11 @@ export async function runAgent(
 
   // 6. 检查是否需要压缩（仅在未被中断时执行）
   if (!session.abortRequested) {
-    await session.maybeCompress();
+    if (shouldSummarize(session.getMessages())) {
+      opts.onCompress?.("start");
+      const summary = await session.compress();
+      opts.onCompress?.("done", summary);
+    }
   }
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);

@@ -40,7 +40,8 @@ export type IpcRequest =
   | { type: "chat"; sessionId: string; message: string }
   | { type: "list" }
   | { type: "new"; agentId?: string }
-  | { type: "cron_trigger"; jobId: string };
+  | { type: "cron_trigger"; jobId: string }
+  | { type: "memorize"; sessionId: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
@@ -50,7 +51,9 @@ export type IpcResponse =
   | { type: "created"; sessionId: string }
   /** MFA 确认请求：服务端向客户端发送，等待用户回复 */
   | { type: "mfa_request"; warningMessage: string }
-  | { type: "cron_triggered"; jobId: string };
+  | { type: "cron_triggered"; jobId: string }
+  /** 手动记忆压缩完成，包含生成的摘要文本 */
+  | { type: "memorized"; summary: string };
 
 export type IpcClientMessage =
   | IpcRequest

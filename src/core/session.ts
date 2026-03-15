@@ -76,14 +76,32 @@ export class Session {
   }
 
   /**
+   * 执行摘要压缩：
+   * 1. LLM 生成摘要 + persistSummary（写 memory/YYYY-MM/YYYY-MM-DD.md + QMD 索引）
+   * 2. this.messages 替换为压缩后的 [system..., summary_assistant]
+   * 3. rewriteJsonl()：JSONL 覆写为压缩后内容，摘要作为下次启动的上下文
+   * 返回摘要文本，供调用方通知用户。
+   */
+  async compress(): Promise<string> {
+    const compressed = await summarizeAndCompress(this.messages, this.agentId);
+    this.messages = compressed;
+    this.rewriteJsonl();
+    // 摘要内容在最后一条 assistant 消息中
+    const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
+    const summary = summaryMsg?.content.replace(/^\[对话历史摘要\]\n/, "") ?? "";
+    return summary;
+  }
+
+  /**
    * 检查是否需要压缩，如需要则执行摘要并替换 messages[]，
    * 同时重写 JSONL（压缩后只保留 system + 摘要）。
+   * 返回摘要文本（已压缩）或 undefined（未触发）。
    */
-  async maybeCompress(): Promise<void> {
+  async maybeCompress(): Promise<string | undefined> {
     if (shouldSummarize(this.messages)) {
-      this.messages = await summarizeAndCompress(this.messages, this.agentId);
-      this.rewriteJsonl();
+      return await this.compress();
     }
+    return undefined;
   }
 
   // ── Interface A MFA ───────────────────────────────────────────────────────

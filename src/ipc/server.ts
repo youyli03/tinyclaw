@@ -100,6 +100,37 @@ async function handleRequest(
     return;
   }
 
+  // ── memorize 请求：手动触发 session 摘要 → 持久化 → QMD 向量化 ───────────
+  if (req.type === "memorize") {
+    const { sessionId: memSid } = req as { type: "memorize"; sessionId: string };
+    const memSession = sessions.get(memSid);
+    if (!memSession) {
+      send({ type: "error", message: `未找到 session "${memSid}"` });
+      return;
+    }
+    // 通知 qqbot session 的用户：开始
+    if (connector && memSid.startsWith("qqbot:")) {
+      const parts = memSid.slice("qqbot:".length).split(":");
+      const msgType = parts[0] as import("../connectors/base.js").InboundMessage["type"];
+      const peerId = parts.slice(1).join(":");
+      void connector.send(peerId, msgType, "⏳ 正在整理记忆，请稍候...");
+    }
+    try {
+      const summary = await memSession.compress();
+      // 通知 qqbot session 的用户：完成
+      if (connector && memSid.startsWith("qqbot:")) {
+        const parts = memSid.slice("qqbot:".length).split(":");
+        const msgType = parts[0] as import("../connectors/base.js").InboundMessage["type"];
+        const peerId = parts.slice(1).join(":");
+        void connector.send(peerId, msgType, `✅ 记忆已整理完成\n\n${summary}`);
+      }
+      send({ type: "memorized", summary });
+    } catch (e) {
+      send({ type: "error", message: `记忆整理失败：${e instanceof Error ? e.message : String(e)}` });
+    }
+    return;
+  }
+
   // ── new 请求：创建新会话 ─────────────────────────────────────────────────
   if (req.type === "new") {
     const newReq = req as { type: "new"; agentId?: string };
@@ -180,6 +211,13 @@ async function handleRequest(
         }, mfaTimeoutMs);
         void verifyCode; // verifyCode 由 agent 层在 onMFARequest 中需要的地方调用，这里不需要
       }),
+    onCompress: (phase, summary) => {
+      if (phase === "start") {
+        send({ type: "chunk", delta: "\n🧠 正在整理记忆...\n" });
+      } else if (phase === "done" && summary) {
+        send({ type: "chunk", delta: `✅ 记忆整理完成\n\n${summary}\n` });
+      }
+    },
   });
   session.currentRunPromise = runPromise;
 

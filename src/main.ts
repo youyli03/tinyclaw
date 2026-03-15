@@ -107,6 +107,13 @@ async function main(): Promise<void> {
       onMFAPrompt: (statusMsg: string) => {
         void connector.send(msg.peerId, msg.type, statusMsg);
       },
+      onCompress: (phase, summary) => {
+        if (phase === "start") {
+          void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");
+        } else if (phase === "done" && summary) {
+          void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`);
+        }
+      },
     };
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──

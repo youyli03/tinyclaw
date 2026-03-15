@@ -30,6 +30,7 @@ import { run as startRun, description as startDesc, usage as startUsage } from "
 import { run as logsRun, description as logsDesc, usage as logsUsage } from "./commands/logs.js";
 import { run as agentRun, description as agentDesc, usage as agentUsage } from "./commands/agent.js";
 import { run as cronRun, description as cronDesc, usage as cronUsage } from "./commands/cron.js";
+import { run as memoryRun, description as memoryDesc, usage as memoryUsage } from "./commands/memory.js";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ const COMMANDS: Record<string, CommandModule> = {
   chat:        { description: chatDesc,        usage: chatUsage,        run: chatRun },
   agent:       { description: agentDesc,       usage: agentUsage,       run: agentRun },
   cron:        { description: cronDesc,        usage: cronUsage,        run: cronRun },
+  memory:      { description: memoryDesc,      usage: memoryUsage,      run: memoryRun },
   logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
@@ -71,6 +73,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   chat:        ["list", "new"],
   agent:       ["list", "new", "show", "edit", "delete", "repair"],
   cron:        ["list", "add", "remove", "enable", "disable", "run", "logs", "help"],
+  memory:      ["save", "list", "search", "index", "help"],
   logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };

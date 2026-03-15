@@ -6,17 +6,19 @@ import { updateMemoryIndex } from "./qmd.js";
 /**
  * 将压缩摘要追加写入对应 Agent 的当日 Markdown 文件，然后异步触发 QMD 增量索引。
  *
- * 文件路径：~/.tinyclaw/agents/<agentId>/memory/YYYY-MM-DD.md
- * 仅在 summarizeAndCompress() 触发时调用，不每轮对话都写。
+ * 文件路径：~/.tinyclaw/agents/<agentId>/memory/YYYY-MM/YYYY-MM-DD.md
+ * 同一天多次触发时增量追加到同一文件，仅在 compress() 触发时调用。
  */
 export function persistSummary(summaryText: string, agentId = "default"): void {
-  const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
-  fs.mkdirSync(agentMemDir, { recursive: true });
+  const now = new Date();
+  const month = now.toISOString().slice(0, 7);  // YYYY-MM
+  const date  = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const monthDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory", month);
+  fs.mkdirSync(monthDir, { recursive: true });
 
-  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const filePath = path.join(agentMemDir, `${date}.md`);
+  const filePath = path.join(monthDir, `${date}.md`);
 
-  const timestamp = new Date().toISOString();
+  const timestamp = now.toISOString();
   const chunk = `\n## ${timestamp}\n\n${summaryText}\n`;
 
   fs.appendFileSync(filePath, chunk, "utf-8");
