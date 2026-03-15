@@ -15,6 +15,7 @@ import { sendToAgent, listSessions, createSession } from "../../ipc/client.js";
 import { IPC_SOCKET_PATH } from "../../ipc/protocol.js";
 import { bold, dim, red, cyan, green } from "../ui.js";
 import { AgentManager } from "../../core/agent-manager.js";
+import { patchTomlField } from "../../config/writer.js";
 import type { SessionInfo } from "../../ipc/protocol.js";
 
 export const description = "会话管理与消息发送";
@@ -23,22 +24,28 @@ export const usage = "chat <list|new|-s <id> <msg>>";
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
-  chat list                               列出所有会话（只读）
-  chat new [--agent <id>]                 新建终端会话
-  chat -s <sessionId> <消息>              发送消息到指定会话
-  chat -s <sessionId> bind <agentId>      将会话绑定到 Agent
+  chat list                                               列出所有会话（只读）
+  chat new [--agent <id>]                                 新建终端会话
+  chat new qqbot --app-id <id> --secret <secret>          配置 QQBot 渠道
+  chat -s <sessionId> <消息>                              发送消息到指定会话
+  chat -s <sessionId> bind <agentId>                      将会话绑定到 Agent
 
 ${bold("示例：")}
-  tinyclaw chat new                       新建默认 Agent 的会话
-  tinyclaw chat new --agent mywork        新建绑定到 mywork Agent 的会话
-  tinyclaw chat -s cli:<uuid> 你好        向指定会话发送消息
-  tinyclaw chat -s cli:<uuid> bind work   将会话绑定到 work Agent
-  tinyclaw chat list                      查看所有会话
+  tinyclaw chat new                                       新建默认 Agent 的会话
+  tinyclaw chat new --agent mywork                        新建绑定到 mywork Agent 的会话
+  tinyclaw chat new qqbot --app-id 1234 --secret abc123   配置 QQBot 并写入 config.toml
+  tinyclaw chat -s cli:<uuid> 你好                        向指定会话发送消息
+  tinyclaw chat -s cli:<uuid> bind work                   将会话绑定到 work Agent
+  tinyclaw chat list                                      查看所有会话
 
 ${bold("会话 ID 格式：")}
   ${cyan("cli:<uuid>")}                  终端会话（chat new 自动生成）
-  ${cyan("qqbot:c2c:<openid>")}          QQ 私聊会话
+  ${cyan("qqbot:c2c:<openid>")}          QQ 私聊会话（QQ 用户主动发消息后自动出现）
   ${cyan("qqbot:group:<openid>")}        QQ 群聊会话
+
+${bold("QQBot 说明：")}
+  配置后需重启守护进程：${cyan("tinyclaw restart")}
+  QQ 用户向机器人发消息后，会话将自动以 ${cyan("qqbot:c2c:<openid>")} 格式出现在 ${cyan("chat list")} 中。
 `);
 }
 
@@ -50,14 +57,27 @@ export async function run(args: string[]): Promise<void> {
 
   // ── list 子命令 ─────────────────────────────────────────────────────────────
   if (args[0] === "list") {
+    if (args.includes("-h") || args.includes("--help")) {
+      printHelp();
+      return;
+    }
     await runList();
     return;
   }
 
   // ── new 子命令 ──────────────────────────────────────────────────────────────
   if (args[0] === "new") {
-    let agentId: string | undefined;
+    if (args.includes("-h") || args.includes("--help")) {
+      printHelp();
+      return;
+    }
     const rest = args.slice(1);
+    // chat new qqbot --app-id <id> --secret <secret>
+    if (rest[0] === "qqbot") {
+      await runNewQQBot(rest.slice(1));
+      return;
+    }
+    let agentId: string | undefined;
     for (let i = 0; i < rest.length; i++) {
       if ((rest[i] === "--agent" || rest[i] === "-a") && rest[i + 1]) {
         agentId = rest[++i];
@@ -226,6 +246,29 @@ async function runNew(agentId?: string): Promise<void> {
     console.error(red(`创建失败：${err instanceof Error ? err.message : String(err)}`));
     process.exit(1);
   }
+}
+
+// ── chat new qqbot ────────────────────────────────────────────────────────────
+
+async function runNewQQBot(args: string[]): Promise<void> {
+  let appId: string | undefined;
+  let clientSecret: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--app-id" && args[i + 1]) appId = args[++i];
+    else if (args[i] === "--secret" && args[i + 1]) clientSecret = args[++i];
+  }
+  if (!appId || !clientSecret) {
+    console.error(red("错误：必须提供 --app-id 和 --secret"));
+    console.error(dim("  用法：tinyclaw chat new qqbot --app-id <id> --secret <secret>"));
+    process.exit(1);
+  }
+  patchTomlField(["channels", "qqbot"], "appId", JSON.stringify(appId));
+  patchTomlField(["channels", "qqbot"], "clientSecret", JSON.stringify(clientSecret));
+  console.log(green("✓ QQBot 已写入 config.toml"));
+  console.log(dim(`  appId        = ${appId}`));
+  console.log(dim(`  clientSecret = ${"*".repeat(4)}${clientSecret.slice(-4)}`));
+  console.log(dim("  执行 tinyclaw restart 使配置生效"));
+  console.log(dim("  QQ 用户向机器人发消息后，会话将自动出现在 tinyclaw chat list 中"));
 }
 
 // ── chat -s <id> bind <agentId> ───────────────────────────────────────────────
