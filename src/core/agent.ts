@@ -58,6 +58,11 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string): 
 - 如果 SKILLS.md 中找不到对应技能，应告知用户并询问如何继续
 - 要获取最新 SKILLS.md（本 session 内被更新过），用 exec_shell 执行 cat ${skillsFilePath}
 
+## 时效性数据规范（强制）
+- 凡涉及实时或时效性数据（天气、股价、汇率、新闻、系统状态、磁盘空间等），必须先通过工具获取真实数据，再输出结果
+- 禁止用训练知识直接回答时效性问题——必须调用 exec_shell（curl/wget 等）或其他工具实际获取，哪怕数据可能与预期相同
+- 若工具调用失败或无法获取数据，明确输出"数据获取失败：<原因>"，不得用任何猜测、估算或历史数据替代
+
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
 - 用中文回复，简洁明了`;

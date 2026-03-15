@@ -41,7 +41,7 @@ registerTool({
       parameters: {
         type: "object",
         properties: {
-          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须自包含完整背景（地点、数据来源偏好、期望输出格式等），无需任何额外上下文即可独立执行。示例好指令：'使用 exec_shell 调用 curl wttr.in/Shanghai 查询上海今日天气，提取天气状况和最高/最低温度，用中文简洁汇报（2-3 行）'。示例坏指令：'帮我提醒天气'——cron agent 无上下文，会误解为委托性任务并递归创建新 job。" },
+          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须自包含完整实现——包括：使用哪个命令获取数据（如 curl 的完整 URL 和参数）、如何解析结果、输出格式要求、以及失败时的兜底行为。示例好指令：'执行 exec_shell: curl -s \"wttr.in/Shanghai?format=j1\" 获取天气JSON，提取 current_condition[0] 中的 temp_C、weatherDesc、precipMM，用中文输出：天气/温度/建议穿着，若 curl 失败则输出数据获取失败。' 示例坏指令：'查询上海天气'——过于模糊，cron agent 无上下文，会凭知识编造数据。" },
           type:          { type: "string",  enum: ["once", "every", "daily"], description: "调度类型" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
