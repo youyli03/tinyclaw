@@ -6,6 +6,7 @@
 import type { Connector, InboundMessage } from "../base.js";
 import { startGateway } from "./gateway.js";
 import { sendMessage } from "./outbound.js";
+import { initMarkdownSupport } from "./api.js";
 import { loadConfig } from "../../config/loader.js";
 
 export class QQBotConnector implements Connector {
@@ -21,6 +22,7 @@ export class QQBotConnector implements Connector {
     const qqcfg = cfg.channels.qqbot;
     if (!qqcfg) throw new Error("channels.qqbot not configured");
 
+    initMarkdownSupport(qqcfg.markdownSupport);
     this.abortController = new AbortController();
 
     await startGateway({

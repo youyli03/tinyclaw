@@ -9,6 +9,22 @@ const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 let cachedToken: { token: string; expiresAt: number; appId: string } | null = null;
 let tokenFetchPromise: Promise<string> | null = null;
 
+let markdownSupport = true;
+
+export function initMarkdownSupport(enabled: boolean): void {
+  markdownSupport = enabled;
+}
+
+function buildBody(
+  content: string,
+  extras?: Record<string, unknown>
+): Record<string, unknown> {
+  const base = markdownSupport
+    ? { markdown: { content }, msg_type: 2 }
+    : { content, msg_type: 0 };
+  return extras ? { ...base, ...extras } : base;
+}
+
 export function clearTokenCache(): void {
   cachedToken = null;
   tokenFetchPromise = null;
@@ -84,11 +100,7 @@ export async function sendC2CMessage(
   content: string,
   msgId: string
 ): Promise<void> {
-  await post(`/v2/users/${userOpenid}/messages`, token, {
-    content,
-    msg_type: 0,
-    msg_id: msgId,
-  });
+  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId }));
 }
 
 /** 群消息被动回复 */
@@ -98,11 +110,7 @@ export async function sendGroupMessage(
   content: string,
   msgId: string
 ): Promise<void> {
-  await post(`/v2/groups/${groupOpenid}/messages`, token, {
-    content,
-    msg_type: 0,
-    msg_id: msgId,
-  });
+  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId }));
 }
 
 /** 频道消息回复 */
@@ -125,11 +133,8 @@ export async function sendProactiveC2CMessage(
   content: string,
   eventId?: string
 ): Promise<void> {
-  await post(`/v2/users/${userOpenid}/messages`, token, {
-    content,
-    msg_type: 0,
-    ...(eventId ? { event_id: eventId } : {}),
-  });
+  await post(`/v2/users/${userOpenid}/messages`, token,
+    buildBody(content, eventId ? { event_id: eventId } : undefined));
 }
 
 /** 群主动消息（不依赖 msgId，需申请权限） */
@@ -139,9 +144,6 @@ export async function sendProactiveGroupMessage(
   content: string,
   eventId?: string
 ): Promise<void> {
-  await post(`/v2/groups/${groupOpenid}/messages`, token, {
-    content,
-    msg_type: 0,
-    ...(eventId ? { event_id: eventId } : {}),
-  });
+  await post(`/v2/groups/${groupOpenid}/messages`, token,
+    buildBody(content, eventId ? { event_id: eventId } : undefined));
 }
