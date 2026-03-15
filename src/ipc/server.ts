@@ -8,7 +8,7 @@
 
 import { createServer, type Server } from "net";
 import { unlinkSync, existsSync } from "fs";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse } from "./protocol.js";
+import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type SessionInfo } from "./protocol.js";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
@@ -67,6 +67,23 @@ async function handleRequest(
     req = JSON.parse(line) as IpcRequest;
   } catch {
     send({ type: "error", message: "invalid JSON request" });
+    return;
+  }
+
+  // ── list 请求：返回所有会话信息 ─────────────────────────────────────────────
+  if (req.type === "list") {
+    const list: SessionInfo[] = [...sessions.entries()].map(([id, sess]) => {
+      const msgs = sess.getMessages();
+      const userMsgs = msgs.filter((m) => m.role === "user");
+      const lastUserMsg = userMsgs.at(-1)?.content ?? "";
+      return {
+        sessionId: id,
+        messageCount: msgs.filter((m) => m.role !== "system").length,
+        running: sess.running,
+        lastUserMessage: lastUserMsg.slice(0, 80),
+      };
+    });
+    send({ type: "sessions", sessions: list });
     return;
   }
 

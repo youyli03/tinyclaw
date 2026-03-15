@@ -10,9 +10,9 @@
 
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
-import { sendToAgent } from "../../ipc/client.js";
+import { sendToAgent, listSessions } from "../../ipc/client.js";
 import { IPC_SOCKET_PATH } from "../../ipc/protocol.js";
-import { bold, dim, red, cyan } from "../ui.js";
+import { bold, dim, red, cyan, green, yellow } from "../ui.js";
 
 export const description = "向 agent 发送消息（支持 QQBot 会话路由）";
 export const usage = "chat [-s <sessionId>] <message>";
@@ -20,6 +20,7 @@ export const usage = "chat [-s <sessionId>] <message>";
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
+  chat list                               列出所有活跃会话
   chat <message>                          新建终端会话，发送消息
   chat -s <sessionId> <message>           复用指定会话
   chat -s qqbot:c2c:<openid> <message>    注入 QQBot C2C 会话（同时推送到 QQ）
@@ -42,6 +43,37 @@ ${bold("选项：")}
 export async function run(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h") || args.includes("help")) {
     printHelp();
+    return;
+  }
+
+  // ── list 子命令 ─────────────────────────────────────────────────────────────
+  if (args[0] === "list") {
+    if (!existsSync(IPC_SOCKET_PATH)) {
+      console.error(red("错误：tinyclaw 主服务未运行，请先执行 bun src/main.ts"));
+      process.exit(1);
+    }
+    try {
+      const sessions = await listSessions();
+      if (sessions.length === 0) {
+        console.log(dim("暂无活跃会话"));
+        return;
+      }
+      console.log(bold(`\n活跃会话（共 ${sessions.length} 个）\n`));
+      for (const s of sessions) {
+        const status = s.running ? green("⚡ 运行中") : dim("空闲");
+        const count = dim(`${s.messageCount} 条消息`);
+        const last = s.lastUserMessage
+          ? dim(`  最后: ${s.lastUserMessage}${s.lastUserMessage.length >= 80 ? "…" : ""}`)
+          : "";
+        console.log(`  ${cyan(s.sessionId)}`);
+        console.log(`    ${status}  ${count}${last}`);
+      }
+      console.log();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(red(`获取会话列表失败：${msg}`));
+      process.exit(1);
+    }
     return;
   }
 

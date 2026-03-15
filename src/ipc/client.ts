@@ -5,7 +5,7 @@
  */
 
 import { connect } from "net";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse } from "./protocol.js";
+import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type SessionInfo } from "./protocol.js";
 
 export interface SendOptions {
   sessionId: string;
@@ -36,7 +36,7 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
     };
 
     socket.on("connect", () => {
-      const req: IpcRequest = { sessionId, message };
+      const req: IpcRequest = { type: "chat", sessionId, message };
       socket.write(JSON.stringify(req) + "\n");
     });
 
@@ -72,5 +72,50 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
         else reject(new Error("Connection closed unexpectedly"));
       });
     });
+  });
+}
+
+/**
+ * 向正在运行的 tinyclaw 服务请求所有会话列表。
+ * @returns SessionInfo 数组
+ */
+export async function listSessions(): Promise<SessionInfo[]> {
+  return new Promise<SessionInfo[]>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "list" };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "sessions") {
+          settle(() => resolve(resp.sessions));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
