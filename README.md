@@ -9,8 +9,9 @@
 - **Agent 工作区**：每个 Agent 独立人格（SYSTEM.md）+ 独立向量记忆命名空间，会话可绑定到指定 Agent
 - **QMD 向量记忆**：对话摘要自动索引至对应 Agent 命名空间，token 超 80% 自动摘要压缩
 - **代码/日常分离**：代码任务 spawn codex/copilot 子进程，不污染主 Agent 上下文
-- **内置 QQBot**：无需插件，填配置即用；三档权限自动降级，自动重连，每用户串行消息队列
-- **GitHub Copilot 后端**：凭 Copilot 订阅自动发现所有可用模型，无需手动填 apiKey / baseUrl
+- **内置 QQBot**：无需插件，填配置即用；三档权限自动降级，自动重连，每用户串行消息队列；支持 Markdown 消息（`msg_type: 2`）
+- **GitHub Copilot 后端**：凭 Copilot 订阅自动发现所有可用模型，无需手动填 apiKey / baseUrl；自动检测模型 function calling 能力
+- **文本模式工具调用**：不支持 function calling 的模型自动切换为 `<tool_call>` XML 文本协议，工具能力不降级
 - **CLI 工具**：`tinyclaw` 全局命令，管理 Agent、会话、模型、配置；支持 bash/zsh/fish tab 补全
 - **会话持久化**：JSONL 崩溃恢复，进程重启不丢上下文
 - **并发安全**：同一会话新消息到达时软中断旧 run，等待工具完成后安全切换

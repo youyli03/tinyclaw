@@ -110,10 +110,13 @@ runAgent(session, userContent, opts)
 │    session.llmAbortController = llmAc
 │
 ├─ 步骤 1：初始化 system prompt（每个 session 只做一次）
-│    messages 为空或首条非 system → 追加：
-│      BUILTIN_SYSTEM（写死，不可覆盖，含高危操作须先告知用户的指令）
-│      + ~/.tinyclaw/SYSTEM.md（用户自定义系统提示，可选）
-│    messages 已有 system → 跳过
+│    messages 中无任何永久 system message（包括 JSONL 恢复会话）→
+│      prependSystemMessage()（插入 index 0，保证始终在历史消息前）：
+│        BUILTIN_SYSTEM（写死，不可覆盖，含高危操作须先告知用户的指令）
+│        + ~/.tinyclaw/agents/<id>/SYSTEM.md（Agent 系统提示，可选）
+│    messages 已有永久 system → 跳过（JSONL 恢复后无需重复注入）
+│    注：文本模式（textMode）时，同时将工具列表与 <tool_call> 格式规则追加进 system prompt
+│         textMode = !client.supportsToolCalls（由后端 supportsToolCalls 标志决定）
 │
 ├─ 步骤 2：QMD 向量记忆检索
 │    searchMemory(userContent)
@@ -128,7 +131,15 @@ runAgent(session, userContent, opts)
 │    messages.push({ role:"user", content: userContent })
 │
 ├─ 步骤 4：ReAct 工具循环（最多 MAX_TOOL_ROUNDS = 10 轮）
-│    ┌── LLM chat(messages, tools=[...], signal=llmAc.signal)
+│
+│    【工具调用协议选择（run 开始前决定，整轮不变）】
+│    textMode == false（supportsToolCalls=true，默认）：
+│      LLM chat(messages, tools=[...])，LLM 用 tool_calls JSON 字段响应
+│    textMode == true（supportsToolCalls=false，不支持 function calling 的模型）：
+│      不传 tools 参数，LLM 用 <tool_call>{"name":"...","args":{...}}</tool_call> 文本响应
+│      parseResponse() 正则提取所有 <tool_call> 块作为 tool_calls，剩余文本为 content
+│
+│    ┌── LLM chat(messages, [tools], signal=llmAc.signal)
 │    │    ├─ AbortError → break（被软中断取消）
 │    │    └─ 其他错误  → throw
 │    │
@@ -166,6 +177,9 @@ runAgent(session, userContent, opts)
 │
 ├─ 步骤 5a：JSONL 持久化（异步 fire-and-forget，不阻塞）
 │    finalContent != "" → session.appendLastTurnToJsonl()
+│      从 messages 末尾反向查找最后一条 assistant message
+│      再从该 assistant 向前找最近的 user message（不要求相邻）
+│      （工具调用轮次会插入 system:tool_result，不能直接找相邻 user→assistant 对）
 │
 └─ 步骤 5b：maybeCompress()（仅未被中断时执行）
      abortRequested == false → 见第四节

@@ -47,7 +47,7 @@ tinyclaw/
 │   │   └── qqbot/
 │   │       ├── index.ts      # 实现 Connector 接口，胶水层
 │   │       ├── gateway.ts    # WS 协议 + 消息队列 + 重连 + Session 持久化
-│   │       ├── api.ts        # QQ REST API 封装（token singleflight + send 方法）
+│   │       ├── api.ts        # QQ REST API 封装（token singleflight + send 方法 + markdown/text 消息类型派发）
 │   │       └── outbound.ts   # 发送限流（1h/4次）+ 降级主动消息 + 长文本分块
 │   ├── cron/                 # 【Phase 8，v1 不实现，接口预留】
 │   │   ├── scheduler.ts      # 轮询 jobs.json，到时触发
@@ -104,7 +104,11 @@ tinyclaw/
 - 统一 OpenAI-compatible 接口（`LLMClient`）
 - 三个命名后端：`daily`（对话）/ `code`（代码任务）/ `summarizer`（摘要压缩）
 - `registry.get(name)` 运行时取后端实例，`registry.init()` 在 main.ts 中异步预初始化所有后端
-- 支持两种 backend 类型（由 `CopilotBackendSchema` / `OpenAIBackendSchema` 区分）：
+- 支持两种 backend 类型（由 `CopilotBackendSchema` / `OpenAIBackendSchema` 区分）
+- 每个后端携带 `supportsToolCalls` 标志（Copilot 后端从模型元数据自动推断）：
+  - `true`（默认）→ 通过 OpenAI `tools` 参数进行 function calling
+  - `false` → 自动切换为**文本模式工具调用**：系统提示注入工具列表与格式规则，LLM 以 `<tool_call>` XML 块响应，Agent 正则解析后执行
+
 
 #### OpenAI-compatible（`provider` 不填 / 为 `"openai"`）
 
@@ -166,7 +170,7 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| API | `api.ts` | QQ REST API 封装（token singleflight、send 系列方法） |
+| API | `api.ts` | QQ REST API 封装（token singleflight、send 系列方法；`markdownSupport` 开启时以 `msg_type: 2 + markdown.content` 发送，否则 `msg_type: 0 + content`） |
 | 传输 | `gateway.ts` | WebSocket 协议（Hello/Identify/Resume/Heartbeat/Reconnect） |
 | 队列 | `gateway.ts` | 每 peerId 独立串行队列，跨用户并行（最多 10 并发） |
 | 重连 | `gateway.ts` | 递增延迟重连（1s→60s），三档 Intent 权限自动降级 |
