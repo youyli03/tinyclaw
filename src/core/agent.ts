@@ -1,6 +1,7 @@
 import { Session } from "./session.js";
 import { llmRegistry } from "../llm/registry.js";
 import type { ChatResult } from "../llm/client.js";
+import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { searchMemory } from "../memory/qmd.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
@@ -35,6 +36,52 @@ function buildBuiltinSystem(maxCodeAssistCalls: number): string {
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
 - 用中文回复，简洁明了`;
+}
+
+/**
+ * 为不支持 function calling 的模型生成文字版工具描述和调用格式说明（追加到 system prompt）。
+ *
+ * 格式约定：
+ *   - 需要调用工具时，整条回复只包含一个 <tool_call> 块，不附加任何其他文字
+ *   - 收到 [tool_result] 后继续推理，可再次调用工具
+ *   - 所有工具执行完毕、任务确认完成后，输出最终中文回复，不得包含任何 <tool_call> 块
+ */
+function buildTextBasedToolInstructions(tools: ChatCompletionTool[]): string {
+  const descs = tools
+    .map((t) => {
+      const fn = t.function;
+      const params = fn.parameters as {
+        properties?: Record<string, { type?: string; description?: string }>;
+        required?: string[];
+      } | undefined;
+      const lines = [`### ${fn.name}`, `说明：${fn.description ?? ""}`];
+      if (params?.properties) {
+        lines.push("参数：");
+        for (const [k, v] of Object.entries(params.properties)) {
+          const req = params.required?.includes(k) ? "必填" : "可选";
+          lines.push(`  - ${k} (${v.type ?? "any"}, ${req})：${v.description ?? ""}`);
+        }
+      }
+      return lines.join("\n");
+    })
+    .join("\n\n");
+
+  return `## 工具调用格式（文字模式）
+
+当前模型不支持 function calling，使用以下文字格式调用工具。
+
+**调用规则：**
+1. 需要调用工具时，整条回复只能包含以下格式的一个块，不得附加任何其他文字或解释：
+   <tool_call>
+   {"name": "工具名", "args": {"参数名": "值"}}
+   </tool_call>
+2. 系统执行工具后，会在 [tool_result:工具名] 消息中返回结果，你需继续推理
+3. 可多次调用工具，每次只调用一个
+4. **最终回复**：所有工具调用完毕、任务确认完成后，输出完整的中文回复，回复中不得包含任何 <tool_call> 块
+
+## 可用工具
+
+${descs}`;
 }
 
 /** 读取 ~/.tinyclaw/SYSTEM.md 作为全局自定义 prompt（文件不存在时返回 undefined） */
@@ -116,10 +163,18 @@ export async function runAgent(
   const llmAc = new AbortController();
   session.llmAbortController = llmAc;
 
+  // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
+  const tools = getAllToolSpecs();
+  const textMode = !client.supportsToolCalls;
+
   // 1. 新 session 时注入 system prompt（三层堆叠：内置 + 全局 + Agent）
   const messages = session.getMessages();
   if (messages.length === 0 || messages[0]?.role !== "system") {
-    session.addSystemMessage(buildSystemPrompt(session.agentId, opts.systemPrompt));
+    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt);
+    if (textMode && tools.length > 0) {
+      sysPrompt += "\n\n" + buildTextBasedToolInstructions(tools);
+    }
+    session.addSystemMessage(sysPrompt);
   }
 
   // 2. 搜索相关历史记忆，注入为 system 消息
@@ -131,7 +186,6 @@ export async function runAgent(
   // 3. 添加用户消息
   session.addUserMessage(userContent);
 
-  const tools = getAllToolSpecs();
   let finalContent = "";
   let codeAssistCallCount = 0;
 
@@ -154,7 +208,7 @@ export async function runAgent(
       throw err;
     }
 
-    const { content, toolCalls } = parseResponse(response);
+    const { content, toolCalls } = parseResponse(response, textMode);
 
     // 没有工具调用 → 最终回复
     if (!toolCalls || toolCalls.length === 0) {
@@ -297,12 +351,47 @@ interface ParsedResponse {
   toolCalls?: ToolCall[];
 }
 
-function parseResponse(result: ChatResult): ParsedResponse {
-  if (result.toolCalls && result.toolCalls.length > 0) {
-    return {
-      content: result.content,
-      toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
-    };
+function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
+  // ── Function calling 模式：直接用 API 返回的 tool_calls ──────────────────
+  if (!textMode) {
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      return {
+        content: result.content,
+        toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+      };
+    }
+    return { content: result.content };
   }
-  return { content: result.content };
+
+  // ── 文字模式：从 content 里提取 <tool_call>...</tool_call> 块 ─────────────
+  const TAG_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+  const matches = [...result.content.matchAll(TAG_RE)];
+  if (matches.length === 0) return { content: result.content };
+
+  const toolCalls: ToolCall[] = [];
+  for (const m of matches) {
+    try {
+      const parsed = JSON.parse(m[1]!) as unknown;
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        "name" in parsed &&
+        typeof (parsed as Record<string, unknown>)["name"] === "string"
+      ) {
+        toolCalls.push({
+          name: (parsed as Record<string, unknown>)["name"] as string,
+          args: ((parsed as Record<string, unknown>)["args"] ?? {}) as Record<string, unknown>,
+        });
+      }
+    } catch {
+      // JSON 格式错误，跳过
+    }
+  }
+
+  // <tool_call> 块是中间步骤，从内容中去掉，不透传给用户
+  const cleanContent = result.content.replace(TAG_RE, "").trim();
+  return {
+    content: cleanContent,
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+  };
 }
