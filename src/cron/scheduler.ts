@@ -60,6 +60,15 @@ class CronScheduler {
     console.log("[cron] Scheduler stopped");
   }
 
+  /** 主动触发一次 job（fire-and-forget，不影响定时计划） */
+  triggerJob(jobId: string): boolean {
+    const jobs = loadJobs();
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return false;
+    void this.fire(job);
+    return true;
+  }
+
   /** 取消并重新调度单个 job（add/enable/remove 后调用） */
   reschedule(jobId: string): void {
     // 先取消旧 timer

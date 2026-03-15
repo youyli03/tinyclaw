@@ -7,7 +7,6 @@
 
 import { registerTool, type ToolContext } from "./registry.js";
 import { addJob, removeJob, loadJobs, updateJob, getJob } from "../cron/store.js";
-import { runJob } from "../cron/runner.js";
 import { cronScheduler } from "../cron/scheduler.js";
 
 // ── nanoid 轻量替代 ───────────────────────────────────────────────────────────
@@ -220,14 +219,10 @@ registerTool({
     const job = getJob(id);
     if (!job) return `未找到 job "${id}"`;
 
-    // 立即执行，不经过调度器（不影响 timer）
-    // connector 从 cronScheduler 的内部状态获取不到，此处传 null
-    // 执行结果会写入 log 并更新 lastRunAt/lastRunResult
-    await runJob(job, null);
-
-    const updated = getJob(id);
-    const status = updated?.lastRunStatus ?? "unknown";
-    const preview = (updated?.lastRunResult ?? "").slice(0, 200);
-    return `✓ job ${id} 执行完成（${status}）\n${preview}`;
+    // fire-and-forget：由 scheduler 内部使用持有的 connector 执行
+    // 结果按 job.output.notify 策略推送到绑定的 peerId，不向 agent 暴露内容
+    const ok = cronScheduler.triggerJob(id);
+    if (!ok) return `触发失败：未找到 job "${id}"`;
+    return `✓ job ${id} 已触发，结果将按通知策略推送到绑定输出`;
   },
 });
