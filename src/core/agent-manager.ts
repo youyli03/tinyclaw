@@ -5,10 +5,15 @@
  *   ~/.tinyclaw/agents/<id>/
  *     agent.toml    — 元数据：id、创建时间、bindings
  *     SYSTEM.md     — Agent 级系统提示（可选）
- *     memory/
- *       index.sqlite   — 向量索引
- *       YYYY-MM-DD.md  — 压缩摘要
+ *     MEM.md        — 跨 session 持久笔记（agent 可写，注入 system prompt）
+ *     SKILLS.md     — 技能目录（agent 可写，注入 system prompt）
+ *     skills/       — 技能 workflow 文件（agent 读取执行）
+ *     workspace/    — exec_shell 默认工作目录
+ *       tmp/        — 临时文件
+ *       output/     — 输出物
+ *     memory/       — QMD 向量索引
  */
+
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -39,6 +44,22 @@ export class AgentManager {
 
   systemPromptPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "SYSTEM.md");
+  }
+
+  memPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "MEM.md");
+  }
+
+  skillsPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "SKILLS.md");
+  }
+
+  skillsDir(id: string): string {
+    return path.join(AGENTS_ROOT, id, "skills");
+  }
+
+  workspaceDir(id: string): string {
+    return path.join(AGENTS_ROOT, id, "workspace");
   }
 
   private tomlPath(id: string): string {
@@ -85,10 +106,17 @@ export class AgentManager {
     };
   }
 
-  save(def: AgentDef): void {
-    const dir = this.agentDir(def.id);
+  private ensureAgentDirs(id: string): void {
+    const dir = this.agentDir(id);
     fs.mkdirSync(dir, { recursive: true });
-    fs.mkdirSync(path.join(dir, "memory"), { recursive: true });
+    fs.mkdirSync(this.memoryDir(id), { recursive: true });
+    fs.mkdirSync(path.join(this.workspaceDir(id), "tmp"), { recursive: true });
+    fs.mkdirSync(path.join(this.workspaceDir(id), "output"), { recursive: true });
+    fs.mkdirSync(this.skillsDir(id), { recursive: true });
+  }
+
+  save(def: AgentDef): void {
+    this.ensureAgentDirs(def.id);
     fs.writeFileSync(this.tomlPath(def.id), formatAgentToml(def), "utf-8");
   }
 
@@ -166,7 +194,7 @@ export class AgentManager {
     return content.length > 0 ? content : null;
   }
 
-  /** 确保 default agent 工作区存在 */
+  /** 确保 default agent 工作区存在（含新子目录） */
   ensureDefault(): void {
     if (!fs.existsSync(this.tomlPath(DEFAULT_AGENT_ID))) {
       this.save({
@@ -174,6 +202,9 @@ export class AgentManager {
         createdAt: new Date().toISOString(),
         bindings: [],
       });
+    } else {
+      // 已存在时也补全新增目录（升级兼容）
+      this.ensureAgentDirs(DEFAULT_AGENT_ID);
     }
   }
 }

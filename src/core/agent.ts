@@ -9,6 +9,7 @@ import { requireMFA } from "../auth/mfa.js";
 import { loadConfig } from "../config/loader.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { agentManager } from "./agent-manager.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -19,19 +20,41 @@ const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 /**
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
  */
-function buildBuiltinSystem(maxCodeAssistCalls: number): string {
+function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string): string {
   const limitNote =
     maxCodeAssistCalls > 0
       ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
-      : "code_assist 调用次数不限制";
+      : 'code_assist 调用次数不限制';
+  const agentDir = join(workspacePath, '..');
+  const memFilePath = join(agentDir, 'MEM.md');
+  const skillsFilePath = join(agentDir, 'SKILLS.md');
   return `你是 tinyclaw，一个简洁高效的 AI 助手。
 
 ## code_assist 工具使用规范
 - 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
 - code_assist 没有对话历史，每次调用是独立会话，task 参数必须自包含完整背景：
-  相关文件路径、现有代码片段（如有）、明确目标——不能只写"修改上面的代码"
+  相关文件路径、现有代码片段（如有）、明确目标——不能只写修改上面的代码
 - 如需多步完成任务，需监督每次结果：检查输出是否达成目标，若未完成则携带上次结果和剩余任务再次调用
 - ${limitNote}
+
+## 工作区规范
+- 当前 Agent 的工作目录（exec_shell 默认 cwd）：${workspacePath}
+- 子目录约定：
+  - tmp/    临时文件（可随时清理）
+  - output/ 输出产物（交付用文件、运行结果等）
+- 所有无关联的中间文件放入 tmp/，输出成果放入 output/，保持目录整洁
+- 可用绝对路径或 \`cd /other/path && command\` 切换工作目录
+
+## MEM.md（持久记忆）
+- MEM.md 是跨 session 的持久笔记，已在本 session 初始化时一次性加载
+- 如需更新（记录用户偏好、重要结论、待办事项等），直接用 write_file 写入 ${memFilePath}
+- 要获取最新内容（本 session 内被更新过），用 exec_shell 执行 cat ${memFilePath}
+
+## SKILLS.md（技能目录）
+- SKILLS.md 列出当前 Agent 所知技能和工作流程，已在本 session 初始化时一次性加载
+- 需要执行某个工作流程时：根据 SKILLS.md 中的路径读取对应 README.md 并按照执行
+- 如果 SKILLS.md 中找不到对应技能，应告知用户并询问如何继续
+- 要获取最新 SKILLS.md（本 session 内被更新过），用 exec_shell 执行 cat ${skillsFilePath}
 
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
@@ -93,26 +116,46 @@ function loadUserSystemPrompt(): string | undefined {
   return content.length > 0 ? content : undefined;
 }
 
+/** 读取 Agent 的 MEM.md（文件不存在时返回 undefined） */
+function loadAgentMem(agentId: string): string | undefined {
+  const p = agentManager.memPath(agentId);
+  if (!existsSync(p)) return undefined;
+  const content = readFileSync(p, "utf-8").trim();
+  return content.length > 0 ? content : undefined;
+}
+
+/** 读取 Agent 的 SKILLS.md（文件不存在时返回 undefined） */
+function loadAgentSkills(agentId: string): string | undefined {
+  const p = agentManager.skillsPath(agentId);
+  if (!existsSync(p)) return undefined;
+  const content = readFileSync(p, "utf-8").trim();
+  return content.length > 0 ? content : undefined;
+}
+
 /** 读取 Agent 的 SYSTEM.md（文件不存在时返回 undefined） */
 function loadAgentSystemPrompt(agentId: string): string | undefined {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const p = join(home, ".tinyclaw", "agents", agentId, "SYSTEM.md");
+  const p = agentManager.systemPromptPath(agentId);
   if (!existsSync(p)) return undefined;
   const content = readFileSync(p, "utf-8").trim();
   return content.length > 0 ? content : undefined;
 }
 
 /**
- * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）
+ * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  */
 function buildSystemPrompt(agentId = "default", extra?: string): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
-  const parts: string[] = [buildBuiltinSystem(maxCalls)];
+  const workspacePath = agentManager.workspaceDir(agentId);
+  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath)];
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
   if (agentPrompt) parts.push(agentPrompt);
+  const mem = loadAgentMem(agentId);
+  if (mem) parts.push(`## 持久记忆（MEM.md）\n\n${mem}`);
+  const skills = loadAgentSkills(agentId);
+  if (skills) parts.push(`## 技能目录（SKILLS.md）\n\n${skills}`);
   return parts.join("\n\n");
 }
 
@@ -292,7 +335,7 @@ export async function runAgent(
       // ── 执行工具 ──────────────────────────────────────────────────────
       let result: string;
       try {
-        result = await executeTool(call.name, call.args);
+        result = await executeTool(call.name, call.args, { cwd: agentManager.workspaceDir(session.agentId) });
       } catch (err) {
         if (err instanceof MFAError) {
           result = `操作被取消：${err.message}`;

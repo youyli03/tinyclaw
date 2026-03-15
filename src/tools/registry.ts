@@ -1,12 +1,18 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
+/** 工具执行上下文（由 runAgent 提供） */
+export interface ToolContext {
+  /** exec_shell 的默认工作目录 */
+  cwd?: string;
+}
+
 export interface ToolDef {
   /** OpenAI function calling 格式的工具描述 */
   spec: ChatCompletionTool;
   /** 是否需要 MFA 确认，默认 false */
   requiresMFA: boolean;
   /** 工具执行函数，参数为 JSON 字符串化的 arguments */
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  execute: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
 }
 
 const tools = new Map<string, ToolDef>();
@@ -33,9 +39,10 @@ export function getAllToolSpecs(): ChatCompletionTool[] {
 /** 执行工具，返回字符串结果 */
 export async function executeTool(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  ctx?: ToolContext
 ): Promise<string> {
   const tool = tools.get(name);
   if (!tool) return `错误：未知工具 "${name}"`;
-  return tool.execute(args);
+  return tool.execute(args, ctx);
 }

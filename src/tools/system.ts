@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import { registerTool } from "./registry.js";
+import { registerTool, type ToolContext } from "./registry.js";
 
 // ── exec_shell ────────────────────────────────────────────────────────────────
 
-async function execShellImpl(args: Record<string, unknown>): Promise<string> {
+async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
 
@@ -18,6 +18,7 @@ async function execShellImpl(args: Record<string, unknown>): Promise<string> {
     const child = spawn("bash", ["-c", command], {
       timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
     });
 
     child.stdout.on("data", (d: Buffer) => chunks.push(d));
