@@ -32,7 +32,7 @@ registerTool({
       parameters: {
         type: "object",
         properties: {
-          message:       { type: "string",  description: "触发时传给 agent 的指令（prompt）" },
+          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须是可自主完成的操作（例如：查询上海今日天气并汇报结果、检查磁盘空间并写入日志）。禁止写委托性语句（如'帮我设置提醒'、'创建定时任务'）——cron agent 运行时无上下文，会将此类语句递归创建新 job。" },
           type:          { type: "string",  enum: ["once", "every", "daily"], description: "调度类型" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },

@@ -14,6 +14,16 @@ import type { Connector } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
 
+// ── Cron 专用 system prompt（约束 agent 不递归创建任务） ──────────────────────
+
+const CRON_AGENT_SYSTEM = `## ⚠️ 你正在以【自动化 cron 任务】身份运行（非交互式）
+
+以下规则必须严格遵守：
+1. **直接执行**：user 消息即为你的任务指令，立即执行，不要询问用户确认或追问细节
+2. **禁止创建 cron 任务**：不得调用 cron_add 工具，当前运行的就是 cron 任务本身
+3. **无人值守**：没有用户在线，所有工具调用须自主完成，不依赖人工介入
+4. **简洁输出**：仅输出执行结果，不要提供操作选项或说明你接下来能做什么`;
+
 // ── 执行单个 Job ──────────────────────────────────────────────────────────────
 
 export async function runJob(job: CronJob, connector: Connector | null): Promise<void> {
@@ -44,7 +54,7 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   let resultText = "";
 
   try {
-    const result = await runAgent(session, job.message, { onMFARequest });
+    const result = await runAgent(session, job.message, { onMFARequest, systemPrompt: CRON_AGENT_SYSTEM });
     resultText = result.content;
   } catch (err) {
     status = "error";
