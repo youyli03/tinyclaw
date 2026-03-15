@@ -13,7 +13,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { bold, dim, green, red, cyan, yellow, section } from "../ui.js";
 import { listSessions, memorizeSession } from "../../ipc/client.js";
-import { searchMemory, updateMemoryIndex, rebuildMemoryIndex } from "../../memory/qmd.js";
+import { searchMemory, updateMemoryIndex, rebuildMemoryIndex, type UpdateProgress, type EmbedProgress } from "../../memory/qmd.js";
 import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 
@@ -165,27 +165,51 @@ async function cmdIndex(args: string[]): Promise<void> {
   console.log(`\n${dim(`重建向量索引... agent: ${agentId}`)}\n`);
   const t0 = Date.now();
 
-  let lastTotal = 0;
-  const result = await rebuildMemoryIndex(agentId, (info) => {
-    lastTotal = info.total;
+  // 阶段 1：扫描文件
+  process.stdout.write(`${dim("阶段 1/2  扫描文件...")}\n`);
+  let lastUpdateTotal = 0;
+  const onUpdate = (info: UpdateProgress) => {
+    lastUpdateTotal = info.total;
     const pct = info.total > 0 ? Math.round((info.current / info.total) * 100) : 0;
-    const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+    const filled = Math.floor(pct / 5);
+    const bar = "█".repeat(filled) + "░".repeat(20 - filled);
     process.stdout.write(
       `\r  ${bar} ${String(info.current).padStart(String(info.total).length)}/${info.total}  ${dim(info.file.slice(-50))}`
     );
-  });
+  };
 
-  if (lastTotal > 0) process.stdout.write("\n");
+  // 阶段 2：生成 embedding（首次回调时打印标题）
+  let embedHeaderPrinted = false;
+  const onEmbed = (info: EmbedProgress) => {
+    if (!embedHeaderPrinted) {
+      embedHeaderPrinted = true;
+      process.stdout.write(`\n${dim("阶段 2/2  生成向量...")}\n`);
+    }
+    const pct = info.totalChunks > 0 ? Math.round((info.chunksEmbedded / info.totalChunks) * 100) : 100;
+    const filled = Math.floor(pct / 5);
+    const bar = "█".repeat(filled) + "░".repeat(20 - filled);
+    process.stdout.write(
+      `\r  ${bar} ${info.chunksEmbedded}/${info.totalChunks} chunks  ${dim(Math.round(info.bytesProcessed / 1024) + "KB")}`
+    );
+  };
+
+  const result = await rebuildMemoryIndex(agentId, onUpdate, onEmbed);
 
   if (!result) {
     console.log(yellow("向量记忆功能未启用"));
     return;
   }
 
+  if (lastUpdateTotal > 0) process.stdout.write("\n");
+  if (embedHeaderPrinted) process.stdout.write("\n");
+
   const ms = Date.now() - t0;
   console.log(`\n${green("✅ 索引已更新")}  耗时 ${ms}ms`);
   console.log(
-    dim(`  已索引 ${result.indexed}  更新 ${result.updated}  未变 ${result.unchanged}  移除 ${result.removed}`)
+    dim(`  文件：已索引 ${result.update.indexed}  更新 ${result.update.updated}  未变 ${result.update.unchanged}  移除 ${result.update.removed}`)
+  );
+  console.log(
+    dim(`  向量：${result.embed.chunksEmbedded} chunks  文档 ${result.embed.docsProcessed}  耗时 ${result.embed.durationMs}ms`)
   );
   console.log();
 }

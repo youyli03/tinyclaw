@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createStore, type QMDStore, type UpdateProgress, type UpdateResult } from "@tobilu/qmd";
+import { createStore, type QMDStore, type UpdateProgress, type UpdateResult, type EmbedProgress, type EmbedResult } from "@tobilu/qmd";
 import { loadConfig } from "../config/loader.js";
 
 const storeMap = new Map<string, QMDStore>();
@@ -67,29 +67,38 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
 }
 
 /**
- * 触发指定 Agent 的 QMD 增量索引。
+ * 触发指定 Agent 的 QMD 增量索引（扫描文件 + 生成 embedding）。
  * 在写入新的压缩摘要后调用。
  */
 export async function updateMemoryIndex(agentId = "default"): Promise<void> {
   const s = await getQMDStore(agentId);
   if (!s) return;
   await s.update({ collections: ["memory"] });
+  await s.embed();
 }
+
+export type { UpdateProgress, UpdateResult, EmbedProgress, EmbedResult };
 
 /**
  * 带进度回调的全量重建索引，供 CLI `memory index` 命令使用。
- * @returns UpdateResult 汇总，memory 未启用时返回 null
+ * 先扫描文件（update），再生成 embedding（embed）。
+ * @returns null 表示 memory 未启用
  */
 export async function rebuildMemoryIndex(
   agentId = "default",
-  onProgress?: (info: UpdateProgress) => void
-): Promise<UpdateResult | null> {
+  onUpdateProgress?: (info: UpdateProgress) => void,
+  onEmbedProgress?: (info: EmbedProgress) => void
+): Promise<{ update: UpdateResult; embed: EmbedResult } | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
-  return s.update({
+  const updateResult = await s.update({
     collections: ["memory"],
-    ...(onProgress ? { onProgress } : {}),
+    ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
+  const embedResult = await s.embed(
+    onEmbedProgress ? { onProgress: onEmbedProgress } : undefined
+  );
+  return { update: updateResult, embed: embedResult };
 }
 
 export async function closeQMDStore(): Promise<void> {
