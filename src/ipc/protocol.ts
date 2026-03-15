@@ -46,4 +46,11 @@ export type IpcResponse =
   | { type: "done" }
   | { type: "error"; message: string }
   | { type: "sessions"; sessions: SessionInfo[] }
-  | { type: "created"; sessionId: string };
+  | { type: "created"; sessionId: string }
+  /** MFA 确认请求：服务端向客户端发送，等待用户回复 */
+  | { type: "mfa_request"; warningMessage: string };
+
+export type IpcClientMessage =
+  | IpcRequest
+  /** MFA 确认响应：客户端向服务端回复 */
+  | { type: "mfa_response"; approved: boolean };

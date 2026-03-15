@@ -4,11 +4,13 @@
  * 子命令：
  *   auth github         重新运行 GitHub Device Flow OAuth（Copilot token）
  *   auth status         检查当前 GitHub token 是否有效
+ *   auth mfa-setup      生成/绑定 TOTP 密钥，终端显示二维码
  */
 
 import { bold, dim, green, red, yellow, section } from "../ui.js";
 import { loadSavedGitHubToken } from "../../llm/copilotSetup.js";
 import { getCopilotToken } from "../../llm/copilot.js";
+import { setupTOTP } from "../../auth/totp.js";
 
 // ── 子命令 ────────────────────────────────────────────────────────────────────
 
@@ -54,27 +56,42 @@ async function cmdStatus(): Promise<void> {
   }
 }
 
-// ── 帮助 ──────────────────────────────────────────────────────────────────────
+async function cmdMFASetup(): Promise<void> {
+  console.log(`\n${bold("TOTP MFA 绑定")}`);
+  console.log(dim("生成 TOTP 密钥并在终端显示二维码\n"));
+  try {
+    const { loadConfig } = await import("../../config/loader.js");
+    const secretPath = loadConfig().auth.mfa?.totpSecretPath;
+    setupTOTP(secretPath);
+    console.log(green("✓ TOTP 绑定完成，将 config.toml 中 [auth.mfa] interface 设为 \"totp\" 即可启用"));
+  } catch (e) {
+    console.error(red(`绑定失败：${e}`));
+  }
+}
+
+// ── 帮助 ──────────────────────────────────────────────────────────────────────────────
 
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
-  auth github     重新执行 GitHub Device Flow OAuth
-  auth status     检查当前 token 有效性
+  auth github      重新执行 GitHub Device Flow OAuth
+  auth status      检查当前 token 有效性
+  auth mfa-setup   生成/绑定 TOTP 密钥（终端插入 QR 码）
 `);
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
-export const description = "认证管理：GitHub Copilot token 授权与状态检查";
-export const usage = "auth <github|status>";
+export const description = "认证管理：GitHub Copilot token 授权与 TOTP MFA 绑定";
+export const usage = "auth <github|status|mfa-setup>";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "status";
 
   switch (sub) {
-    case "github":  return cmdGithub();
-    case "status":  return cmdStatus();
+    case "github":    return cmdGithub();
+    case "status":    return cmdStatus();
+    case "mfa-setup": return cmdMFASetup();
     case "--help":
     case "-h":
     case "help":    printHelp(); return;

@@ -5,7 +5,8 @@
  */
 
 import { connect } from "net";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type SessionInfo } from "./protocol.js";
+import { createInterface } from "node:readline";
+import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
 
 export interface SendOptions {
   sessionId: string;
@@ -53,6 +54,16 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
         if (resp.type === "chunk") {
           fullContent += resp.delta;
           onChunk?.(resp.delta);
+        } else if (resp.type === "mfa_request") {
+          // 终端提示用户确认/取消（或输入 TOTP 码）
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const warningMsg = (resp as { type: "mfa_request"; warningMessage: string }).warningMessage;
+          process.stdout.write(`\n${warningMsg}\n> `);
+          rl.once("line", (answer) => {
+            rl.close();
+            const reply: IpcClientMessage = { type: "mfa_response", approved: !/^(\u53d6\u6d88|n|no)$/i.test(answer.trim()) };
+            socket.write(JSON.stringify(reply) + "\n");
+          });
         } else if (resp.type === "done") {
           settle(() => resolve(fullContent));
         } else if (resp.type === "error") {

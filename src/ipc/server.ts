@@ -9,10 +9,11 @@
 import { createServer, type Server } from "net";
 import { unlinkSync, existsSync } from "fs";
 import { randomUUID } from "node:crypto";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type SessionInfo } from "./protocol.js";
+import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
 import { agentManager } from "../core/agent-manager.js";
+import { loadConfig } from "../config/loader.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 
@@ -27,6 +28,8 @@ export function startIpcServer(
 
   const server = createServer((socket) => {
     let buf = "";
+    /** 当前待处理的 MFA 确认请求 */
+    let pendingMFA: { resolve: (v: boolean) => void; reject: (e: Error) => void } | null = null;
 
     socket.on("data", (data) => {
       buf += data.toString("utf-8");
@@ -34,7 +37,18 @@ export function startIpcServer(
       buf = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        void handleRequest(line, socket, sessions, connector);
+        // 先尝试解析为 IpcClientMessage（包含 mfa_response）
+        let msg: IpcClientMessage;
+        try { msg = JSON.parse(line) as IpcClientMessage; } catch { continue; }
+
+        if (msg.type === "mfa_response") {
+          if (pendingMFA) {
+            pendingMFA.resolve((msg as { type: "mfa_response"; approved: boolean }).approved);
+            pendingMFA = null;
+          }
+          continue;
+        }
+        void handleRequest(line, socket, sessions, connector, (pMFA) => { pendingMFA = pMFA; });
       }
     });
 
@@ -58,7 +72,8 @@ async function handleRequest(
   line: string,
   socket: import("net").Socket,
   sessions: Map<string, Session>,
-  connector: QQBotConnector | null
+  connector: QQBotConnector | null,
+  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void } | null) => void
 ): Promise<void> {
   const send = (resp: IpcResponse): void => {
     if (!socket.destroyed) socket.write(JSON.stringify(resp) + "\n");
@@ -132,6 +147,7 @@ async function handleRequest(
 
   let fullContent = "";
   session.running = true;
+  const mfaTimeoutMs = (loadConfig().auth.mfa?.timeoutSecs ?? 60) * 1000;
   const runPromise = runAgent(session, message, {
     onChunk: (delta) => {
       fullContent += delta;
@@ -140,6 +156,17 @@ async function handleRequest(
     onMFAPrompt: (prompt) => {
       send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
     },
+    onMFARequest: (warningMessage, verifyCode) =>
+      new Promise<boolean>((resolve, reject) => {
+        setPendingMFA({ resolve, reject });
+        send({ type: "mfa_request", warningMessage });
+        setTimeout(() => {
+          setPendingMFA(null);
+          reject(new Error("MFA 超时"));
+          send({ type: "chunk", delta: "\n[MFA] 超时，操作已取消\n" });
+        }, mfaTimeoutMs);
+        void verifyCode; // verifyCode 由 agent 层在 onMFARequest 中需要的地方调用，这里不需要
+      }),
   });
   session.currentRunPromise = runPromise;
 

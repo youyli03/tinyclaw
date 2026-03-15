@@ -6,6 +6,7 @@ import { searchMemory } from "../memory/qmd.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
+import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
@@ -177,7 +178,7 @@ export interface AgentRunOptions {
    * 返回 true = 确认，false = 取消，reject = 超时。
    * 未提供时（CLI 模式）自动通过。
    */
-  onMFARequest?: (warningMessage: string) => Promise<boolean>;
+  onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
   /** Interface B MFA / 状态通知：展示文字消息的回调 */
   onMFAPrompt?: (message: string) => void;
 }
@@ -304,6 +305,25 @@ export async function runAgent(
             await requireMFA(opts.onMFAPrompt);
             opts.onMFAPrompt?.("✓ MFA 已通过，继续执行");
             mfaPassed = true;
+          } else if (mfaCfg?.interface === "totp") {
+            // Interface C: TOTP 验证码
+            if (opts.onMFARequest) {
+              const desc = describeToolCall(call.name, call.args);
+              const secretPath = mfaCfg.totpSecretPath;
+              mfaPassed = await opts.onMFARequest(
+                `⚠️ 即将执行：${desc}\n请打开 Authenticator App，将当前 6 位验证码回复给我（30 秒内有效）`,
+                (code: string) => {
+                  const ok = verifyTOTP(code, secretPath);
+                  return ok;
+                }
+              );
+              if (!mfaPassed) {
+                opts.onMFAPrompt?.("✗ TOTP 验证失败，操作已取消");
+              }
+            } else {
+              // CLI fallback
+              mfaPassed = true;
+            }
           } else if (opts.onMFARequest) {
             // Interface A: 文字确认
             const desc = describeToolCall(call.name, call.args);

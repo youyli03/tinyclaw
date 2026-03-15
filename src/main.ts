@@ -99,9 +99,12 @@ async function main(): Promise<void> {
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 60;
     const opts: AgentRunOptions = {
-      onMFARequest: async (warningMsg: string) => {
-        await connector.send(msg.peerId, msg.type, warningMsg);
-        return session.waitForApproval(mfaTimeoutSecs);
+      onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
+        return connector.buildMFARequest(
+          msg.peerId, msg.type, warningMsg,
+          mfaTimeoutSecs * 1000,
+          verifyCode
+        );
       },
       onMFAPrompt: (statusMsg: string) => {
         void connector.send(msg.peerId, msg.type, statusMsg);

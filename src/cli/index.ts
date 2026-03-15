@@ -62,7 +62,7 @@ const COMMANDS: Record<string, CommandModule> = {
 const SUBCOMMANDS: Record<string, string[]> = {
   model:       ["show", "list", "set", "--all", "-a", "help"],
   config:      ["show", "edit", "path", "set", "help"],
-  auth:        ["github", "status", "help"],
+  auth:        ["github", "status", "mfa-setup", "help"],
   status:      [],
   restart:     [],
   start:       [],

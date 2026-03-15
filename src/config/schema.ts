@@ -80,9 +80,12 @@ const MFASchema = z.object({
   /**
    * MFA 接口类型：
    * - `"simple"` — Interface A：发送文字警告，等待用户回复 确认/取消（默认）
+   * - `"totp"`   — Interface C：用户通过 Authenticator App 生成 6 位 TOTP 码回复确认
    * - `"msal"`   — Interface B：Microsoft Authenticator number-matching 推送
    */
-  interface: z.enum(["simple", "msal"]).default("simple"),
+  interface: z.enum(["simple", "totp", "msal"]).default("simple"),
+  /** TOTP 专用：共享密钥文件路径（由 auth mfa-setup 生成，默认 ~/.tinyclaw/auth/totp.key） */
+  totpSecretPath: z.string().optional(),
   /** 整工具黑名单：列出的工具名总是触发 MFA */
   tools: z.array(z.string()).default(["delete_file", "write_file"]),
   /** exec_shell 命令级黑名单 */
