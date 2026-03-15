@@ -15,6 +15,7 @@ import { randomUUID } from "crypto";
 import { sendToAgent, listSessions } from "../../ipc/client.js";
 import { IPC_SOCKET_PATH } from "../../ipc/protocol.js";
 import { bold, dim, red, cyan, green } from "../ui.js";
+import { select, prompt, closeRl } from "../ui.js";
 import type { SessionInfo } from "../../ipc/protocol.js";
 
 export const description = "向 agent 发送消息（支持 QQBot 会话路由）";
@@ -171,64 +172,105 @@ async function runList(): Promise<void> {
 
   // 2. 尝试从运行中的服务器获取内存会话（可选，服务不在则跳过）
   let memory: SessionInfo[] = [];
-  if (existsSync(IPC_SOCKET_PATH)) {
+  const serverRunning = existsSync(IPC_SOCKET_PATH);
+  if (serverRunning) {
     try {
       memory = await listSessions();
-    } catch { /* server running but list failed, ignore */ }
+    } catch { /* ignore */ }
   }
   const memoryMap = new Map<string, SessionInfo>(memory.map((s) => [s.sessionId, s]));
 
-  // 3. 合并：以所有会话 ID 的并集为准
-  const allIds = new Set([...diskMap.keys(), ...memoryMap.keys()]);
+  // 3. 合并所有会话 ID
+  const allIds = [
+    // 优先展示 QQ 会话，再是终端会话
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter((id) =>
+      id.startsWith("qqbot:")
+    ).sort(),
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter((id) =>
+      id.startsWith("cli:")
+    ).sort(),
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter(
+      (id) => !id.startsWith("qqbot:") && !id.startsWith("cli:")
+    ).sort(),
+  ];
 
-  if (allIds.size === 0) {
-    console.log(dim("暂无会话历史"));
-    return;
+  // 4. 构建选择菜单
+  type Choice = { type: "session"; id: string } | { type: "new" };
+
+  const items: { label: string; value: Choice; note?: string }[] = [
+    {
+      label: green("+ 新建终端会话"),
+      value: { type: "new" },
+      ...(serverRunning ? {} : { note: dim("（服务未运行，将启动失败）") }),
+    },
+    ...allIds.map((id) => {
+      const mem = memoryMap.get(id);
+      const disk2 = diskMap.get(id);
+      const msgCount = mem?.messageCount ?? disk2?.messageCount ?? 0;
+      const lastMsg = mem?.lastUserMessage || disk2?.lastUserMessage || "";
+      let statusTag: string;
+      if (mem?.running) statusTag = green("⚡运行中");
+      else if (mem) statusTag = "空闲";
+      else statusTag = dim("持久化");
+      const note = [
+        statusTag,
+        `${msgCount}条消息`,
+        lastMsg ? `"${lastMsg.slice(0, 50)}${lastMsg.length > 50 ? "…" : ""}"` : "",
+      ]
+        .filter(Boolean)
+        .join("  ");
+      return { label: cyan(id), value: { type: "session" as const, id }, note };
+    }),
+  ];
+
+  const choice = await select<Choice>("选择会话（或新建）", items);
+  closeRl();
+
+  const sessionId =
+    choice.type === "new" ? `cli:${randomUUID()}` : choice.id;
+
+  if (!serverRunning) {
+    console.error(red("\n错误：tinyclaw 主服务未运行，请先执行 tinyclaw start"));
+    process.exit(1);
   }
 
-  // 4. 按类型分组展示
-  const qqIds = [...allIds].filter((id) => id.startsWith("qqbot:")).sort();
-  const cliIds = [...allIds].filter((id) => id.startsWith("cli:")).sort();
-  const otherIds = [...allIds].filter(
-    (id) => !id.startsWith("qqbot:") && !id.startsWith("cli:")
-  ).sort();
+  await runRepl(sessionId);
+}
 
-  const printSession = (id: string) => {
-    const mem = memoryMap.get(id);
-    const disk2 = diskMap.get(id);
-    let status: string;
-    if (mem?.running) {
-      status = green("⚡ 运行中");
-    } else if (mem) {
-      status = dim("空闲");
-    } else {
-      status = dim("已持久化");
+/** 交互式 REPL：在指定会话中持续收发消息，直到用户 Ctrl-C 或 /quit */
+async function runRepl(sessionId: string): Promise<void> {
+  const isQQBot = sessionId.startsWith("qqbot:");
+  console.log();
+  console.log(dim(`会话: ${sessionId}`));
+  if (isQQBot) {
+    console.log(dim("回复将同时推送至对应 QQ 频道"));
+  }
+  console.log(dim("输入消息后回车发送，Ctrl-C 或输入 /quit 退出\n"));
+
+  while (true) {
+    let input: string;
+    try {
+      input = await prompt(cyan("> "));
+    } catch {
+      // Ctrl-C / readline closed
+      break;
     }
-    const msgCount = mem?.messageCount ?? disk2?.messageCount ?? 0;
-    const lastMsg = mem?.lastUserMessage || disk2?.lastUserMessage || "";
-    const count = dim(`${msgCount} 条消息`);
-    const last = lastMsg
-      ? dim(`  最后: ${lastMsg}${lastMsg.length >= 80 ? "…" : ""}`)
-      : "";
-    console.log(`  ${cyan(id)}`);
-    console.log(`    ${status}  ${count}${last}`);
-  };
+    const msg = input.trim();
+    if (!msg) continue;
+    if (msg === "/quit" || msg === "/exit" || msg === "/q") break;
 
-  console.log(bold(`\n会话列表（共 ${allIds.size} 个）\n`));
+    try {
+      await sendToAgent({
+        sessionId,
+        message: msg,
+        onChunk: (delta) => process.stdout.write(delta),
+      });
+      process.stdout.write("\n\n");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(red(`发送失败：${errMsg}\n`));
+    }
+  }
 
-  if (qqIds.length > 0) {
-    console.log(dim("QQ 会话："));
-    qqIds.forEach(printSession);
-    console.log();
-  }
-  if (cliIds.length > 0) {
-    console.log(dim("终端会话："));
-    cliIds.forEach(printSession);
-    console.log();
-  }
-  if (otherIds.length > 0) {
-    console.log(dim("其他会话："));
-    otherIds.forEach(printSession);
-    console.log();
-  }
+  closeRl();
 }
