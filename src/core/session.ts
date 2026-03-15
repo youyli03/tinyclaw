@@ -70,6 +70,11 @@ export class Session {
     this.messages.push({ role: "system", content });
   }
 
+  /** 将 system 消息插到 messages[0]（适用于恢复的 session，确保指令优先级最高） */
+  prependSystemMessage(content: string): void {
+    this.messages.unshift({ role: "system", content });
+  }
+
   /**
    * 检查是否需要压缩，如需要则执行摘要并替换 messages[]，
    * 同时重写 JSONL（压缩后只保留 system + 摘要）。

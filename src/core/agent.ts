@@ -174,7 +174,8 @@ export async function runAgent(
     if (textMode && tools.length > 0) {
       sysPrompt += "\n\n" + buildTextBasedToolInstructions(tools);
     }
-    session.addSystemMessage(sysPrompt);
+    // 始终插到最前：确保恢复的 session（如 qqbot）有正确的指令，不被旧历史覆盖
+    session.prependSystemMessage(sysPrompt);
   }
 
   // 2. 搜索相关历史记忆，注入为 system 消息
