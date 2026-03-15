@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 /** 运行时已解析的后端参数（与 provider 无关的统一结构） */
 export interface ResolvedBackend {
@@ -7,6 +8,8 @@ export interface ResolvedBackend {
   model: string;
   maxTokens: number;
   timeoutMs: number;
+  /** 是否支持 OpenAI function calling（tool_calls）。未设置时视为 true。 */
+  supportsToolCalls?: boolean;
 }
 
 export interface ChatMessage {
@@ -14,15 +17,27 @@ export interface ChatMessage {
   content: string;
 }
 
+/** 从 LLM 响应中解析出的单次工具调用 */
+export interface ToolCallResult {
+  name: string;
+  callId: string;
+  args: Record<string, unknown>;
+}
+
 export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
+  /** 工具列表（OpenAI function calling），仅在模型支持时生效 */
+  tools?: ChatCompletionTool[];
+  tool_choice?: "auto" | "none";
   /** AbortSignal：用于在 runAgent() 被中断时取消当前 LLM HTTP 请求 */
   signal?: AbortSignal;
 }
 
 export interface ChatResult {
   content: string;
+  /** 模型请求执行的工具调用列表（function calling 格式） */
+  toolCalls?: ToolCallResult[];
   /** 本次请求消耗的 token 数 */
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
@@ -55,13 +70,24 @@ export class LLMClient {
     return this.backend.model;
   }
 
+  /** 该模型是否支持 OpenAI function calling（tool_calls） */
+  get supportsToolCalls(): boolean {
+    return this.backend.supportsToolCalls ?? true;
+  }
+
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
+    const canUseTools =
+      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+
     const response = await this.client.chat.completions.create(
       {
         model: this.backend.model,
         messages,
         max_tokens: opts.maxTokens ?? this.backend.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        ...(canUseTools
+          ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
+          : {}),
       },
       opts.signal ? { signal: opts.signal } : undefined
     );
@@ -69,8 +95,25 @@ export class LLMClient {
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");
 
+    const rawCalls = choice.message.tool_calls;
+    const toolCalls: ToolCallResult[] | undefined =
+      rawCalls && rawCalls.length > 0
+        ? rawCalls.map((tc) => ({
+            name: tc.function.name,
+            callId: tc.id,
+            args: (() => {
+              try {
+                return JSON.parse(tc.function.arguments) as Record<string, unknown>;
+              } catch {
+                return {} as Record<string, unknown>;
+              }
+            })(),
+          }))
+        : undefined;
+
     return {
       content: choice.message.content ?? "",
+      ...(toolCalls ? { toolCalls } : {}),
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,

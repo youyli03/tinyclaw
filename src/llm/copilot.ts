@@ -416,6 +416,7 @@ export async function buildCopilotClient(
       model: resolvedModel.id,
       maxTokens: resolvedModel.maxOutputTokens,
       timeoutMs: config.timeoutMs,
+      supportsToolCalls: resolvedModel.supportsToolCalls,
     },
     copilotFetch
   );

@@ -1,5 +1,6 @@
 import { Session } from "./session.js";
 import { llmRegistry } from "../llm/registry.js";
+import type { ChatResult } from "../llm/client.js";
 import { searchMemory } from "../memory/qmd.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
@@ -137,10 +138,12 @@ export async function runAgent(
   // 4. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // ── LLM 调用（支持 AbortSignal）──────────────────────────────────────
-    let response;
+    let response: ChatResult;
     try {
       response = await client.chat(session.getMessages(), {
-        ...(tools.length > 0 ? { tools, tool_choice: "auto" } as object : {}),
+        ...(tools.length > 0 && client.supportsToolCalls
+          ? { tools, tool_choice: "auto" }
+          : {}),
         signal: llmAc.signal,
       });
     } catch (err) {
@@ -151,7 +154,7 @@ export async function runAgent(
       throw err;
     }
 
-    const { content, toolCalls } = parseResponse(response.content);
+    const { content, toolCalls } = parseResponse(response);
 
     // 没有工具调用 → 最终回复
     if (!toolCalls || toolCalls.length === 0) {
@@ -282,7 +285,7 @@ export async function runAgent(
   return { content: finalContent, toolsUsed };
 }
 
-// ── 简单的 tool_call 解析（兼容 openai 返回的 JSON 格式） ─────────────────────
+// ── tool_call 解析 ────────────────────────────────────────────────────────────
 
 interface ToolCall {
   name: string;
@@ -294,10 +297,12 @@ interface ParsedResponse {
   toolCalls?: ToolCall[];
 }
 
-function parseResponse(raw: string): ParsedResponse {
-  // openai SDK 返回的 tool_calls 通过 response.choices[0].message.tool_calls 获取，
-  // 但我们的 LLMClient.chat() 只返回 content string。
-  // 这里解析 LLM 可能以 JSON 形式内嵌的 tool_calls（fallback 方案）。
-  // 正式实现中应在 LLMClient 返回完整 message 对象；此处先做简单处理。
-  return { content: raw };
+function parseResponse(result: ChatResult): ParsedResponse {
+  if (result.toolCalls && result.toolCalls.length > 0) {
+    return {
+      content: result.content,
+      toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+    };
+  }
+  return { content: result.content };
 }
