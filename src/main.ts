@@ -122,8 +122,11 @@ async function main(): Promise<void> {
       })
       .catch((err: unknown) => {
         console.error("[qqbot] runAgent error:", err);
+        const userMsg = err instanceof Error && err.name === "LLMConnectionError"
+          ? err.message
+          : "抱歉，处理消息时出现错误";
         return connector
-          .send(msg.peerId, msg.type, "抱歉，处理消息时出现错误")
+          .send(msg.peerId, msg.type, userMsg)
           .catch(() => {});
       })
       .finally(() => {

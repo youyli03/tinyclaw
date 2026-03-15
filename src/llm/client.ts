@@ -1,5 +1,44 @@
-import OpenAI from "openai";
+import OpenAI, { APIConnectionError } from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+
+/** 是否为可重试的瞬态连接错误 */
+function isRetryableError(err: unknown): boolean {
+  if (err instanceof APIConnectionError) return true;
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket");
+  }
+  return false;
+}
+
+/** 连接失败且耗尽全部重试后抛出的错误（调用方可据此发送用户友好提示） */
+export class LLMConnectionError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `⚠️ 与 AI 服务的连接失败（已重试 3 次）：${cause instanceof Error ? cause.message : String(cause)}`
+    );
+    this.name = "LLMConnectionError";
+  }
+}
+
+/** 最多重试 3 次，指数退避（1s / 2s / 4s），abort 后不再重试 */
+async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const MAX_RETRIES = 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableError(err) || signal?.aborted) throw err;
+      if (attempt === MAX_RETRIES) break;
+      const delay = (2 ** attempt) * 1000;
+      console.warn(`[llm] connection error, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+      await new Promise<void>((res) => setTimeout(res, delay));
+    }
+  }
+  throw new LLMConnectionError(lastErr);
+}
 
 /** 运行时已解析的后端参数（与 provider 无关的统一结构） */
 export interface ResolvedBackend {
@@ -79,7 +118,7 @@ export class LLMClient {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
-    const response = await this.client.chat.completions.create(
+    const response = await withRetry(() => this.client.chat.completions.create(
       {
         model: this.backend.model,
         messages,
@@ -90,7 +129,7 @@ export class LLMClient {
           : {}),
       },
       opts.signal ? { signal: opts.signal } : undefined
-    );
+    ), opts.signal);
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");

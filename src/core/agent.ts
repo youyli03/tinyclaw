@@ -199,6 +199,20 @@ export interface AgentRunResult {
  * 单次 Agent 运行（一轮用户消息 → 完整响应）。
  * 支持多轮 tool_call（ReAct 循环），最多 MAX_TOOL_ROUNDS 轮。
  */
+/** 生成工具调用的单行摘要，用于日志 */
+function toolCallSummary(name: string, args: Record<string, unknown>): string {
+  if (name === "exec_shell") {
+    const cmd = String(args["command"] ?? "").replace(/\n/g, " ");
+    return `${name}: ${cmd.slice(0, 80)}${cmd.length > 80 ? "…" : ""}`;
+  }
+  if (name === "write_file" || name === "read_file" || name === "delete_file") {
+    return `${name}: ${args["path"] ?? ""}`;
+  }
+  if (name === "cron_add") return `${name}: ${args["name"] ?? ""} (${args["schedule"] ?? ""})`;
+  if (name === "cron_remove") return `${name}: ${args["id"] ?? ""}`;
+  return name;
+}
+
 export async function runAgent(
   session: Session,
   userContent: string,
@@ -206,6 +220,10 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   const client = llmRegistry.get("daily");
   const toolsUsed: string[] = [];
+  const sid = session.sessionId.slice(-12);
+  const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
+  console.log(`[agent] ${sid} ← "${msgPreview}${userContent.length > 60 ? "…" : ""}"`);
+  const startMs = Date.now();
 
   // ── 前置：重置并发控制状态，创建新 AbortController ───────────────────────
   session.abortRequested = false;
@@ -359,6 +377,7 @@ export async function runAgent(
       }
 
       // ── 执行工具 ──────────────────────────────────────────────────────
+      console.log(`[agent] ${sid} tool: ${toolCallSummary(call.name, call.args)}`);
       let result: string;
       try {
         result = await executeTool(call.name, call.args, { cwd: agentManager.workspaceDir(session.agentId), sessionId: session.sessionId });
@@ -404,6 +423,13 @@ export async function runAgent(
   // 6. 检查是否需要压缩（仅在未被中断时执行）
   if (!session.abortRequested) {
     await session.maybeCompress();
+  }
+
+  const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+  if (toolsUsed.length > 0) {
+    console.log(`[agent] ${sid} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")})`);
+  } else {
+    console.log(`[agent] ${sid} → done in ${elapsed}s`);
   }
 
   return { content: finalContent, toolsUsed };
