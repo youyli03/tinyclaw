@@ -1,5 +1,5 @@
 /**
- * Agent 工具：cron_add / cron_list / cron_remove / cron_enable / cron_disable
+ * Agent 工具：cron_add / cron_list / cron_remove / cron_enable / cron_disable / cron_run
  *
  * 这些工具在 agent session 中调用时，output.sessionId 会从 ToolContext.sessionId
  * 自动注入，确保 cron job 的结果推送回调用它的那个 QQ 对话。
@@ -7,6 +7,7 @@
 
 import { registerTool, type ToolContext } from "./registry.js";
 import { addJob, removeJob, loadJobs, updateJob, getJob } from "../cron/store.js";
+import { runJob } from "../cron/runner.js";
 import { cronScheduler } from "../cron/scheduler.js";
 
 // ── nanoid 轻量替代 ───────────────────────────────────────────────────────────
@@ -193,5 +194,40 @@ registerTool({
     if (!updateJob(id, { enabled: false })) return `未找到 job "${id}"`;
     cronScheduler.reschedule(id);
     return `✓ job ${id} 已停用`;
+  },
+});
+
+// ── cron_run ──────────────────────────────────────────────────────────────────
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "cron_run",
+      description: "立即触发一次指定 cron job（不影响其定时计划）。执行结果会按 job 的 notify 策略决定是否推送。",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "job ID" },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext) => {
+    const id = String(args["id"] ?? "");
+    const job = getJob(id);
+    if (!job) return `未找到 job "${id}"`;
+
+    // 立即执行，不经过调度器（不影响 timer）
+    // connector 从 cronScheduler 的内部状态获取不到，此处传 null
+    // 执行结果会写入 log 并更新 lastRunAt/lastRunResult
+    await runJob(job, null);
+
+    const updated = getJob(id);
+    const status = updated?.lastRunStatus ?? "unknown";
+    const preview = (updated?.lastRunResult ?? "").slice(0, 200);
+    return `✓ job ${id} 执行完成（${status}）\n${preview}`;
   },
 });
