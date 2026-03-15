@@ -44,20 +44,24 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
 
 /**
  * 在指定 Agent 的 QMD 中搜索与 query 相关的历史记忆片段。
+ * 使用 searchVector（仅 embedding 模型，不触发 LLM query expansion）。
  * 返回格式化好的字符串，可直接注入 system prompt。
- * 无结果时返回空字符串。
+ * 无结果时返回空字符串；memory 未启用时返回 null。
  */
 export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;  // memory 未启用
-  const results = await s.search({ query, limit, minScore: 0.3 });
+  const results = await s.searchVector(query, { limit });
 
   if (results.length === 0) return "";
 
-  const lines = results.map((r) => {
+  const lines = await Promise.all(results.map(async (r) => {
     const score = Math.round(r.score * 100);
-    return `[${score}%] ${r.title ?? r.displayPath}\n${r.bestChunk ?? ""}`.trim();
-  });
+    // 取文档前 30 行作为预览
+    const body = await s.getDocumentBody(r.filepath, { maxLines: 30 });
+    const preview = body?.trim() ?? "";
+    return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
+  }));
 
   return `## 相关历史记忆\n\n${lines.join("\n\n---\n\n")}`;
 }

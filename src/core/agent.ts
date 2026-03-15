@@ -254,7 +254,7 @@ export async function runAgent(
     session.prependSystemMessage(sysPrompt);
   }
 
-  // 2. 搜索相关历史记忆，注入为 system 消息
+  // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
   const memoryContext = await searchMemory(userContent, session.agentId);
   if (memoryContext) {
     session.addSystemMessage(memoryContext);
