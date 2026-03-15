@@ -16,7 +16,7 @@ const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。
  */
 export function shouldSummarize(messages: ChatMessage[]): boolean {
   const cfg = loadConfig();
-  const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
   // 粗估：平均 3.5 字符/token
   const estimatedTokens = Math.ceil(totalChars / 3.5);
   // 优先使用 registry 中的模型上下文窗口（Copilot 后端由模型元数据决定）

@@ -72,22 +72,34 @@ async function handleRequest(
 
   // ── list 请求：返回所有会话信息 ─────────────────────────────────────────────
   if (req.type === "list") {
-    const list: SessionInfo[] = [...sessions.entries()].map(([id, sess]) => {
-      const msgs = sess.getMessages();
-      const userMsgs = msgs.filter((m) => m.role === "user");
-      const lastUserMsg = userMsgs.at(-1)?.content ?? "";
-      return {
-        sessionId: id,
-        messageCount: msgs.filter((m) => m.role !== "system").length,
-        running: sess.running,
-        lastUserMessage: lastUserMsg.slice(0, 80),
-      };
-    });
-    send({ type: "sessions", sessions: list });
+    try {
+      const list: SessionInfo[] = [...sessions.entries()].map(([id, sess]) => {
+        const msgs = sess.getMessages();
+        const userMsgs = msgs.filter((m) => m.role === "user");
+        const lastContent = userMsgs.at(-1)?.content;
+        const lastUserMessage =
+          typeof lastContent === "string" ? lastContent.slice(0, 80) : "";
+        return {
+          sessionId: id,
+          messageCount: msgs.filter((m) => m.role !== "system").length,
+          running: sess.running,
+          lastUserMessage,
+        };
+      });
+      send({ type: "sessions", sessions: list });
+    } catch (e) {
+      send({ type: "error", message: String(e) });
+    }
     return;
   }
 
-  const { sessionId, message } = req;
+  const { sessionId, message } = req as { type: "chat"; sessionId: string; message: string };
+
+  // 防御：sessionId 或 message 缺失时拒绝处理（可能来自不兼容的旧客户端）
+  if (!sessionId || typeof message !== "string") {
+    send({ type: "error", message: "missing sessionId or message" });
+    return;
+  }
 
   // 获取或创建 session
   let session = sessions.get(sessionId);

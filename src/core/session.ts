@@ -207,7 +207,7 @@ export class Session {
 
   /** 估算当前 token 数（粗算） */
   estimatedTokens(): number {
-    const total = this.messages.reduce((s, m) => s + m.content.length, 0);
+    const total = this.messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
     return Math.ceil(total / 3.5);
   }
 
