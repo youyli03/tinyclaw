@@ -131,23 +131,38 @@ export class Session {
    */
   appendLastTurnToJsonl(): void {
     const msgs = this.messages;
-    for (let i = msgs.length - 1; i >= 1; i--) {
-      if (msgs[i]?.role === "assistant" && msgs[i - 1]?.role === "user") {
-        const ts = new Date().toISOString();
-        const lines =
-          JSON.stringify({ role: "user", content: msgs[i - 1]!.content, ts }) +
-          "\n" +
-          JSON.stringify({ role: "assistant", content: msgs[i]!.content, ts }) +
-          "\n";
-        try {
-          const filePath = Session.getJsonlPath(this.sessionId);
-          fs.mkdirSync(path.dirname(filePath), { recursive: true });
-          fs.appendFileSync(filePath, lines, "utf-8");
-        } catch (err) {
-          console.error("[session] JSONL append failed:", err);
-        }
+    // 找最后一条 assistant 消息（即最终回复）
+    let assistantIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]?.role === "assistant") {
+        assistantIdx = i;
         break;
       }
+    }
+    if (assistantIdx < 0) return;
+
+    // 往前找最近的一条 user 消息（不要求与 assistant 相邻）
+    let userIdx = -1;
+    for (let i = assistantIdx - 1; i >= 0; i--) {
+      if (msgs[i]?.role === "user") {
+        userIdx = i;
+        break;
+      }
+    }
+    if (userIdx < 0) return;
+
+    const ts = new Date().toISOString();
+    const lines =
+      JSON.stringify({ role: "user", content: msgs[userIdx]!.content, ts }) +
+      "\n" +
+      JSON.stringify({ role: "assistant", content: msgs[assistantIdx]!.content, ts }) +
+      "\n";
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, lines, "utf-8");
+    } catch (err) {
+      console.error("[session] JSONL append failed:", err);
     }
   }
 
