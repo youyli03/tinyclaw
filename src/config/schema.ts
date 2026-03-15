@@ -59,8 +59,6 @@ export type BackendRole = z.infer<typeof BackendRoleSchema>;
 const LLMBackendsSchema = z.object({
   /** 日常对话后端 */
   daily: BackendRoleSchema,
-  /** 代码任务后端（未配置时回退到 daily） */
-  code: BackendRoleSchema.optional(),
   /** 摘要压缩后端（未配置时回退到 daily） */
   summarizer: BackendRoleSchema.optional(),
 });
@@ -150,6 +148,33 @@ const MemorySchema = z.object({
   contextWindow: z.number().int().positive().default(128_000),
 });
 
+// ── 工具配置 ─────────────────────────────────────────────────────────────────
+
+const CodeAssistSchema = z.object({
+  /**
+   * 底层执行后端：
+   * - `"copilot"` — 调用 `copilot -p <task> --allow-all -s [--model <model>]`（默认）
+   * - `"codex"`   — 调用 `codex --quiet [--model <model>] <task>`
+   * - `"api"`     — 直接用 daily LLM 做一次无历史调用，忽略 model 字段
+   */
+  backend: z.enum(["copilot", "codex", "api"]).default("copilot"),
+  /**
+   * 透传给 CLI 的 --model 参数（可选）。
+   * backend = "api" 时此字段无效（使用 daily backend 的模型）。
+   */
+  model: z.string().optional(),
+  /**
+   * 每次用户消息处理中 code_assist 工具的最大调用次数，默认 5。
+   * 0 = 不限制。超出后注入限制提示，LLM 告知用户需再次发送消息继续。
+   */
+  maxCallsPerRun: z.number().int().min(0).default(5),
+});
+export type CodeAssistConfig = z.infer<typeof CodeAssistSchema>;
+
+const ToolsSchema = z.object({
+  code_assist: CodeAssistSchema.default({}),
+}).default({});
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -158,6 +183,7 @@ export const ConfigSchema = z.object({
   auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
+  tools: ToolsSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

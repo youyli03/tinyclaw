@@ -71,7 +71,6 @@ export async function run(_args: string[]): Promise<void> {
   console.log(`\n${bold("LLM 后端")}`);
   const entries: [string, typeof cfg.llm.backends.daily | undefined][] = [
     ["daily", cfg.llm.backends.daily],
-    ["code", cfg.llm.backends.code],
     ["summarizer", cfg.llm.backends.summarizer],
   ];
 

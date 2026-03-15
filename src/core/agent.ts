@@ -9,20 +9,32 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 // 确保所有工具在模块加载时注册
-import "../tools/codex.js";
-import "../tools/copilot.js";
+import "../tools/code-assist.js";
 import "../tools/system.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 
 /**
- * 内置系统提示词（写死，始终生效）。
- * 描述 tinyclaw 的核心能力边界，不应被用户完全覆盖。
+ * 内置系统提示词（动态生成，含 code_assist 次数限制）。
  */
-const BUILTIN_SYSTEM = `你是 tinyclaw，一个简洁高效的 AI 助手。
-- 需要执行代码任务时，优先调用 codex 或 copilot 工具，不要自己生成大段代码
+function buildBuiltinSystem(maxCodeAssistCalls: number): string {
+  const limitNote =
+    maxCodeAssistCalls > 0
+      ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
+      : "code_assist 调用次数不限制";
+  return `你是 tinyclaw，一个简洁高效的 AI 助手。
+
+## code_assist 工具使用规范
+- 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
+- code_assist 没有对话历史，每次调用是独立会话，task 参数必须自包含完整背景：
+  相关文件路径、现有代码片段（如有）、明确目标——不能只写"修改上面的代码"
+- 如需多步完成任务，需监督每次结果：检查输出是否达成目标，若未完成则携带上次结果和剩余任务再次调用
+- ${limitNote}
+
+## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
 - 用中文回复，简洁明了`;
+}
 
 /** 读取 ~/.tinyclaw/SYSTEM.md 作为全局自定义 prompt（文件不存在时返回 undefined） */
 function loadUserSystemPrompt(): string | undefined {
@@ -47,7 +59,8 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  */
 function buildSystemPrompt(agentId = "default", extra?: string): string {
-  const parts: string[] = [BUILTIN_SYSTEM];
+  const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
+  const parts: string[] = [buildBuiltinSystem(maxCalls)];
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
@@ -119,6 +132,7 @@ export async function runAgent(
 
   const tools = getAllToolSpecs();
   let finalContent = "";
+  let codeAssistCallCount = 0;
 
   // 4. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -165,6 +179,19 @@ export async function runAgent(
       }
 
       toolsUsed.push(call.name);
+
+      // ── code_assist 调用次数限制 ──────────────────────────────────────
+      if (call.name === "code_assist") {
+        const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
+        if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
+          session.addSystemMessage(
+            `[tool_result:code_assist]\n已达本次最大调用次数（${maxCalls}），此次调用未执行。` +
+            `请在当前回复中告知用户任务状态，用户可发新消息继续。`
+          );
+          continue;
+        }
+        codeAssistCallCount++;
+      }
 
       // ── MFA 检查（执行工具前）────────────────────────────────────────
       const mfaCfg = loadConfig().auth.mfa;

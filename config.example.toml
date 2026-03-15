@@ -42,11 +42,6 @@ model   = "gpt-4o"
 # githubToken = "gh_cli"   # 需先运行 `gh auth login`
 # model       = "auto"     # 自动选择 Copilot 的默认模型
 
-[llm.backends.code]
-baseUrl = "https://api.openai.com/v1"
-apiKey  = "sk-..."
-model   = "o4-mini"
-
 [llm.backends.summarizer]
 baseUrl = "https://api.openai.com/v1"
 apiKey  = "sk-..."
@@ -66,6 +61,18 @@ clientId    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # ── QQ Bot ─────────────────────────────────────────────────────────────────────
 # 官方 QQ 开放平台 https://q.qq.com/ 申请机器人后获取
+
+# ── 代码辅助工具 ───────────────────────────────────────────────────────────────
+# code_assist 工具由 daily agent 调用，将代码任务委派给独立 AI 执行
+# backend 可选：
+#   "copilot" — 调用 copilot CLI（需安装）
+#   "codex"   — 调用 codex CLI（需安装）
+#   "api"     — 直接用 daily LLM API 一次无历史调用
+
+[tools.code_assist]
+backend        = "copilot"   # 底层执行方式
+# model        = "gpt-5.1"  # 可选，透传 --model 给 CLI（api 模式忽略）
+# maxCallsPerRun = 5         # 每次用户消息最多调用次数，0 = 不限制（默认 5）
 
 [channels.qqbot]
 appId        = "102xxxxx"

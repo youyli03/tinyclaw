@@ -3,7 +3,7 @@ import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
 
-export type BackendName = "daily" | "code" | "summarizer";
+export type BackendName = "daily" | "summarizer";
 
 /**
  * 解析模型 symbol，格式为 "provider/model-id"。
@@ -26,7 +26,7 @@ export function parseModelSymbol(symbol: string): { provider: string; modelId: s
  * - OpenAI 后端：懒加载，首次 get() 时初始化。
  * - Copilot 后端：需在启动时调用 `await llmRegistry.init()` 预初始化
  *   （涉及异步 token 换取和模型能力发现）。
- * - 未配置 code / summarizer 时自动回退到 daily。
+ * - 未配置 summarizer 时自动回退到 daily。
  */
 class LLMRegistry {
   private clients = new Map<BackendName, LLMClient>();
@@ -42,7 +42,6 @@ class LLMRegistry {
     const backends = config.llm.backends;
     const entries: [BackendName, BackendRole | undefined][] = [
       ["daily", backends.daily],
-      ["code", backends.code],
       ["summarizer", backends.summarizer],
     ];
 
@@ -86,7 +85,6 @@ class LLMRegistry {
     const backends = config.llm.backends;
     const role: BackendRole | undefined =
       name === "daily" ? backends.daily
-      : name === "code" ? backends.code
       : backends.summarizer;
 
     if (!role) {
