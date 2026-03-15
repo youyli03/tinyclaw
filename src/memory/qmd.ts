@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createStore, type QMDStore, type UpdateProgress, type UpdateResult, type EmbedProgress, type EmbedResult } from "@tobilu/qmd";
+import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult } from "@tobilu/qmd";
 import { loadConfig } from "../config/loader.js";
 
 const storeMap = new Map<string, QMDStore>();
@@ -25,8 +25,11 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   fs.mkdirSync(agentMemDir, { recursive: true });
 
   // 禁用 Vulkan 编译尝试（此机器无 Vulkan，避免每次启动触发 cmake 噪音）
+  // 必须在 @tobilu/qmd 动态 import 之前设置，否则 node-llama-cpp 已经加载
   process.env["NODE_LLAMA_CPP_GPU"] = "false";
   process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
+
+  const { createStore } = await import("@tobilu/qmd");
 
   const s = await createStore({
     dbPath: path.join(agentMemDir, "index.sqlite"),
