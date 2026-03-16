@@ -5,6 +5,7 @@
  * QQ 官方规则：同一 message_id 被动回复最多 4 次，1小时有效期
  */
 
+import * as fs from "node:fs";
 import {
   getAccessToken,
   clearTokenCache,
@@ -13,8 +14,11 @@ import {
   sendChannelMessage,
   sendProactiveC2CMessage,
   sendProactiveGroupMessage,
+  sendC2CMedia,
+  sendGroupMedia,
 } from "./api.js";
 import type { InboundMessage } from "../base.js";
+import { parseMediaTags } from "../utils/media-parser.js";
 
 // ── 限流 ──────────────────────────────────────────────────────────────────────
 
@@ -81,28 +85,95 @@ export interface SendOptions {
   replyToId?: string;
 }
 
+/** 本地文件 base64 上传的大小上限（10 MB） */
+const MAX_BASE64_FILE_SIZE = 10 * 1024 * 1024;
+
 export async function sendMessage(opts: SendOptions): Promise<void> {
   const { appId, clientSecret, peerId, type, text, replyToId } = opts;
 
   let token = await getAccessToken(appId, clientSecret);
 
-  const chunks = chunkText(text);
+  const segments = parseMediaTags(text);
 
-  for (const chunk of chunks) {
-    try {
-      await doSend(token, type, peerId, chunk, replyToId);
-    } catch (err) {
-      // token 过期时刷新重试一次
-      const msg = String(err);
-      if (msg.includes("401") || msg.includes("token") || msg.includes("11244")) {
-        clearTokenCache();
-        token = await getAccessToken(appId, clientSecret);
-        await doSend(token, type, peerId, chunk, replyToId);
-      } else {
-        throw err;
+  for (const segment of segments) {
+    if (segment.type === "text") {
+      // ── 纯文本分块发送 ──────────────────────────────────────────────────
+      const chunks = chunkText(segment.content);
+      for (const chunk of chunks) {
+        try {
+          await doSend(token, type, peerId, chunk, replyToId);
+        } catch (err) {
+          // token 过期时刷新重试一次
+          const msg = String(err);
+          if (msg.includes("401") || msg.includes("token") || msg.includes("11244")) {
+            clearTokenCache();
+            token = await getAccessToken(appId, clientSecret);
+            await doSend(token, type, peerId, chunk, replyToId);
+          } else {
+            throw err;
+          }
+        }
+        if (replyToId) recordReply(replyToId);
       }
+    } else {
+      // ── 富媒体发送 ────────────────────────────────────────────────────
+      if (type === "guild") {
+        console.warn("[qqbot] 频道消息暂不支持富媒体，已跳过");
+        continue;
+      }
+      // 频道次数限制：已超限则改为主动消息（不带 msg_id）
+      let mediaReplyToId = replyToId;
+      if (replyToId) {
+        const { allowed } = checkLimit(replyToId);
+        if (!allowed) mediaReplyToId = undefined;
+      }
+      try {
+        await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
+      } catch (err) {
+        const msg = String(err);
+        if (msg.includes("401") || msg.includes("token") || msg.includes("11244")) {
+          clearTokenCache();
+          token = await getAccessToken(appId, clientSecret);
+          await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
+        } else {
+          console.error("[qqbot] 媒体发送失败:", err);
+        }
+      }
+      if (replyToId) recordReply(replyToId);
     }
-    if (replyToId) recordReply(replyToId);
+  }
+}
+
+async function doSendMedia(
+  token: string,
+  type: "c2c" | "dm" | "group",
+  peerId: string,
+  mediaType: "img" | "audio" | "video" | "file",
+  pathOrUrl: string,
+  msgId?: string
+): Promise<void> {
+  let source: { url?: string; fileData?: string };
+
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+    source = { url: pathOrUrl };
+  } else {
+    if (!fs.existsSync(pathOrUrl)) {
+      console.warn(`[qqbot] 媒体文件不存在: ${pathOrUrl}`);
+      return;
+    }
+    const stat = fs.statSync(pathOrUrl);
+    if (stat.size > MAX_BASE64_FILE_SIZE) {
+      console.warn(`[qqbot] 文件过大 (${stat.size} bytes)，跳过: ${pathOrUrl}`);
+      return;
+    }
+    const data = fs.readFileSync(pathOrUrl);
+    source = { fileData: data.toString("base64") };
+  }
+
+  if (type === "c2c" || type === "dm") {
+    await sendC2CMedia(token, peerId, mediaType, source, msgId);
+  } else {
+    await sendGroupMedia(token, peerId, mediaType, source, msgId);
   }
 }
 

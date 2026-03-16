@@ -62,6 +62,10 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "workspace");
   }
 
+  downloadsDir(id: string): string {
+    return path.join(AGENTS_ROOT, id, "workspace", "downloads");
+  }
+
   private tomlPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "agent.toml");
   }
@@ -112,6 +116,7 @@ export class AgentManager {
     fs.mkdirSync(this.memoryDir(id), { recursive: true });
     fs.mkdirSync(path.join(this.workspaceDir(id), "tmp"), { recursive: true });
     fs.mkdirSync(path.join(this.workspaceDir(id), "output"), { recursive: true });
+    fs.mkdirSync(path.join(this.workspaceDir(id), "downloads"), { recursive: true });
     fs.mkdirSync(this.skillsDir(id), { recursive: true });
   }
 

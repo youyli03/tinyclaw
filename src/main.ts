@@ -18,6 +18,7 @@ import { runAgent, type AgentRunOptions } from "./core/agent.js";
 import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
+import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 
@@ -118,7 +119,20 @@ async function main(): Promise<void> {
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
     session.running = true;
-    const runPromise = runAgent(session, msg.content, opts);
+    // 如果消息带有附件，先下载到 workspace/downloads/ 并将路径追加到消息内容
+    let messageContent = msg.content;
+    if (msg.attachments && msg.attachments.length > 0) {
+      try {
+        const downloaded = await downloadAttachments(
+          msg.attachments,
+          agentManager.downloadsDir(session.agentId)
+        );
+        messageContent = buildEnrichedContent(msg.content, downloaded);
+      } catch (err) {
+        console.warn("[qqbot] 附件下载失败:", err);
+      }
+    }
+    const runPromise = runAgent(session, messageContent, opts);
     session.currentRunPromise = runPromise;
 
     void runPromise

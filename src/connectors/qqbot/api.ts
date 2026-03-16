@@ -147,3 +147,60 @@ export async function sendProactiveGroupMessage(
   await post(`/v2/groups/${groupOpenid}/messages`, token,
     buildBody(content, eventId ? { event_id: eventId } : undefined));
 }
+
+// ── 富媒体发送 ─────────────────────────────────────────────────────────────
+
+/** QQ file_type 枚举：1=图片 2=语音 3=视频 4=文件 */
+const FILE_TYPE: Record<"img" | "audio" | "video" | "file", 1 | 2 | 3 | 4> = {
+  img: 1,
+  audio: 2,
+  video: 3,
+  file: 4,
+};
+
+interface MediaSource {
+  /** 公网可访问 URL（与 fileData 二选一） */
+  url?: string;
+  /** base64 编码的文件内容（与 url 二选一） */
+  fileData?: string;
+}
+
+/** C2C 私聊媒体消息（srv_send_msg=true，上传即发送） */
+export async function sendC2CMedia(
+  token: string,
+  userOpenid: string,
+  mediaType: "img" | "audio" | "video" | "file",
+  source: MediaSource,
+  msgId?: string,
+  eventId?: string
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    file_type: FILE_TYPE[mediaType],
+    srv_send_msg: true,
+  };
+  if (source.url) body["url"] = source.url;
+  if (source.fileData) body["file_data"] = source.fileData;
+  if (msgId) body["msg_id"] = msgId;
+  if (eventId) body["event_id"] = eventId;
+  await post(`/v2/users/${userOpenid}/files`, token, body);
+}
+
+/** 群媒体消息（srv_send_msg=true，上传即发送） */
+export async function sendGroupMedia(
+  token: string,
+  groupOpenid: string,
+  mediaType: "img" | "audio" | "video" | "file",
+  source: MediaSource,
+  msgId?: string,
+  eventId?: string
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    file_type: FILE_TYPE[mediaType],
+    srv_send_msg: true,
+  };
+  if (source.url) body["url"] = source.url;
+  if (source.fileData) body["file_data"] = source.fileData;
+  if (msgId) body["msg_id"] = msgId;
+  if (eventId) body["event_id"] = eventId;
+  await post(`/v2/groups/${groupOpenid}/files`, token, body);
+}
