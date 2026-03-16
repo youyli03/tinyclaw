@@ -1,5 +1,7 @@
 import OpenAI, { APIConnectionError } from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import { readFileSync, existsSync } from "node:fs";
+import { extname } from "node:path";
 
 /** 是否为可重试的瞬态连接错误 */
 function isRetryableError(err: unknown): boolean {
@@ -49,11 +51,20 @@ export interface ResolvedBackend {
   timeoutMs: number;
   /** 是否支持 OpenAI function calling（tool_calls）。未设置时视为 true。 */
   supportsToolCalls?: boolean;
+  /** 是否支持视觉能力（图片输入）。未设置时视为 false。 */
+  supportsVision?: boolean;
 }
+
+/** OpenAI vision API 内容块 */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+  /** 内部类型：本地图片路径，在 LLM API 调用前由 resolveMessagesForApi() 转换为 base64 */
+  | { type: "image_path"; path: string };
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | ContentPart[];
 }
 
 /** 从 LLM 响应中解析出的单次工具调用 */
@@ -91,6 +102,40 @@ export interface ChatResult {
 /** 与 OpenAI SDK 兼容的最小 fetch 函数类型 */
 export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 
+/** 将本地图片路径转为 base64 data URL；文件不存在或读取失败返回 null */
+function pathToDataUrl(imgPath: string): string | null {
+  if (!existsSync(imgPath)) return null;
+  try {
+    const buf = readFileSync(imgPath);
+    const ext = extname(imgPath).toLowerCase().slice(1);
+    const mime =
+      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+      ext === "png" ? "image/png" :
+      ext === "gif" ? "image/gif" :
+      ext === "webp" ? "image/webp" :
+      "image/png";
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL） */
+function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => {
+    if (typeof m.content === "string") return m;
+    const resolved = m.content.map((p) => {
+      if (p.type === "image_path") {
+        const url = pathToDataUrl(p.path);
+        if (url) return { type: "image_url" as const, image_url: { url, detail: "auto" as const } };
+        return { type: "text" as const, text: `[图片已不可用: ${p.path}]` };
+      }
+      return p;
+    });
+    return { ...m, content: resolved };
+  });
+}
+
 export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: ResolvedBackend;
@@ -114,14 +159,21 @@ export class LLMClient {
     return this.backend.supportsToolCalls ?? true;
   }
 
+  /** 该模型是否支持视觉能力（图片输入） */
+  get supportsVision(): boolean {
+    return this.backend.supportsVision ?? false;
+  }
+
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
+    const resolved = resolveMessagesForApi(messages);
     const response = await withRetry(() => this.client.chat.completions.create(
       {
         model: this.backend.model,
-        messages,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: resolved as any,
         max_tokens: opts.maxTokens ?? this.backend.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(canUseTools

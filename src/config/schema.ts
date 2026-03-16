@@ -53,6 +53,8 @@ const BackendRoleSchema = z.object({
   maxTokens: z.number().int().positive().optional(),
   /** 覆盖 provider 级 timeoutMs（可选） */
   timeoutMs: z.number().int().positive().optional(),
+  /** 是否支持视觉（图片输入）能力，默认 false */
+  supportsVision: z.boolean().optional(),
 });
 export type BackendRole = z.infer<typeof BackendRoleSchema>;
 

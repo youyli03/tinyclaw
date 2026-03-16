@@ -378,8 +378,12 @@ export interface CopilotClientResult {
  * - 从模型元数据自动设置 maxTokens / contextWindow
  * - 注入自刷新的 Copilot token（每次请求动态获取）
  */
+interface CopilotBuildParamsWithVision extends CopilotBuildParams {
+  supportsVision?: boolean;
+}
+
 export async function buildCopilotClient(
-  config: CopilotBuildParams
+  config: CopilotBuildParamsWithVision
 ): Promise<CopilotClientResult> {
   const models = await getCopilotModels(config.githubToken);
   if (models.length === 0) throw new Error("该 Copilot 账号暂无可用模型");
@@ -430,6 +434,7 @@ export async function buildCopilotClient(
       maxTokens: resolvedModel.maxOutputTokens,
       timeoutMs: config.timeoutMs,
       supportsToolCalls: resolvedModel.supportsToolCalls,
+      supportsVision: config.supportsVision,
     },
     copilotFetch
   );
