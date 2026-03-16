@@ -60,13 +60,19 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
 
   if (results.length === 0) return "";
 
-  const lines = await Promise.all(results.map(async (r) => {
+  const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
-    // 取文档前 30 行作为预览
-    const body = await s.getDocumentBody(r.filepath, { maxLines: 30 });
-    const preview = body?.trim() ?? "";
+    // 用 chunkPos 精确定位命中的 chunk（~3600 字符 = 900 token），
+    // 避免错误地取文件开头（与实际命中 chunk 无关）
+    let preview = "";
+    if (r.chunkPos !== undefined) {
+      try {
+        const raw = fs.readFileSync(r.filepath, "utf-8");
+        preview = raw.slice(r.chunkPos, r.chunkPos + 3600).trim();
+      } catch { /* 文件读取失败忽略 */ }
+    }
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
-  }));
+  });
 
   return `## 相关历史记忆\n\n${lines.join("\n\n---\n\n")}`;
 }
