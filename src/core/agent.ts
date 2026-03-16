@@ -18,13 +18,14 @@ import "../tools/code-assist.js";
 import "../tools/system.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
+import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 
 /**
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
  */
-function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string): string {
+function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, supportsVision = false): string {
   const limitNote =
     maxCodeAssistCalls > 0
       ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
@@ -78,7 +79,12 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string): 
 
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
-- 用中文回复，简洁明了`;
+- 用中文回复，简洁明了${supportsVision ? `
+
+## 视觉能力
+- 你当前使用的模型支持直接读取图片，不需要 OCR 工具
+- 用户发送的图片会被自动附加到消息中，你可以直接描述和分析图片内容
+- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}`;
 }
 
 /**
@@ -164,10 +170,10 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
  * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  */
-function buildSystemPrompt(agentId = "default", extra?: string): string {
+function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
-  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath)];
+  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision)];
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
@@ -255,15 +261,14 @@ export async function runAgent(
   const tools = getAllToolSpecs();
   const textMode = !client.supportsToolCalls;
 
-  // 1. 新 session 时注入 system prompt（三层堆叠：内置 + 全局 + Agent）
-  const messages = session.getMessages();
-  if (messages.length === 0 || messages[0]?.role !== "system") {
-    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt);
+  // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
+  // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
+  {
+    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision);
     if (textMode && tools.length > 0) {
       sysPrompt += "\n\n" + buildTextBasedToolInstructions(tools);
     }
-    // 始终插到最前：确保恢复的 session（如 qqbot）有正确的指令，不被旧历史覆盖
-    session.prependSystemMessage(sysPrompt);
+    session.replaceOrPrependSystemMessage(sysPrompt);
   }
 
   // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
@@ -272,11 +277,13 @@ export async function runAgent(
     session.addSystemMessage(memoryContext);
   }
 
-  // 3. 添加用户消息
-  session.addUserMessage(userContent);
+  // 3. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
+  const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
+  session.addUserMessage(msgContent);
 
   let finalContent = "";
   let codeAssistCallCount = 0;
+  let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   // 4. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -297,6 +304,7 @@ export async function runAgent(
       throw err;
     }
 
+    lastUsage = response.usage;
     const { content, toolCalls } = parseResponse(response, textMode);
 
     // 没有工具调用 → 最终回复
@@ -450,10 +458,13 @@ export async function runAgent(
   }
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+  const contextWindow = llmRegistry.getContextWindow("daily");
+  const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+  const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {
-    console.log(`[agent] ${sid} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")})`);
+    console.log(`[agent] ${sid} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`);
   } else {
-    console.log(`[agent] ${sid} → done in ${elapsed}s`);
+    console.log(`[agent] ${sid} → done in ${elapsed}s [${tokenInfo}]`);
   }
 
   return { content: finalContent, toolsUsed };
