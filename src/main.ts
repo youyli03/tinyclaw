@@ -19,7 +19,7 @@ import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
-import { validateMediaContent } from "./connectors/qqbot/outbound.js";
+import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 
@@ -147,13 +147,20 @@ async function main(): Promise<void> {
         const mediaErrors = validateMediaContent(toSend);
         if (mediaErrors.length > 0) {
           const feedback = mediaErrors.map(e => `${e.src}: ${e.error}`).join("\n");
+          console.log(`[main] 媒体预检失败，重跑 agent:\n${feedback}`);
           const retryResult = await runAgent(
             session,
             `[系统] ${feedback}`,
             opts
           );
-          toSend = retryResult.content;
-          if (!toSend) return;
+          if (retryResult.content) {
+            toSend = retryResult.content;
+          } else {
+            // 重跑无输出（如原始回复含文档示例标签），回退到纯文本部分
+            console.log("[main] 重跑无输出，回退到纯文本");
+            toSend = extractTextContent(toSend);
+            if (!toSend) return;
+          }
         }
 
         return connector.send(msg.peerId, msg.type, toSend, msg.messageId);

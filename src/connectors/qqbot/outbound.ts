@@ -94,6 +94,18 @@ export interface MediaError {
 }
 
 /**
+ * 从含媒体标签的文本中提取纯文本部分（去除所有媒体标签）。
+ * 用于回退：媒体发送失败时至少把文字内容发给用户。
+ */
+export function extractTextContent(text: string): string {
+  return parseMediaTags(text)
+    .filter(seg => seg.type === "text")
+    .map(seg => seg.content)
+    .join("")
+    .trim();
+}
+
+/**
  * 发送前预检：检查本地媒体文件是否存在且不超大。
  * 仅检查本地路径，URL 跳过。返回错误列表，空数组表示通过。
  */
