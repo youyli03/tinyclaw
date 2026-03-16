@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ChatMessage } from "../llm/client.js";
+import type { ChatMessage, ContentPart } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress } from "../memory/summarizer.js";
 
@@ -58,7 +58,7 @@ export class Session {
     return this.messages;
   }
 
-  addUserMessage(content: string): void {
+  addUserMessage(content: string | ContentPart[]): void {
     this.messages.push({ role: "user", content });
   }
 
@@ -73,6 +73,15 @@ export class Session {
   /** 将 system 消息插到 messages[0]（适用于恢复的 session，确保指令优先级最高） */
   prependSystemMessage(content: string): void {
     this.messages.unshift({ role: "system", content });
+  }
+
+  /** 替换 messages[0] 处的 system 消息；若第一条不是 system 则 prepend */
+  replaceOrPrependSystemMessage(content: string): void {
+    if (this.messages.length > 0 && this.messages[0]?.role === "system") {
+      this.messages[0] = { role: "system", content };
+    } else {
+      this.messages.unshift({ role: "system", content });
+    }
   }
 
   /**
@@ -224,9 +233,9 @@ export class Session {
           const content = entry["content"];
           if (
             (role === "system" || role === "user" || role === "assistant") &&
-            typeof content === "string"
+            (typeof content === "string" || Array.isArray(content))
           ) {
-            messages.push({ role, content });
+            messages.push({ role, content: content as string | ContentPart[] });
           }
         } catch {
           // 跳过格式损坏的行
@@ -249,7 +258,13 @@ export class Session {
 
   /** 估算当前 token 数（粗算） */
   estimatedTokens(): number {
-    const total = this.messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    const total = this.messages.reduce((s, m) => {
+      if (typeof m.content === "string") return s + m.content.length;
+      return s + m.content.reduce((cs, p) => {
+        if (p.type === "text") return cs + p.text.length;
+        return cs + 500; // 图片以 500 字符估算
+      }, 0);
+    }, 0);
     return Math.ceil(total / 3.5);
   }
 

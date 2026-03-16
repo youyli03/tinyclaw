@@ -96,3 +96,37 @@ export function parseMediaTags(text: string): MediaSegment[] {
 
   return segments;
 }
+
+// ── Vision 支持 ───────────────────────────────────────────────────────────────
+
+import type { ContentPart } from "../../llm/client.js";
+
+/**
+ * 将含媒体标签的用户消息转为 LLM vision ContentPart[] 格式。
+ * - 无图片标签 → 返回原始 string（不触发 vision 路径）
+ * - 有图片标签 → 返回 ContentPart[]（text + image_path/image_url 交替）
+ *   本地路径使用 image_path（延迟 base64 转换），HTTP URL 使用 image_url。
+ */
+export function buildVisionContent(text: string): string | ContentPart[] {
+  const segments = parseMediaTags(text);
+  if (!segments.some((s) => s.type === "img")) return text;
+
+  const parts: ContentPart[] = [];
+  for (const seg of segments) {
+    if (seg.type === "text") {
+      if (seg.content.trim()) {
+        parts.push({ type: "text", text: seg.content });
+      }
+    } else if (seg.type === "img") {
+      const src = seg.content;
+      if (src.startsWith("http://") || src.startsWith("https://")) {
+        parts.push({ type: "image_url", image_url: { url: src, detail: "auto" } });
+      } else {
+        // 本地路径：延迟读取，由 LLMClient 在 API 调用前转换为 base64
+        parts.push({ type: "image_path", path: src });
+      }
+    }
+    // audio/video/file 不传给视觉 API，跳过
+  }
+  return parts.length > 0 ? parts : text;
+}
