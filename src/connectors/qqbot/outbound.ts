@@ -88,6 +88,34 @@ export interface SendOptions {
 /** 本地文件 base64 上传的大小上限（10 MB） */
 const MAX_BASE64_FILE_SIZE = 10 * 1024 * 1024;
 
+export interface MediaError {
+  src: string;
+  error: string;
+}
+
+/**
+ * 发送前预检：检查本地媒体文件是否存在且不超大。
+ * 仅检查本地路径，URL 跳过。返回错误列表，空数组表示通过。
+ */
+export function validateMediaContent(text: string): MediaError[] {
+  const segments = parseMediaTags(text);
+  const errors: MediaError[] = [];
+  for (const seg of segments) {
+    if (seg.type === "text") continue;
+    const src = seg.content;
+    if (src.startsWith("http://") || src.startsWith("https://")) continue;
+    if (!fs.existsSync(src)) {
+      errors.push({ src, error: `文件不存在: ${src}` });
+    } else {
+      const stat = fs.statSync(src);
+      if (stat.size > MAX_BASE64_FILE_SIZE) {
+        errors.push({ src, error: `文件过大 (${stat.size} bytes)` });
+      }
+    }
+  }
+  return errors;
+}
+
 export async function sendMessage(opts: SendOptions): Promise<void> {
   const { appId, clientSecret, peerId, type, text, replyToId } = opts;
 
@@ -158,13 +186,11 @@ async function doSendMedia(
     source = { url: pathOrUrl };
   } else {
     if (!fs.existsSync(pathOrUrl)) {
-      console.warn(`[qqbot] 媒体文件不存在: ${pathOrUrl}`);
-      return;
+      throw new Error(`媒体文件不存在: ${pathOrUrl}`);
     }
     const stat = fs.statSync(pathOrUrl);
     if (stat.size > MAX_BASE64_FILE_SIZE) {
-      console.warn(`[qqbot] 文件过大 (${stat.size} bytes)，跳过: ${pathOrUrl}`);
-      return;
+      throw new Error(`文件过大 (${stat.size} bytes): ${pathOrUrl}`);
     }
     const data = fs.readFileSync(pathOrUrl);
     source = { fileData: data.toString("base64") };

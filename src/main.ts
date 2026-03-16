@@ -19,6 +19,7 @@ import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
+import { validateMediaContent } from "./connectors/qqbot/outbound.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 
@@ -136,13 +137,26 @@ async function main(): Promise<void> {
     session.currentRunPromise = runPromise;
 
     void runPromise
-      .then((result) => {
+      .then(async (result) => {
         // 工具执行完但 LLM 最终返回空 content 时（非中断），发送兜底消息
-        const toSend = result.content ||
+        let toSend = result.content ||
           (result.toolsUsed.length > 0 && !session.abortRequested ? "✅ 已完成" : "");
-        if (toSend) {
-          return connector.send(msg.peerId, msg.type, toSend, msg.messageId);
+        if (!toSend) return;
+
+        // 发给用户前预检本地媒体文件，失败则回传给 agent 重跑，用户不感知
+        const mediaErrors = validateMediaContent(toSend);
+        if (mediaErrors.length > 0) {
+          const feedback = mediaErrors.map(e => `${e.src}: ${e.error}`).join("\n");
+          const retryResult = await runAgent(
+            session,
+            `[系统] ${feedback}`,
+            opts
+          );
+          toSend = retryResult.content;
+          if (!toSend) return;
         }
+
+        return connector.send(msg.peerId, msg.type, toSend, msg.messageId);
       })
       .catch((err: unknown) => {
         console.error("[qqbot] runAgent error:", err);
