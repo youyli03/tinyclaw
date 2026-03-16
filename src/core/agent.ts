@@ -17,6 +17,7 @@ import { agentManager } from "./agent-manager.js";
 import "../tools/code-assist.js";
 import "../tools/system.js";
 import "../tools/cron.js";
+import "../tools/skill-creator.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 
@@ -55,7 +56,8 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string): 
 
 ## SKILLS.md（技能目录）
 - SKILLS.md 列出当前 Agent 所知技能和工作流程，已在本 session 初始化时一次性加载
-- 需要执行某个工作流程时：根据 SKILLS.md 中的路径读取对应 README.md 并按照执行
+- 需要执行某个工作流程时：根据 SKILLS.md 中的路径读取对应文档文件并按照执行
+- 如需创建新技能，调用 create_skill 工具获取完整指南
 - 如果 SKILLS.md 中找不到对应技能，应告知用户并询问如何继续
 - 要获取最新 SKILLS.md（本 session 内被更新过），用 exec_shell 执行 cat ${skillsFilePath}
 

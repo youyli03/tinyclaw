@@ -6,6 +6,8 @@ export interface ToolContext {
   cwd?: string;
   /** 当前 session 的 ID（供 cron_add 等工具自动绑定 output.sessionId） */
   sessionId?: string;
+  /** 当前 Agent 的 ID */
+  agentId?: string;
 }
 
 export interface ToolDef {

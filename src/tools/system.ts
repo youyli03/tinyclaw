@@ -124,6 +124,49 @@ registerTool({
   execute: deleteFileImpl,
 });
 
+// ── edit_file ─────────────────────────────────────────────────────────────────
+
+async function editFileImpl(args: Record<string, unknown>): Promise<string> {
+  const filePath = String(args["path"] ?? "");
+  const oldStr = String(args["old_str"] ?? "");
+  const newStr = String(args["new_str"] ?? "");
+  if (!filePath) return "错误：缺少 path 参数";
+  if (!oldStr) return "错误：缺少 old_str 参数";
+
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) return `文件不存在：${resolved}`;
+
+  const content = fs.readFileSync(resolved, "utf-8");
+  const count = content.split(oldStr).length - 1;
+  if (count === 0) return `错误：old_str 在文件中未找到，请检查是否完全匹配（含空格/换行）`;
+  if (count > 1) return `错误：old_str 在文件中出现 ${count} 次，必须唯一才能安全替换。请提供更多上下文使其唯一`;
+
+  const updated = content.replace(oldStr, newStr);
+  fs.writeFileSync(resolved, updated, "utf-8");
+  return `已替换：${resolved}`;
+}
+
+registerTool({
+  requiresMFA: true,
+  spec: {
+    type: "function",
+    function: {
+      name: "edit_file",
+      description: "精确替换文件中的一段文本（需要 MFA 确认）。old_str 必须在文件中唯一出现。适合局部修改，避免 write_file 覆写整个文件。",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "文件路径" },
+          old_str: { type: "string", description: "要被替换的原始文本，必须与文件内容完全匹配（含空格、换行），且在文件中唯一出现" },
+          new_str: { type: "string", description: "替换后的新文本" },
+        },
+        required: ["path", "old_str", "new_str"],
+      },
+    },
+  },
+  execute: editFileImpl,
+});
+
 // ── read_file ─────────────────────────────────────────────────────────────────
 
 async function readFileImpl(args: Record<string, unknown>): Promise<string> {
