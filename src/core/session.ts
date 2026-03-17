@@ -97,7 +97,9 @@ export class Session {
     this.rewriteJsonl();
     // 摘要内容在最后一条 assistant 消息中
     const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
-    const summary = summaryMsg?.content.replace(/^\[对话历史摘要\]\n/, "") ?? "";
+    const summary = (typeof summaryMsg?.content === "string"
+      ? summaryMsg.content.replace(/^\[对话历史摘要\]\n/, "")
+      : "") ?? "";
     return summary;
   }
 

@@ -222,9 +222,11 @@ export class LLMClient {
     onChunk: (delta: string) => void,
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
+    const resolvedForStream = resolveMessagesForApi(messages);
     const stream = await this.client.chat.completions.create({
       model: this.backend.model,
-      messages,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: resolvedForStream as any,
       max_tokens: opts.maxTokens ?? this.backend.maxTokens,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       stream: true,

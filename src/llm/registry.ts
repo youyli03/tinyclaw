@@ -61,7 +61,7 @@ class LLMRegistry {
         githubToken: copilotCfg.githubToken,
         model: modelId,
         timeoutMs: role.timeoutMs ?? copilotCfg.timeoutMs,
-        supportsVision: role.supportsVision,
+        ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
       });
       this.clients.set(name, client);
       this.contextWindows.set(name, contextWindow);
@@ -115,7 +115,7 @@ class LLMRegistry {
         model: modelId,
         maxTokens: role.maxTokens ?? openaiCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? openaiCfg.timeoutMs,
-        supportsVision: role.supportsVision,
+        ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
       });
       this.clients.set(name, client);
       return client;

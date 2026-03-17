@@ -53,7 +53,7 @@ export async function summarizeAndCompress(
   // 3. 保留永久性 system messages（BUILTIN_SYSTEM、SYSTEM.md），
   //    过滤掉 QMD 召回注入的临时 system messages
   const systemMessages = messages.filter(
-    (m) => m.role === "system" && !m.content.startsWith("## 相关历史记忆")
+    (m) => m.role === "system" && (typeof m.content === "string" ? !m.content.startsWith("## 相关历史记忆") : true)
   );
   const compressed: ChatMessage[] = [
     ...systemMessages,
