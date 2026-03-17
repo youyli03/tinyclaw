@@ -188,6 +188,8 @@ const MCPStdioServerSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   env: z.record(z.string()).optional(),
+  /** 在 mcp_list_servers 中展示给 Agent 的服务描述 */
+  description: z.string().optional(),
 });
 
 const MCPSSEServerSchema = z.object({
@@ -195,6 +197,8 @@ const MCPSSEServerSchema = z.object({
   transport: z.literal("sse"),
   url: z.string().url(),
   headers: z.record(z.string()).optional(),
+  /** 在 mcp_list_servers 中展示给 Agent 的服务描述 */
+  description: z.string().optional(),
 });
 
 const MCPServerSchema = z.discriminatedUnion("transport", [

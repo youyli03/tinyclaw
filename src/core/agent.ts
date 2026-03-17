@@ -18,6 +18,7 @@ import "../tools/code-assist.js";
 import "../tools/system.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
+import "../tools/mcp-manager.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
@@ -258,15 +259,16 @@ export async function runAgent(
   session.llmAbortController = llmAc;
 
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
-  const tools = getAllToolSpecs();
+  // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
+  const initialTools = getAllToolSpecs();
   const textMode = !client.supportsToolCalls;
 
   // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
   // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
   {
     let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision);
-    if (textMode && tools.length > 0) {
-      sysPrompt += "\n\n" + buildTextBasedToolInstructions(tools);
+    if (textMode && initialTools.length > 0) {
+      sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
     }
     session.replaceOrPrependSystemMessage(sysPrompt);
   }
@@ -287,6 +289,9 @@ export async function runAgent(
 
   // 4. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
+    const tools = getAllToolSpecs();
+
     // ── LLM 调用（支持 AbortSignal）──────────────────────────────────────
     let response: ChatResult;
     try {
