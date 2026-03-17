@@ -22,6 +22,7 @@ import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/at
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
+import { mcpManager } from "./mcp/client.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -52,6 +53,9 @@ async function main(): Promise<void> {
   // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
   await llmRegistry.init();
   console.log(`[tinyclaw] LLM backend ready (model=${llmRegistry.get("daily").model})`);
+
+  // 3. 初始化 MCP servers（读取 ~/.tinyclaw/mcp.toml，注册工具到 registry）
+  await mcpManager.init();
 
   // 初始化 Agent 工作区（确保 default agent 存在）
   agentManager.ensureDefault();

@@ -180,6 +180,34 @@ const ToolsSchema = z.object({
   code_assist: CodeAssistSchema.default({}),
 }).default({});
 
+// ── MCP 服务器配置（独立文件 ~/.tinyclaw/mcp.toml）────────────────────────────
+
+const MCPStdioServerSchema = z.object({
+  enabled: z.boolean().default(true),
+  transport: z.literal("stdio"),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string()).optional(),
+});
+
+const MCPSSEServerSchema = z.object({
+  enabled: z.boolean().default(true),
+  transport: z.literal("sse"),
+  url: z.string().url(),
+  headers: z.record(z.string()).optional(),
+});
+
+const MCPServerSchema = z.discriminatedUnion("transport", [
+  MCPStdioServerSchema,
+  MCPSSEServerSchema,
+]);
+export type MCPServerConfig = z.infer<typeof MCPServerSchema>;
+
+export const MCPConfigSchema = z.object({
+  servers: z.record(MCPServerSchema).default({}),
+}).default({ servers: {} });
+export type MCPConfig = z.infer<typeof MCPConfigSchema>;
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({

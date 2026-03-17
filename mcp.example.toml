@@ -1,0 +1,46 @@
+# tinyclaw MCP 服务器配置
+# 复制到 ~/.tinyclaw/mcp.toml 后编辑使用
+# 警告：mcp.toml 已加入 .gitignore，请勿提交含密钥的配置
+
+# ── 每个 [servers.NAME] 定义一个 MCP server ───────────────────────────────────
+# enabled = false 可快速禁用而不删除配置（默认 true）
+# transport = "stdio"（子进程）或 "sse"（HTTP/SSE 远程）
+
+# ── stdio 示例：官方 fetch server（网页内容抓取）────────────────────────────────
+# [servers.fetch]
+# enabled = true
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-fetch"]
+
+# ── stdio 示例：Playwright 浏览器自动化（截图/点击/表单）───────────────────────
+# [servers.playwright]
+# enabled = false
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@playwright/mcp@latest", "--headless"]
+#
+# 若需要某工具触发 MFA，在 config.toml 的 auth.mfa.tools 里填写工具全名：
+# tools = ["mcp_playwright_browser_navigate", "mcp_playwright_browser_click"]
+
+# ── stdio 示例：文件系统访问（限定目录）──────────────────────────────────────────
+# [servers.filesystem]
+# enabled = false
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/lyy/workspace"]
+
+# ── stdio 示例：带自定义环境变量────────────────────────────────────────────────
+# [servers.my-server]
+# enabled = false
+# transport = "stdio"
+# command = "/usr/local/bin/my-mcp-server"
+# args = ["--port", "3001"]
+# env = { MY_API_KEY = "secret", LOG_LEVEL = "info" }
+
+# ── sse 示例：远程 HTTP/SSE MCP server ──────────────────────────────────────────
+# [servers.remote-api]
+# enabled = false
+# transport = "sse"
+# url = "http://localhost:3000/sse"
+# headers = { Authorization = "Bearer your-token-here" }

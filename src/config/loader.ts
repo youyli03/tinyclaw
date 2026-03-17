@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig } from "./schema.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -80,4 +80,24 @@ export function getDataFile(...segments: string[]): string {
 /** 仅在测试中用于重置单例缓存 */
 export function _resetConfigCache(): void {
   cached = null;
+}
+
+/** 加载 ~/.tinyclaw/mcp.toml，文件不存在时返回空配置（非致命）。 */
+export function loadMcpConfig(): MCPConfig {
+  const mcpPath = path.join(os.homedir(), ".tinyclaw", "mcp.toml");
+  let raw: unknown;
+  try {
+    raw = parse(fs.readFileSync(mcpPath, "utf-8"));
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[tinyclaw] 无法读取 mcp.toml：${err}`);
+    }
+    return MCPConfigSchema.parse({});
+  }
+  const result = MCPConfigSchema.safeParse(raw);
+  if (!result.success) {
+    console.warn(`[tinyclaw] mcp.toml 验证失败，使用空 MCP 配置：${result.error.message}`);
+    return MCPConfigSchema.parse({});
+  }
+  return result.data;
 }
