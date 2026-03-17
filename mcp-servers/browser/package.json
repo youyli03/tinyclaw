@@ -1,0 +1,10 @@
+{
+  "name": "tinyclaw-mcp-browser",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Playwright browser automation MCP server for tinyclaw",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "playwright-core": "^1.50.0"
+  }
+}

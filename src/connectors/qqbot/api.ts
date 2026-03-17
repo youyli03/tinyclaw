@@ -15,6 +15,15 @@ export function initMarkdownSupport(enabled: boolean): void {
   markdownSupport = enabled;
 }
 
+/** 每个 msg_id 对应的下一个 msg_seq 值（从 1 开始递增），用于避免去重错误 */
+const msgSeqCounter = new Map<string, number>();
+
+function nextMsgSeq(msgId: string): number {
+  const seq = (msgSeqCounter.get(msgId) ?? 0) + 1;
+  msgSeqCounter.set(msgId, seq);
+  return seq;
+}
+
 function buildBody(
   content: string,
   extras?: Record<string, unknown>
@@ -100,7 +109,8 @@ export async function sendC2CMessage(
   content: string,
   msgId: string
 ): Promise<void> {
-  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId }));
+  const msg_seq = nextMsgSeq(msgId);
+  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }));
 }
 
 /** 群消息被动回复 */
@@ -110,7 +120,8 @@ export async function sendGroupMessage(
   content: string,
   msgId: string
 ): Promise<void> {
-  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId }));
+  const msg_seq = nextMsgSeq(msgId);
+  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }));
 }
 
 /** 频道消息回复 */

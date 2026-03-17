@@ -36,6 +36,16 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
   const skillsFilePath = join(agentDir, 'SKILLS.md');
   return `你是 tinyclaw，一个简洁高效的 AI 助手。
 
+## 工具使用优先级
+
+处理任务时，按以下顺序选择执行方式：
+
+1. **内置工具**（exec_shell / write_file / read_file / code_assist 等）——直接调用，响应最快
+2. **MCP 工具**（mcp_* 前缀）——若内置工具无法满足，先用 mcp_list_servers 查看可用服务，再用 mcp_enable_server 激活对应服务后调用其工具
+3. **Skill（工作流文档）**——若前两类均不适用，查阅 SKILLS.md 找到对应技能文档并按步骤执行
+
+不要跳级使用：能用内置工具解决的，不必启动 MCP 服务；能用 MCP 工具解决的，不必手动执行 Skill 脚本。
+
 ## code_assist 工具使用规范
 - 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
 - code_assist 没有对话历史，每次调用是独立会话，task 参数必须自包含完整背景：
