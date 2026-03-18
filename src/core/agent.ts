@@ -298,9 +298,12 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   const client = llmRegistry.get("daily");
   const toolsUsed: string[] = [];
-  const sid = session.sessionId.slice(-12);
+  // slave session ID 格式为 "slave:abc12345"，显示为 "[slave:abc12345]"；其他 session 取末尾 12 位
+  const isSlave = session.sessionId.startsWith("slave:");
+  const sid = isSlave ? session.sessionId.slice("slave:".length) : session.sessionId.slice(-12);
+  const logPrefix = isSlave ? `[slave:${sid}]` : `[agent] ${sid}`;
   const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
-  console.log(`[agent] ${sid} ← "${msgPreview}${userContent.length > 60 ? "…" : ""}"`);
+  console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "…" : ""}"`);
   const startMs = Date.now();
 
   // ── 前置：重置并发控制状态，创建新 AbortController ───────────────────────
@@ -487,7 +490,7 @@ export async function runAgent(
       }
 
       // ── 执行工具 ──────────────────────────────────────────────────────
-      console.log(`[agent] ${sid} tool: ${toolCallSummary(call.name, call.args)}`);
+      console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
       let result: string;
       const currentDepth = opts.slaveDepth ?? 0;
       try {
@@ -556,9 +559,9 @@ export async function runAgent(
   const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
   const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {
-    console.log(`[agent] ${sid} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`);
+    console.log(`${logPrefix} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`);
   } else {
-    console.log(`[agent] ${sid} → done in ${elapsed}s [${tokenInfo}]`);
+    console.log(`${logPrefix} → done in ${elapsed}s [${tokenInfo}]`);
   }
 
   return { content: finalContent, toolsUsed };

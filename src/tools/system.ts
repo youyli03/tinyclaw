@@ -24,6 +24,12 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
       ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
     });
 
+    // 若是 slave session，打印子进程 PID（便于追踪或手动 kill）
+    if (ctx?.sessionId?.startsWith("slave:") && child.pid != null) {
+      const slaveId = ctx.sessionId.slice("slave:".length);
+      console.log(`[slave:${slaveId}] exec pid=${child.pid}: ${command.slice(0, 80)}${command.length > 80 ? "…" : ""}`);
+    }
+
     child.stdout.on("data", (d: Buffer) => chunks.push(d));
     child.stderr.on("data", (d: Buffer) => errChunks.push(d));
 
