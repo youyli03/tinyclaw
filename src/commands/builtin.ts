@@ -140,23 +140,40 @@ registerCommand({
 
 registerCommand({
   name: "ping",
-  description: "测试 LLM 服务连通性（发送最小请求并返回延迟）",
+  description: "测试 LLM 服务连通性（流式请求，报告首 token 延迟 TTFT）",
   usage: "/ping",
   async execute() {
     const client = llmRegistry.get("daily");
     const model = client.model;
+    const ac = new AbortController();
+    let ttft: number | null = null;
     const start = Date.now();
+
     try {
-      await client.chat([{ role: "user", content: "Hi" }], {
-        maxTokens: 1,
-        tool_choice: "none",
-      });
-      const latencyMs = Date.now() - start;
-      return `🏓 **pong** — LLM 服务正常\n模型：\`${model}\`\n延迟：${latencyMs} ms`;
+      await client.streamChat(
+        [{ role: "user", content: "Hi" }],
+        (_delta) => {
+          if (ttft === null) {
+            ttft = Date.now() - start;
+            ac.abort(); // 收到首个 token 后立即中断流
+          }
+        },
+        { signal: ac.signal, tool_choice: "none" }
+      );
     } catch (err) {
-      const latencyMs = Date.now() - start;
-      const msg = err instanceof Error ? err.message : String(err);
-      return `❌ **LLM 连通性测试失败**（${latencyMs} ms）\n模型：\`${model}\`\n错误：${msg}`;
+      // ac.abort() 会触发 AbortError — 这是预期的成功路径
+      if (!ac.signal.aborted) {
+        const latencyMs = Date.now() - start;
+        const msg = err instanceof Error ? err.message : String(err);
+        return `❌ **LLM 连通性测试失败**（${latencyMs} ms）\n模型：\`${model}\`\n错误：${msg}`;
+      }
     }
+
+    const totalMs = Date.now() - start;
+    if (ttft !== null) {
+      return `🏓 **pong** — LLM 服务正常\n模型：\`${model}\`\nTTFT：${ttft} ms（首 token）\n总耗时：${totalMs} ms`;
+    }
+    // 流正常结束但没有 token（空响应）
+    return `🏓 **pong** — 连接成功，但未收到 token\n模型：\`${model}\`\n总耗时：${totalMs} ms`;
   },
 });

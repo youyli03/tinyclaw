@@ -237,20 +237,24 @@ export class LLMClient {
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
     const resolvedForStream = resolveMessagesForApi(messages);
-    const stream = await this.client.chat.completions.create({
-      model: this.backend.model,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      messages: resolvedForStream as any,
-      max_tokens: opts.maxTokens ?? this.backend.maxTokens,
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-      stream: true,
-      stream_options: { include_usage: true },
-    });
+    const stream = await this.client.chat.completions.create(
+      {
+        model: this.backend.model,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: resolvedForStream as any,
+        max_tokens: opts.maxTokens ?? this.backend.maxTokens,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+      opts.signal ? { signal: opts.signal } : undefined
+    );
 
     let fullContent = "";
     let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     for await (const chunk of stream) {
+      if (opts.signal?.aborted) break;
       const delta = chunk.choices[0]?.delta?.content ?? "";
       if (delta) {
         fullContent += delta;
