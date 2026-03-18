@@ -41,6 +41,8 @@ class CronScheduler {
   private connector: Connector | null = null;
   /** jobId → timer handle */
   private timers = new Map<string, ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>>();
+  /** 正在执行的 jobId 集合（并发保护：同一 job 不允许多个实例同时运行） */
+  private running = new Set<string>();
 
   async start(connector: Connector): Promise<void> {
     this.connector = connector;
@@ -139,12 +141,20 @@ class CronScheduler {
   }
 
   private async fire(job: CronJob): Promise<void> {
+    if (this.running.has(job.id)) {
+      const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      console.warn(`[${ts}] [cron] Job ${job.id} skipped: previous run still in progress`);
+      return;
+    }
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     console.log(`[${ts}] [cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`);
+    this.running.add(job.id);
     try {
       await runJob(job, this.connector);
     } catch (err) {
       console.error(`[cron] Job ${job.id} failed:`, err);
+    } finally {
+      this.running.delete(job.id);
     }
   }
 }

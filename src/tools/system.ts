@@ -5,6 +5,9 @@ import { registerTool, type ToolContext } from "./registry.js";
 
 // ── exec_shell ────────────────────────────────────────────────────────────────
 
+/** exec_shell 输出最大字符数，超出时截断并附注原始大小，防止超大输出撑爆 session 上下文 */
+const MAX_EXEC_OUTPUT = 8_000;
+
 async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
@@ -27,9 +30,13 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
     child.on("close", (code) => {
       const stdout = Buffer.concat(chunks).toString("utf-8").trim();
       const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
-      const output = [stdout, stderr ? `[stderr] ${stderr}` : ""]
+      let output = [stdout, stderr ? `[stderr] ${stderr}` : ""]
         .filter(Boolean)
         .join("\n");
+      if (output.length > MAX_EXEC_OUTPUT) {
+        output = output.slice(0, MAX_EXEC_OUTPUT) +
+          `\n[…输出已截断：共 ${output.length} 字符，仅显示前 ${MAX_EXEC_OUTPUT} 字符]`;
+      }
       resolve(output || `（退出码 ${code}，无输出）`);
     });
 

@@ -165,9 +165,7 @@ async function main(): Promise<void> {
         onMFAPrompt: (statusMsg: string) => {
           void connector.send(msg.peerId, msg.type, statusMsg);
         },
-        onHeartbeat: (hbMsg: string) => {
-          void connector.send(msg.peerId, msg.type, hbMsg);
-        },
+        // 后台注入不需要心跳：用户没有主动发起请求，不应收到「仍在处理中」消息
         onCompress: (phase, summary) => {
           if (phase === "start") {
             void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");

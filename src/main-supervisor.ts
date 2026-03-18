@@ -36,6 +36,33 @@ let restartCount = 0;
 let child: ChildProcess | null = null;
 let shuttingDown = false;
 
+// 启动前检查并清理残留的旧实例（防止多个 supervisor 并行运行）
+async function killStaleInstance(): Promise<void> {
+  if (!fs.existsSync(SERVICE_PID_FILE)) return;
+  let stalePid: number;
+  try {
+    stalePid = parseInt(fs.readFileSync(SERVICE_PID_FILE, "utf-8").trim(), 10);
+  } catch { return; }
+  if (!stalePid || isNaN(stalePid) || stalePid === process.pid) return;
+  try { process.kill(stalePid, 0); } catch { return; } // 进程不存在，无需清理
+
+  console.log(`[supervisor] 发现残留实例（PID ${stalePid}），正在终止…`);
+  try { process.kill(stalePid, "SIGTERM"); } catch { return; }
+
+  // 等待最多 5s 让旧进程优雅退出
+  for (let i = 0; i < 25; i++) {
+    await new Promise<void>((r) => setTimeout(r, 200));
+    try { process.kill(stalePid, 0); } catch { return; } // 已退出
+  }
+
+  // 超时：强制终止
+  console.warn(`[supervisor] 旧实例未在 5s 内退出，强制终止（SIGKILL）`);
+  try { process.kill(stalePid, "SIGKILL"); } catch { /* already gone */ }
+  await new Promise<void>((r) => setTimeout(r, 300));
+}
+
+await killStaleInstance();
+
 // 写入 supervisor 自身的 PID（restart 命令 kill 此 PID → supervisor 转发给 main → 优雅退出）
 try {
   fs.mkdirSync(path.dirname(SERVICE_PID_FILE), { recursive: true });
