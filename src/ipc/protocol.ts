@@ -41,7 +41,13 @@ export type IpcRequest =
   | { type: "list" }
   | { type: "new"; agentId?: string }
   | { type: "cron_trigger"; jobId: string }
-  | { type: "memorize"; sessionId: string };
+  | { type: "memorize"; sessionId: string }
+  /**
+   * 软中断指定 session 的 runAgent() 循环。
+   * idOrSuffix 可为完整 sessionId，或 sessionId 的末尾子串（如日志中显示的 12 位后缀）。
+   * 返回 aborted（已中断）或 not_found。
+   */
+  | { type: "abort_session"; idOrSuffix: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
@@ -53,7 +59,9 @@ export type IpcResponse =
   | { type: "mfa_request"; warningMessage: string }
   | { type: "cron_triggered"; jobId: string }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
-  | { type: "memorized"; summary: string };
+  | { type: "memorized"; summary: string }
+  /** abort_session 请求的响应 */
+  | { type: "session_aborted"; sessionId: string; found: boolean };
 
 export type IpcClientMessage =
   | IpcRequest

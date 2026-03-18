@@ -220,3 +220,49 @@ export async function memorizeSession(sessionId: string): Promise<string> {
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
+
+/**
+ * 中断正在运行的指定 session 的 runAgent() 循环。
+ * @param idOrSuffix 完整 sessionId 或其末尾子串（日志中显示的 12 位短 ID 也可）
+ * @returns { found: boolean, sessionId: string }
+ */
+export async function abortSession(idOrSuffix: string): Promise<{ found: boolean; sessionId: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "abort_session", idOrSuffix };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "session_aborted") {
+          settle(() => resolve({ found: resp.found, sessionId: resp.sessionId }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}

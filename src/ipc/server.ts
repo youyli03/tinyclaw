@@ -173,6 +173,32 @@ async function handleRequest(
     return;
   }
 
+  // ── abort_session 请求：中断指定 session 的 runAgent() 循环 ─────────────────
+  if (req.type === "abort_session") {
+    const { idOrSuffix } = req as { type: "abort_session"; idOrSuffix: string };
+    // 先精确匹配，再按末尾 suffix 匹配（支持日志中的 12 位短 ID）
+    let target = sessions.get(idOrSuffix);
+    let matchedId = idOrSuffix;
+    if (!target) {
+      for (const [id, sess] of sessions) {
+        if (id.endsWith(idOrSuffix)) {
+          target = sess;
+          matchedId = id;
+          break;
+        }
+      }
+    }
+    if (!target) {
+      send({ type: "session_aborted", sessionId: idOrSuffix, found: false });
+      return;
+    }
+    target.abortRequested = true;
+    target.llmAbortController?.abort();
+    target.abortPendingApproval();
+    send({ type: "session_aborted", sessionId: matchedId, found: true });
+    return;
+  }
+
   const { sessionId, message } = req as { type: "chat"; sessionId: string; message: string };
 
   // 防御：sessionId 或 message 缺失时拒绝处理（可能来自不兼容的旧客户端）
