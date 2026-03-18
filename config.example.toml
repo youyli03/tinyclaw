@@ -84,6 +84,11 @@ clientSecret = "your-client-secret"
 # markdownSupport = true          # 是否启用 markdown 消息格式
 # imageServerPort = 18765         # 图床本地端口
 
+# ── Agent 行为 ─────────────────────────────────────────────────────────────────
+# heartbeatIntervalSecs：LLM 流式调用期间每隔多少秒推送"仍在处理中"消息，0 = 关闭
+# [agent]
+# heartbeatIntervalSecs = 120   # 默认 2 分钟，避免用户误以为 Agent 卡死
+
 # ── 向量记忆 ───────────────────────────────────────────────────────────────────
 # embedModel 首次运行自动从 HuggingFace 下载
 # 切换模型后需删除 ~/.tinyclaw/memory/index.sqlite 重新索引

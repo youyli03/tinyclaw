@@ -251,6 +251,11 @@ export interface AgentRunOptions {
    */
   onProgressNotify?: import("../tools/registry.js").ToolContext["onProgressNotify"];
   /**
+   * LLM 调用心跳回调（由 main.ts 注入）。
+   * 流式请求期间每隔 agent.heartbeatIntervalSecs 秒调用一次，向用户推送"仍在处理中"。
+   */
+  onHeartbeat?: (message: string) => void;
+  /**
    * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
    * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
    * slaveRunFn，agent_fork 工具会返回明确错误，防止无限嵌套或结果丢失。
@@ -337,25 +342,44 @@ export async function runAgent(
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     const tools = getAllToolSpecs();
 
-    // ── LLM 调用（支持 AbortSignal）──────────────────────────────────────
+    // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
-    try {
-      response = await client.chat(session.getMessages(), {
-        ...(tools.length > 0 && client.supportsToolCalls
-          ? { tools, tool_choice: "auto" }
-          : {}),
-        signal: llmAc.signal,
-      });
-    } catch (err) {
-      // AbortError = 被软中断打断，干净退出循环
-      if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
-        break;
+    {
+      const heartbeatSecs = loadConfig().agent.heartbeatIntervalSecs;
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+      const roundStart = Date.now();
+
+      if (heartbeatSecs > 0 && opts.onHeartbeat) {
+        heartbeatTimer = setInterval(() => {
+          const elapsed = Math.round((Date.now() - roundStart) / 1000);
+          opts.onHeartbeat!(`⏳ Agent 仍在处理中，请稍候…（已用时 ${elapsed}s）`);
+        }, heartbeatSecs * 1000);
       }
-      // 连接彻底失败：回滚本次注入的消息，保持 session 状态干净，无需重启
-      if (err instanceof LLMConnectionError) {
-        session.trimToLength(preRunLength);
+
+      try {
+        response = await client.streamChat(
+          session.getMessages(),
+          (delta) => opts.onChunk?.(delta),
+          {
+            ...(tools.length > 0 && client.supportsToolCalls
+              ? { tools, tool_choice: "auto" }
+              : {}),
+            signal: llmAc.signal,
+          }
+        );
+      } catch (err) {
+        // AbortError = 被软中断打断，干净退出循环
+        if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
+          break;
+        }
+        // 连接彻底失败：回滚本次注入的消息，保持 session 状态干净，无需重启
+        if (err instanceof LLMConnectionError) {
+          session.trimToLength(preRunLength);
+        }
+        throw err;
+      } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
-      throw err;
     }
 
     lastUsage = response.usage;

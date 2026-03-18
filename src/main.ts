@@ -165,6 +165,9 @@ async function main(): Promise<void> {
         onMFAPrompt: (statusMsg: string) => {
           void connector.send(msg.peerId, msg.type, statusMsg);
         },
+        onHeartbeat: (hbMsg: string) => {
+          void connector.send(msg.peerId, msg.type, hbMsg);
+        },
         onCompress: (phase, summary) => {
           if (phase === "start") {
             void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");
@@ -231,6 +234,9 @@ async function main(): Promise<void> {
       },
       onMFAPrompt: (statusMsg: string) => {
         void connector.send(msg.peerId, msg.type, statusMsg);
+      },
+      onHeartbeat: (msg2: string) => {
+        void connector.send(msg.peerId, msg.type, msg2);
       },
       onCompress: (phase, summary) => {
         if (phase === "start") {

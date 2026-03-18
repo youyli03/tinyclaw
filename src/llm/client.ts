@@ -228,14 +228,16 @@ export class LLMClient {
   }
 
   /**
-   * 流式聊天，逐 chunk 回调。
-   * 返回完整文本和最终 usage（部分 provider 流式不返回 usage，此时为 0）。
+   * 流式聊天，逐 chunk 回调。支持 tool_calls（function calling）。
+   * 返回完整文本、toolCalls 和最终 usage（部分 provider 流式不返回 usage，此时为 0）。
    */
   async streamChat(
     messages: ChatMessage[],
     onChunk: (delta: string) => void,
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
+    const canUseTools =
+      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
     const resolvedForStream = resolveMessagesForApi(messages);
     const stream = await this.client.chat.completions.create(
       {
@@ -244,6 +246,9 @@ export class LLMClient {
         messages: resolvedForStream as any,
         max_tokens: opts.maxTokens ?? this.backend.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        ...(canUseTools
+          ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
+          : {}),
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -252,14 +257,36 @@ export class LLMClient {
 
     let fullContent = "";
     let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    // 聚合流式 tool_calls delta（各 index 独立累积）
+    const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
 
     for await (const chunk of stream) {
       if (opts.signal?.aborted) break;
-      const delta = chunk.choices[0]?.delta?.content ?? "";
-      if (delta) {
-        fullContent += delta;
-        onChunk(delta);
+      const delta = chunk.choices[0]?.delta;
+
+      // 文本 delta
+      const textDelta = delta?.content ?? "";
+      if (textDelta) {
+        fullContent += textDelta;
+        onChunk(textDelta);
       }
+
+      // 工具调用 delta（按 index 聚合）
+      for (const tcDelta of delta?.tool_calls ?? []) {
+        const idx = tcDelta.index;
+        if (!toolCallAcc[idx]) {
+          toolCallAcc[idx] = {
+            id: tcDelta.id ?? "",
+            name: tcDelta.function?.name ?? "",
+            arguments: "",
+          };
+        } else {
+          if (tcDelta.id) toolCallAcc[idx]!.id = tcDelta.id;
+          if (tcDelta.function?.name) toolCallAcc[idx]!.name = tcDelta.function.name;
+        }
+        toolCallAcc[idx]!.arguments += tcDelta.function?.arguments ?? "";
+      }
+
       if (chunk.usage) {
         usage = {
           promptTokens: chunk.usage.prompt_tokens,
@@ -269,6 +296,21 @@ export class LLMClient {
       }
     }
 
-    return { content: fullContent, usage };
+    const toolCalls: ToolCallResult[] | undefined =
+      toolCallAcc.length > 0
+        ? toolCallAcc.map((tc) => ({
+            name: tc.name,
+            callId: tc.id,
+            args: (() => {
+              try {
+                return JSON.parse(tc.arguments) as Record<string, unknown>;
+              } catch {
+                return {} as Record<string, unknown>;
+              }
+            })(),
+          }))
+        : undefined;
+
+    return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
   }
 }

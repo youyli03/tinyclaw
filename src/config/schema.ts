@@ -212,11 +212,24 @@ export const MCPConfigSchema = z.object({
 }).default({ servers: {} });
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 
+// ── Agent 行为配置 ────────────────────────────────────────────────────────────
+
+const AgentSchema = z.object({
+  /**
+   * LLM 流式调用期间的心跳推送间隔（秒）。
+   * 模型思考时间较长时，每隔该时间向用户推送"仍在处理中"提示，避免用户误以为卡死。
+   * 0 = 关闭心跳。默认 120（2 分钟）。
+   */
+  heartbeatIntervalSecs: z.number().int().min(0).default(120),
+}).default({});
+export type AgentConfig = z.infer<typeof AgentSchema>;
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
   providers: ProvidersSchema,
   llm: LLMSchema,
+  agent: AgentSchema,
   auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
