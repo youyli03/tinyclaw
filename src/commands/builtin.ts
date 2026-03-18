@@ -97,7 +97,26 @@ registerCommand({
   },
 });
 
-// ── /slaves ───────────────────────────────────────────────────────────────────
+// ── /save ─────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "save",
+  description: "立即整理当前 session 的记忆（压缩 → 持久化 → 向量化）",
+  usage: "/save",
+  async execute({ session }) {
+    if (session.running) {
+      return "⚠️ 当前有任务正在运行，请等待完成后再整理记忆。";
+    }
+    try {
+      const summary = await session.compress();
+      return `✅ 记忆已整理完成\n\n${summary}`;
+    } catch (err) {
+      return `❌ 记忆整理失败：${err instanceof Error ? err.message : String(err)}`;
+    }
+  },
+});
+
+
 
 registerCommand({
   name: "slaves",
