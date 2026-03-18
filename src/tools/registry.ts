@@ -1,4 +1,6 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import type { Session } from "../core/session.js";
+import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
 
 /** 工具执行上下文（由 runAgent 提供） */
 export interface ToolContext {
@@ -8,6 +10,18 @@ export interface ToolContext {
   sessionId?: string;
   /** 当前 Agent 的 ID */
   agentId?: string;
+  /** 当前 Master Session（供 agent_fork 读取上下文快照） */
+  masterSession?: Session;
+  /**
+   * runAgent 的引用（由 agent.ts 注入，避免 tools → agent.ts 的循环依赖）。
+   * 供 agent_fork 工具传给 SlaveManager.fork()。
+   */
+  slaveRunFn?: SlaveRunFn;
+  /**
+   * Slave 完成时的通知回调（由 main.ts 注入）。
+   * 负责等待 Master 当前 run 结束、触发新的 runAgent、推送结果给用户。
+   */
+  onSlaveComplete?: (notif: SlaveNotification) => Promise<void>;
 }
 
 export interface ToolDef {

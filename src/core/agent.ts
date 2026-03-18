@@ -20,9 +20,12 @@ import "../tools/system.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
 import "../tools/mcp-manager.js";
+import "../tools/agent-fork.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
+/** Slave 最大嵌套深度：0=Master，1=一级Slave，不允许 Slave 再 fork */
+const MAX_SLAVE_DEPTH = 1;
 
 /**
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
@@ -91,13 +94,25 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
-- 用中文回复，简洁明了${supportsVision ? `
+- 用中文回复，简洁明了
+
+## 后台任务（agent_fork）
+
+对于耗时较长（预计 >10 秒）或可以与其他工作并行的任务，优先使用 **agent_fork** 在后台异步执行，不要让用户等待：
+
+- **适合后台**：长时间编译、依赖安装、大文件处理、网络抓取、多步骤数据分析等
+- **不适合后台**：需要立即回复用户的简单问题、需要追问确认的任务、极短操作
+
+使用方式：
+1. 调用 agent_fork(task="完整任务描述") → 立即返回 slave_id，继续响应用户
+2. 告知用户后台任务已启动，将在完成后自动通知
+3. 可随时调用 agent_status() 列出全部后台任务及进度（status_filter="running" 只看运行中），或 agent_status(slave_id="xxx") 查询特定任务
+4. 若需取消，调用 agent_abort(slave_id="xxx")${supportsVision ? `
 
 ## 视觉能力
 - 你当前使用的模型支持直接读取图片，不需要 OCR 工具
 - 用户发送的图片会被自动附加到消息中，你可以直接描述和分析图片内容
-- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}`;
-}
+- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}`;}
 
 /**
  * 为不支持 function calling 的模型生成文字版工具描述和调用格式说明（追加到 system prompt）。
@@ -225,6 +240,17 @@ export interface AgentRunOptions {
    * phase="start" 在压缩开始前调用，phase="done" 完成后调用（含摘要文本）。
    */
   onCompress?: (phase: "start" | "done", summary?: string) => void;
+  /**
+   * Slave agent 完成时的通知回调（由 main.ts 注入）。
+   * 负责等待 Master 当前 run 结束、触发新的 runAgent、推送结果给用户。
+   */
+  onSlaveComplete?: import("../tools/registry.js").ToolContext["onSlaveComplete"];
+  /**
+   * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
+   * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
+   * slaveRunFn，agent_fork 工具会返回明确错误，防止无限嵌套或结果丢失。
+   */
+  slaveDepth?: number;
 }
 
 export interface AgentRunResult {
@@ -430,8 +456,19 @@ export async function runAgent(
       // ── 执行工具 ──────────────────────────────────────────────────────
       console.log(`[agent] ${sid} tool: ${toolCallSummary(call.name, call.args)}`);
       let result: string;
+      const currentDepth = opts.slaveDepth ?? 0;
       try {
-        result = await executeTool(call.name, call.args, { cwd: agentManager.workspaceDir(session.agentId), sessionId: session.sessionId });
+        result = await executeTool(call.name, call.args, {
+          cwd: agentManager.workspaceDir(session.agentId),
+          sessionId: session.sessionId,
+          agentId: session.agentId,
+          masterSession: session,
+          // 只有未达深度上限时才注入 slaveRunFn；Slave 调用 agent_fork 时会收到明确错误
+          ...(currentDepth < MAX_SLAVE_DEPTH
+            ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1 }) }
+            : {}),
+          ...(opts.onSlaveComplete ? { onSlaveComplete: opts.onSlaveComplete } : {}),
+        });
       } catch (err) {
         if (err instanceof MFAError) {
           result = `操作被取消：${err.message}`;

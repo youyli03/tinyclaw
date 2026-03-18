@@ -23,6 +23,7 @@ import { validateMediaContent, extractTextContent } from "./connectors/qqbot/out
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { mcpManager } from "./mcp/client.js";
+import type { SlaveNotification } from "./core/slave-manager.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -102,7 +103,76 @@ async function main(): Promise<void> {
 
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 60;
+
+    /**
+     * Slave 完成时的通知回调：
+     * 1. 等待 Master 当前 run 结束（如果正在运行）
+     * 2. 调用 runAgent 将 slave 结果注入 Master session
+     * 3. 通过 connector 推送给用户
+     */
+    const onSlaveComplete = async (notif: SlaveNotification): Promise<void> => {
+      const targetSession = sessions.get(notif.masterSessionId);
+      if (!targetSession) {
+        console.warn(`[slave:${notif.slaveId}] master session ${notif.masterSessionId} not found`);
+        return;
+      }
+
+      // 等待 Master 当前任务完成（避免并发写入 session）
+      if (targetSession.running && targetSession.currentRunPromise) {
+        await targetSession.currentRunPromise.catch(() => {});
+      }
+
+      // 构建注入内容
+      const statusIcon = notif.status === "done" ? "✅" : notif.status === "error" ? "❌" : "⛔";
+      const content =
+        `<slave-results>\n` +
+        `[slave:${notif.slaveId}] ${statusIcon} 后台任务已完成\n` +
+        `任务：${notif.task}\n` +
+        `状态：${notif.status}\n` +
+        `结果：\n${notif.result || "（无输出）"}\n` +
+        `</slave-results>`;
+
+      // 重用当前连接的 MFA/Compress 回调（peerId/msgType 通过闭包捕获）
+      const slaveOpts: AgentRunOptions = {
+        onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
+          return connector.buildMFARequest(
+            msg.peerId, msg.type, warningMsg,
+            mfaTimeoutSecs * 1000,
+            verifyCode
+          );
+        },
+        onMFAPrompt: (statusMsg: string) => {
+          void connector.send(msg.peerId, msg.type, statusMsg);
+        },
+        onCompress: (phase, summary) => {
+          if (phase === "start") {
+            void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");
+          } else if (phase === "done" && summary) {
+            void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`);
+          }
+        },
+        // 不传 onSlaveComplete，避免 Slave 触发递归 fork
+      };
+
+      // 将 slave 结果注入 Master session 并运行 agent → 通知用户
+      targetSession.running = true;
+      const slaveRunPromise = runAgent(targetSession, content, slaveOpts);
+      targetSession.currentRunPromise = slaveRunPromise;
+      try {
+        const runResult = await slaveRunPromise;
+        if (runResult.content) {
+          await connector.send(msg.peerId, msg.type, runResult.content).catch(() => {});
+        }
+      } catch (err) {
+        console.error(`[slave:${notif.slaveId}] master inject error:`, err);
+      } finally {
+        targetSession.running = false;
+        targetSession.currentRunPromise = null;
+      }
+    };
+
     const opts: AgentRunOptions = {
+      onSlaveComplete,
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
           msg.peerId, msg.type, warningMsg,
