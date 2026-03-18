@@ -76,7 +76,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   agent:       ["list", "new", "show", "edit", "delete", "repair"],
   cron:        ["list", "add", "remove", "enable", "disable", "run", "logs", "help"],
   memory:      ["save", "list", "search", "index", "help"],
-  session:     ["list", "abort", "help"],
+  session:     ["list", "abort", "memory", "help"],
   logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
