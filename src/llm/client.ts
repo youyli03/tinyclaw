@@ -1,10 +1,12 @@
-import OpenAI, { APIConnectionError } from "openai";
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError } from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { readFileSync, existsSync } from "node:fs";
 import { extname } from "node:path";
 
-/** 是否为可重试的瞬态连接错误 */
+/** 是否为可重试的瞬态连接错误（超时不重试，直接上报） */
 function isRetryableError(err: unknown): boolean {
+  // 超时单独处理：不重试，让调用方立即收到错误并回滚 session
+  if (err instanceof APIConnectionTimeoutError) return false;
   if (err instanceof APIConnectionError) return true;
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
@@ -13,10 +15,11 @@ function isRetryableError(err: unknown): boolean {
   return false;
 }
 
-/** 连接失败且耗尽全部重试后抛出的错误（调用方可据此发送用户友好提示） */
+/** 连接失败（含超时）后抛出的错误（调用方可据此回滚 session 并发送用户友好提示） */
 export class LLMConnectionError extends Error {
-  constructor(cause: unknown) {
+  constructor(cause: unknown, message?: string) {
     super(
+      message ??
       `⚠️ 与 AI 服务的连接失败（已重试 3 次）：${cause instanceof Error ? cause.message : String(cause)}`
     );
     this.name = "LLMConnectionError";
@@ -32,11 +35,22 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
       return await fn();
     } catch (err) {
       lastErr = err;
+      // 超时：不重试，立即包装为 LLMConnectionError 让调用方回滚 session
+      if (err instanceof APIConnectionTimeoutError) {
+        throw new LLMConnectionError(err, `⚠️ AI 服务请求超时，请稍后重试`);
+      }
       if (!isRetryableError(err) || signal?.aborted) throw err;
       if (attempt === MAX_RETRIES) break;
       const delay = (2 ** attempt) * 1000;
       console.warn(`[llm] connection error, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
-      await new Promise<void>((res) => setTimeout(res, delay));
+      // sleep 期间响应 AbortSignal，以便软中断能立即生效
+      await new Promise<void>((res, rej) => {
+        const t = setTimeout(res, delay);
+        signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("abort")); }, { once: true });
+      }).catch((e: unknown) => {
+        if (signal?.aborted) throw e;
+      });
+      if (signal?.aborted) throw new Error("abort");
     }
   }
   throw new LLMConnectionError(lastErr);

@@ -137,6 +137,11 @@ async function main(): Promise<void> {
         console.warn("[qqbot] 附件下载失败:", err);
       }
     }
+
+    // 在用户发出的消息前加上当前时间，方便 Agent 识别当前日期
+    const nowStr = new Date().toLocaleString();
+    messageContent = `[${nowStr}] ${messageContent}`;
+
     const runPromise = runAgent(session, messageContent, opts);
     session.currentRunPromise = runPromise;
 

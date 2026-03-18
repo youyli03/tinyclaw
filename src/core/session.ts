@@ -85,6 +85,16 @@ export class Session {
   }
 
   /**
+   * 将 messages 截断至 length 条（从末尾删除）。
+   * 用于 runAgent() 失败时回滚本次注入的 memory / user 消息，避免 session 状态损坏。
+   */
+  trimToLength(length: number): void {
+    if (length >= 0 && length < this.messages.length) {
+      this.messages.length = length;
+    }
+  }
+
+  /**
    * 执行摘要压缩：
    * 1. LLM 生成摘要 + persistSummary（写 memory/YYYY-MM/YYYY-MM-DD.md + QMD 索引）
    * 2. this.messages 替换为压缩后的 [system..., summary_assistant]

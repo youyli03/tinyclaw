@@ -1,5 +1,6 @@
 import { Session } from "./session.js";
 import { llmRegistry } from "../llm/registry.js";
+import { LLMConnectionError } from "../llm/client.js";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { searchMemory } from "../memory/qmd.js";
@@ -283,6 +284,9 @@ export async function runAgent(
     session.replaceOrPrependSystemMessage(sysPrompt);
   }
 
+  // system prompt 刷新后记录长度，用于连接失败时回滚本次注入的消息
+  const preRunLength = session.getMessages().length;
+
   // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
   const memoryContext = await searchMemory(userContent, session.agentId);
   if (memoryContext) {
@@ -315,6 +319,10 @@ export async function runAgent(
       // AbortError = 被软中断打断，干净退出循环
       if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
         break;
+      }
+      // 连接彻底失败：回滚本次注入的消息，保持 session 状态干净，无需重启
+      if (err instanceof LLMConnectionError) {
+        session.trimToLength(preRunLength);
       }
       throw err;
     }
