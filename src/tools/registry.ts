@@ -22,6 +22,11 @@ export interface ToolContext {
    * 负责等待 Master 当前 run 结束、触发新的 runAgent、推送结果给用户。
    */
   onSlaveComplete?: (notif: SlaveNotification) => Promise<void>;
+  /**
+   * Slave 定期进度推送回调（由 main.ts 注入）。
+   * 每隔 reportIntervalSecs 秒向用户推送 Slave 当前进度快照，不触发 runAgent。
+   */
+  onProgressNotify?: (slaveId: string, state: import("../core/slave-manager.js").SlaveState) => Promise<void>;
 }
 
 export interface ToolDef {

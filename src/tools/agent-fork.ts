@@ -33,6 +33,12 @@ registerTool({
             type: "number",
             description: "从 Master 历史中截取的消息条数作为背景上下文（默认 10，最大 30）",
           },
+          progress_interval_secs: {
+            type: "number",
+            description:
+              "定期进度汇报间隔（秒）。设置后 Slave 每隔该时间向用户推送一次进度快照。" +
+              "最小 30 秒，最大 3600 秒。不设置则仅在任务完成时通知。",
+          },
         },
         required: ["task"],
       },
@@ -54,18 +60,33 @@ registerTool({
       30
     );
 
+    // 定期进度汇报间隔：限制在 30s - 3600s 之间
+    const rawInterval = args["progress_interval_secs"];
+    const reportIntervalSecs =
+      rawInterval !== undefined
+        ? Math.min(3600, Math.max(30, Number(rawInterval)))
+        : undefined;
+
     const slaveId = slaveManager.fork(
       task,
       ctx.masterSession,
       contextWindow,
       ctx.slaveRunFn,
-      ctx.onSlaveComplete
+      ctx.onSlaveComplete,
+      reportIntervalSecs,
+      ctx.onProgressNotify
     );
+
+    const progressNote =
+      reportIntervalSecs !== undefined
+        ? `\n进度汇报：每 ${reportIntervalSecs} 秒推送一次进度快照`
+        : "\n进度汇报：仅在任务完成时通知";
 
     return (
       `✅ Slave \`${slaveId}\` 已在后台启动\n` +
       `任务：${task.slice(0, 100)}${task.length > 100 ? "…" : ""}\n` +
-      `上下文窗口：最近 ${contextWindow} 条消息\n\n` +
+      `上下文窗口：最近 ${contextWindow} 条消息` +
+      progressNote + `\n\n` +
       `用 \`agent_status(slave_id="${slaveId}")\` 查询进度，任务完成后将自动通知你。`
     );
   },

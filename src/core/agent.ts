@@ -246,6 +246,11 @@ export interface AgentRunOptions {
    */
   onSlaveComplete?: import("../tools/registry.js").ToolContext["onSlaveComplete"];
   /**
+   * Slave 定期进度推送回调（由 main.ts 注入）。
+   * 每隔 reportIntervalSecs 秒向用户推送 Slave 当前进度快照，不触发 runAgent。
+   */
+  onProgressNotify?: import("../tools/registry.js").ToolContext["onProgressNotify"];
+  /**
    * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
    * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
    * slaveRunFn，agent_fork 工具会返回明确错误，防止无限嵌套或结果丢失。
@@ -468,6 +473,7 @@ export async function runAgent(
             ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1 }) }
             : {}),
           ...(opts.onSlaveComplete ? { onSlaveComplete: opts.onSlaveComplete } : {}),
+          ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {

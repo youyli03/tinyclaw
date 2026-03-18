@@ -23,7 +23,7 @@ import { validateMediaContent, extractTextContent } from "./connectors/qqbot/out
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { mcpManager } from "./mcp/client.js";
-import type { SlaveNotification } from "./core/slave-manager.js";
+import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -171,8 +171,36 @@ async function main(): Promise<void> {
       }
     };
 
+    /**
+     * Slave 定期进度推送回调：直接通过 connector 推送进度快照，不触发 runAgent。
+     */
+    const onProgressNotify = async (slaveId: string, state: SlaveState): Promise<void> => {
+      const elapsed = Math.round(
+        (Date.now() - new Date(state.startedAt).getTime()) / 1000
+      );
+      const toolsSummary =
+        state.progress.toolsUsed.length > 0
+          ? `\n已用工具：${state.progress.toolsUsed.join(", ")}`
+          : "";
+      const partialSummary = state.progress.partialOutput
+        ? `\n最新输出：…${state.progress.partialOutput.slice(-200)}`
+        : "";
+
+      const progressMsg =
+        `⏳ **[后台任务进度汇报]** Slave \`${slaveId}\`\n` +
+        `任务：${state.task.slice(0, 80)}${state.task.length > 80 ? "…" : ""}\n` +
+        `状态：${state.status}（已运行 ${elapsed}s）` +
+        toolsSummary +
+        partialSummary;
+
+      await connector.send(msg.peerId, msg.type, progressMsg).catch((err) => {
+        console.error(`[slave:${slaveId}] progress notify send error:`, err);
+      });
+    };
+
     const opts: AgentRunOptions = {
       onSlaveComplete,
+      onProgressNotify,
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
           msg.peerId, msg.type, warningMsg,

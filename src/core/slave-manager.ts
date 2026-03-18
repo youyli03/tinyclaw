@@ -41,6 +41,9 @@ export interface SlaveNotification {
   masterSessionId: string;
 }
 
+/** Slave 定期进度推送回调 */
+export type SlaveProgressNotifyFn = (slaveId: string, state: SlaveState) => Promise<void>;
+
 /**
  * Slave 运行函数签名（由 agent.ts 的 runAgent 实现，通过 ToolContext.slaveRunFn 注入）。
  * 使用独立签名避免从 agent.ts 直接导入（防循环依赖）。
@@ -78,18 +81,22 @@ class SlaveManager {
   /**
    * Fork 一个 Slave agent，立即返回 slaveId，后台异步运行。
    *
-   * @param task           Slave 的任务描述（注入为最后一条 user 消息）
-   * @param masterSession  Master Session（用于复制上下文快照）
-   * @param contextWindow  从 Master 消息列表末尾截取的条数（默认 10）
-   * @param runFn          runAgent 实现（由 ToolContext.slaveRunFn 注入，避免循环依赖）
-   * @param onComplete     Slave 完成后的回调
+   * @param task                Slave 的任务描述（注入为最后一条 user 消息）
+   * @param masterSession       Master Session（用于复制上下文快照）
+   * @param contextWindow       从 Master 消息列表末尾截取的条数（默认 10）
+   * @param runFn               runAgent 实现（由 ToolContext.slaveRunFn 注入，避免循环依赖）
+   * @param onComplete          Slave 完成后的回调
+   * @param reportIntervalSecs  定期进度推送间隔（秒），0 或不传则不启用
+   * @param onProgressNotify    定期进度推送回调（每 reportIntervalSecs 秒调用一次）
    */
   fork(
     task: string,
     masterSession: Session,
     contextWindow: number,
     runFn: SlaveRunFn,
-    onComplete?: (notif: SlaveNotification) => Promise<void>
+    onComplete?: (notif: SlaveNotification) => Promise<void>,
+    reportIntervalSecs?: number,
+    onProgressNotify?: SlaveProgressNotifyFn
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
 
@@ -122,7 +129,7 @@ class SlaveManager {
     console.log(`[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, task="${task.slice(0, 60)}"`);
 
     // 后台运行（fire-and-forget）
-    void this._run(slaveId, slaveSession, task, runFn, onComplete);
+    void this._run(slaveId, slaveSession, task, runFn, onComplete, reportIntervalSecs, onProgressNotify);
 
     return slaveId;
   }
@@ -176,9 +183,22 @@ class SlaveManager {
     session: Session,
     task: string,
     runFn: SlaveRunFn,
-    onComplete?: (notif: SlaveNotification) => Promise<void>
+    onComplete?: (notif: SlaveNotification) => Promise<void>,
+    reportIntervalSecs?: number,
+    onProgressNotify?: SlaveProgressNotifyFn
   ): Promise<void> {
     const state = this.states.get(slaveId)!;
+
+    // 启动定期进度推送（如果配置了间隔 > 0 且有回调）
+    let progressInterval: ReturnType<typeof setInterval> | undefined;
+    if (reportIntervalSecs && reportIntervalSecs > 0 && onProgressNotify) {
+      progressInterval = setInterval(() => {
+        if (state.status !== "running") return;
+        onProgressNotify(slaveId, { ...state }).catch((err) => {
+          console.error(`[slave:${slaveId}] onProgressNotify error:`, err);
+        });
+      }, reportIntervalSecs * 1000);
+    }
 
     try {
       const result = await runFn(session, task, { systemPrompt: SLAVE_SYSTEM_PROMPT });
@@ -199,6 +219,9 @@ class SlaveManager {
       state.result = `执行失败：${err instanceof Error ? err.message : String(err)}`.slice(0, MAX_RESULT_LEN);
       console.error(`[slave:${slaveId}] error:`, err);
     }
+
+    // 清除进度推送定时器
+    if (progressInterval !== undefined) clearInterval(progressInterval);
 
     state.finishedAt = new Date().toISOString();
     console.log(`[slave:${slaveId}] ${state.status} (${state.finishedAt})`);

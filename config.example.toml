@@ -15,7 +15,7 @@
 #   apiKey  = "sk-..."
 #   model   = "gpt-4o"
 #   # maxTokens = 4096    # 可选，默认 4096
-#   # timeoutMs = 30000   # 可选，默认 30000ms
+#   # timeoutMs = 60000   # 可选，默认 60000ms
 #
 # 2. GitHub Copilot（自动发现模型和能力参数）：
 #
@@ -23,7 +23,7 @@
 #   provider    = "copilot"
 #   githubToken = "gh_cli"   # "gh_cli"=自动, "env"=$GITHUB_TOKEN, 或直接填 token
 #   model       = "auto"     # "auto"=默认模型, 或填具体 model ID（如 "gpt-4o"）
-#   # timeoutMs = 30000   # 可选，默认 30000ms
+#   # timeoutMs = 60000   # 可选，默认 60000ms
 #
 # Copilot 后端会从 https://api.githubcopilot.com/models 自动获取所有可用模型，
 # 并将 max_output_tokens / max_context_window_tokens 等参数一一对应到 tinyclaw 配置。
@@ -34,7 +34,7 @@ baseUrl = "https://api.openai.com/v1"
 apiKey  = "sk-..."
 model   = "gpt-4o"
 # maxTokens = 4096    # 可选，默认 4096
-# timeoutMs = 30000   # 可选，默认 30000ms
+# timeoutMs = 60000   # 可选，默认 60000ms
 
 # 使用 GitHub Copilot 账号示例（取消注释并删除上方 openai 配置）：
 # [llm.backends.daily]
