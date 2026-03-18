@@ -11,6 +11,7 @@ import { unlinkSync, existsSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
 import { Session } from "../core/session.js";
+import { slaveManager } from "../core/slave-manager.js";
 import { cronScheduler } from "../cron/scheduler.js";
 import { runAgent } from "../core/agent.js";
 import { agentManager } from "../core/agent-manager.js";
@@ -166,6 +167,19 @@ async function handleRequest(
           lastUserMessage,
         };
       });
+
+      // 追加正在运行的 slave 子 agent（不在 sessions Map 中，需单独列出）
+      for (const state of slaveManager.listAll()) {
+        if (state.status === "running") {
+          list.push({
+            sessionId: `slave:${state.slaveId}`,
+            messageCount: 0,
+            running: true,
+            lastUserMessage: state.task.slice(0, 80),
+          });
+        }
+      }
+
       send({ type: "sessions", sessions: list });
     } catch (e) {
       send({ type: "error", message: String(e) });
@@ -188,14 +202,25 @@ async function handleRequest(
         }
       }
     }
-    if (!target) {
-      send({ type: "session_aborted", sessionId: idOrSuffix, found: false });
+    if (target) {
+      target.abortRequested = true;
+      target.llmAbortController?.abort();
+      target.abortPendingApproval();
+      send({ type: "session_aborted", sessionId: matchedId, found: true });
       return;
     }
-    target.abortRequested = true;
-    target.llmAbortController?.abort();
-    target.abortPendingApproval();
-    send({ type: "session_aborted", sessionId: matchedId, found: true });
+
+    // 尝试匹配 slave 子 agent（slave:<slaveId> 或末尾 suffix 匹配）
+    const slaveId = idOrSuffix.startsWith("slave:") ? idOrSuffix.slice(6) : idOrSuffix;
+    const slaveState = slaveManager.status(slaveId)
+      ?? slaveManager.listAll().find((s) => `slave:${s.slaveId}`.endsWith(idOrSuffix));
+    if (slaveState) {
+      slaveManager.abort(slaveState.slaveId);
+      send({ type: "session_aborted", sessionId: `slave:${slaveState.slaveId}`, found: true });
+      return;
+    }
+
+    send({ type: "session_aborted", sessionId: idOrSuffix, found: false });
     return;
   }
 
