@@ -1,0 +1,136 @@
+/**
+ * 内置斜杠命令
+ *
+ * 副作用 import：import "./builtin.js" 即完成注册。
+ * 在 main.ts 和 ipc/server.ts 中各 import 一次（幂等：重复注册会抛出，
+ * 但因模块缓存只执行一次，不会重复注册）。
+ */
+
+import { registerCommand, listCommands, getCommand } from "./registry.js";
+import { slaveManager } from "../core/slave-manager.js";
+
+// ── /help ─────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "help",
+  description: "显示可用命令列表，或查看某个命令的详细说明",
+  usage: "/help [command]",
+  execute({ args }) {
+    if (args.length > 0) {
+      const name = args[0]!.replace(/^\//, "").toLowerCase();
+      const cmd = getCommand(name);
+      if (!cmd) return `❌ 未知命令 \`/${name}\`，发送 \`/help\` 查看全部命令。`;
+      const lines = [
+        `**/${cmd.name}** — ${cmd.description}`,
+      ];
+      if (cmd.usage) lines.push(`用法：\`${cmd.usage}\``);
+      return lines.join("\n");
+    }
+
+    const cmds = listCommands();
+    const lines = ["**可用命令**（发送 `/help <命令名>` 查看详细用法）\n"];
+    for (const c of cmds) {
+      lines.push(`• \`/${c.name}\` — ${c.description}`);
+    }
+    return lines.join("\n");
+  },
+});
+
+// ── /status ───────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "status",
+  description: "查看当前会话状态（消息数、token 估算、agent、运行状态）",
+  usage: "/status",
+  execute({ session }) {
+    const messages = session.getMessages();
+    const msgCount = messages.length;
+    const tokens = session.estimatedTokens();
+    const isRunning = session.running;
+
+    const lines = [
+      "**会话状态**\n",
+      `会话 ID：\`${session.sessionId}\``,
+      `绑定 Agent：\`${session.agentId}\``,
+      `消息数：${msgCount} 条`,
+      `Token 估算：约 ${tokens.toLocaleString()} tokens`,
+      `当前状态：${isRunning ? "⏳ 运行中" : "✅ 空闲"}`,
+    ];
+
+    // 后台任务概览
+    const slaves = slaveManager.listAll();
+    if (slaves.length > 0) {
+      const running = slaves.filter((s) => s.status === "running").length;
+      lines.push(`后台任务：${slaves.length} 个（${running} 个运行中）`);
+    }
+
+    return lines.join("\n");
+  },
+});
+
+// ── /abort ────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "abort",
+  description: "软中断当前正在运行的 agent（不影响后台 Slave 任务）",
+  usage: "/abort",
+  execute({ session }) {
+    if (!session.running) {
+      return "ℹ️ 当前没有正在运行的任务，无需中断。";
+    }
+    session.abortRequested = true;
+    session.llmAbortController?.abort();
+    session.abortPendingApproval?.();
+    return "⛔ 已发送中断信号，当前任务将在本轮 LLM 调用结束后停止。";
+  },
+});
+
+// ── /slaves ───────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "slaves",
+  description: "列出后台 Slave 任务，可按状态过滤",
+  usage: "/slaves [running|done|error|aborted]",
+  execute({ args }) {
+    const validFilters = ["running", "done", "error", "aborted"] as const;
+    type Filter = (typeof validFilters)[number];
+
+    const filterArg = args[0]?.toLowerCase();
+    const filter = validFilters.includes(filterArg as Filter)
+      ? (filterArg as Filter)
+      : undefined;
+
+    let all = slaveManager.listAll();
+    if (filter) {
+      all = all.filter((s) => s.status === filter);
+    }
+
+    if (all.length === 0) {
+      return filter
+        ? `当前没有状态为 \`${filter}\` 的 Slave 任务。`
+        : "当前没有任何后台 Slave 任务。";
+    }
+
+    // running 排最前
+    const sorted = [
+      ...all.filter((s) => s.status === "running"),
+      ...all.filter((s) => s.status !== "running"),
+    ];
+
+    const runningCount = sorted.filter((s) => s.status === "running").length;
+    const header = `**后台 Slave 任务**（共 ${sorted.length} 个，${runningCount} 个运行中）\n`;
+
+    const items = sorted.map((s) => {
+      const icon =
+        s.status === "running" ? "⏳" :
+        s.status === "done"    ? "✅" :
+        s.status === "error"   ? "❌" : "⛔";
+      const elapsed = s.finishedAt
+        ? `${Math.round((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000)}s`
+        : `运行中 ${Math.round((Date.now() - new Date(s.startedAt).getTime()) / 1000)}s`;
+      return `${icon} \`${s.slaveId}\` ${s.status} (${elapsed})\n   任务：${s.task.slice(0, 60)}${s.task.length > 60 ? "…" : ""}`;
+    });
+
+    return header + items.join("\n");
+  },
+});

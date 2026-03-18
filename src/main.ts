@@ -24,6 +24,8 @@ import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
+import { parseCommand, executeCommand } from "./commands/registry.js";
+import "./commands/builtin.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -99,6 +101,14 @@ async function main(): Promise<void> {
       session.abortPendingApproval();
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
       await session.currentRunPromise?.catch(() => {});
+    }
+
+    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不进入 runAgent ────────
+    const parsedCmd = parseCommand(msg.content);
+    if (parsedCmd) {
+      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
+      await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+      return "";
     }
 
     // ── 构建 MFA callbacks ─────────────────────────────────────────────

@@ -17,6 +17,8 @@ import { agentManager } from "../core/agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
+import { parseCommand, executeCommand } from "../commands/registry.js";
+import "../commands/builtin.js";
 
 export function startIpcServer(
   sessions: Map<string, Session>,
@@ -193,6 +195,15 @@ async function handleRequest(
     session.llmAbortController?.abort();
     session.abortPendingApproval();
     await session.currentRunPromise?.catch(() => {});
+  }
+
+  // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不进入 runAgent ────────
+  const parsedCmd = parseCommand(message);
+  if (parsedCmd) {
+    const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
+    send({ type: "chunk", delta: result });
+    send({ type: "done" });
+    return;
   }
 
   let fullContent = "";
