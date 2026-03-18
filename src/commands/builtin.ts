@@ -41,20 +41,31 @@ registerCommand({
 
 registerCommand({
   name: "status",
-  description: "查看当前会话状态（消息数、token 估算、agent、运行状态）",
+  description: "查看当前会话状态（消息数、token 用量、agent、运行状态）",
   usage: "/status",
   execute({ session }) {
     const messages = session.getMessages();
     const msgCount = messages.length;
-    const tokens = session.estimatedTokens();
     const isRunning = session.running;
+    const contextWindow = llmRegistry.getContextWindow("daily");
+
+    // 优先显示上次 LLM 响应的实际 prompt token；若从未发送请求则显示估算
+    let tokenLine: string;
+    if (session.lastPromptTokens > 0) {
+      const pct = Math.round((session.lastPromptTokens / contextWindow) * 100);
+      tokenLine = `Token 用量：${session.lastPromptTokens.toLocaleString()} / ${contextWindow.toLocaleString()} (${pct}%)`;
+    } else {
+      const est = session.estimatedTokens();
+      const pct = Math.round((est / contextWindow) * 100);
+      tokenLine = `Token 估算：~${est.toLocaleString()} / ${contextWindow.toLocaleString()} (${pct}%)`;
+    }
 
     const lines = [
       "**会话状态**\n",
       `会话 ID：\`${session.sessionId}\``,
       `绑定 Agent：\`${session.agentId}\``,
       `消息数：${msgCount} 条`,
-      `Token 估算：约 ${tokens.toLocaleString()} tokens`,
+      tokenLine,
       `当前状态：${isRunning ? "⏳ 运行中" : "✅ 空闲"}`,
     ];
 

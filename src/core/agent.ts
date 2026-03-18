@@ -400,6 +400,8 @@ export async function runAgent(
     }
 
     lastUsage = response.usage;
+    // 记录到 session，供 /status 展示实际 token 用量
+    session.lastPromptTokens = lastUsage.promptTokens;
     const { content, toolCalls } = parseResponse(response, textMode);
 
     // 没有工具调用 → 最终回复

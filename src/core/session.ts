@@ -45,6 +45,11 @@ export class Session {
   /** 最近一次 compress() 生成的摘要文本（由 fork() 注入给 slave 作为历史背景） */
   lastSummary?: string;
 
+  // ── Token 使用量 ──────────────────────────────────────────────────────────
+  /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
+  lastPromptTokens = 0;
+
+
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
     this.agentId = opts.agentId ?? "default";
