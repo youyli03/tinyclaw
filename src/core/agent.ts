@@ -328,7 +328,7 @@ export async function runAgent(
   }
 
   // system prompt 刷新后记录长度，用于连接失败时回滚本次注入的消息
-  const preRunLength = session.getMessages().length;
+  let preRunLength = session.getMessages().length;
 
   // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
   const memoryContext = await searchMemory(userContent, session.agentId);
@@ -336,7 +336,17 @@ export async function runAgent(
     session.addSystemMessage(memoryContext);
   }
 
-  // 3. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
+  // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
+  // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
+  if (!session.abortRequested && shouldSummarize(session.getMessages())) {
+    opts.onCompress?.("start");
+    const summary = await session.compress();
+    opts.onCompress?.("done", summary);
+    // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
+    preRunLength = session.getMessages().length;
+  }
+
+  // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
   const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
   session.addUserMessage(msgContent);
 
@@ -344,7 +354,7 @@ export async function runAgent(
   let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-  // 4. ReAct 循环
+  // 5. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     const tools = getAllToolSpecs();
@@ -545,7 +555,7 @@ export async function runAgent(
     session.appendLastTurnToJsonl();
   }
 
-  // 6. 检查是否需要压缩（仅在未被中断时执行）
+  // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查）
   if (!session.abortRequested) {
     if (shouldSummarize(session.getMessages())) {
       opts.onCompress?.("start");
