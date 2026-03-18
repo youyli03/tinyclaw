@@ -8,6 +8,17 @@
  * 4. 监听信号，优雅退出
  */
 
+// ── 全局日志时间戳注入（daemon 进程，在所有 import 之前执行）────────────────
+{
+  const _log = console.log.bind(console);
+  const _err = console.error.bind(console);
+  const _warn = console.warn.bind(console);
+  const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
+  console.log   = (...a) => _log(`[${ts()}]`, ...a);
+  console.error = (...a) => _err(`[${ts()}]`, ...a);
+  console.warn  = (...a) => _warn(`[${ts()}]`, ...a);
+}
+
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

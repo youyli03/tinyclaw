@@ -74,15 +74,18 @@ export async function executeCommand(
 ): Promise<string> {
   const cmd = commands.get(name.toLowerCase());
   if (!cmd) {
+    console.log(`[cmd] unknown /${name} (session: ${ctx.session?.sessionId ?? "?"})`);
     return (
       `❌ 未知命令 \`/${name}\`\n` +
       `发送 \`/help\` 查看所有可用命令。`
     );
   }
+  console.log(`[cmd] /${name}${args.length ? " " + args.join(" ") : ""} (session: ${ctx.session?.sessionId ?? "?"})`);
   try {
     // args is always provided via spread; cast to satisfy the execute signature
     return await cmd.execute({ ...ctx, args } as CommandContext & { args: string[] });
   } catch (err) {
+    console.error(`[cmd] /${name} error:`, err);
     return `❌ 命令 \`/${name}\` 执行失败：${err instanceof Error ? err.message : String(err)}`;
   }
 }

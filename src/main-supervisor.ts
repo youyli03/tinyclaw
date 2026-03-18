@@ -10,6 +10,17 @@
  * PID 文件写入此 supervisor 自身的 PID，使 `tinyclaw restart` 能正确终止整个进程树。
  */
 
+// ── 全局日志时间戳注入 ────────────────────────────────────────────────────────
+{
+  const _log = console.log.bind(console);
+  const _err = console.error.bind(console);
+  const _warn = console.warn.bind(console);
+  const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
+  console.log   = (...a) => _log(`[${ts()}]`, ...a);
+  console.error = (...a) => _err(`[${ts()}]`, ...a);
+  console.warn  = (...a) => _warn(`[${ts()}]`, ...a);
+}
+
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";

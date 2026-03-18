@@ -10,8 +10,8 @@ const OpenAIProviderSchema = z.object({
   baseUrl: z.string().url().default("https://api.openai.com/v1"),
   /** 最大输出 token 数，默认 4096（可被后端角色覆盖） */
   maxTokens: z.number().int().positive().default(4096),
-  /** 请求超时（毫秒），默认 60000（可被后端角色覆盖） */
-  timeoutMs: z.number().int().positive().default(60_000),
+  /** 请求超时（毫秒），默认 120000（可被后端角色覆盖） */
+  timeoutMs: z.number().int().positive().default(120_000),
 });
 export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderSchema>;
 
@@ -24,8 +24,8 @@ const CopilotProviderSchema = z.object({
    * - 其他字符串  → 直接作为 token 使用
    */
   githubToken: z.string().min(1).default("gh_cli"),
-  /** 请求超时（毫秒），默认 60000（可被后端角色覆盖） */
-  timeoutMs: z.number().int().positive().default(60_000),
+  /** 请求超时（毫秒），默认 120000（可被后端角色覆盖） */
+  timeoutMs: z.number().int().positive().default(120_000),
 });
 export type CopilotProviderConfig = z.infer<typeof CopilotProviderSchema>;
 
