@@ -189,21 +189,21 @@ async function handleRequest(
     sessions.set(sessionId, session);
   }
 
-  // 并发控制：若当前有 runAgent() 正在运行，软中断并等待完成
-  if (session.running) {
-    session.abortRequested = true;
-    session.llmAbortController?.abort();
-    session.abortPendingApproval();
-    await session.currentRunPromise?.catch(() => {});
-  }
-
-  // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不进入 runAgent ────────
+  // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
   const parsedCmd = parseCommand(message);
   if (parsedCmd) {
     const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
     send({ type: "chunk", delta: result });
     send({ type: "done" });
     return;
+  }
+
+  // 并发控制：若当前有 runAgent() 正在运行，软中断并等待完成
+  if (session.running) {
+    session.abortRequested = true;
+    session.llmAbortController?.abort();
+    session.abortPendingApproval();
+    await session.currentRunPromise?.catch(() => {});
   }
 
   let fullContent = "";

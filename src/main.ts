@@ -94,6 +94,14 @@ async function main(): Promise<void> {
       return "";
     }
 
+    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
+    const parsedCmd = parseCommand(msg.content);
+    if (parsedCmd) {
+      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
+      await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+      return "";
+    }
+
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
     if (session.running) {
       session.abortRequested = true;
@@ -101,14 +109,6 @@ async function main(): Promise<void> {
       session.abortPendingApproval();
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
       await session.currentRunPromise?.catch(() => {});
-    }
-
-    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不进入 runAgent ────────
-    const parsedCmd = parseCommand(msg.content);
-    if (parsedCmd) {
-      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
-      await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
-      return "";
     }
 
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
