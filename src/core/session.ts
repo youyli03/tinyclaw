@@ -41,6 +41,10 @@ export class Session {
   /** Interface A：等待用户回复 确认/取消 的控制柄 */
   pendingApproval: PendingApproval | null = null;
 
+  // ── 会话摘要 ──────────────────────────────────────────────────────────────
+  /** 最近一次 compress() 生成的摘要文本（由 fork() 注入给 slave 作为历史背景） */
+  lastSummary?: string;
+
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
     this.agentId = opts.agentId ?? "default";
@@ -110,6 +114,7 @@ export class Session {
     const summary = (typeof summaryMsg?.content === "string"
       ? summaryMsg.content.replace(/^\[对话历史摘要\]\n/, "")
       : "") ?? "";
+    this.lastSummary = summary;
     return summary;
   }
 

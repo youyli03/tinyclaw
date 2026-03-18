@@ -194,10 +194,11 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
 }
 
 /**
- * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）
+ * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）+ suffix（可选）
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
+ * opts.systemPromptSuffix 追加到 Agent 提示之后（不替换）。
  */
-function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false): string {
+function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false, suffix?: string): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
   const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision)];
@@ -205,6 +206,7 @@ function buildSystemPrompt(agentId = "default", extra?: string, supportsVision =
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
   if (agentPrompt) parts.push(agentPrompt);
+  if (suffix) parts.push(suffix);
   const mem = loadAgentMem(agentId);
   if (mem) parts.push(`## 持久记忆（MEM.md）\n\n${mem}`);
   const skills = loadAgentSkills(agentId);
@@ -221,8 +223,10 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
 }
 
 export interface AgentRunOptions {
-  /** 追加到内置 prompt 之后的用户自定义 prompt */
+  /** 替换 Agent SYSTEM.md 的自定义 prompt（优先级高于文件） */
   systemPrompt?: string;
+  /** 追加到 Agent SYSTEM.md 之后的额外 prompt（不替换，适合 slave 注入规则） */
+  systemPromptSuffix?: string;
   /** 收到流式 chunk 时的回调 */
   onChunk?: (delta: string) => void;
   /**
@@ -313,7 +317,7 @@ export async function runAgent(
   // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
   // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
   {
-    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision);
+    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
     if (textMode && initialTools.length > 0) {
       sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
     }

@@ -51,7 +51,7 @@ export type SlaveProgressNotifyFn = (slaveId: string, state: SlaveState) => Prom
 export type SlaveRunFn = (
   session: Session,
   content: string,
-  opts?: { systemPrompt?: string }
+  opts?: { systemPrompt?: string; systemPromptSuffix?: string }
 ) => Promise<{ content: string; toolsUsed: string[] }>;
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -70,7 +70,10 @@ const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份
 4. **禁止嵌套 fork**：不得调用 agent_fork 工具（禁止嵌套 Slave）
 
 ### 上下文说明
-你收到的前几条消息是 Master 对话历史（背景信息，只读），最后一条 user 消息是你的具体任务。`;
+- 若有"Master 对话历史摘要"system 消息，是 Master 历史对话的压缩摘要（只读背景）
+- 后续 user / assistant / system 消息是 Master 最近的对话历史（只读，含工具调用结果）
+- **最后一条 user 消息是你的具体任务**，请直接执行`;
+
 
 // ── SlaveManager ──────────────────────────────────────────────────────────────
 
@@ -118,6 +121,17 @@ class SlaveManager {
     // 将 Master 历史消息快照（最近 contextWindow 条）注入到 Slave Session
     const masterMessages = masterSession.getMessages();
     const contextSlice = masterMessages.slice(-contextWindow);
+
+    // 若 master session 存在压缩摘要，且 context slice 未覆盖到摘要内容，先注入摘要
+    if (masterSession.lastSummary) {
+      const summaryInSlice = contextSlice.some(
+        (m) => typeof m.content === "string" && m.content.includes("[对话历史摘要]")
+      );
+      if (!summaryInSlice) {
+        slaveSession.addSystemMessage(`## Master 对话历史摘要（背景信息）\n\n${masterSession.lastSummary}`);
+      }
+    }
+
     for (const msg of contextSlice) {
       const text = extractText(msg.content);
       if (!text) continue;
@@ -201,7 +215,7 @@ class SlaveManager {
     }
 
     try {
-      const result = await runFn(session, task, { systemPrompt: SLAVE_SYSTEM_PROMPT });
+      const result = await runFn(session, task, { systemPromptSuffix: SLAVE_SYSTEM_PROMPT });
 
       // 更新完成状态
       if (state.status === "aborted") {
