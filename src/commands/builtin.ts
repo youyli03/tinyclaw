@@ -8,6 +8,7 @@
 
 import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
+import { llmRegistry } from "../llm/registry.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -132,5 +133,30 @@ registerCommand({
     });
 
     return header + items.join("\n");
+  },
+});
+
+// ── /ping ─────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "ping",
+  description: "测试 LLM 服务连通性（发送最小请求并返回延迟）",
+  usage: "/ping",
+  async execute() {
+    const client = llmRegistry.get("daily");
+    const model = client.model;
+    const start = Date.now();
+    try {
+      await client.chat([{ role: "user", content: "Hi" }], {
+        maxTokens: 1,
+        tool_choice: "none",
+      });
+      const latencyMs = Date.now() - start;
+      return `🏓 **pong** — LLM 服务正常\n模型：\`${model}\`\n延迟：${latencyMs} ms`;
+    } catch (err) {
+      const latencyMs = Date.now() - start;
+      const msg = err instanceof Error ? err.message : String(err);
+      return `❌ **LLM 连通性测试失败**（${latencyMs} ms）\n模型：\`${model}\`\n错误：${msg}`;
+    }
   },
 });
