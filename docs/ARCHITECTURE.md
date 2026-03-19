@@ -108,6 +108,7 @@ tinyclaw/
 - 每个后端携带 `supportsToolCalls` 标志（Copilot 后端从模型元数据自动推断）：
   - `true`（默认）→ 通过 OpenAI `tools` 参数进行 function calling
   - `false` → 自动切换为**文本模式工具调用**：系统提示注入工具列表与格式规则，LLM 以 `<tool_call>` XML 块响应，Agent 正则解析后执行
+- 所有 LLM 调用均受**连接稳定性**保护（重试 / idle timeout / jitter），详见 [RETRY_AND_STABILITY.md](./RETRY_AND_STABILITY.md)
 
 
 #### OpenAI-compatible（`provider` 不填 / 为 `"openai"`）
@@ -239,6 +240,7 @@ export interface Connector {
 | 8 | Cron：scheduler · runner · tools | ⏸ 预留，不实现 |
 | 9 | GitHub Copilot 后端：token 换取 · 模型发现 · 乘数表 | ✅ 完成 |
 | 10 | CLI 配置入口：model/config/auth/status/restart/completions | ✅ 完成 |
+| 11 | 连接稳定性：重试策略 · jitter · stream idle timeout · 429 Retry-After | ✅ 完成 |
 ---
 
 ## CLI 配置工具（`tinyclaw`）

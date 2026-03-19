@@ -89,6 +89,19 @@ clientSecret = "your-client-secret"
 # [agent]
 # heartbeatIntervalSecs = 120   # 默认 2 分钟，避免用户误以为 Agent 卡死
 
+# ── 重试策略 ───────────────────────────────────────────────────────────────────
+# 控制 LLM API 调用（流式 + 非流式）及 Copilot token/模型列表请求的重试行为。
+# 所有字段均有默认值，通常无需修改，除非遇到严重的网络不稳定或需要降低 429 重试频率。
+#
+# [retry]
+# maxAttempts         = 3      # 最多重试次数（不含首次尝试），默认 3
+# baseDelayMs         = 1000   # 指数退避基准延迟（ms），实际带 ±10% 随机抖动，默认 1000
+# retry429            = true   # 429 限流是否重试（等待建议时长后重试），默认 true
+# retry5xx            = true   # 5xx 服务端错误是否重试，默认 true
+# retryTransport      = true   # 传输层错误（ECONNRESET/socket 断开等）是否重试，默认 true
+# retryTimeout        = false  # 请求超时是否重试，默认 false（超时通常意味着请求太大）
+# streamIdleTimeoutMs = 30000  # 流式调用 chunk 间最长等待时间（ms），超时则中断并重试；0 = 禁用，默认 30000
+
 # ── 向量记忆 ───────────────────────────────────────────────────────────────────
 # embedModel 首次运行自动从 HuggingFace 下载
 # 切换模型后需删除 ~/.tinyclaw/memory/index.sqlite 重新索引

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig } from "./schema.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -80,6 +80,14 @@ export function getDataFile(...segments: string[]): string {
 /** 仅在测试中用于重置单例缓存 */
 export function _resetConfigCache(): void {
   cached = null;
+}
+
+/**
+ * 返回当前配置中的重试策略（含默认值）。
+ * 调用方无需关心 config.retry 是否已配置，本函数保证始终返回有效的 RetryConfig。
+ */
+export function getRetryPolicy(): RetryConfig {
+  return loadConfig().retry;
 }
 
 /** 加载 ~/.tinyclaw/mcp.toml，文件不存在时返回空配置（非致命）。 */

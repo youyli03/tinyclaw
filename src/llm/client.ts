@@ -1,16 +1,41 @@
-import OpenAI, { APIConnectionError, APIConnectionTimeoutError } from "openai";
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, RateLimitError, APIError } from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { readFileSync, existsSync } from "node:fs";
 import { extname } from "node:path";
+import { getRetryPolicy } from "../config/loader.js";
+import type { RetryConfig } from "../config/schema.js";
 
-/** 是否为可重试的瞬态连接错误（超时不重试，直接上报） */
-function isRetryableError(err: unknown): boolean {
-  // 超时单独处理：不重试，让调用方立即收到错误并回滚 session
-  if (err instanceof APIConnectionTimeoutError) return false;
-  if (err instanceof APIConnectionError) return true;
+/** 退避延迟（毫秒），带 ±10% 随机 jitter，防止并发请求同时重试造成"惊群" */
+function backoff(baseMs: number, attempt: number): number {
+  const exp = Math.pow(2, Math.max(0, attempt - 1));
+  const raw = baseMs * exp;
+  const jitter = 0.9 + Math.random() * 0.2; // [0.9, 1.1)
+  return Math.round(raw * jitter);
+}
+
+/** 解析 429 错误消息中的 Retry-After 秒数（如 "Please try again in 5s"）*/
+function parseRetryAfterMs(err: unknown): number | undefined {
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = /try again in\s+([\d.]+)\s*(s|ms|second)/i.exec(msg);
+  if (!match) return undefined;
+  const value = parseFloat(match[1]!);
+  const unit = match[2]!.toLowerCase();
+  if (unit === "ms") return Math.round(value);
+  return Math.round(value * 1000); // seconds → ms
+}
+
+/** 是否为可重试的瞬态错误（受 RetryConfig 开关控制） */
+function isRetryableError(err: unknown, policy: RetryConfig): boolean {
+  if (err instanceof APIConnectionTimeoutError) return policy.retryTimeout;
+  if (err instanceof RateLimitError) return policy.retry429;
+  if (err instanceof APIError && err.status != null && err.status >= 500) return policy.retry5xx;
+  if (err instanceof APIConnectionError) return policy.retryTransport;
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
-    return msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket");
+    if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket")) {
+      return policy.retryTransport;
+    }
+    if (msg.includes("idle timeout")) return policy.retryTransport;
   }
   return false;
 }
@@ -18,32 +43,40 @@ function isRetryableError(err: unknown): boolean {
 /** 连接失败（含超时）后抛出的错误（调用方可据此回滚 session 并发送用户友好提示） */
 export class LLMConnectionError extends Error {
   constructor(cause: unknown, message?: string) {
+    const attempts = (() => {
+      try { return getRetryPolicy().maxAttempts; } catch { return 3; }
+    })();
     super(
       message ??
-      `⚠️ 与 AI 服务的连接失败（已重试 3 次）：${cause instanceof Error ? cause.message : String(cause)}`
+      `⚠️ 与 AI 服务的连接失败（已重试 ${attempts} 次）：${cause instanceof Error ? cause.message : String(cause)}`
     );
     this.name = "LLMConnectionError";
   }
 }
 
-/** 最多重试 3 次，指数退避（1s / 2s / 4s），abort 后不再重试 */
+/** 按 RetryConfig 策略重试，指数退避 + jitter，abort 后不再重试 */
 async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-  const MAX_RETRIES = 3;
+  const policy = (() => {
+    try { return getRetryPolicy(); } catch { return undefined; }
+  })();
+  const MAX_RETRIES = policy?.maxAttempts ?? 3;
+  const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
-      // 超时：不重试，立即包装为 LLMConnectionError 让调用方回滚 session
-      if (err instanceof APIConnectionTimeoutError) {
+      // 超时且不重试：立即包装为 LLMConnectionError
+      if (err instanceof APIConnectionTimeoutError && !(policy?.retryTimeout)) {
         throw new LLMConnectionError(err, `⚠️ AI 服务请求超时，请稍后重试`);
       }
-      if (!isRetryableError(err) || signal?.aborted) throw err;
+      if (!policy || !isRetryableError(err, policy) || signal?.aborted) throw err;
       if (attempt === MAX_RETRIES) break;
-      const delay = (2 ** attempt) * 1000;
-      console.warn(`[llm] connection error, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
-      // sleep 期间响应 AbortSignal，以便软中断能立即生效
+      // 429：优先使用 Retry-After，否则指数退避
+      const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined)
+        ?? backoff(BASE_DELAY, attempt + 1);
+      console.warn(`[llm] retryable error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
       await new Promise<void>((res, rej) => {
         const t = setTimeout(res, delay);
         signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("abort")); }, { once: true });
@@ -150,6 +183,35 @@ function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
   });
 }
 
+/**
+ * 为 async iterable 的每次 next() 添加空闲超时检测。
+ * 若在 idleMs 毫秒内无新 chunk 到达，抛出 idle timeout 错误（可触发 withRetry 重试）。
+ * idleMs <= 0 时直接透传，不添加超时。
+ */
+async function* withStreamIdleTimeout<T>(
+  iter: AsyncIterable<T>,
+  idleMs: number,
+  signal?: AbortSignal
+): AsyncGenerator<T> {
+  if (idleMs <= 0) {
+    yield* iter;
+    return;
+  }
+  const it = iter[Symbol.asyncIterator]();
+  while (true) {
+    const result = await new Promise<IteratorResult<T>>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`stream idle timeout: no chunk received in ${idleMs}ms`));
+      }, idleMs);
+      const cleanup = () => clearTimeout(timer);
+      signal?.addEventListener("abort", () => { cleanup(); reject(new Error("abort")); }, { once: true });
+      it.next().then((r) => { cleanup(); resolve(r); }, (e) => { cleanup(); reject(e as unknown); });
+    });
+    if (result.done) return;
+    yield result.value;
+  }
+}
+
 export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: ResolvedBackend;
@@ -230,87 +292,94 @@ export class LLMClient {
   /**
    * 流式聊天，逐 chunk 回调。支持 tool_calls（function calling）。
    * 返回完整文本、toolCalls 和最终 usage（部分 provider 流式不返回 usage，此时为 0）。
+   * 内置 withRetry 保护：流中断时自动重试；每 chunk 间有 idle timeout 防止服务端挂起。
    */
   async streamChat(
     messages: ChatMessage[],
     onChunk: (delta: string) => void,
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
-    const canUseTools =
-      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
-    const resolvedForStream = resolveMessagesForApi(messages);
-    const stream = await this.client.chat.completions.create(
-      {
-        model: this.backend.model,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        messages: resolvedForStream as any,
-        max_tokens: opts.maxTokens ?? this.backend.maxTokens,
-        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-        ...(canUseTools
-          ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
-          : {}),
-        stream: true,
-        stream_options: { include_usage: true },
-      },
-      opts.signal ? { signal: opts.signal } : undefined
-    );
+    const idleTimeoutMs = (() => {
+      try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 30_000; }
+    })();
 
-    let fullContent = "";
-    let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-    // 聚合流式 tool_calls delta（各 index 独立累积）
-    const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
+    return withRetry(async () => {
+      const canUseTools =
+        this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+      const resolvedForStream = resolveMessagesForApi(messages);
+      const stream = await this.client.chat.completions.create(
+        {
+          model: this.backend.model,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          messages: resolvedForStream as any,
+          max_tokens: opts.maxTokens ?? this.backend.maxTokens,
+          ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+          ...(canUseTools
+            ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
+            : {}),
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        opts.signal ? { signal: opts.signal } : undefined
+      );
 
-    for await (const chunk of stream) {
-      if (opts.signal?.aborted) break;
-      const delta = chunk.choices[0]?.delta;
+      let fullContent = "";
+      let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      // 聚合流式 tool_calls delta（各 index 独立累积）
+      const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
 
-      // 文本 delta
-      const textDelta = delta?.content ?? "";
-      if (textDelta) {
-        fullContent += textDelta;
-        onChunk(textDelta);
-      }
+      for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal)) {
+        if (opts.signal?.aborted) break;
+        const delta = chunk.choices[0]?.delta;
 
-      // 工具调用 delta（按 index 聚合）
-      for (const tcDelta of delta?.tool_calls ?? []) {
-        const idx = tcDelta.index;
-        if (!toolCallAcc[idx]) {
-          toolCallAcc[idx] = {
-            id: tcDelta.id ?? "",
-            name: tcDelta.function?.name ?? "",
-            arguments: "",
-          };
-        } else {
-          if (tcDelta.id) toolCallAcc[idx]!.id = tcDelta.id;
-          if (tcDelta.function?.name) toolCallAcc[idx]!.name = tcDelta.function.name;
+        // 文本 delta
+        const textDelta = delta?.content ?? "";
+        if (textDelta) {
+          fullContent += textDelta;
+          onChunk(textDelta);
         }
-        toolCallAcc[idx]!.arguments += tcDelta.function?.arguments ?? "";
+
+        // 工具调用 delta（按 index 聚合）
+        for (const tcDelta of delta?.tool_calls ?? []) {
+          const idx = tcDelta.index;
+          if (!toolCallAcc[idx]) {
+            toolCallAcc[idx] = {
+              id: tcDelta.id ?? "",
+              name: tcDelta.function?.name ?? "",
+              arguments: "",
+            };
+          } else {
+            if (tcDelta.id) toolCallAcc[idx]!.id = tcDelta.id;
+            if (tcDelta.function?.name) toolCallAcc[idx]!.name = tcDelta.function.name;
+          }
+          toolCallAcc[idx]!.arguments += tcDelta.function?.arguments ?? "";
+        }
+
+        if (chunk.usage) {
+          usage = {
+            promptTokens: chunk.usage.prompt_tokens,
+            completionTokens: chunk.usage.completion_tokens,
+            totalTokens: chunk.usage.total_tokens,
+          };
+        }
       }
 
-      if (chunk.usage) {
-        usage = {
-          promptTokens: chunk.usage.prompt_tokens,
-          completionTokens: chunk.usage.completion_tokens,
-          totalTokens: chunk.usage.total_tokens,
-        };
-      }
-    }
+      const toolCalls: ToolCallResult[] | undefined =
+        toolCallAcc.length > 0
+          ? toolCallAcc.map((tc) => ({
+              name: tc.name,
+              callId: tc.id,
+              args: (() => {
+                try {
+                  return JSON.parse(tc.arguments) as Record<string, unknown>;
+                } catch {
+                  return {} as Record<string, unknown>;
+                }
+              })(),
+            }))
+          : undefined;
 
-    const toolCalls: ToolCallResult[] | undefined =
-      toolCallAcc.length > 0
-        ? toolCallAcc.map((tc) => ({
-            name: tc.name,
-            callId: tc.id,
-            args: (() => {
-              try {
-                return JSON.parse(tc.arguments) as Record<string, unknown>;
-              } catch {
-                return {} as Record<string, unknown>;
-              }
-            })(),
-          }))
-        : undefined;
-
-    return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
+      return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
+    }, opts.signal);
   }
 }

@@ -11,6 +11,7 @@ import { execSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { LLMClient } from "./client.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
+import { getRetryPolicy } from "../config/loader.js";
 
 // ── 系统 CA 证书（修复 Bun 在 Linux 上的 UNKNOWN_CERTIFICATE_VERIFICATION_ERROR）
 
@@ -128,9 +129,12 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
 
   const ghToken = await resolveGitHubToken(githubTokenSource);
 
-  const RETRIES = 3;
+  const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
+  const MAX_RETRIES = policy?.maxAttempts ?? 3;
+  const BASE_DELAY = policy?.baseDelayMs ?? 500;
+
   let resp: Response | undefined;
-  for (let attempt = 1; attempt <= RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     try {
       resp = await fetch(TOKEN_URL, withCA({
         headers: {
@@ -141,8 +145,10 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
       }));
       break; // 成功，退出重试循环
     } catch (err: unknown) {
-      if (attempt === RETRIES) throw err;
-      const waitMs = 500 * 2 ** (attempt - 1); // 500 / 1000 / 2000 ms
+      if (attempt > MAX_RETRIES) throw err;
+      const exp = Math.pow(2, Math.max(0, attempt - 1));
+      const jitter = 0.9 + Math.random() * 0.2;
+      const waitMs = Math.round(BASE_DELAY * exp * jitter);
       console.warn(`[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${waitMs}ms 后重试…`);
       await new Promise(r => setTimeout(r, waitMs));
     }
@@ -318,19 +324,37 @@ export async function getCopilotModels(
   if (cached && nowSecs() - cached.ts < MODELS_CACHE_TTL) return cached.models;
 
   const token = await getCopilotToken(githubTokenSource);
-  const resp = await fetch(`${COPILOT_API}/models`, withCA({
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      ...COPILOT_HEADERS,
-    },
-  }));
 
-  if (!resp.ok) {
-    throw new Error(`Copilot 模型列表获取失败：${resp.status} ${resp.statusText}`);
+  const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
+  const MAX_RETRIES = policy?.maxAttempts ?? 3;
+  const BASE_DELAY = policy?.baseDelayMs ?? 1000;
+
+  let resp: Response | undefined;
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      resp = await fetch(`${COPILOT_API}/models`, withCA({
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          ...COPILOT_HEADERS,
+        },
+      }));
+      break;
+    } catch (err: unknown) {
+      if (attempt > MAX_RETRIES) throw err;
+      const exp = Math.pow(2, Math.max(0, attempt - 1));
+      const jitter = 0.9 + Math.random() * 0.2;
+      const waitMs = Math.round(BASE_DELAY * exp * jitter);
+      console.warn(`[tinyclaw] Copilot 模型列表请求失败（第 ${attempt} 次），${waitMs}ms 后重试…`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
   }
 
-  const data = (await resp.json()) as { data: RawCopilotModel[] };
+  if (!resp!.ok) {
+    throw new Error(`Copilot 模型列表获取失败：${resp!.status} ${resp!.statusText}`);
+  }
+
+  const data = (await resp!.json()) as { data: RawCopilotModel[] };
   const models: CopilotModelInfo[] = data.data.map((m) => {
     const name = m.name ?? m.id;
     // 优先使用服务端返回的 billing.multiplier（企业账户），

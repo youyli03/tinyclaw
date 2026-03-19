@@ -212,6 +212,29 @@ export const MCPConfigSchema = z.object({
 }).default({ servers: {} });
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 
+// ── 重试策略配置 ──────────────────────────────────────────────────────────────
+
+const RetryConfigSchema = z.object({
+  /** 最多重试次数（不含首次尝试），默认 3 */
+  maxAttempts: z.number().int().min(0).default(3),
+  /** 指数退避基准延迟（毫秒），默认 1000 */
+  baseDelayMs: z.number().int().positive().default(1000),
+  /** 429 限流是否重试，默认 true */
+  retry429: z.boolean().default(true),
+  /** 5xx 服务端错误是否重试，默认 true */
+  retry5xx: z.boolean().default(true),
+  /** 传输层错误（ECONNRESET / socket 等）是否重试，默认 true */
+  retryTransport: z.boolean().default(true),
+  /** 请求超时是否重试，默认 false（保持现有行为） */
+  retryTimeout: z.boolean().default(false),
+  /**
+   * 流式（streamChat）chunk 间空闲超时（毫秒），默认 30000。
+   * 超过该时间无 chunk 到达则中断流并触发重试；0 = 禁用。
+   */
+  streamIdleTimeoutMs: z.number().int().min(0).default(30_000),
+}).default({});
+export type RetryConfig = z.infer<typeof RetryConfigSchema>;
+
 // ── Agent 行为配置 ────────────────────────────────────────────────────────────
 
 const AgentSchema = z.object({
@@ -234,6 +257,7 @@ export const ConfigSchema = z.object({
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
   tools: ToolsSchema,
+  retry: RetryConfigSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
