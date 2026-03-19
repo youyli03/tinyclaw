@@ -430,11 +430,15 @@ export async function runAgent(
     session.lastPromptTokens = lastUsage.promptTokens;
     const { content, toolCalls } = parseResponse(response, textMode);
 
-    // ── 文字模式格式纠错：检测格式错误并重提示（最多 1 次）──────────────
-    if (textMode && (!toolCalls || toolCalls.length === 0)) {
+    // ── 格式纠错：检测格式错误并重提示（最多 1 次，不限 textMode）──────────
+    // 根因：supportsToolCalls 默认 true → textMode=false，但模型仍可能输出裸 JSON
+    if (!toolCalls || toolCalls.length === 0) {
       if (formatRetryPending) {
         // 已纠错一次，模型仍未使用正确格式 → 直接把原始输出返回给用户
-        console.warn(`${logPrefix} [text-mode] format correction failed, returning raw output`);
+        console.log(
+          `${logPrefix} ❌ 格式纠错重试仍失败（textMode=${textMode}），返回原始输出：` +
+          content.slice(0, 60).replace(/\n/g, " ") + (content.length > 60 ? "…" : "")
+        );
         finalContent = content;
         session.addAssistantMessage(finalContent);
         formatRetryPending = false;
@@ -444,9 +448,13 @@ export async function runAgent(
       const trimmedContent = content.trim();
       const looksLikeToolAttempt =
         trimmedContent.startsWith("{") ||
-        /["\u2018\u2019](tool|function|exec_shell|tool_call)["\u2019\u201a]?\s*:/.test(trimmedContent);
+        /"(tool|function|exec_shell|tool_call)"\s*:/.test(trimmedContent);
       if (looksLikeToolAttempt) {
-        console.warn(`${logPrefix} [text-mode] incorrect tool call format detected, injecting correction`);
+        console.log(
+          `${logPrefix} ⚠️ 格式错误：无 tool_call（textMode=${textMode}，round=${round}），` +
+          `内容：${trimmedContent.slice(0, 60).replace(/\n/g, " ")}${trimmedContent.length > 60 ? "…" : ""}`
+        );
+        console.log(`${logPrefix} ⚠️ 注入格式纠错提示，重试本轮`);
         session.addAssistantMessage(content);
         session.addSystemMessage(
           "[格式纠错] 工具调用格式不正确。请严格使用以下格式，整条回复只包含此块，不附加任何其他文字：\n" +
@@ -460,6 +468,9 @@ export async function runAgent(
     }
     // 成功解析到工具调用（含纠错后成功）→ 重置纠错标记，后续轮次仍可纠错
     if (toolCalls && toolCalls.length > 0) {
+      if (formatRetryPending) {
+        console.log(`${logPrefix} ✅ 格式纠错成功（round=${round}）`);
+      }
       formatRetryPending = false;
     }
 
