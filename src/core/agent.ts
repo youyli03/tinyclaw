@@ -22,6 +22,7 @@ import "../tools/cron.js";
 import "../tools/skill-creator.js";
 import "../tools/mcp-manager.js";
 import "../tools/agent-fork.js";
+import "../tools/notify.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
@@ -262,6 +263,11 @@ export interface AgentRunOptions {
    * 流式请求期间每隔 agent.heartbeatIntervalSecs 秒调用一次，向用户推送"仍在处理中"。
    */
   onHeartbeat?: (message: string) => void;
+  /**
+   * 主动向用户推送消息（由 main.ts 注入）。
+   * 供 notify_user 工具调用，不等 runAgent 结束即发送，不触发新一轮 LLM 推理。
+   */
+  onNotify?: (message: string) => Promise<void>;
   /**
    * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
    * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
@@ -566,10 +572,11 @@ export async function runAgent(
           masterSession: session,
           // 只有未达深度上限时才注入 slaveRunFn；Slave 调用 agent_fork 时会收到明确错误
           ...(currentDepth < MAX_SLAVE_DEPTH
-            ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1 }) }
+            ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) }) }
             : {}),
           ...(opts.onSlaveComplete ? { onSlaveComplete: opts.onSlaveComplete } : {}),
           ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
+          ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {
@@ -599,7 +606,7 @@ export async function runAgent(
         Date.now() - startMs > threshold
       ) {
         const continuationRunFn = (s: Session, c: string, o?: Record<string, unknown>) =>
-          runAgent(s, c, { ...(o as AgentRunOptions), slaveDepth: 1 });
+          runAgent(s, c, { ...(o as AgentRunOptions), slaveDepth: 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) });
         const slaveId = slaveManager.forkContinuation(
           session,
           continuationRunFn,

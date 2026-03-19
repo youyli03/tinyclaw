@@ -27,6 +27,11 @@ export interface ToolContext {
    * 每隔 reportIntervalSecs 秒向用户推送 Slave 当前进度快照，不触发 runAgent。
    */
   onProgressNotify?: (slaveId: string, state: import("../core/slave-manager.js").SlaveState) => Promise<void>;
+  /**
+   * 主动向用户推送消息（由 main.ts 注入）。
+   * 供 notify_user 工具调用，不等 runAgent 结束即发送，不触发新一轮 LLM 推理。
+   */
+  onNotify?: (message: string) => Promise<void>;
 }
 
 export interface ToolDef {

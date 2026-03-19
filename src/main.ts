@@ -223,6 +223,11 @@ async function main(): Promise<void> {
     const opts: AgentRunOptions = {
       onSlaveComplete,
       onProgressNotify,
+      onNotify: async (message: string) => {
+        await connector.send(msg.peerId, msg.type, message).catch((err) => {
+          console.error("[notify_user] send error:", err);
+        });
+      },
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
           msg.peerId, msg.type, warningMsg,
