@@ -667,7 +667,7 @@ export async function runAgent(
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   const contextWindow = llmRegistry.getContextWindow("daily");
-  const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+  const fmtK = (n: number) => n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n);
   const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {
     console.log(`${logPrefix} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`);
