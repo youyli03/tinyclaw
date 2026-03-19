@@ -36,6 +36,18 @@ model   = "gpt-4o"
 # maxTokens = 4096    # 可选，默认 4096
 # timeoutMs = 120000  # 可选，默认 120000ms
 
+# ── code 后端（可选）──────────────────────────────────────────────────────────
+# 供 /code 斜杠命令的 Code 模式使用，未配置时回退到 daily 后端
+# 可配置更擅长代码的模型（如 o3-mini、claude-3-5-sonnet 等）
+# [llm.backends.code]
+# baseUrl = "https://api.openai.com/v1"
+# apiKey  = "sk-..."
+# model   = "o3-mini"
+# # 使用 Copilot 示例：
+# # provider    = "copilot"
+# # githubToken = "gh_cli"
+# # model       = "gpt-4.1"
+
 # 使用 GitHub Copilot 账号示例（取消注释并删除上方 openai 配置）：
 # [llm.backends.daily]
 # provider    = "copilot"

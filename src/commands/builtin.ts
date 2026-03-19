@@ -207,3 +207,7 @@ registerCommand({
     return `🏓 **pong** — 连接成功，但未收到 token\n模型：\`${model}\`\n总耗时：${totalMs} ms`;
   },
 });
+
+// ── code 模式命令（/code 和 /chat）────────────────────────────────────────────
+// 命令实现在 src/code/，此处触发注册
+import "../code/index.js";

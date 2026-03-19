@@ -61,6 +61,8 @@ export type BackendRole = z.infer<typeof BackendRoleSchema>;
 const LLMBackendsSchema = z.object({
   /** 日常对话后端 */
   daily: BackendRoleSchema,
+  /** 代码专注后端（未配置时回退到 daily） */
+  code: BackendRoleSchema.optional(),
   /** 摘要压缩后端（未配置时回退到 daily） */
   summarizer: BackendRoleSchema.optional(),
 });

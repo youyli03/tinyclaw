@@ -45,7 +45,14 @@ export class Session {
   /** 最近一次 compress() 生成的摘要文本（由 fork() 注入给 slave 作为历史背景） */
   lastSummary?: string;
 
-  // ── Token 使用量 ──────────────────────────────────────────────────────────
+  // ── 会话模式 ──────────────────────────────────────────────────────────────
+  /**
+   * 会话模式：
+   * - `"chat"` — 默认聊天模式，历史记录持久化到 `.jsonl`，支持摘要压缩和 QMD 记忆。
+   * - `"code"` — 代码专注模式，历史记录持久化到 `.code.jsonl`（crash 恢复），跳过摘要压缩和记忆搜索。
+   */
+  mode: "chat" | "code" = "chat";
+
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
 
@@ -54,8 +61,16 @@ export class Session {
     this.sessionId = sessionId;
     this.agentId = opts.agentId ?? "default";
 
-    // 尝试从 JSONL 恢复（进程崩溃后重启）
-    const restored = Session.loadFromJsonl(sessionId);
+    // 优先检测 code 模式恢复（.code.jsonl 存在 → 上次 crash 发生在 code 模式下）
+    const codeRestored = Session.loadFromJsonl(sessionId, "code");
+    if (codeRestored && codeRestored.length > 0) {
+      this.mode = "code";
+      this.messages = codeRestored;
+      return;
+    }
+
+    // 尝试从 chat JSONL 恢复（进程崩溃后重启）
+    const restored = Session.loadFromJsonl(sessionId, "chat");
     if (restored) {
       this.messages = restored;
     } else if (opts.systemPrompt) {
@@ -136,9 +151,11 @@ export class Session {
   /**
    * 检查是否需要压缩，如需要则执行摘要并替换 messages[]，
    * 同时重写 JSONL（压缩后只保留 system + 摘要）。
+   * code 模式下跳过（无长期历史积累）。
    * 返回摘要文本（已压缩）或 undefined（未触发）。
    */
   async maybeCompress(): Promise<string | undefined> {
+    if (this.mode === "code") return undefined;
     if (shouldSummarize(this.messages)) {
       return await this.compress();
     }
@@ -191,6 +208,7 @@ export class Session {
 
   /**
    * 异步追加最后一轮 user/assistant 对话到 JSONL（fire-and-forget）。
+   * chat 模式写 <sessionId>.jsonl；code 模式写 <sessionId>.code.jsonl（crash 恢复用）。
    * 在 runAgent() 成功结束后调用。
    */
   appendLastTurnToJsonl(): void {
@@ -222,7 +240,7 @@ export class Session {
       JSON.stringify({ role: "assistant", content: msgs[assistantIdx]!.content, ts }) +
       "\n";
     try {
-      const filePath = Session.getJsonlPath(this.sessionId);
+      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.appendFileSync(filePath, lines, "utf-8");
     } catch (err) {
@@ -233,10 +251,11 @@ export class Session {
   /**
    * 整体覆盖写入 JSONL，仅保留当前 messages[]（压缩后调用）。
    * 保留 system messages + 摘要，丢弃原始 user/assistant 记录。
+   * 仅在 chat 模式下使用（code 模式不做摘要压缩）。
    */
   private rewriteJsonl(): void {
     try {
-      const filePath = Session.getJsonlPath(this.sessionId);
+      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines =
         this.messages
@@ -249,11 +268,13 @@ export class Session {
   }
 
   /**
-   * 从 JSONL 文件加载 messages[]（进程启动时调用）。
+   * 从 JSONL 文件加载 messages[]（进程启动时调用，或切换模式时调用）。
+   * @param sessionId 会话 ID
+   * @param mode 模式（"chat" → .jsonl，"code" → .code.jsonl），默认 "chat"
    * 文件不存在返回 null。
    */
-  private static loadFromJsonl(sessionId: string): ChatMessage[] | null {
-    const filePath = Session.getJsonlPath(sessionId);
+  private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): ChatMessage[] | null {
+    const filePath = Session.getJsonlPath(sessionId, mode);
     if (!fs.existsSync(filePath)) return null;
     try {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
@@ -280,15 +301,60 @@ export class Session {
     }
   }
 
-  private static getJsonlPath(sessionId: string): string {
+  private static getJsonlPath(sessionId: string, mode: "chat" | "code" = "chat"): string {
     // 将 sessionId 中的 : / \ 替换为 _ 作为合法文件名
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
-    return path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
+    const suffix = mode === "code" ? ".code.jsonl" : ".jsonl";
+    return path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}${suffix}`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** 估算当前 token 数（粗算） */
+  /**
+   * 清空当前 messages[]，同时删除当前模式对应的 JSONL 文件（重置持久化状态）。
+   * 用于 /code 和 /chat 命令切换模式时清理上下文。
+   */
+  clearMessages(): void {
+    this.messages = [];
+    this.lastPromptTokens = 0;
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.error("[session] clearMessages: failed to delete JSONL:", err);
+    }
+  }
+
+  /**
+   * 从磁盘加载指定模式的 JSONL 历史到 messages[]。
+   * 用于 /code 和 /chat 命令切换模式时恢复上下文。
+   * - 切换到 "chat" 时：删除 .code.jsonl（避免下次 crash 恢复错误地进入 code 模式）
+   * @param targetMode 要恢复的模式（从对应 JSONL 文件加载）
+   * @returns 是否成功加载了历史消息
+   */
+  reloadFromDisk(targetMode: "chat" | "code"): boolean {
+    if (targetMode === "chat") {
+      // 切换到 chat 模式时清理 code JSONL，防止下次重启误判模式
+      try {
+        const codePath = Session.getJsonlPath(this.sessionId, "code");
+        if (fs.existsSync(codePath)) {
+          fs.unlinkSync(codePath);
+        }
+      } catch (err) {
+        console.error("[session] reloadFromDisk: failed to clean up code JSONL:", err);
+      }
+    }
+    const restored = Session.loadFromJsonl(this.sessionId, targetMode);
+    if (restored && restored.length > 0) {
+      this.messages = restored;
+      return true;
+    }
+    this.messages = [];
+    return false;
+  }
+
   estimatedTokens(): number {
     const total = this.messages.reduce((s, m) => {
       if (typeof m.content === "string") return s + m.content.length;

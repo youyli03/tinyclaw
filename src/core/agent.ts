@@ -14,6 +14,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
+import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -315,7 +316,8 @@ export async function runAgent(
   userContent: string,
   opts: AgentRunOptions = {}
 ): Promise<AgentRunResult> {
-  const client = llmRegistry.get("daily");
+  const isCodeMode = session.mode === "code";
+  const client = llmRegistry.get(isCodeMode ? "code" : "daily");
   const toolsUsed: string[] = [];
   // slave session ID 格式为 "slave:abc12345"，显示为 "[slave:abc12345]"；其他 session 取末尾 12 位
   const isSlave = session.sessionId.startsWith("slave:");
@@ -343,7 +345,13 @@ export async function runAgent(
     // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
     // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
     {
-      let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
+      let sysPrompt: string;
+      if (isCodeMode) {
+        // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision);
+      } else {
+        sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
+      }
       if (textMode && initialTools.length > 0) {
         sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
       }
@@ -353,15 +361,18 @@ export async function runAgent(
     // system prompt 刷新后更新回滚点
     preRunLength = session.getMessages().length;
 
-    // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
-    const memoryContext = await searchMemory(userContent, session.agentId);
-    if (memoryContext) {
-      session.addSystemMessage(memoryContext);
+    // 2. 搜索相关历史记忆，注入为 system 消息（code 模式跳过，null = 未启用，"" = 无结果）
+    if (!isCodeMode) {
+      const memoryContext = await searchMemory(userContent, session.agentId);
+      if (memoryContext) {
+        session.addSystemMessage(memoryContext);
+      }
     }
 
     // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
     // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
-    if (!session.abortRequested && shouldSummarize(session.getMessages())) {
+    // code 模式跳过（无长期历史积累，不做压缩）
+    if (!isCodeMode && !session.abortRequested && shouldSummarize(session.getMessages())) {
       opts.onCompress?.("start");
       const summary = await session.compress();
       opts.onCompress?.("done", summary);
@@ -656,8 +667,8 @@ export async function runAgent(
     session.appendLastTurnToJsonl();
   }
 
-  // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查）
-  if (!session.abortRequested) {
+  // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查；code 模式跳过）
+  if (!session.abortRequested && !isCodeMode) {
     if (shouldSummarize(session.getMessages())) {
       opts.onCompress?.("start");
       const summary = await session.compress();
@@ -666,7 +677,7 @@ export async function runAgent(
   }
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-  const contextWindow = llmRegistry.getContextWindow("daily");
+  const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily");
   const fmtK = (n: number) => n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n);
   const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {

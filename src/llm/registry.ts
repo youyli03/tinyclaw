@@ -3,7 +3,7 @@ import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
 
-export type BackendName = "daily" | "summarizer";
+export type BackendName = "daily" | "summarizer" | "code";
 
 /**
  * 解析模型 symbol，格式为 "provider/model-id"。
@@ -43,6 +43,7 @@ class LLMRegistry {
     const entries: [BackendName, BackendRole | undefined][] = [
       ["daily", backends.daily],
       ["summarizer", backends.summarizer],
+      ["code", backends.code],
     ];
 
     for (const [name, role] of entries) {
@@ -86,6 +87,7 @@ class LLMRegistry {
     const backends = config.llm.backends;
     const role: BackendRole | undefined =
       name === "daily" ? backends.daily
+      : name === "code" ? backends.code
       : backends.summarizer;
 
     if (!role) {
