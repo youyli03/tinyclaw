@@ -371,6 +371,8 @@ export async function runAgent(
   let finalContent = "";
   let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
+  let formatRetryPending = false;
 
   // 5. ReAct 循环
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -421,6 +423,39 @@ export async function runAgent(
     // 记录到 session，供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
     const { content, toolCalls } = parseResponse(response, textMode);
+
+    // ── 文字模式格式纠错：检测格式错误并重提示（最多 1 次）──────────────
+    if (textMode && (!toolCalls || toolCalls.length === 0)) {
+      if (formatRetryPending) {
+        // 已纠错一次，模型仍未使用正确格式 → 直接把原始输出返回给用户
+        console.warn(`${logPrefix} [text-mode] format correction failed, returning raw output`);
+        finalContent = content;
+        session.addAssistantMessage(finalContent);
+        formatRetryPending = false;
+        break;
+      }
+      // 判断是否疑似工具调用尝试（以 { 开头，或含常见工具调用关键词）
+      const trimmedContent = content.trim();
+      const looksLikeToolAttempt =
+        trimmedContent.startsWith("{") ||
+        /["\u2018\u2019](tool|function|exec_shell|tool_call)["\u2019\u201a]?\s*:/.test(trimmedContent);
+      if (looksLikeToolAttempt) {
+        console.warn(`${logPrefix} [text-mode] incorrect tool call format detected, injecting correction`);
+        session.addAssistantMessage(content);
+        session.addSystemMessage(
+          "[格式纠错] 工具调用格式不正确。请严格使用以下格式，整条回复只包含此块，不附加任何其他文字：\n" +
+          "<tool_call>\n" +
+          '{"name": "工具名", "args": {"参数名": "值"}}\n' +
+          "</tool_call>"
+        );
+        formatRetryPending = true;
+        continue;
+      }
+    }
+    // 成功解析到工具调用（含纠错后成功）→ 重置纠错标记，后续轮次仍可纠错
+    if (toolCalls && toolCalls.length > 0) {
+      formatRetryPending = false;
+    }
 
     // 没有工具调用 → 最终回复
     if (!toolCalls || toolCalls.length === 0) {
