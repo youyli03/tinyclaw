@@ -13,6 +13,7 @@ import { loadConfig } from "../config/loader.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { agentManager } from "./agent-manager.js";
+import { slaveManager } from "./slave-manager.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -26,6 +27,8 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
 const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
 /** Slave 最大嵌套深度：0=Master，1=一级Slave，不允许 Slave 再 fork */
 const MAX_SLAVE_DEPTH = 1;
+/** 超过此时长（ms）且仍在执行工具时，自动 fork 为 Slave 继续执行 */
+const AUTO_FORK_THRESHOLD_MS = 120_000;
 
 /**
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
@@ -265,6 +268,16 @@ export interface AgentRunOptions {
    * slaveRunFn，agent_fork 工具会返回明确错误，防止无限嵌套或结果丢失。
    */
   slaveDepth?: number;
+  /**
+   * 跳过 runAgent 前置步骤（system prompt 重建、记忆搜索、压缩、添加用户消息），
+   * 直接进入 ReAct 循环。用于 auto-fork continuation slave——session 已包含完整上下文。
+   */
+  skipPreamble?: boolean;
+  /**
+   * 自动 fork 的时间阈值（毫秒）。超过该时间后，每批工具执行完毕即触发 auto-fork。
+   * 默认 120_000（2 分钟）。设为 0 可禁用 auto-fork。
+   */
+  autoForkThresholdMs?: number;
 }
 
 export interface AgentRunResult {
@@ -317,38 +330,43 @@ export async function runAgent(
   const initialTools = getAllToolSpecs();
   const textMode = !client.supportsToolCalls;
 
-  // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
-  // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
-  {
-    let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
-    if (textMode && initialTools.length > 0) {
-      sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
-    }
-    session.replaceOrPrependSystemMessage(sysPrompt);
-  }
-
-  // system prompt 刷新后记录长度，用于连接失败时回滚本次注入的消息
+  // preRunLength：连接失败时用于回滚本次注入的消息
   let preRunLength = session.getMessages().length;
 
-  // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
-  const memoryContext = await searchMemory(userContent, session.agentId);
-  if (memoryContext) {
-    session.addSystemMessage(memoryContext);
-  }
+  if (!opts.skipPreamble) {
+    // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
+    // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
+    {
+      let sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
+      if (textMode && initialTools.length > 0) {
+        sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
+      }
+      session.replaceOrPrependSystemMessage(sysPrompt);
+    }
 
-  // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
-  // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
-  if (!session.abortRequested && shouldSummarize(session.getMessages())) {
-    opts.onCompress?.("start");
-    const summary = await session.compress();
-    opts.onCompress?.("done", summary);
-    // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
+    // system prompt 刷新后更新回滚点
     preRunLength = session.getMessages().length;
-  }
 
-  // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
-  const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
-  session.addUserMessage(msgContent);
+    // 2. 搜索相关历史记忆，注入为 system 消息（null = 未启用，"" = 无结果）
+    const memoryContext = await searchMemory(userContent, session.agentId);
+    if (memoryContext) {
+      session.addSystemMessage(memoryContext);
+    }
+
+    // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
+    // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
+    if (!session.abortRequested && shouldSummarize(session.getMessages())) {
+      opts.onCompress?.("start");
+      const summary = await session.compress();
+      opts.onCompress?.("done", summary);
+      // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
+      preRunLength = session.getMessages().length;
+    }
+
+    // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
+    const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
+    session.addUserMessage(msgContent);
+  }
 
   let finalContent = "";
   let codeAssistCallCount = 0;
@@ -534,6 +552,34 @@ export async function runAgent(
 
     // 一整批工具处理完，若已中断则退出轮次循环
     if (session.abortRequested) break;
+
+    // ── Auto-fork 检查：超过阈值时将剩余任务交给 Slave 继续执行 ──────────
+    {
+      const threshold = opts.autoForkThresholdMs ?? AUTO_FORK_THRESHOLD_MS;
+      if (
+        threshold > 0 &&
+        !isSlave &&
+        (opts.slaveDepth ?? 0) === 0 &&
+        opts.onSlaveComplete !== undefined &&
+        Date.now() - startMs > threshold
+      ) {
+        const continuationRunFn = (s: Session, c: string, o?: Record<string, unknown>) =>
+          runAgent(s, c, { ...(o as AgentRunOptions), slaveDepth: 1 });
+        const slaveId = slaveManager.forkContinuation(
+          session,
+          continuationRunFn,
+          opts.onSlaveComplete,
+          opts.onProgressNotify,
+        );
+        finalContent =
+          `⏱️ 任务已运行超过 ${Math.round(threshold / 60_000)} 分钟，` +
+          `已自动在后台创建 Sub-Agent \`${slaveId}\` 继续执行。\n` +
+          `您可以继续提问，任务完成后将自动通知您。\n` +
+          `用 \`agent_status(slave_id="${slaveId}")\` 查询进度。`;
+        session.addAssistantMessage(finalContent);
+        break;
+      }
+    }
 
     // 最后一轮，强制用 LLM 生成总结
     if (round === MAX_TOOL_ROUNDS - 1) {

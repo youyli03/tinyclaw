@@ -51,7 +51,7 @@ export type SlaveProgressNotifyFn = (slaveId: string, state: SlaveState) => Prom
 export type SlaveRunFn = (
   session: Session,
   content: string,
-  opts?: { systemPrompt?: string; systemPromptSuffix?: string }
+  opts?: { systemPrompt?: string; systemPromptSuffix?: string; skipPreamble?: boolean }
 ) => Promise<{ content: string; toolsUsed: string[] }>;
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
@@ -148,6 +148,57 @@ class SlaveManager {
     return slaveId;
   }
 
+  /**
+   * Fork a continuation Slave that picks up an in-progress Master ReAct loop.
+   *
+   * Unlike `fork()`, this clones the Master's FULL message history (not just a window),
+   * preserving tool_call / tool_result structure so the Slave LLM sees the exact context.
+   * `runFn` is called with `skipPreamble: true` to skip system-prompt rebuild and user
+   * message injection — the session already has the complete, ready-to-continue state.
+   *
+   * Called automatically by `runAgent()` when elapsed time exceeds the auto-fork threshold.
+   */
+  forkContinuation(
+    masterSession: Session,
+    runFn: SlaveRunFn,
+    onComplete?: (notif: SlaveNotification) => Promise<void>,
+    onProgressNotify?: SlaveProgressNotifyFn,
+  ): string {
+    const slaveId = crypto.randomUUID().slice(0, 8);
+
+    const state: SlaveState = {
+      slaveId,
+      task: "(auto-fork continuation)",
+      status: "running",
+      progress: { round: 0, toolsUsed: [], partialOutput: "" },
+      startedAt: new Date().toISOString(),
+      masterSessionId: masterSession.sessionId,
+    };
+    this.states.set(slaveId, state);
+
+    const slaveSessionId = `slave:${slaveId}`;
+    const slaveSession = new Session(slaveSessionId, { agentId: masterSession.agentId });
+    this.sessions.set(slaveId, slaveSession);
+
+    // Deep-clone ALL master messages (preserves tool_call / tool_result structure)
+    slaveSession.importMessages(masterSession.getMessages());
+
+    // Append a brief continuation hint so the Slave knows it's running headless
+    slaveSession.addSystemMessage(
+      "## ⚠️ Sub-Agent 后台续跑提示\n\n" +
+      "你是一个在后台继续执行的 Sub-Agent（Slave）。" +
+      "上方对话历史是原 Master 会话的完整上下文（含已执行工具的结果）。\n" +
+      "请直接从当前状态继续完成任务，无需重复已完成的步骤，无用户在线，自主决策。\n" +
+      "禁止调用 agent_fork 工具（不得嵌套 fork）。"
+    );
+
+    console.log(`[slave:${slaveId}] auto-fork continuation from ${masterSession.sessionId.slice(-12)}`);
+
+    void this._run(slaveId, slaveSession, "(auto-fork continuation)", runFn, onComplete, undefined, onProgressNotify, true);
+
+    return slaveId;
+  }
+
   /** 软中断 Slave */
   abort(slaveId: string): string {
     const state = this.states.get(slaveId);
@@ -199,7 +250,8 @@ class SlaveManager {
     runFn: SlaveRunFn,
     onComplete?: (notif: SlaveNotification) => Promise<void>,
     reportIntervalSecs?: number,
-    onProgressNotify?: SlaveProgressNotifyFn
+    onProgressNotify?: SlaveProgressNotifyFn,
+    skipPreamble?: boolean,
   ): Promise<void> {
     const state = this.states.get(slaveId)!;
 
@@ -215,7 +267,10 @@ class SlaveManager {
     }
 
     try {
-      const result = await runFn(session, task, { systemPromptSuffix: SLAVE_SYSTEM_PROMPT });
+      const runOpts = skipPreamble
+        ? { skipPreamble: true }
+        : { systemPromptSuffix: SLAVE_SYSTEM_PROMPT };
+      const result = await runFn(session, task, runOpts);
 
       // 更新完成状态
       if (state.status === "aborted") {

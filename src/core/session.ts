@@ -94,6 +94,16 @@ export class Session {
   }
 
   /**
+   * 批量导入消息（深拷贝），用于 auto-fork continuation slave 克隆 Master 全量上下文。
+   * 保留原始结构（含 tool_call / tool_result），不做任何内容提取或角色过滤。
+   */
+  importMessages(messages: ChatMessage[]): void {
+    for (const msg of messages) {
+      this.messages.push(structuredClone(msg));
+    }
+  }
+
+  /**
    * 将 messages 截断至 length 条（从末尾删除）。
    * 用于 runAgent() 失败时回滚本次注入的 memory / user 消息，避免 session 状态损坏。
    */
