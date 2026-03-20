@@ -22,6 +22,7 @@ registerCommand({
   name: "code",
   description: "切换到 Code 模式（独立编码会话，不写入聊天历史，支持 crash 恢复）",
   usage: "/code",
+  modes: ["chat"],
   execute({ session }) {
     if (session.mode === "code") {
       return "ℹ️ 已处于 Code 模式。发送 `/chat` 可返回聊天模式。";
@@ -75,6 +76,7 @@ registerCommand({
   name: "chat",
   description: "切换回聊天模式（恢复聊天历史，退出 Code 模式）",
   usage: "/chat",
+  modes: ["code"],
   execute({ session }) {
     if (session.mode === "chat") {
       return "ℹ️ 已处于聊天模式。发送 `/code` 可切换到 Code 模式。";
@@ -106,10 +108,8 @@ registerCommand({
   name: "plan",
   description: "切换到 Plan 子模式：AI 先分析任务、输出计划，等用户确认后再执行（需在 Code 模式下）",
   usage: "/plan",
+  modes: ["code"],
   execute({ session }) {
-    if (session.mode !== "code") {
-      return "ℹ️ `/plan` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
-    }
     if (session.codeSubMode === "plan") {
       return "ℹ️ 已处于 Plan 子模式。发送 `/auto` 可切换回直接执行模式。";
     }
@@ -131,10 +131,8 @@ registerCommand({
   name: "auto",
   description: "切换到 Auto 子模式：AI 直接执行任务，不经过规划阶段（默认模式，需在 Code 模式下）",
   usage: "/auto",
+  modes: ["code"],
   execute({ session }) {
-    if (session.mode !== "code") {
-      return "ℹ️ `/auto` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
-    }
     if (session.codeSubMode === "auto") {
       return "ℹ️ 已处于 Auto 子模式（默认）。发送 `/plan` 可切换到规划子模式。";
     }
@@ -155,11 +153,8 @@ registerCommand({
   name: "workspace",
   description: "查看或设置 Code 模式工作目录（持久化，下次进入自动恢复）",
   usage: "/workspace [路径]",
+  modes: ["code"],
   execute({ session, args }) {
-    if (session.mode !== "code") {
-      return "ℹ️ `/workspace` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
-    }
-
     const dirInput = args.join(" ").trim();
     const defaultDir = agentManager.workspaceDir(session.agentId);
 
@@ -199,10 +194,8 @@ registerCommand({
   name: "new",
   description: "开始全新编码会话（清空当前 Code 模式上下文，需在 Code 模式下）",
   usage: "/new",
+  modes: ["code"],
   execute({ session }) {
-    if (session.mode !== "code") {
-      return "ℹ️ `/new` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
-    }
     session.clearMessages();
     // 重新激活标记（clearMessages 会删除 .code.active，这里需要重建）
     session.activateCodeMode();

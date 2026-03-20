@@ -18,7 +18,7 @@ registerCommand({
   name: "help",
   description: "显示可用命令列表，或查看某个命令的详细说明",
   usage: "/help [command]",
-  execute({ args }) {
+  execute({ args, session }) {
     if (args.length > 0) {
       const name = args[0]!.replace(/^\//, "").toLowerCase();
       const cmd = getCommand(name);
@@ -30,7 +30,7 @@ registerCommand({
       return lines.join("\n");
     }
 
-    const cmds = listCommands();
+    const cmds = listCommands(session.mode);
     const lines = ["**可用命令**（发送 `/help <命令名>` 查看详细用法）\n"];
     for (const c of cmds) {
       lines.push(`• \`/${c.name}\` — ${c.description}`);
@@ -174,6 +174,7 @@ registerCommand({
   name: "save",
   description: "立即整理当前 session 的记忆（压缩 → 持久化 → 向量化）",
   usage: "/save",
+  modes: ["chat"],
   async execute({ session }) {
     if (session.running) {
       return "⚠️ 当前有任务正在运行，请等待完成后再整理记忆。";
@@ -193,6 +194,7 @@ registerCommand({
   name: "slaves",
   description: "列出后台 Slave 任务，可按状态过滤",
   usage: "/slaves [running|done|error|aborted]",
+  modes: ["chat"],
   execute({ args }) {
     const validFilters = ["running", "done", "error", "aborted"] as const;
     type Filter = (typeof validFilters)[number];
@@ -243,6 +245,7 @@ registerCommand({
   name: "ping",
   description: "测试 LLM 服务连通性（流式请求，报告首 token 延迟 TTFT）",
   usage: "/ping",
+  modes: ["chat"],
   async execute() {
     const client = llmRegistry.get("daily");
     const model = client.model;

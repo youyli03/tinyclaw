@@ -23,6 +23,11 @@ export interface CommandDef {
   description: string;
   /** 用法示例（/help <name> 时显示） */
   usage?: string;
+  /**
+   * 命令可用模式。未设置表示两种模式都可用。
+   * 影响：/help 展示过滤 + executeCommand 执行拦截。
+   */
+  modes?: Array<"chat" | "code">;
   /** 执行函数，返回要发送给用户的字符串 */
   execute(ctx: CommandContext & { args: string[] }): string | Promise<string>;
 }
@@ -43,8 +48,10 @@ export function getCommand(name: string): CommandDef | undefined {
   return commands.get(name.toLowerCase());
 }
 
-export function listCommands(): CommandDef[] {
-  return Array.from(commands.values());
+export function listCommands(mode?: "chat" | "code"): CommandDef[] {
+  const all = Array.from(commands.values());
+  if (!mode) return all;
+  return all.filter((c) => !c.modes || c.modes.includes(mode));
 }
 
 // ── 解析 & 执行 ───────────────────────────────────────────────────────────────
@@ -81,6 +88,11 @@ export async function executeCommand(
     );
   }
   console.log(`[cmd] /${name}${args.length ? " " + args.join(" ") : ""} (session: ${ctx.session?.sessionId ?? "?"})`);
+  // 模式隔离检查：命令标记了 modes 且当前模式不在列表中时拦截
+  if (cmd.modes && ctx.session && !cmd.modes.includes(ctx.session.mode)) {
+    const allowed = cmd.modes.map((m) => (m === "chat" ? "Chat 模式" : "Code 模式")).join("/");
+    return `❌ \`/${cmd.name}\` 仅在 ${allowed} 下可用（当前：${ctx.session.mode === "chat" ? "Chat 模式" : "Code 模式"}）。`;
+  }
   try {
     // args is always provided via spread; cast to satisfy the execute signature
     return await cmd.execute({ ...ctx, args } as CommandContext & { args: string[] });
