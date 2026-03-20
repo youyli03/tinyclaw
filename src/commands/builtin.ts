@@ -10,7 +10,7 @@ import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
-import { getCachedCopilotInfo, lookupMultiplier } from "../llm/copilot.js";
+import { getCachedCopilotInfo, getCopilotRateLimit, lookupMultiplier } from "../llm/copilot.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -107,10 +107,15 @@ registerCommand({
         // 从缓存读取 Copilot token 信息（不触发新网络请求）
         const info = getCachedCopilotInfo(copilotCfg.githubToken);
 
-        // 配额信息
-        let quotaStr = "N/A";
-        if (info.quotas) {
-          // 尝试提取 chat_completions 或第一个配额项
+        // 配额信息：优先从补全 API 响应头（付费计划），回退到 token 响应体（免费计划）
+        let quotaStr = "N/A（发送消息后更新）";
+        const rl = getCopilotRateLimit(copilotCfg.githubToken);
+        if (rl) {
+          const ageMin = Math.round((Date.now() - rl.capturedAt) / 60_000);
+          const ageSuffix = ageMin < 1 ? "" : `（${ageMin} 分钟前更新）`;
+          quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
+        } else if (info.quotas) {
+          // 免费计划：token 响应体中的 limited_user_quotas
           const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
             | Record<string, unknown>
             | undefined;
@@ -126,9 +131,16 @@ registerCommand({
         }
 
         const skuStr = info.sku ?? (info.tokenCached ? "（SKU 未知）" : "（未初始化）");
+
+        // Code 模式独立模型提示
+        let modelDisplayName = `\`${modelName}\``;
+        if (isCodeMode && !config.llm.backends.code) {
+          modelDisplayName += "（与 Chat 共用 daily 模型，可在 [llm.backends.code] 独立配置）";
+        }
+
         lines.push(
           "",
-          `Copilot：\`${modelName}\` · ${multiplierStr} premium/请求 · 剩余配额：${quotaStr} · 计划：${skuStr}`,
+          `Copilot：${modelDisplayName} · ${multiplierStr} premium/请求 · 剩余配额：${quotaStr} · 计划：${skuStr}`,
         );
       }
     } catch {

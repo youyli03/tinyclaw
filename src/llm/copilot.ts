@@ -8,7 +8,9 @@
  */
 
 import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
+import * as os from "os";
+import * as path from "path";
 import { LLMClient } from "./client.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 import { getRetryPolicy } from "../config/loader.js";
@@ -117,6 +119,62 @@ const tokenCache = new Map<string, CachedToken>();
 
 function nowSecs(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+// ── Copilot rate-limit 缓存（持久化到 ~/.tinyclaw/copilot-ratelimit.json）────
+
+export interface CopilotRateLimit {
+  /** x-ratelimit-remaining-requests */
+  remaining: number;
+  /** x-ratelimit-limit-requests */
+  limit: number;
+  /** x-ratelimit-reset-requests（原始字符串，ISO 8601 或 unix timestamp） */
+  resetAt?: string;
+  /** 捕获时间（unix ms） */
+  capturedAt: number;
+}
+
+const RATELIMIT_FILE = path.join(os.homedir(), ".tinyclaw", "copilot-ratelimit.json");
+
+/** 内存缓存，启动时从文件加载 */
+const rateLimitCache = new Map<string, CopilotRateLimit>();
+
+function loadRateLimitFromDisk(): void {
+  try {
+    if (!existsSync(RATELIMIT_FILE)) return;
+    const raw = readFileSync(RATELIMIT_FILE, "utf-8");
+    const obj = JSON.parse(raw) as Record<string, CopilotRateLimit>;
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && typeof v.remaining === "number" && typeof v.limit === "number") {
+        rateLimitCache.set(k, v);
+      }
+    }
+  } catch {
+    // 文件损坏或不存在，忽略
+  }
+}
+
+function saveRateLimitToDisk(): void {
+  try {
+    const dir = path.dirname(RATELIMIT_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const obj: Record<string, CopilotRateLimit> = {};
+    for (const [k, v] of rateLimitCache) obj[k] = v;
+    writeFileSync(RATELIMIT_FILE, JSON.stringify(obj, null, 2), "utf-8");
+  } catch {
+    // 写入失败，忽略
+  }
+}
+
+// 模块加载时读取历史数据
+loadRateLimitFromDisk();
+
+/**
+ * 读取已缓存的 Copilot rate-limit 信息（优先内存，回退文件）。
+ * 每次 LLM 调用后自动更新。
+ */
+export function getCopilotRateLimit(githubTokenSource: string): CopilotRateLimit | undefined {
+  return rateLimitCache.get(githubTokenSource);
 }
 
 /**
@@ -499,7 +557,24 @@ export async function buildCopilotClient(
     for (const [k, v] of Object.entries(COPILOT_HEADERS)) {
       headers.set(k, v);
     }
-    return globalThis.fetch(input, withCA({ ...init, headers }));
+    const response = await globalThis.fetch(input, withCA({ ...init, headers }));
+
+    // 捕获 rate-limit 响应头，更新内存 + 持久化（仅补全接口有此头）
+    const remaining = response.headers.get("x-ratelimit-remaining-requests");
+    const limit = response.headers.get("x-ratelimit-limit-requests");
+    if (remaining !== null && limit !== null) {
+      const rl: CopilotRateLimit = {
+        remaining: Number(remaining),
+        limit: Number(limit),
+        capturedAt: Date.now(),
+      };
+      const resetAt = response.headers.get("x-ratelimit-reset-requests");
+      if (resetAt) rl.resetAt = resetAt;
+      rateLimitCache.set(githubToken, rl);
+      saveRateLimitToDisk();
+    }
+
+    return response;
   };
 
   const client = new LLMClient(
