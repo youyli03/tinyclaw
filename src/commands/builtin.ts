@@ -9,6 +9,8 @@
 import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
+import { loadConfig } from "../config/loader.js";
+import { getCachedCopilotInfo, lookupMultiplier } from "../llm/copilot.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -41,15 +43,26 @@ registerCommand({
 
 registerCommand({
   name: "status",
-  description: "查看当前会话状态（消息数、token 用量、agent、运行状态）",
+  description: "查看当前会话状态（模式、消息数、token 用量、agent、Copilot 配额）",
   usage: "/status",
-  execute({ session }) {
+  async execute({ session }) {
     const messages = session.getMessages();
     const msgCount = messages.length;
     const isRunning = session.running;
-    const contextWindow = llmRegistry.getContextWindow("daily");
+    const isCodeMode = session.mode === "code";
+    const backendName = isCodeMode ? "code" : "daily";
+    const contextWindow = llmRegistry.getContextWindow(backendName);
 
-    // 优先显示上次 LLM 响应的实际 prompt token；若从未发送请求则显示估算
+    // ── 模式行 ───────────────────────────────────────────────────────────────
+    let modeLine: string;
+    if (isCodeMode) {
+      const subModeIcon = session.codeSubMode === "plan" ? "📋 Plan" : "🚀 Auto";
+      modeLine = `模式：🖥️ Code · ${subModeIcon} 子模式`;
+    } else {
+      modeLine = "模式：💬 Chat 模式";
+    }
+
+    // ── Token 行 ─────────────────────────────────────────────────────────────
     let tokenLine: string;
     if (session.lastPromptTokens > 0) {
       const pct = Math.round((session.lastPromptTokens / contextWindow) * 100);
@@ -62,6 +75,7 @@ registerCommand({
 
     const lines = [
       "**会话状态**\n",
+      modeLine,
       `会话 ID：\`${session.sessionId}\``,
       `绑定 Agent：\`${session.agentId}\``,
       `消息数：${msgCount} 条`,
@@ -69,11 +83,56 @@ registerCommand({
       `当前状态：${isRunning ? "⏳ 运行中" : "✅ 空闲"}`,
     ];
 
-    // 后台任务概览
+    // ── 后台任务概览 ─────────────────────────────────────────────────────────
     const slaves = slaveManager.listAll();
     if (slaves.length > 0) {
       const running = slaves.filter((s) => s.status === "running").length;
       lines.push(`后台任务：${slaves.length} 个（${running} 个运行中）`);
+    }
+
+    // ── Copilot 信息 ─────────────────────────────────────────────────────────
+    try {
+      const config = loadConfig();
+      const copilotCfg = config.providers?.copilot;
+      if (copilotCfg?.githubToken) {
+        const modelName = llmRegistry.get(backendName).model;
+        const multiplier = lookupMultiplier(modelName);
+
+        // 格式化 multiplier
+        let multiplierStr: string;
+        if (multiplier === undefined) multiplierStr = "-";
+        else if (multiplier === 0) multiplierStr = "免费（不计配额）";
+        else multiplierStr = `${multiplier}×`;
+
+        // 从缓存读取 Copilot token 信息（不触发新网络请求）
+        const info = getCachedCopilotInfo(copilotCfg.githubToken);
+
+        // 配额信息
+        let quotaStr = "N/A";
+        if (info.quotas) {
+          // 尝试提取 chat_completions 或第一个配额项
+          const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
+            | Record<string, unknown>
+            | undefined;
+          if (chatQuota) {
+            const remaining = chatQuota["remaining"];
+            const limit = chatQuota["monthly_limit"];
+            if (typeof remaining === "number" && typeof limit === "number") {
+              quotaStr = `${remaining} / ${limit}`;
+            } else if (typeof remaining === "number") {
+              quotaStr = String(remaining);
+            }
+          }
+        }
+
+        const skuStr = info.sku ?? (info.tokenCached ? "（SKU 未知）" : "（未初始化）");
+        lines.push(
+          "",
+          `Copilot：\`${modelName}\` · ${multiplierStr} premium/请求 · 剩余配额：${quotaStr} · 计划：${skuStr}`,
+        );
+      }
+    } catch {
+      // Copilot 未配置或初始化失败，忽略
     }
 
     return lines.join("\n");

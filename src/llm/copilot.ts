@@ -109,6 +109,8 @@ async function resolveGitHubToken(source: string): Promise<string> {
 interface CachedToken {
   value: string;
   expiresAt: number; // unix seconds
+  /** 完整 token API 响应体（含 limited_user_quotas 等字段，若存在） */
+  responseBody?: Record<string, unknown>;
 }
 
 const tokenCache = new Map<string, CachedToken>();
@@ -160,16 +162,67 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
     );
   }
 
-  const data = (await resp!.json()) as {
-    token: string;
-    refresh_in?: number;
-  };
+  const data = (await resp!.json()) as Record<string, unknown>;
+  const token = data["token"];
+  const refreshIn = typeof data["refresh_in"] === "number" ? data["refresh_in"] : undefined;
 
-  if (!data.token) throw new Error("Copilot token 响应格式异常");
+  if (typeof token !== "string" || !token) throw new Error("Copilot token 响应格式异常");
 
-  const expiresAt = nowSecs() + (data.refresh_in ?? 1740) + 60;
-  tokenCache.set(githubTokenSource, { value: data.token, expiresAt });
-  return data.token;
+  const expiresAt = nowSecs() + (refreshIn ?? 1740) + 60;
+  tokenCache.set(githubTokenSource, { value: token, expiresAt, responseBody: data });
+  return token;
+}
+
+// ── Copilot token 信息提取 ──────────────────────────────────────────────────
+
+/** 解码 Copilot 代理 token JWT（无需验证签名，仅提取 payload 供展示用） */
+function decodeCopilotJWT(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payloadB64 = parts[1]!;
+    // base64url → base64
+    const padded = payloadB64 + "=".repeat((4 - (payloadB64.length % 4)) % 4);
+    const decoded = Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export interface CopilotCachedInfo {
+  /** Copilot 计划 SKU（如 "copilot_for_github_pro"）；解码 JWT 失败时为 undefined */
+  sku?: string;
+  /**
+   * Token API 响应体中的 limited_user_quotas 字段（若存在）。
+   * 结构通常为 `{ chat_completions: { remaining, monthly_limit, ... } }`。
+   * 目前 GitHub API 不一定会返回此字段，可能为 undefined。
+   */
+  quotas?: Record<string, unknown>;
+  /** 是否有缓存的 token（false 表示 Copilot 客户端尚未初始化） */
+  tokenCached: boolean;
+}
+
+/**
+ * 读取已缓存的 Copilot token 信息（不触发新的网络请求）。
+ * 供 /status 命令展示 Copilot 计划类型和配额信息。
+ */
+export function getCachedCopilotInfo(githubTokenSource: string): CopilotCachedInfo {
+  const cached = tokenCache.get(githubTokenSource);
+  if (!cached) return { tokenCached: false };
+
+  const payload = decodeCopilotJWT(cached.value);
+  const sku = typeof payload?.["sku"] === "string" ? payload["sku"] : undefined;
+  const quotas =
+    cached.responseBody?.["limited_user_quotas"] != null &&
+    typeof cached.responseBody["limited_user_quotas"] === "object"
+      ? (cached.responseBody["limited_user_quotas"] as Record<string, unknown>)
+      : undefined;
+
+  const result: CopilotCachedInfo = { tokenCached: true };
+  if (sku !== undefined) result.sku = sku;
+  if (quotas !== undefined) result.quotas = quotas;
+  return result;
 }
 
 // ── 模型乘数静态表 ────────────────────────────────────────────────────────────
@@ -222,7 +275,7 @@ const MODEL_MULTIPLIERS_PAID: Record<string, number> = {
  * 2. 大小写不敏感匹配
  * 3. 双向去掉 " (Preview)" 后缀再匹配（API 与文档互有差异）
  */
-function lookupMultiplier(name: string): number | undefined {
+export function lookupMultiplier(name: string): number | undefined {
   if (name in MODEL_MULTIPLIERS_PAID) return MODEL_MULTIPLIERS_PAID[name];
   const lower = name.toLowerCase();
   const stripPreview = (s: string) => s.replace(/\s*\(preview\)/gi, "").trim().toLowerCase();
