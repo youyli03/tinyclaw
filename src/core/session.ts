@@ -90,9 +90,11 @@ export class Session {
     this.sessionId = sessionId;
     this.agentId = opts.agentId ?? "default";
 
-    // 优先检测 code 模式恢复（.code.jsonl 存在 → 上次 crash 发生在 code 模式下）
+    // 优先检测 code 模式恢复（.code.jsonl + .code.active 同时存在 → 上次 crash 发生在 code 模式下）
+    // .code.active 不存在说明用户主动切回了 chat，不做恢复
     const codeRestored = Session.loadFromJsonl(sessionId, "code");
-    if (codeRestored && codeRestored.length > 0) {
+    const codeActive = fs.existsSync(Session.getCodeActivePath(sessionId));
+    if (codeRestored && codeRestored.length > 0 && codeActive) {
       this.mode = "code";
       this.messages = codeRestored;
       this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
@@ -382,6 +384,12 @@ export class Session {
     return path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}${suffix}`);
   }
 
+  /** `.code.active` 标记文件路径（存在表示当前 session 正处于 code 模式，用于区分 crash 和主动切换） */
+  static getCodeActivePath(sessionId: string): string {
+    const sanitized = sessionId.replace(/[:/\\]/g, "_");
+    return path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.code.active`);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
@@ -399,6 +407,17 @@ export class Session {
     } catch (err) {
       console.error("[session] clearMessages: failed to delete JSONL:", err);
     }
+    // code 模式下同时删除 .code.active 标记（/new 后不再被 crash 恢复误判）
+    if (this.mode === "code") {
+      try {
+        const activePath = Session.getCodeActivePath(this.sessionId);
+        if (fs.existsSync(activePath)) {
+          fs.unlinkSync(activePath);
+        }
+      } catch (err) {
+        console.error("[session] clearMessages: failed to delete .code.active:", err);
+      }
+    }
   }
 
   /**
@@ -410,14 +429,15 @@ export class Session {
    */
   reloadFromDisk(targetMode: "chat" | "code"): boolean {
     if (targetMode === "chat") {
-      // 切换到 chat 模式时清理 code JSONL，防止下次重启误判模式
+      // 切换到 chat 模式时删除 .code.active 标记（保留 .code.jsonl 以便之后恢复）
+      // 不删 .code.jsonl，防止下次 /code 时丢失上下文
       try {
-        const codePath = Session.getJsonlPath(this.sessionId, "code");
-        if (fs.existsSync(codePath)) {
-          fs.unlinkSync(codePath);
+        const activePath = Session.getCodeActivePath(this.sessionId);
+        if (fs.existsSync(activePath)) {
+          fs.unlinkSync(activePath);
         }
       } catch (err) {
-        console.error("[session] reloadFromDisk: failed to clean up code JSONL:", err);
+        console.error("[session] reloadFromDisk: failed to clean up .code.active:", err);
       }
     }
     const restored = Session.loadFromJsonl(this.sessionId, targetMode);
@@ -460,6 +480,17 @@ export class Session {
       }
     } catch (err) {
       console.error("[session] saveCodeDir failed:", err);
+    }
+  }
+
+  /** 创建 `.code.active` 标记，表示当前 session 处于 code 模式（防止主动 /chat 后的 JSONL 被误判为 crash） */
+  activateCodeMode(): void {
+    try {
+      const activePath = Session.getCodeActivePath(this.sessionId);
+      fs.mkdirSync(path.dirname(activePath), { recursive: true });
+      fs.writeFileSync(activePath, "", "utf-8");
+    } catch (err) {
+      console.error("[session] activateCodeMode failed:", err);
     }
   }
 

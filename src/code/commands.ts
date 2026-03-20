@@ -27,17 +27,35 @@ registerCommand({
       return "ℹ️ 已处于 Code 模式。发送 `/chat` 可返回聊天模式。";
     }
     session.mode = "code";
-    session.clearMessages();
 
-    // 尝试恢复上次工作目录
+    // 恢复已有 code 上下文（从 .code.jsonl 加载）
+    const hadHistory = session.reloadFromDisk("code");
+
+    // 创建 .code.active 标记，确保 crash 后能正确恢复
+    session.activateCodeMode();
+
+    // 加载持久化工作目录
     const savedDir = Session.readCodeDir(agentManager.codeDirPath(session.agentId));
     if (savedDir) {
       session.codeWorkdir = savedDir;
     }
 
+    const defaultDir = agentManager.workspaceDir(session.agentId);
     const dirLine = savedDir
       ? `• 📁 工作目录：\`${savedDir}\`（上次记录，发送 \`/workspace\` 修改）`
-      : `• 📁 工作目录：\`${agentManager.workspaceDir(session.agentId)}\`（默认，发送 \`/workspace <路径>\` 指定项目目录）`;
+      : `• 📁 工作目录：\`${defaultDir}\`（默认，发送 \`/workspace <路径>\` 指定项目目录）`;
+
+    if (hadHistory) {
+      return [
+        "🖥️ **已进入 Code 模式**（已恢复上次会话）",
+        "",
+        "• 上次编码上下文已恢复",
+        dirLine,
+        "• 发送 `/new` 开始全新编码会话",
+        "• 发送 `/chat` 可返回聊天模式（上下文将暂存）",
+        "• 发送 `/plan` 启用规划子模式，`/auto` 切换回直接执行（默认）",
+      ].join("\n");
+    }
 
     return [
       "🖥️ **已进入 Code 模式**",
@@ -45,7 +63,7 @@ registerCommand({
       "• 本次编码上下文独立保存，不写入聊天历史",
       "• 进程重启后可自动恢复当前编码上下文",
       dirLine,
-      "• 发送 `/chat` 可返回聊天模式（恢复之前的聊天历史）",
+      "• 发送 `/chat` 可返回聊天模式（上下文将暂存）",
       "• 发送 `/plan` 启用规划子模式，`/auto` 切换回直接执行（默认）",
     ].join("\n");
   },
@@ -68,15 +86,16 @@ registerCommand({
         "💬 **已返回聊天模式**",
         "",
         "• 聊天历史已恢复",
-        "• 编码会话上下文已清除",
-        "• 发送 `/code` 可重新开始编码会话",
+        "• 编码会话上下文已暂存，发送 `/code` 可随时恢复",
+        "• 发送 `/code` 可重新进入编码会话",
       ].join("\n");
     }
     return [
       "💬 **已返回聊天模式**",
       "",
       "• 暂无聊天历史记录",
-      "• 发送 `/code` 可切换到 Code 模式",
+      "• 编码会话上下文已暂存，发送 `/code` 可随时恢复",
+      "• 发送 `/code` 可重新进入编码会话",
     ].join("\n");
   },
 });
@@ -170,6 +189,28 @@ registerCommand({
       "",
       "• 已持久化，下次进入 Code 模式将自动恢复",
       "• AI 的 exec_shell 将在此目录下执行命令",
+    ].join("\n");
+  },
+});
+
+// ── /new ──────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "new",
+  description: "开始全新编码会话（清空当前 Code 模式上下文，需在 Code 模式下）",
+  usage: "/new",
+  execute({ session }) {
+    if (session.mode !== "code") {
+      return "ℹ️ `/new` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
+    }
+    session.clearMessages();
+    // 重新激活标记（clearMessages 会删除 .code.active，这里需要重建）
+    session.activateCodeMode();
+    return [
+      "🆕 **已开始全新编码会话**",
+      "",
+      "• 上下文已清空，可以开始新任务",
+      "• 发送 `/chat` 可返回聊天模式",
     ].join("\n");
   },
 });
