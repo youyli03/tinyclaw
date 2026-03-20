@@ -120,7 +120,7 @@ clientSecret = "your-client-secret"
 # retry5xx            = true   # 5xx 服务端错误是否重试，默认 true
 # retryTransport      = true   # 传输层错误（ECONNRESET/socket 断开等）是否重试，默认 true
 # retryTimeout        = false  # 请求超时是否重试，默认 false（超时通常意味着请求太大）
-# streamIdleTimeoutMs = 30000  # 流式调用 chunk 间最长等待时间（ms），超时则中断并重试；0 = 禁用，默认 30000
+# streamIdleTimeoutMs = 60000  # 流式调用 chunk 间最长等待时间（ms），超时则中断并重试；0 = 禁用，默认 60000
 
 # ── 向量记忆 ───────────────────────────────────────────────────────────────────
 # embedModel 首次运行自动从 HuggingFace 下载

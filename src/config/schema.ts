@@ -242,10 +242,11 @@ const RetryConfigSchema = z.object({
   /** 请求超时是否重试，默认 false（保持现有行为） */
   retryTimeout: z.boolean().default(false),
   /**
-   * 流式（streamChat）chunk 间空闲超时（毫秒），默认 30000。
+   * 流式（streamChat）chunk 间空闲超时（毫秒），默认 60000。
    * 超过该时间无 chunk 到达则中断流并触发重试；0 = 禁用。
+   * 设为 60s 是因为复杂推理任务（o1/claude 等）首个 chunk 可能延迟较长。
    */
-  streamIdleTimeoutMs: z.number().int().min(0).default(30_000),
+  streamIdleTimeoutMs: z.number().int().min(0).default(60_000),
 }).default({});
 export type RetryConfig = z.infer<typeof RetryConfigSchema>;
 
