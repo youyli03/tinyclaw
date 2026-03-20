@@ -67,7 +67,7 @@ const COMMANDS: Record<string, CommandModule> = {
 /** 每个命令的子命令列表，供 --complete 模式使用 */
 const SUBCOMMANDS: Record<string, string[]> = {
   model:       ["show", "list", "set", "--all", "-a", "help"],
-  config:      ["show", "edit", "path", "set", "help"],
+  config:      ["show", "get", "edit", "path", "set", "help"],
   auth:        ["github", "status", "mfa-setup", "help"],
   status:      [],
   restart:     [],

@@ -125,6 +125,67 @@ async function cmdPath(): Promise<void> {
   }
 }
 
+/** 敏感字段名，get 时自动隐藏 */
+const SENSITIVE_KEYS = new Set(["apiKey", "clientSecret", "password", "secret", "githubToken"]);
+
+/**
+ * config get <dotted.key.path>
+ *
+ * 按 dot-path 读取已解析 config 的值，敏感字段自动脱敏。
+ */
+async function cmdGet(args: string[]): Promise<void> {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.log(red(`配置文件不存在：${CONFIG_PATH}`));
+    return;
+  }
+  if (args.length === 0) {
+    console.log(red("用法：config get <dotted.key>"));
+    console.log(dim("示例：config get llm.backends.daily.model"));
+    return;
+  }
+
+  const dotPath = args[0]!;
+  const parts = dotPath.split(".");
+
+  let raw: unknown;
+  try {
+    raw = parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+  } catch (e) {
+    console.log(red(`配置解析失败：${e}`));
+    return;
+  }
+
+  // 按路径导航
+  let cur: unknown = raw;
+  for (const part of parts) {
+    if (cur === null || typeof cur !== "object") {
+      console.log(red(`配置项 "${dotPath}" 不存在（在 "${part}" 处路径断开）`));
+      return;
+    }
+    cur = (cur as Record<string, unknown>)[part];
+    if (cur === undefined) {
+      console.log(red(`配置项 "${dotPath}" 不存在`));
+      return;
+    }
+  }
+
+  // 敏感字段脱敏
+  const lastKey = parts[parts.length - 1]!;
+  if (SENSITIVE_KEYS.has(lastKey)) {
+    const str = typeof cur === "string" ? cur : JSON.stringify(cur);
+    console.log(`${cyan(dotPath)} = ${dim(mask(str))}  ${yellow("(已脱敏)")}`);
+    return;
+  }
+
+  // 对象类型展开显示
+  if (typeof cur === "object" && cur !== null) {
+    console.log(`${cyan(dotPath)} =`);
+    console.log(JSON.stringify(cur, null, 2));
+  } else {
+    console.log(`${cyan(dotPath)} = ${green(String(cur))}`);
+  }
+}
+
 /**
  * config set <dotted.key.path> <value>
  *
@@ -176,11 +237,13 @@ function printHelp(): void {
   console.log(`
 ${bold("用法：")}
   config show                  格式化显示当前配置（密钥脱敏）
+  config get <key>             读取指定配置项（dot path）
   config edit                  用 $EDITOR 打开配置文件
   config path                  打印配置文件路径
   config set <key> <value>     修改配置字段
 
 ${bold("示例：")}
+  config get llm.backends.daily.model
   config set llm.backends.daily.model gpt-4o
   config set llm.backends.daily.maxTokens 8192
   config set channels.qqbot.markdownSupport false
@@ -189,8 +252,8 @@ ${bold("示例：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
-export const description = "配置管理：查看 / 编辑 / 修改配置字段";
-export const usage = "config <show|edit|path|set> [args]";
+export const description = "配置管理：查看 / 读取 / 编辑 / 修改配置字段";
+export const usage = "config <show|get|edit|path|set> [args]";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "show";
@@ -198,6 +261,7 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "show":  return cmdShow();
+    case "get":   return cmdGet(rest);
     case "edit":  return cmdEdit();
     case "path":  return cmdPath();
     case "set":   return cmdSet(rest);
