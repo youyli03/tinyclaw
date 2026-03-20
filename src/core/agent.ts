@@ -316,6 +316,41 @@ function toolCallSummary(name: string, args: Record<string, unknown>): string {
   return name;
 }
 
+/** 为 code 模式生成工具调用的用户可见通知文本（50字符截断） */
+function buildCodeToolNotification(name: string, args: Record<string, unknown>): string {
+  const truncate = (s: string, n = 50) => s.length > n ? s.slice(0, n) + "…" : s;
+  switch (name) {
+    case "exec_shell": {
+      const cmd = truncate(String(args["command"] ?? "").replace(/\n/g, " "));
+      return `⚙️ 执行命令：${cmd}`;
+    }
+    case "write_file":
+      return `📝 写入文件：${truncate(String(args["path"] ?? ""))}`;
+    case "edit_file":
+      return `✏️ 编辑文件：${truncate(String(args["path"] ?? ""))}`;
+    case "read_file":
+      return `📖 读取文件：${truncate(String(args["path"] ?? ""))}`;
+    case "delete_file":
+      return `🗑️ 删除文件：${truncate(String(args["path"] ?? ""))}`;
+    case "code_assist":
+      return "🤖 调用代码助手...";
+    case "mcp_enable_server":
+      return `🔌 启用 MCP：${args["name"] ?? ""}`;
+    case "mcp_disable_server":
+      return `🔌 停用 MCP：${args["name"] ?? ""}`;
+    case "mcp_list_servers":
+      return "🔌 查询 MCP 服务列表...";
+    case "agent_fork":
+      return "🪄 启动子 Agent...";
+    case "agent_status":
+      return "🪄 查询子 Agent 状态...";
+    case "create_skill":
+      return `🛠️ 创建技能：${truncate(String(args["name"] ?? ""))}`;
+    default:
+      return `🔧 工具：${name}`;
+  }
+}
+
 export async function runAgent(
   session: Session,
   userContent: string,
@@ -590,6 +625,12 @@ export async function runAgent(
 
       // ── 执行工具 ──────────────────────────────────────────────────────
       console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
+
+      // code 模式：每次工具调用前向用户推送简短状态（notify_user 本身会发，跳过）
+      if (isCodeMode && opts.onNotify && call.name !== "notify_user") {
+        void opts.onNotify(buildCodeToolNotification(call.name, call.args));
+      }
+
       let result: string;
       const currentDepth = opts.slaveDepth ?? 0;
       try {
