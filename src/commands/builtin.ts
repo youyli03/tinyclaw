@@ -9,7 +9,8 @@
 import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
-import { loadConfig } from "../config/loader.js";
+import { loadConfig, _resetConfigCache } from "../config/loader.js";
+import { readRawConfig, patchTomlField, CONFIG_PATH } from "../config/writer.js";
 import { getCachedCopilotInfo, getCopilotRateLimit, lookupMultiplier } from "../llm/copilot.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
@@ -148,6 +149,149 @@ registerCommand({
     }
 
     return lines.join("\n");
+  },
+});
+
+// ── /config ───────────────────────────────────────────────────────────────────
+
+/** 敏感字段名（get 全量展示时隐藏值） */
+const SENSITIVE_KEYS = new Set(["apiKey", "clientSecret", "password", "secret"]);
+
+/**
+ * 隐藏 TOML 原始文本中敏感字段的值。
+ * 匹配形如 `key = "..."` 或 `key = '...'` 的行（忽略注释行）。
+ */
+function redactToml(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("#")) return line;
+      for (const k of SENSITIVE_KEYS) {
+        if (new RegExp(`^\\s*${k}\\s*=`).test(line)) {
+          return line.replace(/(=\s*)(.+)$/, '$1"***"');
+        }
+      }
+      return line;
+    })
+    .join("\n");
+}
+
+/**
+ * 将用户输入的值字符串推断为 TOML 字面量。
+ * - "true" / "false" → 布尔
+ * - 纯数字（可含小数点）→ 数字
+ * - 否则 → 带双引号的字符串
+ */
+function inferTomlValue(input: string): string {
+  if (input === "true" || input === "false") return input;
+  if (/^-?\d+(\.\d+)?$/.test(input)) return input;
+  // 如果用户已自己加了引号，则直接使用
+  if ((input.startsWith('"') && input.endsWith('"')) ||
+      (input.startsWith("'") && input.endsWith("'"))) {
+    return input;
+  }
+  return JSON.stringify(input);
+}
+
+/** 从已解析的 Config 对象中按 dot-path 取值 */
+function getByPath(obj: unknown, parts: string[]): { found: true; value: unknown } | { found: false } {
+  let cur = obj;
+  for (const part of parts) {
+    if (cur === null || typeof cur !== "object") return { found: false };
+    cur = (cur as Record<string, unknown>)[part];
+    if (cur === undefined) return { found: false };
+  }
+  return { found: true, value: cur };
+}
+
+registerCommand({
+  name: "config",
+  description: "查看或修改配置（get/set）",
+  usage: "/config [get [key]] | [set key value]",
+  execute({ args }) {
+    const subCmd = args[0]?.toLowerCase();
+
+    // ── /config get ──────────────────────────────────────────────────────────
+    if (!subCmd || subCmd === "get") {
+      const key = args[1];
+
+      if (!key) {
+        // 显示完整 config.toml（隐藏敏感字段）
+        let raw: string;
+        try {
+          raw = readRawConfig();
+        } catch {
+          return `❌ 配置文件不存在：\`${CONFIG_PATH}\``;
+        }
+        const redacted = redactToml(raw);
+        return `**配置文件** \`${CONFIG_PATH}\`\n\n\`\`\`toml\n${redacted}\n\`\`\``;
+      }
+
+      // 显示指定字段
+      const parts = key.split(".");
+      const lastPart = parts[parts.length - 1]!;
+
+      const cfg = loadConfig() as unknown;
+      const result = getByPath(cfg, parts);
+      if (!result.found) return `❌ 配置项 \`${key}\` 不存在`;
+
+      if (SENSITIVE_KEYS.has(lastPart)) {
+        return `\`${key}\` = \`***\`（已隐藏敏感字段）`;
+      }
+
+      const val = result.value;
+      const display = typeof val === "object" && val !== null
+        ? `\`\`\`json\n${JSON.stringify(val, null, 2)}\n\`\`\``
+        : `\`${String(val)}\``;
+      return `\`${key}\` = ${display}`;
+    }
+
+    // ── /config set ──────────────────────────────────────────────────────────
+    if (subCmd === "set") {
+      const key = args[1];
+      const rawInput = args.slice(2).join(" ");
+
+      if (!key || !rawInput) {
+        return "❌ 用法：`/config set <key> <value>`\n示例：`/config set llm.backends.daily.model gpt-4o`";
+      }
+
+      const parts = key.split(".");
+      if (parts.length < 2) {
+        return "❌ 需要指定完整路径（如 `llm.backends.daily.model`）";
+      }
+
+      const fieldName = parts[parts.length - 1]!;
+      const sectionPath = parts.slice(0, -1);
+      const tomlValue = inferTomlValue(rawInput);
+
+      try {
+        patchTomlField(sectionPath, fieldName, tomlValue);
+        _resetConfigCache();
+        // 重新加载以验证新配置是否合法
+        loadConfig();
+        return `✅ 已更新 \`${key}\` = \`${rawInput}\``;
+      } catch (err) {
+        // 写入成功但验证失败时，尝试回滚并提示
+        return `❌ 更新失败：${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    // ── 帮助文本 ─────────────────────────────────────────────────────────────
+    return [
+      "**配置管理**\n",
+      "`/config get` — 查看完整配置（敏感字段已隐藏）",
+      "`/config get <key>` — 查看指定配置项",
+      "`/config set <key> <value>` — 修改配置项",
+      "",
+      "**示例**",
+      "`/config get llm.backends.daily.model`",
+      "`/config set llm.backends.daily.model gpt-4o`",
+      "`/config set agent.heartbeatIntervalSecs 60`",
+      "`/config set channels.qqbot.markdownSupport false`",
+      "",
+      `配置文件：\`${CONFIG_PATH}\``,
+    ].join("\n");
   },
 });
 
