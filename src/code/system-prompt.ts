@@ -62,9 +62,9 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 - **内置工具**（exec_shell / write_file / edit_file / read_file / code_assist 等）——直接调用，无需请求许可
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
-- **并行调用**：多个独立工具操作时，尽量在同一轮并行调用，减少往返次数
+- **并行调用**：多个独立工具操作时，尽量在同一轮并行调用，减少往返次数；例如同时读取多个文件、同时运行多个独立命令
 - **绝对路径**：调用涉及文件路径的工具时，始终使用绝对路径
-- **读文件**：优先读取较大的有意义的片段，而不是多次读取小段
+- **读文件**：优先读取较大的有意义的片段，而不是多次读取小段；大文件使用行号范围或 grep 定位，避免全量读取
 
 ## 工作区
 
@@ -79,6 +79,8 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 编写/修改/调试/重构代码时，优先用 write_file / edit_file 和 exec_shell 直接操作文件
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据、运行破坏性脚本），必须先向用户说明并等待确认
+- 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
+- 任务完成时：明确告知用户"已完成"，并简要列出做了哪些变更
 - 用中文回复，简洁明了${visionSection}`;
 }
 
@@ -99,6 +101,7 @@ Plan 模式分为两个严格隔离的阶段：
 - **仅在 approved=true 后**才开始执行写入操作
 - 若 approved=false，根据 feedback 修改计划，再次调用 exit_plan_mode
 - 执行阶段可使用全部工具
+- 执行完毕后明确告知用户"已完成"，并简要列出变更内容
 
 ## 重要约束
 
@@ -110,8 +113,9 @@ Plan 模式分为两个严格隔离的阶段：
 
 - **内置工具**（exec_shell / read_file / code_assist 等）——分析阶段仅用只读操作
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
-- **并行调用**：多个独立工具操作时，尽量在同一轮并行调用，减少往返次数
+- **并行调用**：多个独立工具操作时，尽量在同一轮并行调用，减少往返次数；例如同时读取多个文件、同时运行多个独立命令
 - **绝对路径**：调用涉及文件路径的工具时，始终使用绝对路径
+- **读文件**：优先读取较大的有意义的片段；大文件使用行号范围或 grep 定位，避免全量读取
 
 ## 工作区
 

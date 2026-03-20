@@ -33,7 +33,7 @@ tinyclaw/
 │   ├── memory/
 │   │   ├── qmd.ts            # @tobilu/qmd SDK 封装（search / updateIndex）
 │   │   ├── store.ts          # 对话 → ~/.tinyclaw/memory/sessions/YYYY-MM-DD.md
-│   │   └── summarizer.ts     # token >80% → 摘要 → 压缩 messages[]，用户无感
+│   │   └── summarizer.ts     # chat: token >80% → 全量摘要；code: token >75% → 滑动窗口摘要
 │   ├── auth/
 │   │   ├── mfa.ts            # MSAL Device Code Flow + Azure AD number-matching push
 │   │   └── guard.ts          # withMFA() 高阶包装，超时/拒绝则 abort

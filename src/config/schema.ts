@@ -180,6 +180,18 @@ export type CodeAssistConfig = z.infer<typeof CodeAssistSchema>;
 
 const ToolsSchema = z.object({
   code_assist: CodeAssistSchema.default({}),
+  /**
+   * Code 模式下 ReAct 循环的最大工具调用轮次，默认 25。
+   * 复杂代码任务（重构、调试、多文件修改）通常需要比 chat 模式更多的轮次。
+   * chat 模式固定使用 10 轮。
+   */
+  maxCodeToolRounds: z.number().int().min(1).default(25),
+  /**
+   * 工具执行结果的最大字符数，超出时自动截断并附加说明，默认 20000。
+   * 防止大文件读取或冗长命令输出占满 context window。
+   * 0 = 不限制。
+   */
+  maxToolResultChars: z.number().int().min(0).default(20_000),
 }).default({});
 
 // ── MCP 服务器配置（独立文件 ~/.tinyclaw/mcp.toml）────────────────────────────

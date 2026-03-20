@@ -11,13 +11,16 @@ Code 模式是独立于 Chat 对话历史的编码会话，灵感来源于 VS Co
 | 维度 | Chat 模式（默认） | Code 模式 |
 |------|-----------------|-----------|
 | 历史持久化文件 | `<sessionId>.jsonl` | `<sessionId>.code.jsonl` |
-| 摘要压缩 | ✅ 触发后自动压缩 | ❌ 跳过 |
+| 摘要压缩 | ✅ 全量压缩（保留 system + 摘要） | ✅ 滑动窗口压缩（保留最近 8 条）|
+| 压缩触发阈值 | context 80%（可配）| context 75%（固定），≥90% 额外通知用户 |
 | QMD 记忆搜索 | ✅ 每次 run 注入相关记忆 | ❌ 跳过 |
 | MEM.md / SKILLS.md | ✅ 加载到 system prompt | ❌ 跳过 |
 | LLM 后端 | `llm.backends.daily` | `llm.backends.code`（可选，fallback daily）|
 | System prompt | 完整通用 prompt | 精简代码专注 prompt |
 | Crash 恢复 | ✅ 从 `.jsonl` 恢复 | ✅ 从 `.code.jsonl` 恢复 |
 | 工具能力 | ✅ 完整（exec_shell、write_file 等） | ✅ 完整（同 Chat 模式）|
+| 工具调用轮次上限 | 10（固定） | 25（默认，可通过 `tools.maxCodeToolRounds` 配置）|
+| 工具结果截断 | ✅ `tools.maxToolResultChars`（默认 20000）| ✅ 同 Chat 模式 |
 
 ---
 
@@ -127,12 +130,22 @@ src/code/
 src/core/
   session.ts        — Session.mode 字段、clearMessages()、reloadFromDisk()
                       appendLastTurnToJsonl()（模式感知路径）
-                      maybeCompress()（code 模式跳过）
+                      maybeCompress()（chat 模式全量压缩）
+                      compressForCode() / maybeCompressCode()（code 模式滑动窗口压缩）
+                      rewriteCodeJsonl()（压缩后持久化 .code.jsonl）
                       constructor（crash 恢复优先级）
   agent.ts          — runAgent() 中的 code 模式分支
+                      maxToolRounds（code 模式使用 config.tools.maxCodeToolRounds）
+                      预调用 token 预算检查（≥75% 触发压缩，≥90% 通知用户）
+                      工具结果截断（config.tools.maxToolResultChars）
 
 src/config/
   schema.ts         — LLMBackendsSchema.code（可选字段）
+                      tools.maxCodeToolRounds（默认 25）
+                      tools.maxToolResultChars（默认 20000）
+
+src/memory/
+  summarizer.ts     — shouldSummarizeCode() / summarizeAndCompressCode()（code 专属）
 
 src/llm/
   registry.ts       — BackendName 加入 "code"，init/get 支持
@@ -149,11 +162,11 @@ src/llm/
       │                         │
   写 .jsonl                写 .code.jsonl
   QMD 记忆                 无记忆搜索
-  摘要压缩                 无压缩
+  全量摘要压缩              滑动窗口压缩（保留最近 8 条消息）
       │                         │
       └──────/chat──────────────┘
               ↓
-    删除 .code.jsonl
+    删除 .code.active
     恢复 .jsonl 历史
     回到 Chat 模式
 ```
@@ -162,7 +175,62 @@ src/llm/
 
 ---
 
-## 九、Code 子模式：Plan / Auto
+## 九、上下文管理与滑动窗口压缩
+
+Code 模式采用**滑动窗口**策略管理上下文，与 Chat 模式的全量替换策略不同。
+
+### 压缩触发时机
+
+每次 LLM 调用前，`agent.ts` 检查当前 messages 的估算 token 用量：
+
+| 用量 | 行为 |
+|------|------|
+| < 75% | 正常执行 |
+| ≥ 75% | 静默触发 `compressForCode()`，日志记录 |
+| ≥ 90% | 触发压缩 + 通过 `onNotify` 向用户推送提示 |
+
+### 压缩策略
+
+```
+压缩前：
+  [system prompt] [旧消息 1..N] [最近消息 N+1..N+8]
+
+压缩后：
+  [system prompt] [历史摘要（assistant 角色）] [最近消息 N+1..N+8]
+```
+
+- **保留**：system prompt + 最近 8 条消息（完整，不压缩）
+- **压缩**：更早的消息 → 代码专属摘要
+- **摘要内容**：当前任务目标、已修改文件列表、执行命令及结果、任务进度、待解决问题
+
+与 Chat 模式区别：Chat 压缩后只剩 system + 摘要（全量替换），Code 压缩后**保留最近上下文**，确保当前正在执行的操作不丢失。
+
+### 压缩后持久化
+
+`compressForCode()` 执行后立即调用 `rewriteCodeJsonl()`，将压缩后的 messages 覆写到 `.code.jsonl`，确保 crash 恢复时从压缩后的状态开始。
+
+### 相关配置
+
+```toml
+# config.toml — tools 节（可选，以下均为默认值）
+[tools]
+maxCodeToolRounds = 25     # Code 模式工具调用轮次上限（chat 模式固定 10）
+maxToolResultChars = 20000 # 工具结果最大字符数（0 = 不限制）
+```
+
+### 工具结果截断
+
+所有工具执行结果（`tool_result`）超过 `maxToolResultChars` 时自动截断，并在末尾附加说明：
+
+```
+[内容过长，已截断。原始长度 X 字符，保留前 20000 字符。如需查看更多请缩小范围重新调用。]
+```
+
+这有效防止 `read_file` 大文件或 `exec_shell` 冗长输出一次性占满大量 context。
+
+---
+
+## 十、Code 子模式：Plan / Auto
 
 Code 模式内置两个子模式，通过 `/plan` 和 `/auto` 命令切换。
 

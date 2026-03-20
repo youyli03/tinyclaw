@@ -26,11 +26,14 @@ import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
-const MAX_TOOL_ROUNDS = 10; // 防止工具调用死循环
+/** Chat 模式固定工具调用轮次上限 */
+const MAX_TOOL_ROUNDS = 10;
 /** Slave 最大嵌套深度：0=Master，1=一级Slave，不允许 Slave 再 fork */
 const MAX_SLAVE_DEPTH = 1;
 /** 超过此时长（ms）且仍在执行工具时，自动 fork 为 Slave 继续执行 */
 const AUTO_FORK_THRESHOLD_MS = 120_000;
+/** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
+const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
 
 /**
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
@@ -431,10 +434,31 @@ export async function runAgent(
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
 
+  // code 模式轮次上限：使用配置值；chat 模式使用固定值
+  const maxToolRounds = isCodeMode ? loadConfig().tools.maxCodeToolRounds : MAX_TOOL_ROUNDS;
+  // code 模型 context window（供 token 预算检查用）
+  const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code") : 0;
+
   // 5. ReAct 循环
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     const tools = getAllToolSpecs();
+
+    // ── Code 模式：预调用 Token 预算检查 ──────────────────────────────────
+    if (isCodeMode && codeContextWindow > 0 && !session.abortRequested) {
+      const estimatedTokens = session.estimatedTokens();
+      const usageRatio = estimatedTokens / codeContextWindow;
+      if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
+        // 超过 90%：触发压缩并通知用户
+        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%，触发滑动窗口压缩`);
+        await session.compressForCode();
+        void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+      } else if (usageRatio >= 0.75) {
+        // 超过 75%：静默压缩
+        console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%，静默压缩`);
+        await session.compressForCode();
+      }
+    }
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
@@ -656,6 +680,14 @@ export async function runAgent(
         }
       }
 
+      // 工具结果截断：防止单条大输出占满 context window
+      const maxResultChars = loadConfig().tools.maxToolResultChars;
+      if (maxResultChars > 0 && result.length > maxResultChars) {
+        const truncatedAt = maxResultChars;
+        result = result.slice(0, truncatedAt) +
+          `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${truncatedAt} 字符。如需查看更多请缩小范围重新调用。]`;
+      }
+
       session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
 
       // 工具执行完毕后再次检查 abort（新消息可能在工具运行期间到达）
@@ -694,7 +726,7 @@ export async function runAgent(
     }
 
     // 最后一轮，强制用 LLM 生成总结
-    if (round === MAX_TOOL_ROUNDS - 1) {
+    if (round === maxToolRounds - 1) {
       try {
         const summary = await client.chat(session.getMessages(), {
           signal: llmAc.signal,

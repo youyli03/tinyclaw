@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { ChatMessage, ContentPart } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
-import { shouldSummarize, summarizeAndCompress } from "../memory/summarizer.js";
+import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
 
 /** Plan 模式审批结果 */
@@ -194,6 +194,38 @@ export class Session {
     return undefined;
   }
 
+  /**
+   * Code 模式滑动窗口压缩：
+   * 1. 用 summarizer LLM 生成代码专属摘要（保留文件状态、命令结果、任务进度）
+   * 2. this.messages 替换为 [system..., summary_assistant, 最近 N 条消息]
+   * 3. 重写 .code.jsonl（压缩后状态持久化，供 crash 恢复用）
+   * 返回 true 表示压缩已执行。
+   */
+  async compressForCode(): Promise<boolean> {
+    const compressed = await summarizeAndCompressCode(this.messages);
+    // 如果返回原始消息（无足够旧内容可压缩），跳过
+    if (compressed === this.messages || compressed.length >= this.messages.length) {
+      this.messages = compressed;
+    } else {
+      this.messages = compressed;
+    }
+    this.rewriteCodeJsonl();
+    return true;
+  }
+
+  /**
+   * Code 模式：检查是否需要滑动窗口压缩，如需要则执行。
+   * @param contextWindow code 模型的上下文窗口大小（tokens）
+   * @returns true 表示压缩已执行
+   */
+  async maybeCompressCode(contextWindow: number): Promise<boolean> {
+    if (this.mode !== "code") return false;
+    if (shouldSummarizeCode(this.messages, contextWindow)) {
+      return await this.compressForCode();
+    }
+    return false;
+  }
+
   // ── Interface A MFA ───────────────────────────────────────────────────────
 
   /**
@@ -340,6 +372,21 @@ export class Session {
       fs.writeFileSync(filePath, lines, "utf-8");
     } catch (err) {
       console.error("[session] JSONL rewrite failed:", err);
+    }
+  }
+
+  /** Code 模式专用：将压缩后的 messages 覆写到 .code.jsonl */
+  private rewriteCodeJsonl(): void {
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId, "code");
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const lines =
+        this.messages
+          .map((m) => JSON.stringify({ role: m.role, content: m.content }))
+          .join("\n") + "\n";
+      fs.writeFileSync(filePath, lines, "utf-8");
+    } catch (err) {
+      console.error("[session] code JSONL rewrite failed:", err);
     }
   }
 
