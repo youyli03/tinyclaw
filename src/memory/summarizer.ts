@@ -1,7 +1,7 @@
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { persistSummary } from "./store.js";
-import type { ChatMessage } from "../llm/client.js";
+import type { ChatMessage, OpenAIToolCall } from "../llm/client.js";
 
 const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。
 将给定的对话历史压缩为简洁的摘要（不超过 400 token），保留：
@@ -24,6 +24,55 @@ const CODE_SUMMARIZE_SYSTEM = `你是一个代码会话摘要助手。
 /** Code 模式 context window 触发压缩的阈值（75%） */
 const CODE_SUMMARIZE_THRESHOLD = 0.75;
 
+/**
+ * 将单条消息格式化为摘要 LLM 的可读文本。
+ *
+ * 关键改进：function calling 模式下 assistant 调用工具时 content 通常为空字符串，
+ * 真正的工具信息（名称、参数）在 tool_calls 字段里。此函数展开 tool_calls 使摘要
+ * LLM 能看到"调用了哪些工具、传入了什么参数"，而不是一行空白。
+ *
+ * tool 消息（工具执行结果）直接输出 content，已足够摘要使用。
+ *
+ * @param m 待格式化的消息
+ * @returns 可读文本行，空消息返回空字符串（调用方应 filter(Boolean)）
+ */
+function formatMsgForSummary(m: ChatMessage): string {
+  if (m.role === "assistant") {
+    const calls = (m as { role: "assistant"; content: unknown; tool_calls?: OpenAIToolCall[] }).tool_calls;
+    if (calls && calls.length > 0) {
+      // 展开工具调用：显示工具名 + 参数摘要（单个参数值超过 200 字符时截断）
+      const callsDesc = calls.map((tc) => {
+        let argsStr: string;
+        try {
+          const parsed = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+          const entries = Object.entries(parsed).map(([k, v]) => {
+            const vs = typeof v === "string" ? v : JSON.stringify(v);
+            return `${k}: ${vs.length > 200 ? vs.slice(0, 200) + "…" : vs}`;
+          });
+          argsStr = entries.join(", ");
+        } catch {
+          argsStr = tc.function.arguments.slice(0, 200);
+        }
+        return `${tc.function.name}(${argsStr})`;
+      }).join("; ");
+      // 若 content 非空（思考链/前言文本），一并保留
+      const textContent = typeof m.content === "string" ? m.content.trim() : "";
+      return `[助手调用工具]：${callsDesc}${textContent ? `\n${textContent}` : ""}`;
+    }
+    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    return content.trim() ? `[助手]：${content}` : "";
+  }
+  if (m.role === "tool") {
+    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    return `[工具结果]：${content}`;
+  }
+  if (m.role === "user") {
+    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    return `[用户]：${content}`;
+  }
+  return "";
+}
+
 /** Code 模式压缩后保留的最近消息数（除 system 以外）*/
 const CODE_KEEP_RECENT_MESSAGES = 8;
 
@@ -44,7 +93,23 @@ export function shouldSummarize(messages: ChatMessage[], actualTokens?: number):
   }
 
   // Fallback：字符数粗估（首次 run 尚无实际值时使用）
-  const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  // assistant 消息的 tool_calls 字段也占 token，须一并计入
+  const totalChars = messages.reduce((sum, m) => {
+    const toolCallsChars =
+      m.role === "assistant" &&
+      (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
+        ? JSON.stringify((m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls).length
+        : 0;
+    if (typeof m.content === "string") return sum + m.content.length + toolCallsChars;
+    if (Array.isArray(m.content)) {
+      return sum + m.content.reduce((cs: number, p: unknown) => {
+        const part = p as { type?: string; text?: string };
+        if (part.type === "text") return cs + (part.text?.length ?? 0);
+        return cs + 500;
+      }, 0) + toolCallsChars;
+    }
+    return sum + toolCallsChars;
+  }, 0);
   const estimatedTokens = Math.ceil(totalChars / 3.5);
   return estimatedTokens >= threshold;
 }
@@ -107,18 +172,15 @@ export async function summarizeAndCompressCode(
     return messages;
   }
 
-  // 构建待摘要的历史文本
+  // 构建待摘要的历史文本，使用 formatMsgForSummary 展开 tool_calls 字段，
+  // 确保摘要 LLM 能看到工具调用的名称和参数，而非只看到空白 assistant 消息
   const historyText = toSummarize
     .map((m) => {
-      const role =
-        m.role === "user" ? "用户" :
-        m.role === "assistant" ? "助手" :
-        m.role === "tool" ? "工具结果" : "系统";
-      const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      const text = formatMsgForSummary(m);
       // 截断超长的单条消息（避免摘要输入过大）
-      const truncated = content.length > 8000 ? content.slice(0, 8000) + "\n[内容过长，已截断]" : content;
-      return `[${role}]：${truncated}`;
+      return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长，已截断]" : text;
     })
+    .filter(Boolean)
     .join("\n\n");
 
   const result = await client.chat([
@@ -151,16 +213,11 @@ export async function summarizeAndCompress(
 ): Promise<ChatMessage[]> {
   // 1. 生成摘要
   const client = llmRegistry.get("summarizer");
+  // 使用 formatMsgForSummary 展开 tool_calls，确保工具调用名称/参数进入摘要
   const historyText = messages
     .filter((m) => m.role !== "system")
-    .map((m) => {
-      const roleLabel =
-        m.role === "user" ? "用户" :
-        m.role === "assistant" ? "助手" :
-        m.role === "tool" ? "工具结果" : "系统";
-      const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-      return `${roleLabel}：${content}`;
-    })
+    .map(formatMsgForSummary)
+    .filter(Boolean)
     .join("\n\n");
 
   const result = await client.chat([

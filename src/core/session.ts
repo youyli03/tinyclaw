@@ -337,25 +337,45 @@ export class Session {
   // ── JSONL 持久化 ──────────────────────────────────────────────────────────
 
   /**
-   * 异步追加最后一轮 user/assistant 对话到 JSONL（fire-and-forget）。
+   * 将单条消息序列化为 JSON 字符串，完整保留所有字段：
+   * - assistant 消息：保留 tool_calls（function calling 调用链的发起方）
+   * - tool 消息：保留 tool_call_id（与 assistant.tool_calls[].id 配对）
+   * - 其他角色：仅 role + content
+   * 可附带 ts 时间戳（append 时使用，rewrite 时不带）。
+   */
+  private static serializeMsgFull(m: ChatMessage, ts?: string): string {
+    if (m.role === "assistant") {
+      const base: Record<string, unknown> = { role: m.role, content: m.content };
+      if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
+      if (ts) base["ts"] = ts;
+      return JSON.stringify(base);
+    }
+    if (m.role === "tool") {
+      const base: Record<string, unknown> = { role: m.role, tool_call_id: m.tool_call_id, content: m.content };
+      if (ts) base["ts"] = ts;
+      return JSON.stringify(base);
+    }
+    // system / user
+    const base: Record<string, unknown> = { role: m.role, content: m.content };
+    if (ts) base["ts"] = ts;
+    return JSON.stringify(base);
+  }
+
+  /**
+   * 追加本轮完整工具调用链到 JSONL（fire-and-forget）。
    * chat 模式写 <sessionId>.jsonl；code 模式写 <sessionId>.code.jsonl（crash 恢复用）。
    * 在 runAgent() 成功结束后调用。
+   *
+   * 与旧版只存 user + 最终 assistant 不同，此方法保存：
+   *   user → [assistant+tool_calls → tool×N]* → assistant(最终回复)
+   * 确保工具调用链完整，crash 恢复后发给 LLM API 不会因 tool_call_id 孤立而报错。
    */
   appendLastTurnToJsonl(): void {
     const msgs = this.messages;
-    // 找最后一条 assistant 消息（即最终回复）
-    let assistantIdx = -1;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i]?.role === "assistant") {
-        assistantIdx = i;
-        break;
-      }
-    }
-    if (assistantIdx < 0) return;
 
-    // 往前找最近的一条 user 消息（不要求与 assistant 相邻）
+    // 找最后一条 user 消息作为本轮起始点
     let userIdx = -1;
-    for (let i = assistantIdx - 1; i >= 0; i--) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i]?.role === "user") {
         userIdx = i;
         break;
@@ -363,12 +383,14 @@ export class Session {
     }
     if (userIdx < 0) return;
 
+    // user 之后必须至少有一条 assistant 作为最终回复，否则本轮尚未完成
+    const hasAssistantAfter = msgs.slice(userIdx + 1).some((m) => m?.role === "assistant");
+    if (!hasAssistantAfter) return;
+
     const ts = new Date().toISOString();
-    const lines =
-      JSON.stringify({ role: "user", content: msgs[userIdx]!.content, ts }) +
-      "\n" +
-      JSON.stringify({ role: "assistant", content: msgs[assistantIdx]!.content, ts }) +
-      "\n";
+    // 序列化从 user 消息开始到末尾的完整工具调用链
+    const lines = msgs.slice(userIdx).map((m) => Session.serializeMsgFull(m, ts)).join("\n") + "\n";
+
     try {
       const filePath = Session.getJsonlPath(this.sessionId, this.mode);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -382,6 +404,7 @@ export class Session {
    * 整体覆盖写入 JSONL，仅保留当前 messages[]（压缩后调用）。
    * 保留 system messages + 摘要，丢弃原始 user/assistant 记录。
    * 仅在 chat 模式下使用（code 模式不做摘要压缩）。
+   * 使用 serializeMsgFull 保证 tool_calls / tool_call_id 字段不丢失。
    */
   private rewriteJsonl(): void {
     try {
@@ -389,7 +412,7 @@ export class Session {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines =
         this.messages
-          .map((m) => JSON.stringify({ role: m.role, content: m.content }))
+          .map((m) => Session.serializeMsgFull(m))
           .join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
     } catch (err) {
@@ -397,14 +420,18 @@ export class Session {
     }
   }
 
-  /** Code 模式专用：将压缩后的 messages 覆写到 .code.jsonl */
+  /**
+   * Code 模式专用：将压缩后的 messages 覆写到 .code.jsonl。
+   * 使用 serializeMsgFull 保证 tool_calls / tool_call_id 字段不丢失，
+   * 确保 crash 恢复时工具调用链的完整性。
+   */
   private rewriteCodeJsonl(): void {
     try {
       const filePath = Session.getJsonlPath(this.sessionId, "code");
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines =
         this.messages
-          .map((m) => JSON.stringify({ role: m.role, content: m.content }))
+          .map((m) => Session.serializeMsgFull(m))
           .join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
     } catch (err) {
@@ -417,6 +444,12 @@ export class Session {
    * @param sessionId 会话 ID
    * @param mode 模式（"chat" → .jsonl，"code" → .code.jsonl），默认 "chat"
    * 文件不存在返回 null。
+   *
+   * 完整恢复所有消息类型：
+   * - system / user：role + content
+   * - assistant：role + content + tool_calls（若有）
+   * - tool：role + tool_call_id + content
+   * tool 与 assistant+tool_calls 必须成对出现，孤立的 tool 消息（缺少对应 tool_call_id）会被跳过。
    */
   private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): ChatMessage[] | null {
     const filePath = Session.getJsonlPath(sessionId, mode);
@@ -429,8 +462,37 @@ export class Session {
           const entry = JSON.parse(line) as Record<string, unknown>;
           const role = entry["role"];
           const content = entry["content"];
-          if (
-            (role === "system" || role === "user" || role === "assistant") &&
+
+          if (role === "tool") {
+            // tool 消息：必须有合法的 tool_call_id 和 string content
+            const toolCallId = entry["tool_call_id"];
+            if (typeof toolCallId === "string" && typeof content === "string") {
+              messages.push({ role: "tool", tool_call_id: toolCallId, content });
+            }
+          } else if (role === "assistant" && (typeof content === "string" || Array.isArray(content))) {
+            // assistant 消息：可选恢复 tool_calls 字段
+            const rawToolCalls = entry["tool_calls"];
+            const msg: ChatMessage = { role: "assistant", content: content as string | ContentPart[] };
+            if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+              // 基本校验：每个 tool_call 需有 id / type / function.name / function.arguments
+              const validCalls = (rawToolCalls as unknown[]).filter((tc): tc is OpenAIToolCall => {
+                if (typeof tc !== "object" || tc === null) return false;
+                const t = tc as Record<string, unknown>;
+                const fn = t["function"] as Record<string, unknown> | undefined;
+                return (
+                  typeof t["id"] === "string" &&
+                  t["type"] === "function" &&
+                  typeof fn?.["name"] === "string" &&
+                  typeof fn?.["arguments"] === "string"
+                );
+              });
+              if (validCalls.length > 0) {
+                (msg as { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }).tool_calls = validCalls;
+              }
+            }
+            messages.push(msg);
+          } else if (
+            (role === "system" || role === "user") &&
             (typeof content === "string" || Array.isArray(content))
           ) {
             messages.push({ role, content: content as string | ContentPart[] });
