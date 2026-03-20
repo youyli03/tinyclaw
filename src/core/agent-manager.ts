@@ -66,6 +66,11 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "workspace", "downloads");
   }
 
+  /** Plan 模式下 AI 输出的计划文档路径（与 MEM.md 同级） */
+  planPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "PLAN.md");
+  }
+
   private tomlPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "agent.toml");
   }

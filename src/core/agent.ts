@@ -270,6 +270,11 @@ export interface AgentRunOptions {
    */
   onNotify?: (message: string) => Promise<void>;
   /**
+   * Plan 模式：向用户展示计划摘要并等待确认（由 main.ts 注入）。
+   * 仅在 code + plan 子模式下注入；auto 模式或非 code 模式时不注入。
+   */
+  onPlanRequest?: import("../tools/registry.js").ToolContext["onPlanRequest"];
+  /**
    * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
    * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
    * slaveRunFn，agent_fork 工具会返回明确错误，防止无限嵌套或结果丢失。
@@ -348,7 +353,7 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision);
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode);
       } else {
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
       }
@@ -419,6 +424,7 @@ export async function runAgent(
               ? { tools, tool_choice: "auto" }
               : {}),
             signal: llmAc.signal,
+            isUserInitiated: round === 0 && !opts.skipPreamble,
           }
         );
       } catch (err) {
@@ -599,6 +605,7 @@ export async function runAgent(
           ...(opts.onSlaveComplete ? { onSlaveComplete: opts.onSlaveComplete } : {}),
           ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
           ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
+          ...(opts.onPlanRequest ? { onPlanRequest: opts.onPlanRequest } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {

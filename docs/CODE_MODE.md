@@ -26,6 +26,8 @@ Code 模式是独立于 Chat 对话历史的编码会话，灵感来源于 VS Co
 ```
 /code   进入 Code 模式
 /chat   返回 Chat 模式
+/plan   切换到 Plan 子模式（Code 模式下）
+/auto   切换到 Auto 子模式（Code 模式下，默认）
 ```
 
 ### `/code`
@@ -157,3 +159,99 @@ src/llm/
 ```
 
 两种模式的历史完全隔离，切换时不会相互污染。
+
+---
+
+## 九、Code 子模式：Plan / Auto
+
+Code 模式内置两个子模式，通过 `/plan` 和 `/auto` 命令切换。
+
+### 概述
+
+| 子模式 | 命令 | 行为 |
+|--------|------|------|
+| **auto**（默认）| `/auto` | AI 直接分析并执行任务（同原有 Code 模式行为） |
+| **plan** | `/plan` | AI 先分析任务、输出计划，等用户确认后再执行 |
+
+子模式状态保存在 `session.codeSubMode`，不影响会话历史。
+
+### Plan 子模式流程
+
+```
+用户发送任务
+  └→ AI 分析（read_file / exec_shell）
+       └→ AI 调用 exit_plan_mode 工具提交计划摘要
+            └→ 向 QQ 推送操作菜单：
+                 1. 🚀 autopilot    —— 批准，立即执行（推荐）
+                 2. 💬 interactive  —— 批准，逐步确认
+                 3. ❌ exit_only    —— 取消执行
+                 或：输入自由文字 → AI 修改计划后重新提交
+            └→ 用户选择：
+                 ├→ 批准 → AI 继续执行（写文件等），仍在同一 runAgent()
+                 └→ 反馈 → AI 修改计划，再次调用 exit_plan_mode
+```
+
+**计费说明**：分析 + 规划 + 等待确认 + 执行全部在同一 `runAgent()` 内完成，只消耗 1 次 Copilot premium request。每次拒绝并提供反馈才会产生额外消耗。
+
+### exit_plan_mode 工具
+
+AI 通过调用此工具触发计划审批流程：
+
+```
+exit_plan_mode(
+  summary: string,            // 计划摘要（必填），展示给用户
+  planPath?: string,          // 详细计划文件路径（可选，如 PLAN.md）
+  actions?: string[],         // 操作列表，默认 ["autopilot","interactive","exit_only"]
+  recommendedAction?: string  // 推荐操作，默认 "autopilot"
+)
+```
+
+**返回给 AI**：
+```json
+{ "approved": true, "selectedAction": "autopilot" }
+// 或
+{ "approved": false, "feedback": "请把第3步的写法改为..." }
+```
+
+### 工具权限约束（system prompt 软约束）
+
+- ✅ 允许：`read_file`、`exec_shell`（只读分析）、`write_file` 写 PLAN.md
+- ⚠️ 禁止（软）：`exit_plan_mode` 批准前修改源代码
+
+### 用户交互示例
+
+```
+📋 **计划已就绪**
+
+将在 src/auth/ 新增 JWT 认证模块：
+- 新建 src/auth/jwt.ts（encode/decode/verify）
+- 修改 src/main.ts：在路由中间件前注入认证校验
+- 预计影响范围：2 文件，新增约 80 行代码
+
+─────────────────
+请选择操作：
+  1. 🚀 autopilot —— 推荐
+  2. 💬 interactive
+  3. ❌ exit_only
+
+或直接输入反馈意见，AI 将修改计划后重新提交。
+（超时 5 分钟自动取消）
+```
+
+### 相关文件
+
+```
+src/code/
+  commands.ts               — /plan 和 /auto 命令
+  exit-plan-mode-tool.ts    — exit_plan_mode 工具注册
+  system-prompt.ts          — buildCodeSystemPrompt(agentId, supportsVision, subMode)
+  backends/
+    types.ts                — CodeBackend 接口（扩展点）
+    copilot.ts              — Copilot 后端 stub
+
+src/core/
+  session.ts                — codeSubMode / pendingPlanApproval 状态机
+  agent.ts                  — onPlanRequest 注入；isUserInitiated 传递
+
+src/main.ts                 — pendingPlanApproval 处理；onPlanRequest 回调构建
+```

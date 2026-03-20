@@ -100,6 +100,13 @@ export interface ResolvedBackend {
   supportsToolCalls?: boolean;
   /** 是否支持视觉能力（图片输入）。未设置时视为 false。 */
   supportsVision?: boolean;
+  /**
+   * 是否为 GitHub Copilot provider。
+   * 设为 true 时，LLM 调用会根据 ChatOptions.isUserInitiated 设置 X-Initiator header，
+   * 让 GitHub 服务端仅对第一轮（用户发起）计费一次 premium request。
+   * 非 Copilot 后端不设此字段，不发送 X-Initiator。
+   */
+  isCopilotProvider?: boolean;
 }
 
 /** OpenAI vision API 内容块 */
@@ -129,6 +136,14 @@ export interface ChatOptions {
   tool_choice?: "auto" | "none";
   /** AbortSignal：用于在 runAgent() 被中断时取消当前 LLM HTTP 请求 */
   signal?: AbortSignal;
+  /**
+   * 是否为用户主动发起的请求（即 ReAct 循环第 0 轮）。
+   * 仅在 Copilot 后端（isCopilotProvider=true）时生效：
+   *   true  → X-Initiator: user  （计为一次 premium request）
+   *   false → X-Initiator: agent （工具续接轮次，不额外计费）
+   * 未设置时不发送此 header。
+   */
+  isUserInitiated?: boolean;
 }
 
 export interface ChatResult {
@@ -244,6 +259,10 @@ export class LLMClient {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
+    const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
+      ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
+      : undefined;
+
     const resolved = resolveMessagesForApi(messages);
     const response = await withRetry(() => this.client.chat.completions.create(
       {
@@ -256,7 +275,10 @@ export class LLMClient {
           ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
           : {}),
       },
-      opts.signal ? { signal: opts.signal } : undefined
+      {
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
+      }
     ), opts.signal);
 
     const choice = response.choices[0];
@@ -307,6 +329,9 @@ export class LLMClient {
       const canUseTools =
         this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
       const resolvedForStream = resolveMessagesForApi(messages);
+      const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
+        ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
+        : undefined;
       const stream = await this.client.chat.completions.create(
         {
           model: this.backend.model,
@@ -320,7 +345,10 @@ export class LLMClient {
           stream: true,
           stream_options: { include_usage: true },
         },
-        opts.signal ? { signal: opts.signal } : undefined
+        {
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
+        }
       );
 
       let fullContent = "";

@@ -458,6 +458,7 @@ export async function buildCopilotClient(
       maxTokens: resolvedModel.maxOutputTokens,
       timeoutMs: config.timeoutMs,
       supportsToolCalls: resolvedModel.supportsToolCalls,
+      isCopilotProvider: true,
       ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
     },
     copilotFetch

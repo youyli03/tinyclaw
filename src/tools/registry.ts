@@ -32,6 +32,19 @@ export interface ToolContext {
    * 供 notify_user 工具调用，不等 runAgent 结束即发送，不触发新一轮 LLM 推理。
    */
   onNotify?: (message: string) => Promise<void>;
+  /**
+   * Plan 模式：向用户展示计划摘要并等待确认（由 main.ts 注入）。
+   * exit_plan_mode 工具调用此回调来暂停执行、等待用户选择操作。
+   * - 返回 approved=true + selectedAction：用户批准，AI 继续执行
+   * - 返回 approved=false + feedback：用户拒绝或提供反馈，AI 修改计划
+   * 仅在 code + plan 子模式下注入；auto 模式或非 code 模式时为 undefined。
+   */
+  onPlanRequest?: (
+    summary: string,
+    actions?: string[],
+    recommendedAction?: string,
+    planPath?: string,
+  ) => Promise<import("../core/session.js").PlanApprovalResult>;
 }
 
 export interface ToolDef {

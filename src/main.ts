@@ -24,7 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "./config/loader.js";
 import { llmRegistry } from "./llm/registry.js";
-import { Session } from "./core/session.js";
+import { Session, type PlanApprovalResult } from "./core/session.js";
 import { runAgent, type AgentRunOptions } from "./core/agent.js";
 import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
@@ -91,6 +91,28 @@ async function main(): Promise<void> {
     const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
     const session = getSession(sessionId);
 
+    // ── Plan 审批：检测 plan 子模式下等待用户选择操作的消息 ─────────────
+    if (session.pendingPlanApproval) {
+      const trimmed = msg.content.trim();
+      const actions = session.pendingPlanApproval.actions;
+      const n = parseInt(trimmed, 10);
+
+      if (!isNaN(n) && n >= 1 && n <= actions.length) {
+        // 数字选项：最后一项（exit_only 惯例）视为取消
+        const selectedAction = actions[n - 1]!;
+        const isLastAction = n === actions.length;
+        session.pendingPlanApproval.resolve({
+          approved: !isLastAction,
+          selectedAction,
+        });
+      } else {
+        // 自由文本 → feedback，AI 将修改计划后重新提交
+        session.pendingPlanApproval.resolve({ approved: false, feedback: trimmed });
+      }
+      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId);
+      return "";
+    }
+
     // ── Interface A：检测 MFA 确认消息 ──────────────────────────────────
     if (session.pendingApproval) {
       const trimmed = msg.content.trim();
@@ -118,6 +140,7 @@ async function main(): Promise<void> {
       session.abortRequested = true;
       session.llmAbortController?.abort();
       session.abortPendingApproval();
+      session.abortPendingPlanApproval();
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
       await session.currentRunPromise?.catch(() => {});
     }
@@ -220,6 +243,50 @@ async function main(): Promise<void> {
       });
     };
 
+    const planTimeoutSecs = 5 * 60; // 5 分钟等待用户确认
+
+    /**
+     * Plan 审批回调：向 QQ 用户推送计划摘要和操作菜单，等待用户选择。
+     * 仅在 code + plan 子模式下注入。
+     */
+    const buildPlanRequestCallback = (): AgentRunOptions["onPlanRequest"] | undefined => {
+      if (session.mode !== "code" || session.codeSubMode !== "plan") return undefined;
+
+      return async (
+        summary: string,
+        actions?: string[],
+        recommendedAction?: string,
+        planPath?: string,
+      ): Promise<PlanApprovalResult> => {
+        const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
+        const resolvedRecommended = recommendedAction ?? "autopilot";
+
+        // 构建操作菜单
+        const actionLines = resolvedActions.map((action, i) => {
+          const icons: Record<string, string> = {
+            autopilot: "🚀",
+            interactive: "💬",
+            exit_only: "❌",
+          };
+          const icon = icons[action] ?? "▶️";
+          const isRecommended = action === resolvedRecommended;
+          return `  ${i + 1}. ${icon} ${action}${isRecommended ? " —— 推荐" : ""}`;
+        });
+
+        const planPathLine = planPath ? `\n📄 详细计划：${planPath}` : "";
+        const menuMsg =
+          `📋 **计划已就绪**\n\n${summary}${planPathLine}\n\n` +
+          `─────────────────\n请选择操作：\n${actionLines.join("\n")}\n\n` +
+          `或直接输入反馈意见，AI 将修改计划后重新提交。\n（超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
+
+        await connector.send(msg.peerId, msg.type, menuMsg).catch(() => {});
+
+        return session.waitForPlanApproval(planTimeoutSecs, resolvedActions);
+      };
+    };
+
+    const onPlanRequest = buildPlanRequestCallback();
+
     const opts: AgentRunOptions = {
       onSlaveComplete,
       onProgressNotify,
@@ -228,6 +295,7 @@ async function main(): Promise<void> {
           console.error("[notify_user] send error:", err);
         });
       },
+      ...(onPlanRequest !== undefined ? { onPlanRequest } : {}),
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
           msg.peerId, msg.type, warningMsg,

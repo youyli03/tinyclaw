@@ -223,3 +223,62 @@ type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' |
 - 测试用例: `src/extension/chatSessions/copilotcli/node/test/copilotcliSession.spec.ts` (L1088)
 - 测试用例 (PlanModeHook): `src/extension/chatSessions/claude/node/test/planModeHook.spec.ts`
 - Claude SDK 工具定义: `@anthropic-ai/claude-agent-sdk/sdk-tools`
+
+---
+
+## 八、补充：高级请求计费机制与模型分工（2026-03-20 新增）
+
+### 1. `disable-model-invocation` 的真实含义
+
+Plan Agent（以及 Ask Agent、Edit Mode Agent）的 frontmatter 中 `disable-model-invocation: true` **不是"不调用模型"**，而是告诉 VS Code 框架"不要由框架层自动发起 LM 调用，由 agent/extension 自己管理调用"。
+
+证据：`EditModeAgentProvider`（有真实文件编辑能力）同样设置了 `disableModelInvocation: true`，并且有完整的 system prompt body，可以正常调用模型。
+
+关键代码（`src/extension/agents/vscode-node/agentTypes.ts`）：
+```typescript
+if (config.disableModelInvocation) {
+    lines.push(`disable-model-invocation: true`);
+}
+```
+由 `src/util/vs/workbench/contrib/chat/common/promptSyntax/promptFileParser.ts` 解析读取。
+
+### 2. Plan Agent 的模型分工
+
+Plan Agent 调研阶段由两类 agent 分工，使用不同的模型：
+
+| 角色 | 模型来源 | 说明 |
+|------|---------|------|
+| **Plan Agent 本身**（规划、推理、总结） | 用户当前在 Chat UI 选择的模型（如 GPT-4o/Claude Opus） | frontmatter 无 `model:` 字段时，VS Code 使用用户当前选择的模型 |
+| **Explore 子 Agent**（读文件、grep、搜索代码库） | `Claude Haiku 4.5` → `Gemini 3 Flash (Preview)` → `Auto`（廉价小模型） | `EXPLORE_AGENT_FALLBACK_MODELS` 优先列表，取第一个可用的 |
+
+**结论：Plan 阶段的规划质量与用户选择的高级模型完全一致；廉价模型仅用于读文件/搜索等不需要强推理能力的机械性操作。**
+
+可通过以下配置键覆盖默认模型：
+- `chat.planAgent.defaultModel` — Plan Agent 使用的模型
+- `chat.exploreAgent.defaultModel` — Explore 子 Agent 使用的模型
+- `github.copilot.planAgent.implementAgentModel` — handoff 到实现阶段时的模型
+
+### 3. 工具调用循环的高级请求计费机制
+
+Agent 模式下，一个用户 turn 内可能发起多轮 LLM API 调用（每次工具返回结果后再调用一次），但只消耗 **1 次**高级请求。原理是通过 HTTP 请求头区分：
+
+```
+X-Initiator: user   ← 第 0 轮（用户发起的第一次）→ GitHub 服务端计费 1 次
+X-Initiator: agent  ← 第 1~N 轮（工具调用结果后继续推理）→ 不计费
+```
+
+关键赋值逻辑（`src/extension/intents/node/toolCallingLoop.ts`）：
+```typescript
+userInitiatedRequest: (iterationNumber === 0 && !isContinuation && !this.options.request.subAgentInvocationId)
+                      || this.stopHookUserInitiated
+```
+
+对应 HTTP 头设置（`src/extension/prompt/node/chatMLFetcher.ts`）：
+```typescript
+'X-Initiator': userInitiatedRequest ? 'user' : 'agent'
+// 注释：Agent = a system request / not the primary user query.
+```
+
+同一 task 内的所有 API 调用通过 `X-Agent-Task-Id`（等于 requestId）串联，`X-Interaction-Type` 设为 `conversation-agent`，让服务端将它们识别为同一代理任务。
+
+**对 tinyclaw 的启示：** 如果自行实现 agent 循环，可以参考此设计——只有用户主动触发的第一次 LLM 请求标记为"用户发起"，后续工具驱动的续接请求标记为"agent 发起"，由服务端或自定义计费逻辑据此决定是否消耗配额。

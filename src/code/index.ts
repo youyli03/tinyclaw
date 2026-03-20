@@ -6,3 +6,5 @@
  */
 
 import "./commands.js";
+import "./exit-plan-mode-tool.js";
+import "./backends/copilot.js";

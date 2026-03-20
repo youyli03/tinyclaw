@@ -5,10 +5,27 @@ import type { ChatMessage, ContentPart } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress } from "../memory/summarizer.js";
 
+/** Plan 模式审批结果 */
+export type PlanApprovalResult = {
+  approved: boolean;
+  /** 用户选择的操作（"autopilot" | "interactive" | "exit_only" | 自定义） */
+  selectedAction?: string;
+  /** 用户输入的自由文字反馈（AI 将据此修改计划） */
+  feedback?: string;
+};
+
 /** Interface A MFA：等待用户回复的 Promise 控制柄 */
 interface PendingApproval {
   resolve: (approved: boolean) => void;
   reject: (err: Error) => void;
+}
+
+/** Plan 审批控制柄 */
+interface PendingPlanApproval {
+  resolve: (result: PlanApprovalResult) => void;
+  reject: (err: Error) => void;
+  /** 当前展示给用户的操作列表（用于数字索引映射） */
+  actions: string[];
 }
 
 export interface SessionOptions {
@@ -53,9 +70,17 @@ export class Session {
    */
   mode: "chat" | "code" = "chat";
 
+  /** Code 子模式：auto（默认，直接执行）/ plan（先规划后执行） */
+  codeSubMode: "auto" | "plan" = "auto";
+
+  /** Code 后端（当前仅 copilot，预留扩展） */
+  codeBackend: "copilot" = "copilot";
+
+  /** Plan 审批：等待用户选择操作或提供反馈的控制柄 */
+  pendingPlanApproval: PendingPlanApproval | null = null;
+
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
-
 
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
@@ -201,6 +226,50 @@ export class Session {
     if (this.pendingApproval) {
       this.pendingApproval.reject(new Error("会话被中断，MFA 操作已取消"));
       this.pendingApproval = null;
+    }
+  }
+
+  // ── Plan 审批 ─────────────────────────────────────────────────────────────
+
+  /**
+   * 挂起当前执行，等待用户选择操作或输入反馈。
+   * - resolve({ approved: true, selectedAction }) = 用户批准
+   * - resolve({ approved: false, feedback }) = 用户拒绝 / 提供反馈
+   * - reject = 超时
+   */
+  waitForPlanApproval(timeoutSecs: number, actions: string[]): Promise<PlanApprovalResult> {
+    if (this.pendingPlanApproval) {
+      this.pendingPlanApproval.reject(new Error("新的 Plan 审批请求覆盖了未完成的请求"));
+      this.pendingPlanApproval = null;
+    }
+
+    return new Promise<PlanApprovalResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingPlanApproval = null;
+        reject(new Error("Plan 审批超时，操作已取消"));
+      }, timeoutSecs * 1000);
+
+      this.pendingPlanApproval = {
+        actions,
+        resolve: (result) => {
+          clearTimeout(timer);
+          this.pendingPlanApproval = null;
+          resolve(result);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          this.pendingPlanApproval = null;
+          reject(err);
+        },
+      };
+    });
+  }
+
+  /** 中止等待中的 Plan 审批（用于软中断时清理） */
+  abortPendingPlanApproval(): void {
+    if (this.pendingPlanApproval) {
+      this.pendingPlanApproval.reject(new Error("会话被中断，Plan 审批已取消"));
+      this.pendingPlanApproval = null;
     }
   }
 
