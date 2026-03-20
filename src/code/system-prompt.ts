@@ -14,10 +14,15 @@ export function buildCodeSystemPrompt(
   agentId = "default",
   supportsVision = false,
   subMode: "auto" | "plan" = "auto",
+  workdir?: string,
 ): string {
-  const workspacePath = agentManager.workspaceDir(agentId);
+  const workspacePath = workdir ?? agentManager.workspaceDir(agentId);
   const agentDir = join(workspacePath, "..");
   const planPath = agentManager.planPath(agentId);
+
+  const workdirNote = workdir
+    ? `\n- 默认 workspace（文件输出备用）：${agentManager.workspaceDir(agentId)}`
+    : "";
 
   const planModeSection = subMode === "plan" ? `
 
@@ -49,7 +54,7 @@ export function buildCodeSystemPrompt(
 ## 工作区
 
 - 当前工作目录：${workspacePath}
-- Agent 目录：${agentDir}
+- Agent 目录：${agentDir}${workdirNote}
 - 子目录约定：
   - tmp/    临时文件（可随时清理）
   - output/ 输出产物（交付用文件、运行结果等）

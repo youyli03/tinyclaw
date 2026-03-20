@@ -1,15 +1,20 @@
 /**
  * Code 模式斜杠命令
  *
- * /code — 切换到 coding 模式（清空当前上下文，不保留长期历史）
- * /chat — 切换回聊天模式（恢复 chat JSONL 历史）
- * /plan — 切换到 plan 子模式（AI 先规划后执行）
- * /auto — 切换到 auto 子模式（AI 直接执行，默认）
+ * /code      — 切换到 coding 模式（清空当前上下文，不保留长期历史）
+ * /chat      — 切换回聊天模式（恢复 chat JSONL 历史）
+ * /plan      — 切换到 plan 子模式（AI 先规划后执行）
+ * /auto      — 切换到 auto 子模式（AI 直接执行，默认）
+ * /workspace — 查看或设置 Code 模式工作目录（持久化存储）
  *
  * 副作用 import：由 src/code/index.ts → src/commands/builtin.ts 触发注册。
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { registerCommand } from "../commands/registry.js";
+import { agentManager } from "../core/agent-manager.js";
+import { Session } from "../core/session.js";
 
 // ── /code ─────────────────────────────────────────────────────────────────────
 
@@ -23,11 +28,23 @@ registerCommand({
     }
     session.mode = "code";
     session.clearMessages();
+
+    // 尝试恢复上次工作目录
+    const savedDir = Session.readCodeDir(agentManager.codeDirPath(session.agentId));
+    if (savedDir) {
+      session.codeWorkdir = savedDir;
+    }
+
+    const dirLine = savedDir
+      ? `• 📁 工作目录：\`${savedDir}\`（上次记录，发送 \`/workspace\` 修改）`
+      : `• 📁 工作目录：\`${agentManager.workspaceDir(session.agentId)}\`（默认，发送 \`/workspace <路径>\` 指定项目目录）`;
+
     return [
       "🖥️ **已进入 Code 模式**",
       "",
       "• 本次编码上下文独立保存，不写入聊天历史",
       "• 进程重启后可自动恢复当前编码上下文",
+      dirLine,
       "• 发送 `/chat` 可返回聊天模式（恢复之前的聊天历史）",
       "• 发送 `/plan` 启用规划子模式，`/auto` 切换回直接执行（默认）",
     ].join("\n");
@@ -109,6 +126,50 @@ registerCommand({
       "• AI 将直接分析并执行任务，不经过规划确认",
       "• 这是 Code 模式的默认行为",
       "• 发送 `/plan` 可切换回规划子模式",
+    ].join("\n");
+  },
+});
+
+// ── /workspace ────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "workspace",
+  description: "查看或设置 Code 模式工作目录（持久化，下次进入自动恢复）",
+  usage: "/workspace [路径]",
+  execute({ session, args }) {
+    if (session.mode !== "code") {
+      return "ℹ️ `/workspace` 仅在 Code 模式下有效。发送 `/code` 先切换到 Code 模式。";
+    }
+
+    const dirInput = args.join(" ").trim();
+    const defaultDir = agentManager.workspaceDir(session.agentId);
+
+    if (!dirInput) {
+      const current = session.codeWorkdir ?? defaultDir;
+      const isDefault = !session.codeWorkdir;
+      return [
+        `📁 **当前工作目录**：\`${current}\`${isDefault ? "（默认）" : ""}`,
+        "",
+        "用法：`/workspace <路径>` 设置项目目录",
+      ].join("\n");
+    }
+
+    // 解析路径（相对路径以默认 workspace 为基准）
+    const resolved = path.isAbsolute(dirInput) ? dirInput : path.resolve(defaultDir, dirInput);
+
+    if (!fs.existsSync(resolved)) {
+      return `❌ 目录不存在：\`${resolved}\``;
+    }
+    if (!fs.statSync(resolved).isDirectory()) {
+      return `❌ 路径不是目录：\`${resolved}\``;
+    }
+
+    session.saveCodeDir(agentManager.codeDirPath(session.agentId), resolved);
+    return [
+      `📁 **工作目录已设置**：\`${resolved}\``,
+      "",
+      "• 已持久化，下次进入 Code 模式将自动恢复",
+      "• AI 的 exec_shell 将在此目录下执行命令",
     ].join("\n");
   },
 });

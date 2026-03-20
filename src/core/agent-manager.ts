@@ -71,6 +71,11 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "PLAN.md");
   }
 
+  /** Code 模式持久化工作目录文件路径 */
+  codeDirPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "codedir");
+  }
+
   private tomlPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "agent.toml");
   }

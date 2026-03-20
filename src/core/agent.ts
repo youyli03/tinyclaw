@@ -353,7 +353,7 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode);
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode, session.codeWorkdir ?? undefined);
       } else {
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
       }
@@ -594,7 +594,7 @@ export async function runAgent(
       const currentDepth = opts.slaveDepth ?? 0;
       try {
         result = await executeTool(call.name, call.args, {
-          cwd: agentManager.workspaceDir(session.agentId),
+          cwd: (isCodeMode && session.codeWorkdir) ? session.codeWorkdir : agentManager.workspaceDir(session.agentId),
           sessionId: session.sessionId,
           agentId: session.agentId,
           masterSession: session,

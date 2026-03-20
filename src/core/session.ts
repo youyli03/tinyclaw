@@ -4,6 +4,7 @@ import * as os from "node:os";
 import type { ChatMessage, ContentPart } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress } from "../memory/summarizer.js";
+import { agentManager } from "./agent-manager.js";
 
 /** Plan 模式审批结果 */
 export type PlanApprovalResult = {
@@ -76,6 +77,9 @@ export class Session {
   /** Code 后端（当前仅 copilot，预留扩展） */
   codeBackend: "copilot" = "copilot";
 
+  /** Code 模式用户指定的工作目录（null = 使用默认 workspace） */
+  codeWorkdir: string | null = null;
+
   /** Plan 审批：等待用户选择操作或提供反馈的控制柄 */
   pendingPlanApproval: PendingPlanApproval | null = null;
 
@@ -91,6 +95,7 @@ export class Session {
     if (codeRestored && codeRestored.length > 0) {
       this.mode = "code";
       this.messages = codeRestored;
+      this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
       return;
     }
 
@@ -422,6 +427,40 @@ export class Session {
     }
     this.messages = [];
     return false;
+  }
+
+  // ── Code 工作目录持久化 ───────────────────────────────────────────────────
+
+  /**
+   * 读取 codedir 文件中保存的工作目录路径。
+   * 文件不存在、路径不合法或目录不存在时返回 null。
+   */
+  static readCodeDir(codeDirFile: string): string | null {
+    try {
+      if (!fs.existsSync(codeDirFile)) return null;
+      const dir = fs.readFileSync(codeDirFile, "utf-8").trim();
+      if (dir && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) return dir;
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * 将工作目录持久化写入 codedir 文件，同时更新内存中的 codeWorkdir。
+   * dir 为 null 时删除持久化文件并清空内存值。
+   */
+  saveCodeDir(codeDirFile: string, dir: string | null): void {
+    try {
+      if (dir === null) {
+        if (fs.existsSync(codeDirFile)) fs.unlinkSync(codeDirFile);
+        this.codeWorkdir = null;
+      } else {
+        fs.mkdirSync(path.dirname(codeDirFile), { recursive: true });
+        fs.writeFileSync(codeDirFile, dir, "utf-8");
+        this.codeWorkdir = dir;
+      }
+    } catch (err) {
+      console.error("[session] saveCodeDir failed:", err);
+    }
   }
 
   estimatedTokens(): number {
