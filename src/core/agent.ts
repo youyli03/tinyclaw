@@ -717,11 +717,13 @@ export async function runAgent(
     if (session.abortRequested) break;
 
     // ── Auto-fork 检查：超过阈值时将剩余任务交给 Slave 继续执行 ──────────
+    // Code 模式是有状态的交互会话（工作区、plan 子模式等），不应 auto-fork
     {
       const threshold = opts.autoForkThresholdMs ?? AUTO_FORK_THRESHOLD_MS;
       if (
         threshold > 0 &&
         !isSlave &&
+        !isCodeMode &&
         (opts.slaveDepth ?? 0) === 0 &&
         opts.onSlaveComplete !== undefined &&
         Date.now() - startMs > threshold
