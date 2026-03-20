@@ -60,6 +60,7 @@ export async function getAccessToken(appId: string, clientSecret: string): Promi
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId, clientSecret }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!resp.ok) throw new Error(`Token fetch failed: ${resp.status}`);
     const data = await resp.json() as { access_token: string; expires_in: number };
@@ -78,6 +79,7 @@ export async function getAccessToken(appId: string, clientSecret: string): Promi
 export async function getGatewayUrl(token: string): Promise<string> {
   const resp = await fetch(`${API_BASE}/gateway`, {
     headers: { Authorization: `QQBot ${token}` },
+    signal: AbortSignal.timeout(15_000),
   });
   if (!resp.ok) throw new Error(`Gateway fetch failed: ${resp.status}`);
   const data = await resp.json() as { url: string };
@@ -94,6 +96,7 @@ async function post(path: string, token: string, body: unknown): Promise<unknown
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => "");
