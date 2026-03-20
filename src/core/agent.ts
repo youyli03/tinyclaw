@@ -414,8 +414,9 @@ export async function runAgent(
 
     // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
     // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
-    // code 模式跳过（无长期历史积累，不做压缩）
-    if (!isCodeMode && !session.abortRequested && shouldSummarize(session.getMessages())) {
+    // 优先使用上一轮实际 promptTokens（session.lastPromptTokens），0 时 fallback 字符估算
+    // code 模式跳过（有独立的滑动窗口压缩）
+    if (!isCodeMode && !session.abortRequested && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
       opts.onCompress?.("start");
       const summary = await session.compress();
       opts.onCompress?.("done", summary);
@@ -443,22 +444,6 @@ export async function runAgent(
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     const tools = getAllToolSpecs();
-
-    // ── Code 模式：预调用 Token 预算检查 ──────────────────────────────────
-    if (isCodeMode && codeContextWindow > 0 && !session.abortRequested) {
-      const estimatedTokens = session.estimatedTokens();
-      const usageRatio = estimatedTokens / codeContextWindow;
-      if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
-        // 超过 90%：触发压缩并通知用户
-        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%，触发滑动窗口压缩`);
-        await session.compressForCode();
-        void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
-      } else if (usageRatio >= 0.75) {
-        // 超过 75%：静默压缩
-        console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%，静默压缩`);
-        await session.compressForCode();
-      }
-    }
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
@@ -504,6 +489,23 @@ export async function runAgent(
     lastUsage = response.usage;
     // 记录到 session，供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
+
+    // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
+    // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值
+    if (isCodeMode && codeContextWindow > 0 && !session.abortRequested) {
+      // 实际值为 0（极少见）时 fallback 到字符估算
+      const actualTokens = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
+      const usageRatio = actualTokens / codeContextWindow;
+      if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
+        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），触发滑动窗口压缩`);
+        await session.compressForCode();
+        void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+      } else if (usageRatio >= 0.75) {
+        console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
+        await session.compressForCode();
+      }
+    }
+
     const { content, toolCalls } = parseResponse(response, textMode);
 
     // ── 格式纠错：检测格式错误并重提示（最多 1 次，不限 textMode）──────────
@@ -748,8 +750,9 @@ export async function runAgent(
   }
 
   // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查；code 模式跳过）
+  // 使用最后一轮实际 promptTokens（比字符估算更准确）
   if (!session.abortRequested && !isCodeMode) {
-    if (shouldSummarize(session.getMessages())) {
+    if (shouldSummarize(session.getMessages(), lastUsage.promptTokens)) {
       opts.onCompress?.("start");
       const summary = await session.compress();
       opts.onCompress?.("done", summary);

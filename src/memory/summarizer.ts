@@ -29,26 +29,43 @@ const CODE_KEEP_RECENT_MESSAGES = 8;
 
 /**
  * 检查当前 messages 的 token 使用率是否超过阈值。
- * 使用简单的字符数估算（1 token ≈ 3 中文字符 / 4 英文字符）。
+ * 优先使用 actualTokens（LLM 返回的真实 prompt token 数），
+ * 无实际值时 fallback 到字符数估算（1 token ≈ 3.5 字符）。
+ * @param messages 当前 session messages
+ * @param actualTokens LLM 上次响应报告的实际 prompt token 数（0 或 undefined = 使用估算）
  */
-export function shouldSummarize(messages: ChatMessage[]): boolean {
+export function shouldSummarize(messages: ChatMessage[], actualTokens?: number): boolean {
   const cfg = loadConfig();
-  const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-  // 粗估：平均 3.5 字符/token
-  const estimatedTokens = Math.ceil(totalChars / 3.5);
-  // 优先使用 registry 中的模型上下文窗口（Copilot 后端由模型元数据决定）
   const contextWindow = llmRegistry.getContextWindow("daily");
   const threshold = Math.floor(contextWindow * cfg.memory.tokenThreshold);
+
+  if (actualTokens && actualTokens > 0) {
+    return actualTokens >= threshold;
+  }
+
+  // Fallback：字符数粗估（首次 run 尚无实际值时使用）
+  const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  const estimatedTokens = Math.ceil(totalChars / 3.5);
   return estimatedTokens >= threshold;
 }
 
 /**
  * 检查 code 模式的 messages 是否需要滑动窗口压缩。
  * 阈值为 code 模型上下文窗口的 75%。
+ * 优先使用 actualTokens（LLM 返回的真实 prompt token 数），
+ * 无实际值时 fallback 到字符数估算。
  * @param messages 当前 session messages
  * @param contextWindow code 模型的上下文窗口大小（tokens）
+ * @param actualTokens LLM 上次响应报告的实际 prompt token 数（0 或 undefined = 使用估算）
  */
-export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: number): boolean {
+export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: number, actualTokens?: number): boolean {
+  const threshold = Math.floor(contextWindow * CODE_SUMMARIZE_THRESHOLD);
+
+  if (actualTokens && actualTokens > 0) {
+    return actualTokens >= threshold;
+  }
+
+  // Fallback：字符数粗估
   const totalChars = messages.reduce((sum, m) => {
     const content = m.content;
     if (typeof content === "string") return sum + content.length;
@@ -61,7 +78,6 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
     return sum;
   }, 0);
   const estimatedTokens = Math.ceil(totalChars / 3.5);
-  const threshold = Math.floor(contextWindow * CODE_SUMMARIZE_THRESHOLD);
   return estimatedTokens >= threshold;
 }
 
