@@ -394,17 +394,21 @@ export class LLMClient {
 
       const toolCalls: ToolCallResult[] | undefined =
         toolCallAcc.length > 0
-          ? toolCallAcc.map((tc) => ({
-              name: tc.name,
-              callId: tc.id,
-              args: (() => {
-                try {
-                  return JSON.parse(tc.arguments) as Record<string, unknown>;
-                } catch {
-                  return {} as Record<string, unknown>;
-                }
-              })(),
-            }))
+          ? toolCallAcc
+              // tcDelta.index 可能不连续（如 0, 2），导致 toolCallAcc 为稀疏数组
+              // 过滤掉洞（hole）和 undefined，避免后续 for...of 产生 undefined call
+              .filter((tc): tc is { id: string; name: string; arguments: string } => tc != null)
+              .map((tc) => ({
+                name: tc.name,
+                callId: tc.id,
+                args: (() => {
+                  try {
+                    return JSON.parse(tc.arguments) as Record<string, unknown>;
+                  } catch {
+                    return {} as Record<string, unknown>;
+                  }
+                })(),
+              }))
           : undefined;
 
       return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };

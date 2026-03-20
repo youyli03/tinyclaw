@@ -563,6 +563,8 @@ export async function runAgent(
     session.addAssistantMessage(content || "");
 
     for (const call of toolCalls) {
+      // 防御性检查：理论上不应出现 undefined（LLM 返回稀疏 index 时可能）
+      if (!call) continue;
       // ── 软中断检测：跳过未执行的工具 ──────────────────────────────────
       if (session.abortRequested) {
         session.addSystemMessage(
