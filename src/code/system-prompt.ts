@@ -81,7 +81,16 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据、运行破坏性脚本），必须先向用户说明并等待确认
 - 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
 - 任务完成时：明确告知用户"已完成"，并简要列出做了哪些变更
-- 用中文回复，简洁明了${visionSection}`;
+- 用中文回复，简洁明了
+
+## 图表与可视化
+
+- **需要展示流程图、架构图、时序图、数据图表时，必须调用 render_diagram 工具生成图片**
+- 不要输出 ASCII 艺术字流程图或 mermaid/graphviz 代码块——QQ 无法正确渲染它们
+- render_diagram 支持两种类型：
+  - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
+  - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
+- 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次${visionSection}`;
 }
 
 function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection }: PromptParts): string {
@@ -129,5 +138,14 @@ Plan 模式分为两个严格隔离的阶段：
 
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
+
+## 图表与可视化
+
+- **需要展示流程图、架构图、时序图、数据图表时，必须调用 render_diagram 工具生成图片**
+- 不要输出 ASCII 艺术字流程图或 mermaid/graphviz 代码块——QQ 无法正确渲染它们
+- render_diagram 支持两种类型：
+  - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
+  - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
+- 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
 - 用中文回复，简洁明了${visionSection}`;
 }
