@@ -24,7 +24,7 @@ registerCommand({
       const cmd = getCommand(name);
       if (!cmd) return `❌ 未知命令 \`/${name}\`，发送 \`/help\` 查看全部命令。`;
       const lines = [
-        `**/${cmd.name}** — ${cmd.description}`,
+        `• \`/${cmd.name}\` — ${cmd.description}`,
       ];
       if (cmd.usage) lines.push(`用法：\`${cmd.usage}\``);
       return lines.join("\n");
