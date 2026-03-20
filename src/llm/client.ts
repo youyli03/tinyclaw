@@ -28,7 +28,12 @@ function parseRetryAfterMs(err: unknown): number | undefined {
 function isRetryableError(err: unknown, policy: RetryConfig): boolean {
   if (err instanceof APIConnectionTimeoutError) return policy.retryTimeout;
   if (err instanceof RateLimitError) return policy.retry429;
-  if (err instanceof APIError && err.status != null && err.status >= 500) return policy.retry5xx;
+  if (err instanceof APIError && err.status != null) {
+    // 5xx：服务端错误，可重试
+    if (err.status >= 500) return policy.retry5xx;
+    // 499：GitHub Copilot 服务端主动中断（模型繁忙/上游断路器），属于瞬态错误，重试 5xx 策略
+    if (err.status === 499) return policy.retry5xx;
+  }
   if (err instanceof APIConnectionError) return policy.retryTransport;
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
