@@ -320,38 +320,47 @@ function toolCallSummary(name: string, args: Record<string, unknown>): string {
   return name;
 }
 
-/** 为 code 模式生成工具调用的用户可见通知文本（50字符截断） */
-function buildCodeToolNotification(name: string, args: Record<string, unknown>): string {
-  const truncate = (s: string, n = 50) => s.length > n ? s.slice(0, n) + "…" : s;
-  switch (name) {
-    case "exec_shell": {
-      const cmd = truncate(String(args["command"] ?? "").replace(/\n/g, " "));
-      return `⚙️ 执行命令：${cmd}`;
+/**
+ * Code 模式工具调用节流器：将每次工具调用汇总为每分钟一条通知，防止刷屏。
+ * 每 FLUSH_INTERVAL_MS 毫秒 flush 一次（若有未发通知）；run 结束时调用 stop() 清理。
+ */
+class ToolCallThrottler {
+  private static readonly FLUSH_INTERVAL_MS = 60_000;
+  private count = 0;
+  private names: Record<string, number> = {};
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly onFlush: (msg: string) => void;
+
+  constructor(onFlush: (msg: string) => void) {
+    this.onFlush = onFlush;
+  }
+
+  add(toolName: string): void {
+    this.count++;
+    this.names[toolName] = (this.names[toolName] ?? 0) + 1;
+    // 首次调用时启动定时器
+    if (this.timer === null) {
+      this.timer = setInterval(() => this.flush(), ToolCallThrottler.FLUSH_INTERVAL_MS);
     }
-    case "write_file":
-      return `📝 写入文件：${truncate(String(args["path"] ?? ""))}`;
-    case "edit_file":
-      return `✏️ 编辑文件：${truncate(String(args["path"] ?? ""))}`;
-    case "read_file":
-      return `📖 读取文件：${truncate(String(args["path"] ?? ""))}`;
-    case "delete_file":
-      return `🗑️ 删除文件：${truncate(String(args["path"] ?? ""))}`;
-    case "code_assist":
-      return "🤖 调用代码助手...";
-    case "mcp_enable_server":
-      return `🔌 启用 MCP：${args["name"] ?? ""}`;
-    case "mcp_disable_server":
-      return `🔌 停用 MCP：${args["name"] ?? ""}`;
-    case "mcp_list_servers":
-      return "🔌 查询 MCP 服务列表...";
-    case "agent_fork":
-      return "🪄 启动子 Agent...";
-    case "agent_status":
-      return "🪄 查询子 Agent 状态...";
-    case "create_skill":
-      return `🛠️ 创建技能：${truncate(String(args["name"] ?? ""))}`;
-    default:
-      return `🔧 工具：${name}`;
+  }
+
+  private flush(): void {
+    if (this.count === 0) return;
+    const detail = Object.entries(this.names)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, n]) => (n > 1 ? `${name}×${n}` : name))
+      .join("、");
+    this.onFlush(`⚙️ 过去1分钟工具调用 ${this.count} 次（${detail}）`);
+    this.count = 0;
+    this.names = {};
+  }
+
+  stop(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.flush(); // 最后 flush 剩余调用
   }
 }
 
@@ -370,6 +379,11 @@ export async function runAgent(
   const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
   console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "…" : ""}"`);
   const startMs = Date.now();
+
+  // code 模式工具调用节流：每分钟汇总一次通知
+  const toolThrottler = (isCodeMode && opts.onNotify)
+    ? new ToolCallThrottler((msg) => void opts.onNotify!(msg))
+    : null;
 
   // ── 前置：重置并发控制状态，创建新 AbortController ───────────────────────
   session.abortRequested = false;
@@ -486,6 +500,7 @@ export async function runAgent(
         // 连接彻底失败：回滚本次注入的消息，保持 session 状态干净，无需重启
         if (err instanceof LLMConnectionError) {
           session.trimToLength(preRunLength);
+          toolThrottler?.stop();
         }
         throw err;
       } finally {
@@ -674,9 +689,9 @@ export async function runAgent(
       // ── 执行工具 ──────────────────────────────────────────────────────
       console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
 
-      // code 模式：每次工具调用前向用户推送简短状态（notify_user 本身会发，跳过）
-      if (isCodeMode && opts.onNotify && call.name !== "notify_user") {
-        void opts.onNotify(buildCodeToolNotification(call.name, call.args));
+      // code 模式：工具调用通过节流器汇总（每分钟一条），防止刷屏；notify_user 直接发送不节流
+      if (call.name !== "notify_user") {
+        toolThrottler?.add(call.name);
       }
 
       let result: string;
@@ -794,6 +809,9 @@ export async function runAgent(
   } else {
     console.log(`${logPrefix} → done in ${elapsed}s [${tokenInfo}]`);
   }
+
+  // flush 剩余工具调用通知，清理定时器
+  toolThrottler?.stop();
 
   return { content: finalContent, toolsUsed };
 }
