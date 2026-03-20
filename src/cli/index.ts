@@ -32,7 +32,10 @@ import { run as agentRun, description as agentDesc, usage as agentUsage } from "
 import { run as cronRun, description as cronDesc, usage as cronUsage } from "./commands/cron.js";
 import { run as memoryRun, description as memoryDesc, usage as memoryUsage } from "./commands/memory.js";
 import { run as sessionRun, description as sessionDesc, usage as sessionUsage } from "./commands/session.js";
+import { readFileSync, existsSync } from "node:fs";
+import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
+import { CONFIG_PATH } from "../config/writer.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
 
@@ -84,6 +87,40 @@ const SUBCOMMANDS: Record<string, string[]> = {
 const BACKENDS = ["daily", "code", "summarizer"];
 
 /**
+ * 读取 config.toml，返回所有叶子节点的 dot-path 列表（供 tab 补全用）。
+ * 数组项不展开，仅返回 object 类型的叶子键。
+ */
+function flatConfigKeys(): string[] {
+  try {
+    if (!existsSync(CONFIG_PATH)) return [];
+    const raw = parseToml(readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown>;
+    const keys: string[] = [];
+
+    function walk(obj: unknown, prefix: string): void {
+      if (obj === null || Array.isArray(obj) || typeof obj !== "object") {
+        if (prefix) keys.push(prefix);
+        return;
+      }
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        const full = prefix ? `${prefix}.${k}` : k;
+        if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+          // 中间路径（对象节点）也加入，方便 `get llm.backends` 等
+          keys.push(full);
+          walk(v, full);
+        } else {
+          keys.push(full);
+        }
+      }
+    }
+
+    walk(raw, "");
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * --complete 模式：根据已输入的 words（不含 'tinyclaw'），输出补全候选词（每行一个）。
  * Shell 脚本通过 compgen -W 过滤前缀，此处输出全量候选即可。
  */
@@ -105,6 +142,15 @@ function outputCompletions(words: string[]): void {
   } else if (cmd === "model" && (sub === "list" || sub === "set")) {
     // 补全 backend 名
     candidates = BACKENDS;
+  } else if (cmd === "config" && (sub === "get" || sub === "set")) {
+    // config get/set 第三个参数：补全 dot-path 配置键
+    // （config set 第四个参数是值，不补全）
+    const argIdx = prev.length - 2; // prev = [cmd, sub, ...args]
+    if (argIdx === 0) {
+      candidates = flatConfigKeys();
+    } else {
+      candidates = [];
+    }
   } else if (cmd === "completions" && sub === "install") {
     candidates = ["bash", "zsh", "fish"];
   } else {
