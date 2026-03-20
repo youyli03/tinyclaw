@@ -10,7 +10,7 @@ import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
-import { getCachedCopilotInfo, getCopilotRateLimit, lookupMultiplier } from "../llm/copilot.js";
+import { getCachedCopilotInfo, getCopilotRateLimit, getCopilotUserQuota, lookupMultiplier } from "../llm/copilot.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -107,25 +107,41 @@ registerCommand({
         // 从缓存读取 Copilot token 信息（不触发新网络请求）
         const info = getCachedCopilotInfo(copilotCfg.githubToken);
 
-        // 配额信息：优先从补全 API 响应头（付费计划），回退到 token 响应体（免费计划）
-        let quotaStr = "N/A（发送消息后更新）";
-        const rl = getCopilotRateLimit(copilotCfg.githubToken);
-        if (rl) {
-          const ageMin = Math.round((Date.now() - rl.capturedAt) / 60_000);
-          const ageSuffix = ageMin < 1 ? "" : `（${ageMin} 分钟前更新）`;
-          quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
-        } else if (info.quotas) {
-          // 免费计划：token 响应体中的 limited_user_quotas
-          const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
-            | Record<string, unknown>
-            | undefined;
-          if (chatQuota) {
-            const remaining = chatQuota["remaining"];
-            const limit = chatQuota["monthly_limit"];
-            if (typeof remaining === "number" && typeof limit === "number") {
-              quotaStr = `${remaining} / ${limit}`;
-            } else if (typeof remaining === "number") {
-              quotaStr = String(remaining);
+        // 配额信息：
+        //  1. 优先：copilot_internal/user 的 quota_snapshots（Pro/Pro+ 实时 premium 配额）
+        //  2. 回退：补全 API 响应头 x-ratelimit-*（部分账户类型）
+        //  3. 最后：token 响应体 limited_user_quotas（免费计划）
+        let quotaStr = "N/A";
+        const userQuota = await getCopilotUserQuota(copilotCfg.githubToken);
+        const pi = userQuota.premium_interactions;
+        if (pi) {
+          if (pi.unlimited) {
+            quotaStr = "无限制";
+          } else {
+            const resetSuffix = userQuota.quota_reset_date ? `，${userQuota.quota_reset_date} 重置` : "";
+            const overageSuffix = pi.overage_permitted && pi.overage_count > 0
+              ? `（超额 ${pi.overage_count}）`
+              : "";
+            quotaStr = `${pi.remaining} / ${pi.entitlement} premium 请求${overageSuffix}${resetSuffix}`;
+          }
+        } else {
+          const rl = getCopilotRateLimit(copilotCfg.githubToken);
+          if (rl) {
+            const ageMin = Math.round((Date.now() - rl.capturedAt) / 60_000);
+            const ageSuffix = ageMin < 1 ? "" : `（${ageMin} 分钟前）`;
+            quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
+          } else if (info.quotas) {
+            const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
+              | Record<string, unknown>
+              | undefined;
+            if (chatQuota) {
+              const remaining = chatQuota["remaining"];
+              const limit = chatQuota["monthly_limit"];
+              if (typeof remaining === "number" && typeof limit === "number") {
+                quotaStr = `${remaining} / ${limit}`;
+              } else if (typeof remaining === "number") {
+                quotaStr = String(remaining);
+              }
             }
           }
         }

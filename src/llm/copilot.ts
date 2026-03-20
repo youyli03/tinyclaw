@@ -47,6 +47,7 @@ function withCA(init?: RequestInit): RequestInit {
 
 const COPILOT_API = "https://api.githubcopilot.com";
 const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
+const USER_URL = "https://api.github.com/copilot_internal/user";
 const COPILOT_HEADERS = {
   "Copilot-Integration-Id": "vscode-chat",
   "Editor-Version": "tinyclaw/1.0",
@@ -281,6 +282,78 @@ export function getCachedCopilotInfo(githubTokenSource: string): CopilotCachedIn
   if (sku !== undefined) result.sku = sku;
   if (quotas !== undefined) result.quotas = quotas;
   return result;
+}
+
+// ── Copilot 用户配额（premium_interactions）──────────────────────────────────
+
+export interface CopilotQuotaSnapshot {
+  remaining: number;
+  entitlement: number;
+  percent_remaining: number;
+  unlimited: boolean;
+  overage_permitted: boolean;
+  overage_count: number;
+  timestamp_utc: string;
+}
+
+export interface CopilotUserQuota {
+  quota_reset_date?: string;
+  premium_interactions?: CopilotQuotaSnapshot;
+  chat?: CopilotQuotaSnapshot;
+  completions?: CopilotQuotaSnapshot;
+}
+
+/** 内存缓存（TTL = 3 分钟），避免 /status 多次重复请求 */
+const userQuotaCache = new Map<string, { data: CopilotUserQuota; ts: number }>();
+
+/**
+ * 从 `copilot_internal/user` 获取实时配额快照（premium_interactions 等）。
+ * 使用 GitHub OAuth token（非 Copilot API token），结果缓存 3 分钟。
+ * 失败时静默返回空对象，不影响 /status 其他字段。
+ */
+export async function getCopilotUserQuota(
+  githubTokenSource: string
+): Promise<CopilotUserQuota> {
+  const cached = userQuotaCache.get(githubTokenSource);
+  if (cached && Date.now() - cached.ts < 3 * 60 * 1000) return cached.data;
+
+  try {
+    const ghToken = await resolveGitHubToken(githubTokenSource);
+    const resp = await globalThis.fetch(USER_URL, withCA({
+      headers: {
+        Authorization: `token ${ghToken}`,
+        Accept: "application/json",
+        "User-Agent": "tinyclaw/1.0",
+      },
+    }));
+    if (!resp.ok) return {};
+    const body = await resp.json() as Record<string, unknown>;
+    const snapshots = body["quota_snapshots"] as Record<string, unknown> | undefined;
+    const result: CopilotUserQuota = {};
+    if (typeof body["quota_reset_date"] === "string") {
+      result.quota_reset_date = body["quota_reset_date"];
+    }
+    if (snapshots && typeof snapshots === "object") {
+      for (const key of ["premium_interactions", "chat", "completions"] as const) {
+        const s = snapshots[key] as Record<string, unknown> | undefined;
+        if (s && typeof s.remaining === "number") {
+          result[key] = {
+            remaining: s.remaining as number,
+            entitlement: (s.entitlement as number) ?? 0,
+            percent_remaining: (s.percent_remaining as number) ?? 0,
+            unlimited: Boolean(s.unlimited),
+            overage_permitted: Boolean(s.overage_permitted),
+            overage_count: (s.overage_count as number) ?? 0,
+            timestamp_utc: (s.timestamp_utc as string) ?? "",
+          };
+        }
+      }
+    }
+    userQuotaCache.set(githubTokenSource, { data: result, ts: Date.now() });
+    return result;
+  } catch {
+    return {};
+  }
 }
 
 // ── 模型乘数静态表 ────────────────────────────────────────────────────────────
