@@ -378,7 +378,10 @@ export async function runAgent(
 
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
-  const initialTools = getAllToolSpecs();
+  // code 模式过滤 code_assist（code 模式本身即代码助手）
+  const initialTools = getAllToolSpecs().filter(
+    (t) => !(isCodeMode && t.function.name === "code_assist")
+  );
   const textMode = !client.supportsToolCalls;
 
   // preRunLength：连接失败时用于回滚本次注入的消息
@@ -443,7 +446,10 @@ export async function runAgent(
   // 5. ReAct 循环
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
-    const tools = getAllToolSpecs();
+    // code 模式本身就是代码助手，无需 code_assist（避免递归委派）
+    const tools = getAllToolSpecs().filter(
+      (t) => !(isCodeMode && t.function.name === "code_assist")
+    );
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;

@@ -368,16 +368,22 @@ async function main(): Promise<void> {
           }
         }
 
-        return connector.send(msg.peerId, msg.type, toSend, msg.messageId);
+        try {
+          await connector.send(msg.peerId, msg.type, toSend, msg.messageId);
+        } catch (sendErr) {
+          console.error("[qqbot] send error:", sendErr);
+        }
       })
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         console.error("[qqbot] runAgent error:", err);
         const userMsg = err instanceof Error && err.name === "LLMConnectionError"
           ? err.message
           : "抱歉，处理消息时出现错误";
-        return connector
-          .send(msg.peerId, msg.type, userMsg)
-          .catch(() => {});
+        try {
+          await connector.send(msg.peerId, msg.type, userMsg);
+        } catch {
+          // 发送失败（如网络/证书错误），静默忽略，不能让进程崩溃
+        }
       })
       .finally(() => {
         session.running = false;
