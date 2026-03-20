@@ -110,7 +110,10 @@ export async function summarizeAndCompressCode(
   // 构建待摘要的历史文本
   const historyText = toSummarize
     .map((m) => {
-      const role = m.role === "user" ? "用户" : m.role === "assistant" ? "助手" : "系统";
+      const role =
+        m.role === "user" ? "用户" :
+        m.role === "assistant" ? "助手" :
+        m.role === "tool" ? "工具结果" : "系统";
       const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
       // 截断超长的单条消息（避免摘要输入过大）
       const truncated = content.length > 8000 ? content.slice(0, 8000) + "\n[内容过长，已截断]" : content;
@@ -150,7 +153,14 @@ export async function summarizeAndCompress(
   const client = llmRegistry.get("summarizer");
   const historyText = messages
     .filter((m) => m.role !== "system")
-    .map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content}`)
+    .map((m) => {
+      const roleLabel =
+        m.role === "user" ? "用户" :
+        m.role === "assistant" ? "助手" :
+        m.role === "tool" ? "工具结果" : "系统";
+      const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      return `${roleLabel}：${content}`;
+    })
     .join("\n\n");
 
   const result = await client.chat([

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ChatMessage, ContentPart } from "../llm/client.js";
+import type { ChatMessage, ContentPart, ToolCallResult, OpenAIToolCall } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
@@ -120,6 +120,28 @@ export class Session {
 
   addAssistantMessage(content: string): void {
     this.messages.push({ role: "assistant", content });
+  }
+
+  /**
+   * 添加 assistant 消息并附带 tool_calls（function calling 模式专用）。
+   * 仅在 textMode=false（模型支持原生 function calling）时调用。
+   */
+  addAssistantWithToolCalls(content: string, calls: ToolCallResult[]): void {
+    const tool_calls: OpenAIToolCall[] = calls.map((c) => ({
+      id: c.callId,
+      type: "function",
+      function: { name: c.name, arguments: JSON.stringify(c.args) },
+    }));
+    this.messages.push({ role: "assistant", content, tool_calls });
+  }
+
+  /**
+   * 添加 role: "tool" 工具结果消息（function calling 模式专用）。
+   * tool_call_id 必须与对应 assistant.tool_calls[].id 匹配。
+   * 仅在 textMode=false 时调用；文本模型继续使用 addSystemMessage。
+   */
+  addToolResultMessage(toolCallId: string, content: string): void {
+    this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
   }
 
   addSystemMessage(content: string): void {

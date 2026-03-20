@@ -116,10 +116,25 @@ export type ContentPart =
   /** 内部类型：本地图片路径，在 LLM API 调用前由 resolveMessagesForApi() 转换为 base64 */
   | { type: "image_path"; path: string };
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string | ContentPart[];
+/** OpenAI function calling 中 tool_calls 数组元素的格式 */
+export interface OpenAIToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 }
+
+/**
+ * 会话消息类型。
+ * - system/user/assistant：通用角色
+ * - assistant with tool_calls：function calling 模式下，assistant 发起工具调用
+ * - tool：function calling 模式下，工具执行结果（role: "tool" + tool_call_id 与 assistant.tool_calls[].id 对应）
+ *   文本模型（textMode=true）不使用 tool 角色，工具结果存为 system 消息。
+ */
+export type ChatMessage =
+  | { role: "system"; content: string | ContentPart[] }
+  | { role: "user"; content: string | ContentPart[] }
+  | { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
 
 /** 从 LLM 响应中解析出的单次工具调用 */
 export interface ToolCallResult {
@@ -185,6 +200,8 @@ function pathToDataUrl(imgPath: string): string | null {
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL） */
 function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m) => {
+    // tool 消息 content 只有 string，不含 ContentPart，直接透传
+    if (m.role === "tool") return m;
     if (typeof m.content === "string") return m;
     const resolved = m.content.map((p) => {
       if (p.type === "image_path") {

@@ -560,22 +560,38 @@ export async function runAgent(
     }
 
     // 有工具调用 → 执行并将结果追加到 messages
-    session.addAssistantMessage(content || "");
+    // function calling 模式：assistant 消息需携带 tool_calls 数组（供 API 匹配 tool_call_id）
+    // 文本模式：普通 assistant 消息即可
+    if (!textMode) {
+      session.addAssistantWithToolCalls(content || "", toolCalls);
+    } else {
+      session.addAssistantMessage(content || "");
+    }
 
     for (const call of toolCalls) {
       // 防御性检查：理论上不应出现 undefined（LLM 返回稀疏 index 时可能）
       if (!call) continue;
+
+      // 工具结果写入 session 的辅助函数：
+      // - function calling 模式（!textMode）：role: "tool" + tool_call_id（API 强制要求）
+      // - 文本模式（textMode）：system 消息（模型读纯文本，无 id 匹配需求）
+      const addResult = (content: string) => {
+        if (!textMode) {
+          session.addToolResultMessage(call.callId, content);
+        } else {
+          session.addSystemMessage(`[tool_result:${call.name}]\n${content}`);
+        }
+      };
+
       // ── 软中断检测：跳过未执行的工具 ──────────────────────────────────
       if (session.abortRequested) {
-        session.addSystemMessage(
-          `[tool_result:${call.name}]\n操作被用户新消息中断，此工具调用未执行`
-        );
+        addResult("操作被用户新消息中断，此工具调用未执行");
         continue;
       }
 
       const toolDef = getTool(call.name);
       if (!toolDef) {
-        session.addSystemMessage(`[tool_result:${call.name}] 未知工具`);
+        addResult("未知工具");
         continue;
       }
 
@@ -585,8 +601,8 @@ export async function runAgent(
       if (call.name === "code_assist") {
         const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
         if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
-          session.addSystemMessage(
-            `[tool_result:code_assist]\n已达本次最大调用次数（${maxCalls}），此次调用未执行。` +
+          addResult(
+            `已达本次最大调用次数（${maxCalls}），此次调用未执行。` +
             `请在当前回复中告知用户任务状态，用户可发新消息继续。`
           );
           continue;
@@ -636,15 +652,12 @@ export async function runAgent(
           }
         } catch {
           // 超时或其他失败 → 取消操作
-          const result = "操作被取消：MFA 未通过";
-          session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
+          addResult("操作被取消：MFA 未通过");
           continue;
         }
 
         if (!mfaPassed) {
-          session.addSystemMessage(
-            `[tool_result:${call.name}]\n操作被取消：用户拒绝了 MFA 确认`
-          );
+          addResult("操作被取消：用户拒绝了 MFA 确认");
           continue;
         }
 
@@ -692,7 +705,9 @@ export async function runAgent(
           `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${truncatedAt} 字符。如需查看更多请缩小范围重新调用。]`;
       }
 
-      session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
+      // function calling 模式：role: "tool" + tool_call_id（API 要求格式）
+      // 文本模式：system 消息（模型读纯文本上下文，无需 id 匹配）
+      addResult(result);
 
       // 工具执行完毕后再次检查 abort（新消息可能在工具运行期间到达）
       if (session.abortRequested) break;
@@ -779,6 +794,8 @@ export async function runAgent(
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
+  /** function calling 模式下 LLM 分配的唯一 ID，用于 tool_call_id 匹配；文本模式为空字符串 */
+  callId: string;
 }
 
 interface ParsedResponse {
@@ -792,7 +809,7 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
     if (result.toolCalls && result.toolCalls.length > 0) {
       return {
         content: result.content,
-        toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+        toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args, callId: tc.callId })),
       };
     }
     return { content: result.content };
@@ -816,6 +833,7 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
         toolCalls.push({
           name: (parsed as Record<string, unknown>)["name"] as string,
           args: ((parsed as Record<string, unknown>)["args"] ?? {}) as Record<string, unknown>,
+          callId: "",  // 文本模式无 ID
         });
       }
     } catch {
