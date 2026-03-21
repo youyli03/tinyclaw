@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig } from "./schema.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -88,6 +88,26 @@ export function _resetConfigCache(): void {
  */
 export function getRetryPolicy(): RetryConfig {
   return loadConfig().retry;
+}
+
+/** 加载 ~/.tinyclaw/memstores.toml，文件不存在时返回空配置（非致命）。 */
+export function loadMemStoresConfig(): MemStoresConfig {
+  const p = path.join(os.homedir(), ".tinyclaw", "memstores.toml");
+  let raw: unknown;
+  try {
+    raw = parse(fs.readFileSync(p, "utf-8"));
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[tinyclaw] 无法读取 memstores.toml：${err}`);
+    }
+    return MemStoresConfigSchema.parse({});
+  }
+  const result = MemStoresConfigSchema.safeParse(raw);
+  if (!result.success) {
+    console.warn(`[tinyclaw] memstores.toml 验证失败，使用空配置：${result.error.message}`);
+    return MemStoresConfigSchema.parse({});
+  }
+  return result.data;
 }
 
 /** 加载 ~/.tinyclaw/mcp.toml，文件不存在时返回空配置（非致命）。 */
