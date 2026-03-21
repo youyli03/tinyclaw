@@ -31,17 +31,18 @@ registerTool({
       description: `创建定时任务。
 
 ⚠️ 调用此工具前，必须先向用户确认以下信息，不得跳过：
-1. 任务要做什么（操作对象、范围、期望输出格式）
+1. 任务意图与执行流程（做什么、操作对象、数据来源/关键步骤）
 2. 调度时间（具体时间点 / 间隔 / 一次性时间）
 3. 是否需要推送到 QQ（若是，推送给谁）
 4. 通知策略（每次推送 / 仅变化时 / 仅出错时 / 不推送）
+5. 输出要求（输出什么内容、格式；若不需要输出则说明）
 
 只有在用户明确回答了以上关键信息后，才能调用此工具创建任务。
 若用户描述模糊（如"帮我设置个天气提醒"），须追问细节后再创建。`,
       parameters: {
         type: "object",
         properties: {
-          message:       { type: "string",  description: "cron agent 每次被唤醒时要直接执行的任务指令。必须自包含完整实现——包括：使用哪个命令获取数据（如 curl 的完整 URL 和参数）、如何解析结果、输出格式要求、以及失败时的兜底行为。示例好指令：'执行 exec_shell: curl -s \"wttr.in/Shanghai?format=j1\" 获取天气JSON，提取 current_condition[0] 中的 temp_C、weatherDesc、precipMM，用中文输出：天气/温度/建议穿着，若 curl 失败则输出数据获取失败。' 示例坏指令：'查询上海天气'——过于模糊，cron agent 无上下文，会凭知识编造数据。" },
+          message:       { type: "string",  description: "发给 cron agent 的自然语言任务指令。cron agent 拥有完整工具调用能力，支持语义理解，无需手写 shell 命令。指令须包含以下四个要素：\n① 意图：做什么、操作对象是什么（例：查上海实时天气）\n② 执行流程：数据来源 / 关键步骤（例：用 exec_shell 调用 curl wttr.in/Shanghai 获取 JSON）\n③ 约束：异常处理方式、数据必须实时获取而非凭知识编造（例：curl 失败时报错而非捏造数值）\n④ 输出要求：输出什么内容、用什么格式；若不需要输出则明确说明（例：中文输出"城市/温度/天气/穿衣建议"）\n\n示例（好）：'查询上海实时天气，用 exec_shell 执行 curl wttr.in/Shanghai?format=j1，提取温度和天气描述，若 curl 失败则输出"数据获取失败"，最终中文输出：城市/温度/天气/穿衣建议'\n示例（坏）：'查询天气'——缺少城市、数据来源、输出格式，cron agent 无法可靠执行" },
           type:          { type: "string",  enum: ["once", "every", "daily"], description: "调度类型" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
