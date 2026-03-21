@@ -262,7 +262,7 @@ async function main(): Promise<void> {
         const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
         const resolvedRecommended = recommendedAction ?? "autopilot";
 
-        // 构建操作菜单
+        // 构建操作菜单（Markdown 格式，用于渲染为图片）
         const actionLines = resolvedActions.map((action, i) => {
           const icons: Record<string, string> = {
             autopilot: "🚀",
@@ -271,16 +271,40 @@ async function main(): Promise<void> {
           };
           const icon = icons[action] ?? "▶️";
           const isRecommended = action === resolvedRecommended;
-          return `  ${i + 1}. ${icon} ${action}${isRecommended ? " —— 推荐" : ""}`;
+          return `${i + 1}. ${icon} \`${action}\`${isRecommended ? " **——推荐**" : ""}`;
         });
 
-        const planPathLine = planPath ? `\n📄 详细计划：${planPath}` : "";
+        const planPathLine = planPath ? `\n\n📄 **详细计划**：\`${planPath}\`` : "";
         const menuMsg =
-          `📋 **计划已就绪**\n\n${summary}${planPathLine}\n\n` +
-          `─────────────────\n请选择操作：\n${actionLines.join("\n")}\n\n` +
-          `或直接输入反馈意见，AI 将修改计划后重新提交。\n（超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
+          `## 📋 计划已就绪\n\n${summary}${planPathLine}\n\n` +
+          `---\n\n**请选择操作：**\n\n${actionLines.join("\n")}\n\n` +
+          `> 或直接输入反馈意见，AI 将修改计划后重新提交。\n> （超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
 
-        await connector.send(msg.peerId, msg.type, menuMsg).catch(() => {});
+        // 尝试渲染为图片发送，失败则 fallback 纯文本
+        let sent = false;
+        try {
+          const outDir = path.join(
+            os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+          );
+          fs.mkdirSync(outDir, { recursive: true });
+          const imgPath = await mdToImage(menuMsg, outDir);
+          await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`).catch(() => {});
+          sent = true;
+        } catch (renderErr) {
+          console.warn("[plan] 计划摘要渲染图片失败，降级为文本:", renderErr);
+        }
+        if (!sent) {
+          // fallback：发送纯文本版本（去掉 Markdown 特殊符号）
+          const plainMsg =
+            `📋 计划已就绪\n\n${summary}${planPath ? `\n📄 详细计划：${planPath}` : ""}\n\n` +
+            `─────────────────\n请选择操作：\n${resolvedActions.map((action, i) => {
+              const icons: Record<string, string> = { autopilot: "🚀", interactive: "💬", exit_only: "❌" };
+              const isRecommended = action === resolvedRecommended;
+              return `  ${i + 1}. ${icons[action] ?? "▶️"} ${action}${isRecommended ? " —— 推荐" : ""}`;
+            }).join("\n")}\n\n` +
+            `或直接输入反馈意见，AI 将修改计划后重新提交。\n（超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
+          await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
+        }
 
         return session.waitForPlanApproval(planTimeoutSecs, resolvedActions);
       };
