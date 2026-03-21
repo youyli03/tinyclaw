@@ -268,19 +268,12 @@ export class Session {
     }
 
     return new Promise<boolean>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingApproval = null;
-        reject(new Error("MFA 确认超时，操作已取消"));
-      }, timeoutSecs * 1000);
-
       this.pendingApproval = {
         resolve: (approved) => {
-          clearTimeout(timer);
           this.pendingApproval = null;
           resolve(approved);
         },
         reject: (err) => {
-          clearTimeout(timer);
           this.pendingApproval = null;
           reject(err);
         },
@@ -311,20 +304,13 @@ export class Session {
     }
 
     return new Promise<PlanApprovalResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingPlanApproval = null;
-        reject(new Error("Plan 审批超时，操作已取消"));
-      }, timeoutSecs * 1000);
-
       this.pendingPlanApproval = {
         actions,
         resolve: (result) => {
-          clearTimeout(timer);
           this.pendingPlanApproval = null;
           resolve(result);
         },
         reject: (err) => {
-          clearTimeout(timer);
           this.pendingPlanApproval = null;
           reject(err);
         },

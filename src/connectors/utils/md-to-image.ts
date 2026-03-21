@@ -191,7 +191,7 @@ function chromiumScreenshot(htmlPath: string, outPng: string): Promise<void> {
       "--no-sandbox",
       "--disable-dev-shm-usage",
       `--screenshot=${outPng}`,
-      `--window-size=${RENDER_WIDTH},3000`,
+      `--window-size=${RENDER_WIDTH},30000`,
       "--hide-scrollbars",
       `file://${htmlPath}`,
     ];

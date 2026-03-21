@@ -244,7 +244,7 @@ async function main(): Promise<void> {
       });
     };
 
-    const planTimeoutSecs = 5 * 60; // 5 分钟等待用户确认
+    const planTimeoutSecs = 0; // 不超时，永久等待用户确认
 
     /**
      * Plan 审批回调：向 QQ 用户推送计划摘要和操作菜单，等待用户选择。
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
         const menuMsg =
           `## 📋 计划已就绪\n\n${summary}${planPathLine}\n\n` +
           `---\n\n**请选择操作：**\n\n${actionLines.join("\n")}\n\n` +
-          `> 或直接输入反馈意见，AI 将修改计划后重新提交。\n> （超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
+          `> 或直接输入反馈意见，AI 将修改计划后重新提交。`;
 
         // 尝试渲染为图片发送，失败则 fallback 纯文本
         let sent = false;
@@ -302,7 +302,7 @@ async function main(): Promise<void> {
               const isRecommended = action === resolvedRecommended;
               return `  ${i + 1}. ${icons[action] ?? "▶️"} ${action}${isRecommended ? " —— 推荐" : ""}`;
             }).join("\n")}\n\n` +
-            `或直接输入反馈意见，AI 将修改计划后重新提交。\n（超时 ${Math.round(planTimeoutSecs / 60)} 分钟自动取消）`;
+            `或直接输入反馈意见，AI 将修改计划后重新提交。`;
           await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
         }
 

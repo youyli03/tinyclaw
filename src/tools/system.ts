@@ -12,7 +12,7 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
 
-  const timeoutMs = 30_000;
+  const timeoutMs = 0; // 不超时，允许长时间运行的命令
 
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];

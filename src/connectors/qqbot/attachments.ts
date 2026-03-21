@@ -54,7 +54,7 @@ export async function downloadAttachments(
   for (const att of attachments) {
     const downloadUrl = att.voiceWavUrl ?? att.url;
     try {
-      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(30_000) });
+      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
       if (!resp.ok) {
         console.warn(`[attachments] 下载失败 ${downloadUrl}: ${resp.status}`);
         continue;

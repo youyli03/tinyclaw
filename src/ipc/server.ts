@@ -15,7 +15,6 @@ import { slaveManager } from "../core/slave-manager.js";
 import { cronScheduler } from "../cron/scheduler.js";
 import { runAgent } from "../core/agent.js";
 import { agentManager } from "../core/agent-manager.js";
-import { loadConfig } from "../config/loader.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { parseCommand, executeCommand } from "../commands/registry.js";
@@ -259,7 +258,6 @@ async function handleRequest(
 
   let fullContent = "";
   session.running = true;
-  const mfaTimeoutMs = (loadConfig().auth.mfa?.timeoutSecs ?? 60) * 1000;
   const runPromise = runAgent(session, message, {
     onChunk: (delta) => {
       fullContent += delta;
@@ -272,11 +270,6 @@ async function handleRequest(
       new Promise<boolean>((resolve, reject) => {
         setPendingMFA({ resolve, reject });
         send({ type: "mfa_request", warningMessage });
-        setTimeout(() => {
-          setPendingMFA(null);
-          reject(new Error("MFA 超时"));
-          send({ type: "chunk", delta: "\n[MFA] 超时，操作已取消\n" });
-        }, mfaTimeoutMs);
         void verifyCode; // verifyCode 由 agent 层在 onMFARequest 中需要的地方调用，这里不需要
       }),
     onCompress: (phase, summary) => {
