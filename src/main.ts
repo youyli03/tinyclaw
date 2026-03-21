@@ -31,6 +31,7 @@ import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
+import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { mcpManager } from "./mcp/client.js";
@@ -365,6 +366,21 @@ async function main(): Promise<void> {
             console.log("[main] 重跑无输出，回退到纯文本");
             toSend = extractTextContent(toSend);
             if (!toSend) return;
+          }
+        }
+
+        // Code 模式：将含 Markdown 特征的纯文本回复渲染为图片
+        if (session.mode === "code" && looksLikeMarkdown(toSend)) {
+          try {
+            const outDir = path.join(
+              os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+            );
+            fs.mkdirSync(outDir, { recursive: true });
+            const imgPath = await mdToImage(toSend, outDir);
+            console.log(`[main] Markdown 渲染为图片: ${imgPath}`);
+            toSend = `<img src="${imgPath}"/>`;
+          } catch (renderErr) {
+            console.warn("[main] Markdown 渲染失败，降级为文本:", renderErr);
           }
         }
 

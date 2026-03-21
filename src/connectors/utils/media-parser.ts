@@ -40,24 +40,50 @@ function extractAttr(attrStr: string, name: string): string | undefined {
 }
 
 /**
+ * 将文本中的代码块（围栏式 ``` 和行内 `）内容替换为占位符，返回替换后的文本和还原函数。
+ * 用于防止代码块内的示例媒体标签（如 <img src="..."/>）被误识别为真实媒体。
+ */
+function maskCodeBlocks(text: string): { masked: string; restore: (s: string) => string } {
+  const placeholders: string[] = [];
+  // 先处理围栏式代码块（```...```），再处理行内代码（`...`）
+  let masked = text
+    .replace(/```[\s\S]*?```/g, (m) => {
+      const idx = placeholders.push(m) - 1;
+      return `\x00CODE${idx}\x00`;
+    })
+    .replace(/`[^`\n]+`/g, (m) => {
+      const idx = placeholders.push(m) - 1;
+      return `\x00CODE${idx}\x00`;
+    });
+  const restore = (s: string) =>
+    s.replace(/\x00CODE(\d+)\x00/g, (_, i) => placeholders[Number(i)] ?? "");
+  return { masked, restore };
+}
+
+/**
  * 将含有媒体标签的文本拆分为有序段落列表。
  * 纯文本输入（无媒体标签）返回单个 type="text" 段落。
+ * 代码块（``` 和行内 `）内的内容不会被识别为媒体标签。
  */
 export function parseMediaTags(text: string): MediaSegment[] {
+  // 屏蔽代码块内容，避免示例标签（如 <img src="..."/>）被误识别
+  const { masked, restore } = maskCodeBlocks(text);
+  const workText = masked;
+
   // 匹配：<tagname attr="val" .../> 或 <tagname ...>content</tagname>
   const re = /<([a-z_]+)((?:\s+[a-z_-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/gi;
   const segments: MediaSegment[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = re.exec(text)) !== null) {
+  while ((match = re.exec(workText)) !== null) {
     const tagName = match[1]!.toLowerCase();
     const mediaType = ALIAS_MAP[tagName];
     if (!mediaType) continue; // 不是已知媒体标签，跳过
 
-    // 把标签之前的文本推入段落
+    // 把标签之前的文本推入段落（还原代码块占位符）
     if (match.index > lastIndex) {
-      const textContent = text.slice(lastIndex, match.index);
+      const textContent = restore(workText.slice(lastIndex, match.index));
       if (textContent.trim()) {
         segments.push({ type: "text", content: textContent });
       }
@@ -81,9 +107,9 @@ export function parseMediaTags(text: string): MediaSegment[] {
     lastIndex = match.index + match[0].length;
   }
 
-  // 尾部剩余文本
-  if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex);
+  // 尾部剩余文本（还原代码块占位符）
+  if (lastIndex < workText.length) {
+    const remaining = restore(workText.slice(lastIndex));
     if (remaining.trim()) {
       segments.push({ type: "text", content: remaining });
     }
