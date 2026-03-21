@@ -780,10 +780,23 @@ export async function runAgent(
       }
     }
 
-    // 最后一轮，强制用 LLM 生成总结
+    // 最后一轮，强制用 LLM 生成总结（注入系统提示告知已达轮次上限）
     if (round === maxToolRounds - 1) {
+      const summaryMessages = [
+        ...session.getMessages(),
+        {
+          role: "system" as const,
+          content:
+            "[系统] 已达本次最大工具调用轮次上限，无法继续调用工具。" +
+            "请在此回复中：\n" +
+            "1. 总结本次已完成的工作内容；\n" +
+            "2. 列出尚未完成的任务；\n" +
+            "3. 告知用户可以发送新消息（如「继续」）以继续执行。\n" +
+            "请勿调用任何工具。",
+        },
+      ];
       try {
-        const summary = await client.chat(session.getMessages(), {
+        const summary = await client.chat(summaryMessages, {
           signal: llmAc.signal,
         });
         finalContent = summary.content;

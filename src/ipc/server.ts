@@ -292,8 +292,11 @@ async function handleRequest(
   } catch (e) {
     send({ type: "error", message: String(e) });
   } finally {
-    session.running = false;
-    session.currentRunPromise = null;
+    // 只在本 run 仍是当前 run 时才清状态，防止新 run 启动后被旧 finally 覆盖
+    if (session.currentRunPromise === runPromise) {
+      session.running = false;
+      session.currentRunPromise = null;
+    }
   }
 
   // ── 路由到 QQBot（如果 sessionId 编码了 QQ 频道信息）────────────────────────

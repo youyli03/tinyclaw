@@ -426,8 +426,11 @@ async function main(): Promise<void> {
         }
       })
       .finally(() => {
-        session.running = false;
-        session.currentRunPromise = null;
+        // 只在本 run 仍是当前 run 时才清状态，防止新 run 启动后被旧 .finally() 覆盖
+        if (session.currentRunPromise === runPromise) {
+          session.running = false;
+          session.currentRunPromise = null;
+        }
       });
 
     // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
