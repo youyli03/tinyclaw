@@ -26,6 +26,9 @@ export class QQBotConnector implements Connector {
   private handler: ((msg: InboundMessage) => Promise<string>) | null = null;
   private abortController: AbortController | null = null;
 
+  /** 连接就绪时调用（可在 connector.start() 前设置） */
+  onReady?: () => void;
+
   onMessage(handler: (msg: InboundMessage) => Promise<string>): void {
     this.handler = handler;
   }
@@ -96,7 +99,10 @@ export class QQBotConnector implements Connector {
           return "";
         }
       },
-      onReady: () => console.log(`[${ts()}] [qqbot] Ready`),
+      onReady: () => {
+        console.log(`[${ts()}] [qqbot] Ready`);
+        this.onReady?.();
+      },
       log: {
         info:  (m) => console.log(`[${ts()}] ${m}`),
         error: (m) => console.error(`[${ts()}] ${m}`),

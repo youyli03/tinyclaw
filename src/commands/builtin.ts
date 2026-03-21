@@ -11,6 +11,10 @@ import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { getCachedCopilotInfo, getCopilotRateLimit, getCopilotUserQuota, lookupMultiplier } from "../llm/copilot.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { spawn } from "node:child_process";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -295,6 +299,81 @@ registerCommand({
     }
     // 流正常结束但没有 token（空响应）
     return `🏓 **pong** — 连接成功，但未收到 token\n模型：\`${model}\`\n总耗时：${totalMs} ms`;
+  },
+});
+
+// ── /restart ──────────────────────────────────────────────────────────────────
+
+/** 项目根目录（src/commands/builtin.ts → ../../） */
+const PROJECT_ROOT = new URL("../../", import.meta.url).pathname;
+
+/** 运行 tsc --noEmit 检查，返回 {ok, output} */
+function runTypecheck(): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const proc = spawn("bun", ["run", "typecheck"], {
+      cwd: PROJECT_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    proc.stdout.on("data", (d: Buffer) => chunks.push(d));
+    proc.stderr.on("data", (d: Buffer) => chunks.push(d));
+
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve({ ok: false, output: "[超时] 类型检查超过 60 秒未完成" });
+    }, 60_000);
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      const output = Buffer.concat(chunks).toString("utf-8").trim();
+      resolve({ ok: code === 0, output });
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, output: `启动 tsc 失败：${err.message}` });
+    });
+  });
+}
+
+registerCommand({
+  name: "restart",
+  description: "类型检查通过后重启 tinyclaw 服务，重启完成后发送通知",
+  usage: "/restart",
+  modes: ["chat"],
+  async execute({ session }) {
+    if (session.running) {
+      return "⚠️ 当前有任务正在运行，请等待完成后再重启。";
+    }
+
+    const { ok, output } = await runTypecheck();
+
+    if (!ok) {
+      const truncated = output.length > 1500
+        ? output.slice(0, 1500) + "\n…（输出已截断）"
+        : output || "（无输出）";
+      return `❌ 类型检查失败，已取消重启：\n\`\`\`\n${truncated}\n\`\`\``;
+    }
+
+    // 若是 QQ 会话，写 marker 文件，重启后发通知
+    if (session.sessionId.startsWith("qqbot:")) {
+      const parts = session.sessionId.split(":");
+      // qqbot:<msgType>:<peerId>
+      const msgType = parts[1] as import("../connectors/base.js").InboundMessage["type"];
+      const peerId = parts.slice(2).join(":");
+      if (peerId) {
+        const markerPath = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
+        try {
+          fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+          fs.writeFileSync(markerPath, JSON.stringify({ peerId, msgType }), "utf-8");
+        } catch { /* 写失败不影响重启 */ }
+      }
+    }
+
+    // 延迟退出，给当前 HTTP 响应/消息推送留出时间
+    setTimeout(() => process.exit(75), 600);
+
+    return "⏳ 类型检查通过，正在重启服务，稍后恢复...";
   },
 });
 

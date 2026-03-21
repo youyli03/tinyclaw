@@ -461,6 +461,24 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void handleExit("SIGTERM"));
 
   console.log("[tinyclaw] Starting QQBot connector...");
+
+  // 检查重启通知 marker（由 /restart 命令写入，用于重启后发送通知）
+  const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
+  if (fs.existsSync(RESTART_NOTIFY_FILE)) {
+    try {
+      const marker = JSON.parse(fs.readFileSync(RESTART_NOTIFY_FILE, "utf-8")) as {
+        peerId: string;
+        msgType: InboundMessage["type"];
+      };
+      fs.unlinkSync(RESTART_NOTIFY_FILE);
+      connector.onReady = () => {
+        void connector.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
+      };
+    } catch {
+      try { fs.unlinkSync(RESTART_NOTIFY_FILE); } catch { /* ignore */ }
+    }
+  }
+
   await connector.start(); // 阻塞直到 abort
 }
 

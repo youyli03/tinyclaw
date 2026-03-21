@@ -86,6 +86,13 @@ function startChild(): void {
       process.exit(code ?? 0);
     }
 
+    // 主动重启请求（exit code 75）：立即重启，不计入崩溃次数
+    if (code === 75) {
+      console.log("[supervisor] 收到主动重启请求，立即重启...");
+      setTimeout(startChild, 100);
+      return;
+    }
+
     console.error(
       `[supervisor] main.ts 异常退出（code=${code ?? "null"}, signal=${signal ?? "null"}）`
     );
