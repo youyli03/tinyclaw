@@ -26,6 +26,7 @@ import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import "../tools/render-diagram.js";
 import "../tools/search-store.js";
+import "../tools/ask-user-tool.js";
 import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
@@ -110,6 +111,18 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
 - 用中文回复，简洁明了
+
+## 主动询问用户（ask_user）
+
+遇到以下情况时，调用 **ask_user** 工具向用户提问，而不是盲目假设：
+- 需求描述模糊，存在多种合理理解方式
+- 有 2～4 个可行方案，用户偏好决定走哪条路
+- 任务执行到一半遇到分支，需要用户决策才能继续
+
+使用方式：
+- 提供 2～5 个预设选项（含 label，可加 description 说明和 recommended 推荐标记）
+- 默认允许用户自由输入（不局限于预设选项）
+- 不要用此工具询问**可以自行通过读文件/执行命令确认**的事项
 
 ## 后台任务（agent_fork）
 
@@ -284,6 +297,11 @@ export interface AgentRunOptions {
    * 仅在 code + plan 子模式下注入；auto 模式或非 code 模式时不注入。
    */
   onPlanRequest?: import("../tools/registry.js").ToolContext["onPlanRequest"];
+  /**
+   * ask_user：向用户展示问题和选项菜单，等待用户回答（由 main.ts 注入）。
+   * Chat 和 Code 模式下均注入；CLI/cron 模式时不注入，工具自动返回 skipped。
+   */
+  onAskUser?: import("../tools/registry.js").ToolContext["onAskUser"];
   /**
    * 当前 runAgent 调用的 Slave 嵌套深度（0 = 交互式 Master，1 = 一级 Slave，以此类推）。
    * 用于控制 agent_fork 的嵌套上限：深度 >= MAX_SLAVE_DEPTH 时，ToolContext 不注入
@@ -746,6 +764,7 @@ export async function runAgent(
           ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
           ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
           ...(opts.onPlanRequest ? { onPlanRequest: opts.onPlanRequest } : {}),
+          ...(opts.onAskUser ? { onAskUser: opts.onAskUser } : {}),
           ...(opts.onMFARequest ? { onMFARequest: opts.onMFARequest } : {}),
           ...(opts.onAskMaster ? { onAskMaster: opts.onAskMaster } : {}),
           ...(opts.codeRunFn ? { codeRunFn: opts.codeRunFn } : {}),

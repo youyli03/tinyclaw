@@ -51,6 +51,18 @@ export interface ToolContext {
    */
   onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
   /**
+   * ask_user 回调（由 main.ts 注入）。
+   * AI 调用 ask_user 工具时触发，向用户展示问题和选项菜单，等待用户回复。
+   * - answer：用户选择的 label 或自由输入的文本
+   * - isFreeform：true 表示用户自由输入，false 表示选择了预设选项
+   * 仅在交互式会话下注入；CLI/cron 模式时为 undefined，工具自动返回 skipped。
+   */
+  onAskUser?: (
+    question: string,
+    options?: Array<{ label: string; description?: string; recommended?: boolean }>,
+    allowFreeform?: boolean,
+  ) => Promise<{ answer: string; isFreeform: boolean }>;
+  /**
    * ask_master 回调（由 code_assist 注入给 daily subagent）。
    * daily subagent 遇到不确定时调用，同步阻塞直到用户通过 master 回复。
    * 若有 planPath，调用方应先将 plan.md 渲染为图片后附在消息中。

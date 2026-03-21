@@ -137,6 +137,31 @@ async function main(): Promise<void> {
       return "";
     }
 
+    // ── ask_user 拦截：AI 通过 ask_user 工具等待用户选择/输入时 ─────────
+    if (session.pendingAskUser) {
+      const trimmed = msg.content.trim();
+      const { optionLabels, allowFreeform } = session.pendingAskUser;
+      const n = parseInt(trimmed, 10);
+
+      if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
+        // 用户输入数字，映射到预设选项
+        session.pendingAskUser.resolve({
+          answer: optionLabels[n - 1]!,
+          isFreeform: false,
+        });
+      } else if (allowFreeform) {
+        // 自由输入
+        session.pendingAskUser.resolve({ answer: trimmed, isFreeform: true });
+      } else {
+        // 不允许自由输入，提示用户重新选择
+        const hint = optionLabels.map((l, i) => `${i + 1}. ${l}`).join("\n");
+        void connector.send(msg.peerId, msg.type, `请输入选项编号（1～${optionLabels.length}）：\n${hint}`, msg.messageId);
+        return "";
+      }
+      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId);
+      return "";
+    }
+
     // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
     const parsedCmd = parseCommand(msg.content);
     if (parsedCmd) {
@@ -151,6 +176,7 @@ async function main(): Promise<void> {
       session.llmAbortController?.abort();
       session.abortPendingApproval();
       session.abortPendingPlanApproval();
+      session.abortPendingAskUser();
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
       await session.currentRunPromise?.catch(() => {});
     }
@@ -321,6 +347,57 @@ async function main(): Promise<void> {
 
     const onPlanRequest = buildPlanRequestCallback();
 
+    /**
+     * ask_user 回调：向 QQ 用户展示问题和选项菜单，等待用户选择或输入。
+     * Chat 和 Code 模式均注入，始终可用。
+     */
+    const onAskUser = async (
+      question: string,
+      options?: Array<{ label: string; description?: string; recommended?: boolean }>,
+      allowFreeform = true,
+    ): Promise<{ answer: string; isFreeform: boolean }> => {
+      const optionLabels = (options ?? []).map((o) => o.label);
+
+      // 构建菜单消息（Markdown 格式，尝试渲染为图片）
+      const optionLines = (options ?? []).map((opt, i) => {
+        const recMark = opt.recommended ? " **——推荐**" : "";
+        const desc = opt.description ? `：${opt.description}` : "";
+        return `${i + 1}. ${opt.label}${desc}${recMark}`;
+      });
+      const freeformNote = allowFreeform ? "\n\n> 或直接输入你的想法…" : "";
+      const menuMsg =
+        `## 🤔 有一个问题\n\n${question}\n\n` +
+        (optionLines.length > 0 ? `---\n\n${optionLines.join("\n")}` : "") +
+        freeformNote;
+
+      let sent = false;
+      try {
+        const outDir = path.join(
+          os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+        );
+        fs.mkdirSync(outDir, { recursive: true });
+        const imgPath = await mdToImage(menuMsg, outDir);
+        await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`).catch(() => {});
+        sent = true;
+      } catch {
+        // 渲染失败，降级为纯文本
+      }
+      if (!sent) {
+        const plainOptLines = (options ?? []).map((opt, i) => {
+          const recMark = opt.recommended ? " —— 推荐" : "";
+          const desc = opt.description ? `（${opt.description}）` : "";
+          return `  ${i + 1}. ${opt.label}${desc}${recMark}`;
+        });
+        const plainMsg =
+          `🤔 有一个问题\n\n${question}` +
+          (plainOptLines.length > 0 ? `\n\n─────────────────\n${plainOptLines.join("\n")}` : "") +
+          (allowFreeform ? "\n\n或直接输入你的想法…" : "");
+        await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
+      }
+
+      return session.waitForAskUser(optionLabels, allowFreeform);
+    };
+
     const opts: AgentRunOptions = {
       onSlaveComplete,
       onProgressNotify,
@@ -330,6 +407,7 @@ async function main(): Promise<void> {
         });
       },
       ...(onPlanRequest !== undefined ? { onPlanRequest } : {}),
+      onAskUser,
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
           msg.peerId, msg.type, warningMsg,

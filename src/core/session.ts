@@ -30,6 +30,22 @@ interface PendingPlanApproval {
   actions: string[];
 }
 
+/** ask_user 交互结果 */
+export type AskUserResult = {
+  answer: string;
+  isFreeform: boolean;
+};
+
+/** ask_user 控制柄 */
+interface PendingAskUser {
+  resolve: (result: AskUserResult) => void;
+  reject: (err: Error) => void;
+  /** 预设选项标签列表（用于数字索引映射；若为空则仅支持自由输入） */
+  optionLabels: string[];
+  /** 是否允许自由输入 */
+  allowFreeform: boolean;
+}
+
 export interface SessionOptions {
   systemPrompt?: string;
   agentId?: string;
@@ -85,6 +101,9 @@ export class Session {
 
   /** Plan 审批：等待用户选择操作或提供反馈的控制柄 */
   pendingPlanApproval: PendingPlanApproval | null = null;
+
+  /** ask_user：等待用户回答问题的控制柄 */
+  pendingAskUser: PendingAskUser | null = null;
 
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
@@ -340,6 +359,47 @@ export class Session {
     if (this.pendingPlanApproval) {
       this.pendingPlanApproval.reject(new Error("会话被中断，Plan 审批已取消"));
       this.pendingPlanApproval = null;
+    }
+  }
+
+  // ── ask_user ──────────────────────────────────────────────────────────────
+
+  /**
+   * 挂起当前执行，等待用户回答问题。
+   * - resolve({ answer, isFreeform: false }) = 用户选择了预设选项
+   * - resolve({ answer, isFreeform: true })  = 用户自由输入
+   * - reject = 超时或会话被中断
+   */
+  waitForAskUser(
+    optionLabels: string[],
+    allowFreeform: boolean,
+  ): Promise<AskUserResult> {
+    if (this.pendingAskUser) {
+      this.pendingAskUser.reject(new Error("新的 ask_user 请求覆盖了未完成的请求"));
+      this.pendingAskUser = null;
+    }
+
+    return new Promise<AskUserResult>((resolve, reject) => {
+      this.pendingAskUser = {
+        optionLabels,
+        allowFreeform,
+        resolve: (result) => {
+          this.pendingAskUser = null;
+          resolve(result);
+        },
+        reject: (err) => {
+          this.pendingAskUser = null;
+          reject(err);
+        },
+      };
+    });
+  }
+
+  /** 中止等待中的 ask_user（用于软中断时清理） */
+  abortPendingAskUser(): void {
+    if (this.pendingAskUser) {
+      this.pendingAskUser.reject(new Error("会话被中断，提问已取消"));
+      this.pendingAskUser = null;
     }
   }
 
