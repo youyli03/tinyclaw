@@ -165,11 +165,34 @@ export async function summarizeAndCompressCode(
   // 保留最新的 N 条消息，对更早的部分做摘要
   const keepCount = Math.min(CODE_KEEP_RECENT_MESSAGES, nonSystemMessages.length);
   const toSummarize = nonSystemMessages.slice(0, nonSystemMessages.length - keepCount);
-  const toKeep = nonSystemMessages.slice(nonSystemMessages.length - keepCount);
+  let toKeep = nonSystemMessages.slice(nonSystemMessages.length - keepCount);
 
   // 如果没有足够旧的内容可压缩，直接返回原始消息
   if (toSummarize.length === 0) {
     return messages;
+  }
+
+  // 去除 toKeep 开头的孤立 role=tool 消息：
+  // 当对应的 assistant+tool_calls 已被移入 toSummarize 时，tool 消息的 tool_call_id 找不到
+  // 对应的 assistant，OpenAI API 会拒绝该消息序列（400 Bad Request）。
+  {
+    const validIds = new Set<string>();
+    for (const m of toKeep) {
+      if (m.role === "assistant") {
+        const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+        if (calls) calls.forEach((c) => validIds.add(c.id));
+      }
+    }
+    let keepStart = 0;
+    while (keepStart < toKeep.length) {
+      const m = toKeep[keepStart]!;
+      if (m.role === "tool" && !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)) {
+        keepStart++;
+      } else {
+        break;
+      }
+    }
+    toKeep = toKeep.slice(keepStart);
   }
 
   // 构建待摘要的历史文本，使用 formatMsgForSummary 展开 tool_calls 字段，

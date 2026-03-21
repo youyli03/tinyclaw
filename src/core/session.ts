@@ -507,7 +507,28 @@ export class Session {
           // 跳过格式损坏的行
         }
       }
-      return messages.length > 0 ? messages : null;
+      // 加载后清理孤立的 role=tool 消息：
+      // 当会话历史被压缩时，可能出现 tool 消息排在最前而其对应的
+      // assistant+tool_calls 已被移除的情况，OpenAI API 会拒绝该序列（400 Bad Request）。
+      const validToolCallIds = new Set<string>();
+      const sanitized: ChatMessage[] = [];
+      for (const m of messages) {
+        if (m.role === "tool") {
+          if (validToolCallIds.has(m.tool_call_id)) {
+            sanitized.push(m);
+            // 使用过的 id 无需继续保留（tool_call_id 一对一匹配）
+            validToolCallIds.delete(m.tool_call_id);
+          }
+          // else: 孤立 tool 消息，静默丢弃
+        } else {
+          sanitized.push(m);
+          if (m.role === "assistant") {
+            const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+            if (calls) calls.forEach((c) => validToolCallIds.add(c.id));
+          }
+        }
+      }
+      return sanitized.length > 0 ? sanitized : null;
     } catch (err) {
       console.error("[session] JSONL load failed:", err);
       return null;
