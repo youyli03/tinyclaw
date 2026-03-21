@@ -15,6 +15,13 @@ news_fetch.py  —  tinyclaw news MCP server 的多源抓取脚本
   NEWS_DATA_DIR   数据根目录，默认 ~/.tinyclaw/news
   LAST30_LIB_DIR  last30days lib 目录，默认 ~/last30days-skill/scripts/lib
 
+关键词匹配规则（_title_matches）：
+  - 多词短语（如 "gold price"）：标题必须包含该完整短语
+  - 多词短语同时拆词：每个 4+ 字符的非停用词单独作为关键词（\b 词边界匹配）
+    例：topics="gold price" → kw_set 中同时有 "gold price"、"gold"
+    "Gold slips near $4,500" 通过 \bgold\b 匹配 ✓
+    "Goldman Sachs rises" 不匹配 \bgold\b ✗（词边界阻断误匹配）
+
 内置 RSS 源清单（DEFAULT_RSS_FEEDS）：
   科技/通用：
     BBC Technology    https://feeds.bbci.co.uk/news/technology/rss.xml
@@ -208,13 +215,35 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
     results = []
 
     # 关键词集合（小写，用于快速过滤）
-    kw_set = {t.strip().lower() for t in topics if t.strip() and t.strip() != "*"}
+    # 对多词短语（如 "gold price"），同时保留整体短语 AND 拆出 4+ 字符单词，
+    # 任一命中即视为匹配，避免 "gold price" 无法匹配 "Gold slips" 标题的问题。
+    _STOP_WORDS = {"price", "news", "data", "rate", "from", "with", "that", "this",
+                   "will", "were", "have", "been", "they", "their", "about", "more"}
+    kw_set: set[str] = set()
+    for t in topics:
+        t = t.strip().lower()
+        if not t or t == "*":
+            continue
+        kw_set.add(t)  # 整体短语匹配（精确）
+        if " " in t:   # 多词短语：拆出有意义的单词（≥4 字符，非停用词）
+            for word in t.split():
+                if len(word) >= 4 and word not in _STOP_WORDS:
+                    kw_set.add(word)
 
     def _title_matches(title: str) -> bool:
         if not kw_set:
             return True
         tl = title.lower()
-        return any(kw in tl for kw in kw_set)
+        for kw in kw_set:
+            if " " in kw:
+                # 多词短语：整体子串匹配（"gold price" → 要求连续出现）
+                if kw in tl:
+                    return True
+            else:
+                # 单个词：词边界匹配，避免 "gold" 命中 "Goldman"
+                if re.search(r"\b" + re.escape(kw) + r"\b", tl):
+                    return True
+        return False
 
     def _parse_date(s: str | None) -> datetime | None:
         if not s:
