@@ -1,0 +1,9 @@
+{
+  "name": "tinyclaw-mcp-news",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Multi-source news fetch/store/dedup MCP server for tinyclaw",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  }
+}
