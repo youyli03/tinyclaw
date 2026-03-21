@@ -45,7 +45,9 @@ tinyclaw/
 │   ├── tools/
 │   │   ├── registry.ts       # 工具注册表（spec / requiresMFA / hidden）+ ToolContext 定义
 │   │   ├── system.ts         # exec_shell / write_file / edit_file / delete_file / read_file
-│   │   ├── code-assist.ts    # code_assist（委派给 copilot/codex CLI 或 API 直调）
+│   │   ├── code-assist.ts    # code_assist（双子 Agent 架构：daily 协调 + code 执行）
+│   │   ├── ask-master.ts     # ask_master（隐藏工具：daily 子 Agent 暂停向用户提问）
+│   │   ├── run-code-subagent.ts  # run_code_subagent（隐藏工具：daily 触发 code 子 Agent 执行）
 │   │   ├── render-diagram.ts # render_diagram（mermaid mmdc / mermaid.ink；python matplotlib）
 │   │   ├── notify.ts         # notify_user（不等 run 结束即推送消息）
 │   │   ├── skill-creator.ts  # create_skill（创建 Skill 文档并注册到 SKILLS.md）
@@ -206,13 +208,52 @@ tinyclaw 支持三种 MFA 接口（通过 `auth.mfa.interface` 配置）：
 所有接口：超时 60s（可配）或用户拒绝 → 操作 abort  
 高危工具范围：`exec_shell` / `delete_file` / `write_file` / `edit_file`（以及 `config.toml` 自定义黑名单）
 
-### 代码/日常操作分离（code_assist + Code 模式）
+### 代码/日常操作分离（code_assist 双子 Agent）
 
-**code_assist 工具**：Agent 将代码任务委派给独立后端执行（不污染主对话历史）。  
-支持三种后端（`tools.code_assist.backend`）：
-- `"copilot"` — 调用 `copilot` CLI 子进程
-- `"codex"`   — 调用 `codex` CLI 子进程
-- `"api"`     — 直接用 daily LLM 做一次无历史调用
+**code_assist 工具**：Master Agent 将代码任务委派给两个后台子 Agent 协作完成，不污染主对话历史。
+
+#### 架构图
+
+```
+用户
+ │ 发出代码任务
+ ▼
+Master Agent（chat 模式，daily LLM）
+ │ 调用 code_assist(task)
+ ▼
+code_assist.runInternal()
+ ├─ 一次性 MFA 预授权（两个子 Agent 共享）
+ ├─ 创建 dailySession（slaveDepth=1，mfaPreApproved）
+ │   绑定（parentId = masterSession）
+ ├─ 创建 codeSession（slaveDepth=2，mfaPreApproved）
+ │   绑定（parentId = dailySession）
+ └─ slaveManager.fork(dailySession, task, dailyRunFn)
+       │  后台异步运行
+       ▼
+  Daily 协调 Agent（daily LLM，系统提示：DAILY_SUBAGENT_SYSTEM）
+   │  分析任务、制订计划、指挥 code 执行
+   │
+   ├─ 调用 run_code_subagent(instruction)
+   │       └─ 同步等待 Code Agent 完成（ctx.codeRunFn）
+   │
+   ├─ 调用 ask_master(question, context, planPath?)
+   │       ├─ 将问题 + plan.md 渲染为图片发给用户（mdToImage）
+   │       ├─ 阻塞等待用户回复（session.pendingSlaveQuestion）
+   │       └─ main.ts 拦截用户消息 → resolve() 解除阻塞
+   │
+   └─ 任务完成 → onSlaveComplete → Master 注入结果 → 通知用户
+               ↕
+  Code 执行 Agent（code LLM，系统提示：CODE_SUBAGENT_SYSTEM）
+   读文件 / 写文件 / 执行命令 / 提交代码 …
+```
+
+#### 关键设计点
+
+- **MFA 预授权**：`code_assist` 调用时触发一次 MFA，授权两个子 Agent 的 `mfaPreApproved = true`，后续工具调用跳过 MFA 弹窗
+- **Session 绑定**：`session.bindParent()` 存储父子关系（`parentId` / `childIds[]`），便于追踪和清理
+- **ask_master 阻塞机制**：daily 子 Agent 调用 `ask_master` → 在 `session.pendingSlaveQuestion` 上设置 Promise → `main.ts` 拦截用户下条消息 → resolve unblock → daily 子 Agent 继续运行
+- **代码隔离**：code 子 Agent `slaveDepth=2`，无法再触发 fork，也不能调用 `ask_master`
+- **反向汇报链**：code → daily（同步，工具返回值）；daily → master（异步，`onSlaveComplete`）；master → 用户（connector.send）
 
 **Code 模式（`/code` 命令）**：切换为代码专注会话，独立 JSONL 文件，滑动窗口压缩，工具轮次上限 25（可配）。  
 内置 **Plan / Auto 子模式**（`/plan` / `/auto`）：Plan 模式下 AI 先规划，调用 `exit_plan_mode` 工具提交计划摘要，用户确认后再执行。

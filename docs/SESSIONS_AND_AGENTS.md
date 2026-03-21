@@ -249,7 +249,61 @@ DISPATCH 事件 → InboundMessage
 
 ---
 
-## 六、常用操作速查
+## 七、子 Agent 绑定（Session Bind）
+
+`code_assist` 等工具会创建子 Agent Session，并通过 **bind** 机制维护父子关系。
+
+### 绑定字段（`session.ts`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `parentId` | `string \| null` | 父 Session ID（Master 或上级 daily Agent）|
+| `childIds` | `string[]` | 子 Session ID 列表 |
+| `mfaPreApproved` | `boolean` | 是否已通过一次性 MFA 预授权（跳过后续 MFA 弹窗）|
+| `pendingSlaveQuestion` | `{ question, resolve } \| null` | daily 子 Agent 调用 `ask_master` 时的挂起问题 |
+
+### 绑定方法
+
+```typescript
+// 在子 Session 上调用，同时更新父 Session 的 childIds[]
+childSession.bindParent(masterSession);
+
+// 子 Agent 完成时清理父 Session 的 childIds[]
+masterSession.removeChild(childSession.sessionId);
+```
+
+### ask_master 阻塞流程
+
+```
+daily 子 Agent 调用 ask_master(question, context, planPath?)
+  └→ 将问题 + plan.md 渲染为图片发给用户
+  └→ 在 masterSession.pendingSlaveQuestion 设置 { question, resolve }
+  └→ 阻塞等待（async Promise）
+
+用户回复消息
+  └→ main.ts handleMessage() 检测 session.pendingSlaveQuestion
+  └→ session.pendingSlaveQuestion = null
+  └→ resolve(userMessage)  ← 解除 daily 子 Agent 阻塞
+  └→ 发送"已收到，已转发给 AI 继续处理..."
+  └→ return（不触发 runAgent）
+
+daily 子 Agent 继续运行（获得用户回复作为工具返回值）
+```
+
+### 层级关系示意
+
+```
+masterSession（chat，slaveDepth=0）
+  └─ dailySession（daily LLM，slaveDepth=1，mfaPreApproved=true）
+       └─ codeSession（code LLM，slaveDepth=2，mfaPreApproved=true）
+```
+
+- `slaveDepth=2` 的 code Session 不允许再 fork（`agent_fork` 返回错误）
+- `slaveDepth=2` 的 code Session 不持有 `ask_master` 工具（只注入给 daily）
+
+---
+
+## 八、常用操作速查
 
 ```bash
 # Agent 管理

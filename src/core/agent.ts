@@ -26,6 +26,8 @@ import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import "../tools/render-diagram.js";
 import "../tools/search-store.js";
+import "../tools/ask-master.js";
+import "../tools/run-code-subagent.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 /** Chat 模式固定工具调用轮次上限 */
@@ -298,6 +300,21 @@ export interface AgentRunOptions {
    * 默认 120_000（2 分钟）。设为 0 可禁用 auto-fork。
    */
   autoForkThresholdMs?: number;
+  /**
+   * 额外注入给 LLM 的工具列表（追加到 getAllToolSpecs() 之后）。
+   * 用于向特定 Agent（如 daily subagent）暴露 hidden 工具（ask_master / run_code_subagent 等）。
+   */
+  customTools?: import("openai/resources/chat/completions").ChatCompletionTool[];
+  /**
+   * ask_master 回调（由 code_assist 注入给 daily subagent）。
+   * 透传到 ToolContext，供 ask_master 工具使用。
+   */
+  onAskMaster?: import("../tools/registry.js").ToolContext["onAskMaster"];
+  /**
+   * code subagent 调用函数（由 code_assist 注入给 daily subagent）。
+   * 透传到 ToolContext，供 run_code_subagent 工具使用。
+   */
+  codeRunFn?: import("../tools/registry.js").ToolContext["codeRunFn"];
 }
 
 export interface AgentRunResult {
@@ -478,9 +495,12 @@ export async function runAgent(
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
-    const tools = getAllToolSpecs().filter(
-      (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
-    );
+    const tools = [
+      ...getAllToolSpecs().filter(
+        (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
+      ),
+      ...(opts.customTools ?? []),
+    ];
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
@@ -650,7 +670,7 @@ export async function runAgent(
 
       // ── MFA 检查（执行工具前）────────────────────────────────────────
       const mfaCfg = loadConfig().auth.mfa;
-      if (toolNeedsMFA(call.name, call.args, mfaCfg) && !session.mfaApprovedForThisRun) {
+      if (toolNeedsMFA(call.name, call.args, mfaCfg) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
         let mfaPassed = false;
         try {
           if (mfaCfg?.interface === "msal") {
@@ -726,6 +746,9 @@ export async function runAgent(
           ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
           ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
           ...(opts.onPlanRequest ? { onPlanRequest: opts.onPlanRequest } : {}),
+          ...(opts.onMFARequest ? { onMFARequest: opts.onMFARequest } : {}),
+          ...(opts.onAskMaster ? { onAskMaster: opts.onAskMaster } : {}),
+          ...(opts.codeRunFn ? { codeRunFn: opts.codeRunFn } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {

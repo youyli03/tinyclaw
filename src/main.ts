@@ -128,6 +128,15 @@ async function main(): Promise<void> {
       return "";
     }
 
+    // ── ask_master 拦截：daily subagent 等待用户回复时转发给它 ─────────────
+    if (session.pendingSlaveQuestion) {
+      const { resolve } = session.pendingSlaveQuestion;
+      session.pendingSlaveQuestion = null;
+      resolve(msg.content.trim());
+      void connector.send(msg.peerId, msg.type, "已收到，已转发给 AI 继续处理...", msg.messageId);
+      return "";
+    }
+
     // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
     const parsedCmd = parseCommand(msg.content);
     if (parsedCmd) {

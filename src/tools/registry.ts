@@ -45,6 +45,22 @@ export interface ToolContext {
     recommendedAction?: string,
     planPath?: string,
   ) => Promise<import("../core/session.js").PlanApprovalResult>;
+  /**
+   * MFA 确认回调（由 main.ts → runAgent opts 透传）。
+   * 供 code_assist 在启动子 Agent 前做一次性预授权确认。
+   */
+  onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
+  /**
+   * ask_master 回调（由 code_assist 注入给 daily subagent）。
+   * daily subagent 遇到不确定时调用，同步阻塞直到用户通过 master 回复。
+   * 若有 planPath，调用方应先将 plan.md 渲染为图片后附在消息中。
+   */
+  onAskMaster?: (question: string, context: string, planPath?: string) => Promise<string>;
+  /**
+   * code subagent 调用函数（由 code_assist 注入给 daily subagent）。
+   * daily subagent 调用此函数向 code subagent 发送指令，同步等待执行结果。
+   */
+  codeRunFn?: (instruction: string) => Promise<string>;
 }
 
 export interface ToolDef {

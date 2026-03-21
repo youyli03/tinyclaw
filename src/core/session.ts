@@ -57,6 +57,8 @@ export class Session {
   // ── MFA 状态 ──────────────────────────────────────────────────────────────
   /** 同一次 runAgent() 中，MFA 一旦通过即设为 true，后续工具跳过验证 */
   mfaApprovedForThisRun = false;
+  /** 由父 Agent 预授权（code_assist 启动子 Agent 时设置），整个 Session 生命周期内跳过 MFA 检查 */
+  mfaPreApproved = false;
   /** Interface A：等待用户回复 确认/取消 的控制柄 */
   pendingApproval: PendingApproval | null = null;
 
@@ -86,6 +88,21 @@ export class Session {
 
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
+
+  // ── Agent Bind（父子关系）──────────────────────────────────────────────────
+  /** 父 Session ID（由 code_assist / agent_fork 等创建时设置） */
+  parentId?: string;
+  /** 子 Session ID 列表 */
+  readonly childIds: string[] = [];
+
+  /**
+   * 子 Agent 通过 ask_master 发起提问时，此字段被设置；
+   * main.ts 收到用户下一条消息后将其作为答案 resolve，并清空此字段。
+   */
+  pendingSlaveQuestion: {
+    question: string;
+    resolve: (answer: string) => void;
+  } | null = null;
 
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
@@ -324,6 +341,22 @@ export class Session {
       this.pendingPlanApproval.reject(new Error("会话被中断，Plan 审批已取消"));
       this.pendingPlanApproval = null;
     }
+  }
+
+  // ── Agent Bind 操作 ────────────────────────────────────────────────────────
+
+  /** 设置父 Session ID，并将本 Session 注册到父的 childIds */
+  bindParent(parentSession: Session): void {
+    this.parentId = parentSession.sessionId;
+    if (!parentSession.childIds.includes(this.sessionId)) {
+      parentSession.childIds.push(this.sessionId);
+    }
+  }
+
+  /** 移除子 Session ID（子 Session 销毁或解绑时调用） */
+  removeChild(childSessionId: string): void {
+    const idx = this.childIds.indexOf(childSessionId);
+    if (idx !== -1) this.childIds.splice(idx, 1);
   }
 
   // ── JSONL 持久化 ──────────────────────────────────────────────────────────
