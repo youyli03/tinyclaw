@@ -192,7 +192,40 @@ const ToolsSchema = z.object({
    * 0 = 不限制。
    */
   maxToolResultChars: z.number().int().min(0).default(20_000),
+  /**
+   * 工具调用参数单个值的最大字符数，超出时写入 session 消息历史前自动截断，默认 4000。
+   * 防止 edit_file 等工具的大 old_str/new_str 参数全量写入 messages[]，
+   * 导致后续 LLM 请求 token 溢出（400 Bad Request）。
+   * 截断只影响存储副本，工具实际执行仍使用 LLM 返回的完整参数。
+   * 0 = 不限制。
+   */
+  maxToolCallArgChars: z.number().int().min(0).default(4_000),
 }).default({});
+
+// ── MemStore 配置（独立文件 ~/.tinyclaw/memstores.toml）──────────────────────────
+
+/**
+ * 单个额外 QMD 可搜索库的配置项。
+ * 每个 store 对应一个独立的 Markdown 目录，由同一个 QMD SQLite 索引（collection 隔离）。
+ */
+export const MemStoreSchema = z.object({
+  /** collection 名，同时作为 search_store 工具的 store 参数枚举值 */
+  name: z.string().min(1),
+  /** 展示给 LLM 的描述，出现在 search_store 工具 description 和搜索结果标头 */
+  title: z.string().min(1),
+  /** Markdown 文件根目录（支持 ~ 展开） */
+  path: z.string().min(1),
+  /** glob 匹配模式，默认 **\/*.md */
+  pattern: z.string().default("**/*.md"),
+  /** 是否启用，false 时不注册 collection 也不出现在 search_store 枚举中 */
+  enabled: z.boolean().default(true),
+});
+export type MemStoreConfig = z.infer<typeof MemStoreSchema>;
+
+export const MemStoresConfigSchema = z.object({
+  stores: z.array(MemStoreSchema).default([]),
+}).default({ stores: [] });
+export type MemStoresConfig = z.infer<typeof MemStoresConfigSchema>;
 
 // ── MCP 服务器配置（独立文件 ~/.tinyclaw/mcp.toml）────────────────────────────
 

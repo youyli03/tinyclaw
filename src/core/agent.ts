@@ -4,7 +4,7 @@ import { LLMConnectionError } from "../llm/client.js";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { searchMemory } from "../memory/qmd.js";
-import { shouldSummarize } from "../memory/summarizer.js";
+import { shouldSummarize, shouldSummarizeCode } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
@@ -433,13 +433,24 @@ export async function runAgent(
     // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
     // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
     // 优先使用上一轮实际 promptTokens（session.lastPromptTokens），0 时 fallback 字符估算
-    // code 模式跳过（有独立的滑动窗口压缩）
-    if (!isCodeMode && !session.abortRequested && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
-      opts.onCompress?.("start");
-      const summary = await session.compress();
-      opts.onCompress?.("done", summary);
-      // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
-      preRunLength = session.getMessages().length;
+    if (!session.abortRequested) {
+      if (!isCodeMode && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
+        // chat 模式：完整摘要压缩
+        opts.onCompress?.("start");
+        const summary = await session.compress();
+        opts.onCompress?.("done", summary);
+        // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
+        preRunLength = session.getMessages().length;
+      } else if (isCodeMode) {
+        // code 模式：pre-flight 检测 session 是否已超限（如上次 run 400 后 session 未清理）
+        // 用 lastPromptTokens（上次记录值）或字符估算进行判断；若超限则先压缩再执行
+        const codeCtx = llmRegistry.getContextWindow("code");
+        if (codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens)) {
+          console.log(`${logPrefix} ℹ️ Code session pre-flight 检测到上下文超限，执行滑动窗口压缩`);
+          await session.compressForCode();
+          preRunLength = session.getMessages().length;
+        }
+      }
     }
 
     // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）

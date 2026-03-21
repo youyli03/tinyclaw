@@ -5,6 +5,7 @@ import type { ChatMessage, ContentPart, ToolCallResult, OpenAIToolCall } from ".
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
+import { loadConfig } from "../config/loader.js";
 
 /** Plan 模式审批结果 */
 export type PlanApprovalResult = {
@@ -127,11 +128,17 @@ export class Session {
    * 仅在 textMode=false（模型支持原生 function calling）时调用。
    */
   addAssistantWithToolCalls(content: string, calls: ToolCallResult[]): void {
-    const tool_calls: OpenAIToolCall[] = calls.map((c) => ({
-      id: c.callId,
-      type: "function",
-      function: { name: c.name, arguments: JSON.stringify(c.args) },
-    }));
+    const maxArgChars = (() => {
+      try { return loadConfig().tools.maxToolCallArgChars; } catch { return 4_000; }
+    })();
+    const tool_calls: OpenAIToolCall[] = calls.map((c) => {
+      const rawArgs = JSON.stringify(c.args);
+      // 截断单次参数总 JSON 长度（防止 edit_file 大 old_str/new_str 撑爆 context window）
+      const args = maxArgChars > 0 && rawArgs.length > maxArgChars
+        ? rawArgs.slice(0, maxArgChars) + `...[已截断，原始长度 ${rawArgs.length} 字符]`
+        : rawArgs;
+      return { id: c.callId, type: "function", function: { name: c.name, arguments: args } };
+    });
     this.messages.push({ role: "assistant", content, tool_calls });
   }
 
@@ -225,12 +232,11 @@ export class Session {
    */
   async compressForCode(): Promise<boolean> {
     const compressed = await summarizeAndCompressCode(this.messages);
-    // 如果返回原始消息（无足够旧内容可压缩），跳过
+    // 如果返回原始消息（无足够旧内容可压缩），跳过更新
     if (compressed === this.messages || compressed.length >= this.messages.length) {
-      this.messages = compressed;
-    } else {
-      this.messages = compressed;
+      return false;
     }
+    this.messages = compressed;
     this.rewriteCodeJsonl();
     return true;
   }
