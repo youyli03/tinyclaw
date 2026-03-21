@@ -14,6 +14,37 @@ news_fetch.py  —  tinyclaw news MCP server 的多源抓取脚本
 环境变量（均可选）：
   NEWS_DATA_DIR   数据根目录，默认 ~/.tinyclaw/news
   LAST30_LIB_DIR  last30days lib 目录，默认 ~/last30days-skill/scripts/lib
+
+内置 RSS 源清单（DEFAULT_RSS_FEEDS）：
+  科技/通用：
+    BBC Technology    https://feeds.bbci.co.uk/news/technology/rss.xml
+    Al Jazeera        https://www.aljazeera.com/xml/rss/all.xml
+    36kr              https://36kr.com/feed
+    InfoQ CN          https://www.infoq.cn/feed
+    Solidot           https://www.solidot.org/index.rss
+    HN RSS            https://hnrss.org/frontpage
+
+  贵金属专项：
+    FX Street         https://www.fxstreet.com/rss/news         (XAU/USD、Gold、Silver 实时分析)
+    Seeking Alpha Gold   https://seekingalpha.com/tag/gold.xml
+    Seeking Alpha Silver https://seekingalpha.com/tag/silver.xml
+
+  大宗商品：
+    Seeking Alpha Commodities  https://seekingalpha.com/tag/commodities.xml
+    OilPrice.com               https://oilprice.com/rss/main
+    Seeking Alpha Copper       https://seekingalpha.com/tag/copper.xml
+
+  概念板块：
+    Seeking Alpha Energy    https://seekingalpha.com/tag/energy.xml
+    Seeking Alpha Materials https://seekingalpha.com/tag/materials.xml
+    CNBC Energy             https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768
+
+  综合财经/宏观：
+    MarketWatch       https://feeds.content.dowjones.io/public/rss/mw_marketpulse
+    Bloomberg Markets https://feeds.bloomberg.com/markets/news.rss
+    CNBC Finance      https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
+    CNBC Investing    https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069
+    Investing.com Forex https://www.investing.com/rss/news_1.rss
 """
 
 import argparse
@@ -138,12 +169,31 @@ def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]
 
 # 内置 RSS 源列表（topics 用于标题关键词过滤；若 topic 为 "*" 则不过滤）
 DEFAULT_RSS_FEEDS: list[dict] = [
+    # ── 科技/通用 ──────────────────────────────────────────────────────────────
     {"name": "BBC Technology", "url": "https://feeds.bbci.co.uk/news/technology/rss.xml", "topics": ["*"]},
-    {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml", "topics": ["*"]},
-    {"name": "36kr",    "url": "https://36kr.com/feed", "topics": ["*"]},
-    {"name": "InfoQ CN", "url": "https://www.infoq.cn/feed", "topics": ["*"]},
-    {"name": "Solidot", "url": "https://www.solidot.org/index.rss", "topics": ["*"]},
-    {"name": "HN RSS",  "url": "https://hnrss.org/frontpage", "topics": ["*"]},
+    {"name": "Al Jazeera",     "url": "https://www.aljazeera.com/xml/rss/all.xml",        "topics": ["*"]},
+    {"name": "36kr",           "url": "https://36kr.com/feed",                            "topics": ["*"]},
+    {"name": "InfoQ CN",       "url": "https://www.infoq.cn/feed",                        "topics": ["*"]},
+    {"name": "Solidot",        "url": "https://www.solidot.org/index.rss",                "topics": ["*"]},
+    {"name": "HN RSS",         "url": "https://hnrss.org/frontpage",                      "topics": ["*"]},
+    # ── 贵金属专项 ────────────────────────────────────────────────────────────
+    {"name": "FX Street",            "url": "https://www.fxstreet.com/rss/news",                   "topics": ["*"]},
+    {"name": "Seeking Alpha Gold",   "url": "https://seekingalpha.com/tag/gold.xml",               "topics": ["*"]},
+    {"name": "Seeking Alpha Silver", "url": "https://seekingalpha.com/tag/silver.xml",             "topics": ["*"]},
+    # ── 大宗商品 ──────────────────────────────────────────────────────────────
+    {"name": "Seeking Alpha Commodities", "url": "https://seekingalpha.com/tag/commodities.xml",   "topics": ["*"]},
+    {"name": "OilPrice.com",              "url": "https://oilprice.com/rss/main",                  "topics": ["*"]},
+    {"name": "Seeking Alpha Copper",      "url": "https://seekingalpha.com/tag/copper.xml",        "topics": ["*"]},
+    # ── 概念板块 ──────────────────────────────────────────────────────────────
+    {"name": "Seeking Alpha Energy",    "url": "https://seekingalpha.com/tag/energy.xml",          "topics": ["*"]},
+    {"name": "Seeking Alpha Materials", "url": "https://seekingalpha.com/tag/materials.xml",       "topics": ["*"]},
+    {"name": "CNBC Energy",             "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768", "topics": ["*"]},
+    # ── 综合财经/宏观 ─────────────────────────────────────────────────────────
+    {"name": "MarketWatch",       "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",                             "topics": ["*"]},
+    {"name": "Bloomberg Markets", "url": "https://feeds.bloomberg.com/markets/news.rss",                                            "topics": ["*"]},
+    {"name": "CNBC Finance",      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",     "topics": ["*"]},
+    {"name": "CNBC Investing",    "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",     "topics": ["*"]},
+    {"name": "Investing.com Forex","url": "https://www.investing.com/rss/news_1.rss",                                              "topics": ["*"]},
 ]
 
 
