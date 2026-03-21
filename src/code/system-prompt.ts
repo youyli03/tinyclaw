@@ -80,7 +80,14 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据、运行破坏性脚本），必须先向用户说明并等待确认
 - 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
-- 任务完成时：明确告知用户"已完成"，并简要列出做了哪些变更
+- **语法检查（必须）**：每次写入或修改代码文件后，立即用 exec_shell 执行对应语法/编译检查，通过后再提交变更；若检查失败须修复后重新检查直到通过。常用命令参考：
+  - TypeScript：\`tsc --noEmit\`
+  - ESLint：\`eslint <files>\`
+  - Python：\`python -m py_compile <file>\` 或 \`mypy <file>\`
+  - Go：\`go build ./...\`
+  - Rust：\`cargo check\`
+  - 其他语言/框架：根据项目实际情况选择合适命令
+- **任务完成时**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
 - 用中文回复，简洁明了
 
 ## 图表与可视化
@@ -110,7 +117,14 @@ Plan 模式分为两个严格隔离的阶段：
 - **仅在 approved=true 后**才开始执行写入操作
 - 若 approved=false，根据 feedback 修改计划，再次调用 exit_plan_mode
 - 执行阶段可使用全部工具
-- 执行完毕后明确告知用户"已完成"，并简要列出变更内容
+- **语法检查（必须）**：每次写入或修改代码文件后，立即用 exec_shell 执行对应语法/编译检查，通过后再继续后续步骤；若检查失败须修复后重新检查直到通过。常用命令参考：
+  - TypeScript：\`tsc --noEmit\`
+  - ESLint：\`eslint <files>\`
+  - Python：\`python -m py_compile <file>\` 或 \`mypy <file>\`
+  - Go：\`go build ./...\`
+  - Rust：\`cargo check\`
+  - 其他语言/框架：根据项目实际情况选择合适命令
+- **执行完毕**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
 
 ## 重要约束
 
