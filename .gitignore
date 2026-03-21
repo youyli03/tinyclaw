@@ -18,6 +18,7 @@ config.toml
 *.toml
 !config.example.toml
 !mcp.example.toml
+!memstores.example.toml
 
 # 运行时数据
 data/

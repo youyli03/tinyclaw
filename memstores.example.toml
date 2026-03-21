@@ -1,0 +1,26 @@
+# ~/.tinyclaw/memstores.toml
+# 额外可搜索的本地知识库（MemStore）配置
+#
+# 每个 [[stores]] 条目对应一个独立的 QMD collection，
+# 可通过 search_store 工具（或 mcp_news_* 工具）进行向量语义搜索。
+#
+# 注意：
+# - 需要在 config.toml 中设置 [memory] enabled = true，QMD 才会启动。
+# - path 支持 ~ 展开（如 ~/.tinyclaw/news）。
+# - pattern 使用 glob 语法匹配要索引的文件（默认 **/*.md）。
+
+# ── 新闻存档示例（配合 news MCP server 使用）─────────────────────────────────
+[[stores]]
+name    = "news"
+title   = "每日新闻存档（HackerNews / RSS 抓取）"
+path    = "~/.tinyclaw/news"
+pattern = "**/*.md"
+enabled = true
+
+# ── 笔记/文档示例（可选）──────────────────────────────────────────────────────
+# [[stores]]
+# name    = "notes"
+# title   = "个人笔记与文档"
+# path    = "~/Documents/notes"
+# pattern = "**/*.md"
+# enabled = false
