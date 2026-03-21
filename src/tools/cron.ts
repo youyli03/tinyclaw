@@ -42,7 +42,7 @@ registerTool({
       parameters: {
         type: "object",
         properties: {
-          message:       { type: "string",  description: "发给 cron agent 的自然语言任务指令。cron agent 拥有完整工具调用能力，支持语义理解，无需手写 shell 命令。指令须包含以下四个要素：\n① 意图：做什么、操作对象是什么（例：查上海实时天气）\n② 执行流程：数据来源 / 关键步骤（例：用 exec_shell 调用 curl wttr.in/Shanghai 获取 JSON）\n③ 约束：异常处理方式、数据必须实时获取而非凭知识编造（例：curl 失败时报错而非捏造数值）\n④ 输出要求：输出什么内容、用什么格式；若不需要输出则明确说明（例：中文输出"城市/温度/天气/穿衣建议"）\n\n示例（好）：'查询上海实时天气，用 exec_shell 执行 curl wttr.in/Shanghai?format=j1，提取温度和天气描述，若 curl 失败则输出"数据获取失败"，最终中文输出：城市/温度/天气/穿衣建议'\n示例（坏）：'查询天气'——缺少城市、数据来源、输出格式，cron agent 无法可靠执行" },
+          message:       { type: "string",  description: "发给 cron agent 的自然语言任务指令。cron agent 拥有完整工具调用能力，支持语义理解，无需手写 shell 命令。指令须包含以下四个要素：\n① 意图：做什么、操作对象是什么（例：查上海实时天气）\n② 执行流程：数据来源 / 关键步骤（例：用 exec_shell 调用 curl wttr.in/Shanghai 获取 JSON）\n③ 约束：异常处理方式、数据必须实时获取而非凭知识编造（例：curl 失败时报错而非捏造数值）\n④ 输出要求：输出什么内容、用什么格式；若不需要输出则明确说明（例：中文输出\"城市/温度/天气/穿衣建议\"）\n\n示例（好）：'查询上海实时天气，用 exec_shell 执行 curl wttr.in/Shanghai?format=j1，提取温度和天气描述，若 curl 失败则输出\"数据获取失败\"，最终中文输出：城市/温度/天气/穿衣建议'\n示例（坏）：'查询天气'——缺少城市、数据来源、输出格式，cron agent 无法可靠执行" },
           type:          { type: "string",  enum: ["once", "every", "daily"], description: "调度类型" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
