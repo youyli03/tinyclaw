@@ -465,8 +465,9 @@ export async function runAgent(
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
 
-  // code 模式轮次上限：使用配置值；chat 模式使用固定值
-  const maxToolRounds = isCodeMode ? loadConfig().tools.maxCodeToolRounds : MAX_TOOL_ROUNDS;
+  // code 模式轮次上限：0 = 无限制（用 Infinity 表示）；chat 模式固定 MAX_TOOL_ROUNDS
+  const configuredRounds = isCodeMode ? loadConfig().tools.maxCodeToolRounds : MAX_TOOL_ROUNDS;
+  const maxToolRounds = isCodeMode && configuredRounds === 0 ? Infinity : configuredRounds;
   // code 模型 context window（供 token 预算检查用）
   const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code") : 0;
 

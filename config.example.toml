@@ -86,9 +86,10 @@ backend        = "copilot"   # 底层执行方式
 # model        = "gpt-5.1"  # 可选，透传 --model 给 CLI（api 模式忽略）
 # maxCallsPerRun = 5         # 每次用户消息最多调用次数，0 = 不限制（默认 5）
 
-# Code 模式工具调用轮次上限（默认 25，复杂代码任务建议保持较大值）
+# Code 模式工具调用轮次上限（默认 0 = 无限制，agent 持续执行直到完成或被中断）
 # chat 模式固定使用 10 轮，不受此项影响
-# maxCodeToolRounds = 25
+# 若需限制轮次（如节省 token），可设为正整数（如 50）
+# maxCodeToolRounds = 0
 
 # 工具执行结果的最大字符数，超出时自动截断，防止大文件读取或冗长命令输出耗尽 context window
 # 0 = 不限制（默认 20000）
