@@ -128,6 +128,24 @@ export function validateMediaContent(text: string): MediaError[] {
   return errors;
 }
 
+// ── 错误判断辅助 ──────────────────────────────────────────────────────────────
+
+function isTokenError(err: unknown): boolean {
+  const msg = String(err);
+  return msg.includes("401") || msg.includes("token") || msg.includes("11244");
+}
+
+function isTimeoutError(err: unknown): boolean {
+  if (err instanceof DOMException && (err.code === 23 || err.name === "TimeoutError")) return true;
+  if (err instanceof Error && err.name === "TimeoutError") return true;
+  return false;
+}
+
+/** 指数退避：delay ms 后 resolve，不设上限 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function sendMessage(opts: SendOptions): Promise<void> {
   const { appId, clientSecret, peerId, type, text, replyToId } = opts;
 
@@ -140,17 +158,25 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
       // ── 纯文本分块发送 ──────────────────────────────────────────────────
       const chunks = chunkText(segment.content);
       for (const chunk of chunks) {
-        try {
-          await doSend(token, type, peerId, chunk, replyToId);
-        } catch (err) {
-          // token 过期时刷新重试一次
-          const msg = String(err);
-          if (msg.includes("401") || msg.includes("token") || msg.includes("11244")) {
-            clearTokenCache();
-            token = await getAccessToken(appId, clientSecret);
+        let backoffMs = 2_000;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          try {
             await doSend(token, type, peerId, chunk, replyToId);
-          } else {
-            throw err;
+            break;
+          } catch (err) {
+            if (isTokenError(err)) {
+              clearTokenCache();
+              token = await getAccessToken(appId, clientSecret);
+              await doSend(token, type, peerId, chunk, replyToId);
+              break;
+            } else if (isTimeoutError(err)) {
+              console.warn(`[qqbot] 发送超时，${backoffMs / 1000}s 后重试...`);
+              await sleep(backoffMs);
+              backoffMs *= 2;
+            } else {
+              throw err;
+            }
           }
         }
         if (replyToId) recordReply(replyToId);
@@ -167,16 +193,26 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
         const { allowed } = checkLimit(replyToId);
         if (!allowed) mediaReplyToId = undefined;
       }
-      try {
-        await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
-      } catch (err) {
-        const msg = String(err);
-        if (msg.includes("401") || msg.includes("token") || msg.includes("11244")) {
-          clearTokenCache();
-          token = await getAccessToken(appId, clientSecret);
+      let backoffMs = 2_000;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
           await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
-        } else {
-          console.error("[qqbot] 媒体发送失败:", err);
+          break;
+        } catch (err) {
+          if (isTokenError(err)) {
+            clearTokenCache();
+            token = await getAccessToken(appId, clientSecret);
+            await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
+            break;
+          } else if (isTimeoutError(err)) {
+            console.warn(`[qqbot] 媒体发送超时，${backoffMs / 1000}s 后重试...`);
+            await sleep(backoffMs);
+            backoffMs *= 2;
+          } else {
+            console.error("[qqbot] 媒体发送失败:", err);
+            break;
+          }
         }
       }
       if (replyToId) recordReply(replyToId);
