@@ -62,9 +62,12 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 
 ## code_assist 工具使用规范
 - 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
-- code_assist 没有对话历史，每次调用是独立会话，task 参数必须自包含完整背景：
-  相关文件路径、现有代码片段（如有）、明确目标——不能只写修改上面的代码
-- 如需多步完成任务，需监督每次结果：检查输出是否达成目标，若未完成则携带上次结果和剩余任务再次调用
+- code_assist 采用 **两阶段工作流**（plan→execute）：
+  1. 调用 code_assist(task) → 子 Agent 探索代码库并返回计划摘要 + sessionId
+  2. 审阅计划后：
+     - 批准并执行：调用 code_assist_run(sessionId)，等待执行完成
+     - 修改计划：调用 code_assist_run(sessionId, "反馈意见")，子 Agent 重规划后返回新计划
+- task 参数必须自包含完整背景：相关文件路径、现有代码片段（如有）、明确目标——不能只写修改上面的代码
 - ${limitNote}
 
 ## 工作区规范
@@ -394,9 +397,9 @@ export async function runAgent(
 
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
-  // code 模式过滤 code_assist（code 模式本身即代码助手）
+  // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
   const initialTools = getAllToolSpecs().filter(
-    (t) => !(isCodeMode && t.function.name === "code_assist")
+    (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
   );
   const textMode = !client.supportsToolCalls;
 
@@ -474,9 +477,9 @@ export async function runAgent(
   // 5. ReAct 循环
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
-    // code 模式本身就是代码助手，无需 code_assist（避免递归委派）
+    // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
     const tools = getAllToolSpecs().filter(
-      (t) => !(isCodeMode && t.function.name === "code_assist")
+      (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
     );
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
