@@ -25,6 +25,7 @@ import "../tools/mcp-manager.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import "../tools/render-diagram.js";
+import "../tools/search-store.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 /** Chat 模式固定工具调用轮次上限 */

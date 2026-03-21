@@ -10,9 +10,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult } from "@tobilu/qmd";
-import { loadConfig } from "../config/loader.js";
+import { loadConfig, loadMemStoresConfig } from "../config/loader.js";
 
 const storeMap = new Map<string, QMDStore>();
+
+/**
+ * 内部：展开 ~ 为用户主目录
+ */
+function expandHome(p: string): string {
+  if (p.startsWith("~/") || p === "~") {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
+}
 
 async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   const cfg = loadConfig();
@@ -31,16 +41,29 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
 
   const { createStore } = await import("@tobilu/qmd");
 
+  // 基础 memory collection
+  const collections: Record<string, { path: string; pattern: string }> = {
+    memory: {
+      path: agentMemDir,
+      pattern: "**/*.md",
+    },
+  };
+
+  // 注册 memstores.toml 中启用的额外 store
+  const memStoresCfg = loadMemStoresConfig();
+  for (const store of memStoresCfg.stores) {
+    if (!store.enabled) continue;
+    const storePath = expandHome(store.path);
+    fs.mkdirSync(storePath, { recursive: true });
+    collections[store.name] = {
+      path: storePath,
+      pattern: store.pattern,
+    };
+  }
+
   const s = await createStore({
     dbPath: path.join(agentMemDir, "index.sqlite"),
-    config: {
-      collections: {
-        memory: {
-          path: agentMemDir,
-          pattern: "**/*.md",
-        },
-      },
-    },
+    config: { collections },
   });
 
   storeMap.set(agentId, s);
@@ -117,4 +140,46 @@ export async function closeQMDStore(): Promise<void> {
     await s.close().catch(() => {});
   }
   storeMap.clear();
+}
+
+/**
+ * 在指定 MemStore collection 中做向量搜索。
+ * 返回格式化后的 Markdown 字符串，可直接交给 LLM；无结果返回空字符串；未启用返回 null。
+ */
+export async function searchStore(
+  name: string,
+  query: string,
+  agentId = "default",
+  limit = 8
+): Promise<string | null> {
+  const s = await getQMDStore(agentId);
+  if (!s) return null;
+
+  const results = await s.searchVector(query, { limit, collection: name });
+  if (results.length === 0) return "";
+
+  const lines = results.map((r) => {
+    const score = Math.round(r.score * 100);
+    let preview = "";
+    if (r.chunkPos !== undefined) {
+      try {
+        const raw = fs.readFileSync(r.filepath, "utf-8");
+        preview = raw.slice(r.chunkPos, r.chunkPos + 3600).trim();
+      } catch { /* ignore */ }
+    }
+    return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
+  });
+
+  return `## Store: ${name} 搜索结果\n\n${lines.join("\n\n---\n\n")}`;
+}
+
+/**
+ * 触发指定 MemStore collection 的增量索引更新。
+ * 在 MCP server 写入新文件后调用，确保向量库与文件保持同步。
+ */
+export async function updateStore(name: string, agentId = "default"): Promise<void> {
+  const s = await getQMDStore(agentId);
+  if (!s) return;
+  await s.update({ collections: [name] });
+  await s.embed();
 }
