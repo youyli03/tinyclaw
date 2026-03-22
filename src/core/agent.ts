@@ -24,6 +24,7 @@ import "../tools/skill-creator.js";
 import "../tools/mcp-manager.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
+import "../tools/send-report.js";
 import "../tools/render-diagram.js";
 import "../tools/search-store.js";
 import "../tools/ask-user-tool.js";
