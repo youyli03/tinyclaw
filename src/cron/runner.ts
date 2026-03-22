@@ -13,6 +13,10 @@ import { runAgent } from "../core/agent.js";
 import type { Connector } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
+import { parseModelSymbol, llmRegistry } from "../llm/registry.js";
+import { buildCopilotClient } from "../llm/copilot.js";
+import { LLMClient } from "../llm/client.js";
+import { loadConfig } from "../config/loader.js";
 
 // ── Cron 专用 system prompt（约束 agent 不递归创建任务） ──────────────────────
 
@@ -63,6 +67,46 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   let status: "success" | "error" = "success";
   let resultText = "";
 
+  // ── 按 job.model 构建自定义 LLM client（可选）────────────────────────────
+  let overrideClient: LLMClient | undefined;
+  if (job.model) {
+    try {
+      const { provider, modelId } = parseModelSymbol(job.model);
+      if (provider === "copilot") {
+        const cfg = loadConfig();
+        const copilotCfg = cfg.providers.copilot;
+        if (!copilotCfg) {
+          throw new Error("job.model 使用 copilot provider，但 [providers.copilot] 未配置");
+        }
+        const { client } = await buildCopilotClient({
+          githubToken: copilotCfg.githubToken,
+          model: modelId,
+          timeoutMs: copilotCfg.timeoutMs,
+        });
+        overrideClient = client;
+      } else if (provider === "openai") {
+        const cfg = loadConfig();
+        const openaiCfg = cfg.providers.openai;
+        if (!openaiCfg) {
+          throw new Error("job.model 使用 openai provider，但 [providers.openai] 未配置");
+        }
+        overrideClient = new LLMClient({
+          baseUrl: openaiCfg.baseUrl,
+          apiKey: openaiCfg.apiKey,
+          model: modelId,
+          maxTokens: openaiCfg.maxTokens,
+          timeoutMs: openaiCfg.timeoutMs,
+        });
+      } else {
+        throw new Error(`job.model 使用未知 provider "${provider}"`);
+      }
+      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
+    } catch (err) {
+      console.error(`[cron] job=${job.id} 模型初始化失败，回退到 daily：`, err);
+      overrideClient = undefined;
+    }
+  }
+
   try {
     const notifyFn = connector && job.output.peerId
       ? async (message: string) => {
@@ -73,6 +117,7 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
       onMFARequest,
       systemPrompt: CRON_AGENT_SYSTEM,
       ...(notifyFn ? { onNotify: notifyFn } : {}),
+      ...(overrideClient ? { overrideClient } : {}),
     });
     resultText = result.content;
   } catch (err) {

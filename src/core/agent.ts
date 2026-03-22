@@ -325,6 +325,11 @@ export interface AgentRunOptions {
    */
   customTools?: import("openai/resources/chat/completions").ChatCompletionTool[];
   /**
+   * 覆盖 llmRegistry 选出的 LLM client（cron 指定 model 时使用）。
+   * 不传则走默认逻辑：code 模式用 code 后端，其余用 daily 后端。
+   */
+  overrideClient?: import("../llm/client.js").LLMClient;
+  /**
    * ask_master 回调（由 code_assist 注入给 daily subagent）。
    * 透传到 ToolContext，供 ask_master 工具使用。
    */
@@ -410,7 +415,7 @@ export async function runAgent(
   opts: AgentRunOptions = {}
 ): Promise<AgentRunResult> {
   const isCodeMode = session.mode === "code";
-  const client = llmRegistry.get(isCodeMode ? "code" : "daily");
+  const client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
   const toolsUsed: string[] = [];
   // slave session ID 格式为 "slave:abc12345"，显示为 "[slave:abc12345]"；其他 session 取末尾 12 位
   const isSlave = session.sessionId.startsWith("slave:");

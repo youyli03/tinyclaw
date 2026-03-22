@@ -56,6 +56,12 @@ export const CronJobSchema = z.object({
    */
   mfaExempt: z.boolean().default(false),
 
+  /**
+   * 运行此 job 使用的模型（格式同 config.toml，如 "copilot/claude-sonnet-4.6"）。
+   * 不填则使用 daily 后端模型。
+   */
+  model: z.string().optional(),
+
   // ── 运行记录 ──────────────────────────────────────────────────────────────
   createdAt: z.string(),
   lastRunAt: z.string().optional(),

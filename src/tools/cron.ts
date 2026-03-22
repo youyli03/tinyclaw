@@ -52,6 +52,7 @@ registerTool({
           stateful:      { type: "boolean", description: "是否保留跨 run 对话历史（默认 false）" },
           peerId:        { type: "string",  description: "推送目标的 QQ peerId（不填则仅写 log）" },
           msgType:       { type: "string",  enum: ["c2c","group","guild","dm"], description: "消息类型（默认 c2c）" },
+          model:         { type: "string",  description: "（可选）运行此 job 使用的模型，格式 \"provider/model-id\"，如 \"copilot/claude-sonnet-4.6\"。不填则使用 daily 后端。" },
         },
         required: ["message", "type"],
       },
@@ -93,6 +94,7 @@ registerTool({
       },
       stateful: Boolean(args["stateful"] ?? false),
       mfaExempt: true, // agent 调用本身已经过 MFA，默认豁免
+      ...(args["model"] ? { model: String(args["model"]) } : {}),
     });
 
     cronScheduler.reschedule(job.id);
@@ -122,6 +124,7 @@ registerTool({
         type: j.type,
         schedule: j.type === "once" ? j.runAt : j.type === "every" ? `每 ${j.intervalSecs}s` : `每天 ${j.timeOfDay}`,
         message: j.message.slice(0, 60),
+        model: j.model ?? "daily（默认）",
         lastRunAt: j.lastRunAt,
         lastRunStatus: j.lastRunStatus,
         output: j.output,
