@@ -225,11 +225,19 @@ DEFAULT_RSS_FEEDS: list[dict] = [
     {"name": "The Verge",      "url": "https://www.theverge.com/rss/index.xml",           "topics": ["*"]},
     {"name": "Wired",          "url": "https://www.wired.com/feed/rss",                   "topics": ["*"]},
     {"name": "Ars Technica",   "url": "https://arstechnica.com/feed/",                    "topics": ["*"]},
+    {"name": "TechCrunch",     "url": "https://techcrunch.com/feed/",                     "topics": ["*"]},
+    {"name": "MIT Tech Review","url": "https://www.technologyreview.com/feed/",           "topics": ["*"]},
     {"name": "HN RSS",         "url": "https://hnrss.org/frontpage",                      "topics": ["*"]},
     # ── AI / LLM 专项 ────────────────────────────────────────────────────────
-    {"name": "VentureBeat AI", "url": "https://feeds.feedburner.com/venturebeat/SZYF",    "topics": ["*"]},
-    {"name": "AI News",        "url": "https://www.artificialintelligence-news.com/feed/","topics": ["*"]},
-    {"name": "LessWrong",      "url": "https://www.lesswrong.com/feed.xml",               "topics": ["*"]},
+    {"name": "VentureBeat AI",   "url": "https://feeds.feedburner.com/venturebeat/SZYF",           "topics": ["*"]},
+    {"name": "AI News",          "url": "https://www.artificialintelligence-news.com/feed/",        "topics": ["*"]},
+    {"name": "LessWrong",        "url": "https://www.lesswrong.com/feed.xml",                       "topics": ["*"]},
+    {"name": "HuggingFace Blog", "url": "https://huggingface.co/blog/feed.xml",                     "topics": ["*"]},
+    {"name": "The Sequence AI",  "url": "https://thesequence.substack.com/feed",                    "topics": ["*"]},
+    {"name": "NVIDIA Blog",      "url": "https://blogs.nvidia.com/feed/",                           "topics": ["*"]},
+    {"name": "Google AI Blog",   "url": "https://blog.google/technology/ai/rss/",                   "topics": ["*"]},
+    {"name": "Simon Willison",   "url": "https://simonwillison.net/atom/everything/",               "topics": ["*"]},
+    {"name": "Import AI",        "url": "https://jack-clark.net/feed/",                             "topics": ["*"]},
     # ── 中文科技媒体 ──────────────────────────────────────────────────────────
     {"name": "36kr",           "url": "https://36kr.com/feed",         "topics": ["*"]},
     {"name": "InfoQ CN",       "url": "https://www.infoq.cn/feed",     "topics": ["*"]},
@@ -261,8 +269,11 @@ DEFAULT_RSS_FEEDS: list[dict] = [
     {"name": "Yahoo Finance",      "url": "https://finance.yahoo.com/news/rssindex",                                             "topics": ["*"]},
     {"name": "Investing.com Forex","url": "https://www.investing.com/rss/news_1.rss",                                           "topics": ["*"]},
     # ── 加密货币 ──────────────────────────────────────────────────────────────
-    {"name": "CoinDesk",       "url": "https://feeds.feedburner.com/CoinDesk",  "topics": ["*"]},
-    {"name": "CoinTelegraph",  "url": "https://cointelegraph.com/rss",          "topics": ["*"]},
+    {"name": "CoinDesk",        "url": "https://feeds.feedburner.com/CoinDesk",  "topics": ["*"]},
+    {"name": "CoinTelegraph",   "url": "https://cointelegraph.com/rss",          "topics": ["*"]},
+    {"name": "Decrypt",         "url": "https://decrypt.co/feed",                "topics": ["*"]},
+    {"name": "Bitcoin Magazine","url": "https://bitcoinmagazine.com/feed",       "topics": ["*"]},
+    {"name": "The Block",       "url": "https://www.theblock.co/rss.xml",        "topics": ["*"]},
 ]
 
 
