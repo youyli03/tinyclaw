@@ -184,9 +184,16 @@ const ToolsSchema = z.object({
    * Code 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
    * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
    * 复杂代码任务（重构、调试、多文件修改）建议使用无限制。
-   * chat 模式固定使用 10 轮。
+   * chat 模式轮次由 maxChatToolRounds 控制。
    */
   maxCodeToolRounds: z.number().int().min(0).default(0),
+  /**
+   * Chat/Cron 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
+   * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
+   * 若需限制轮次（如节省 token），可设为正整数（如 20）。
+   * cron 任务无人值守，推荐保持 0（无限制）确保复杂工作流能完整执行。
+   */
+  maxChatToolRounds: z.number().int().min(0).default(0),
   /**
    * 工具执行结果的最大字符数，超出时自动截断并附加说明，默认 20000。
    * 防止大文件读取或冗长命令输出占满 context window。

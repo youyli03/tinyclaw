@@ -158,7 +158,7 @@ QQBot 收到新 openid 的消息时，自动调用 `getSession(sessionId)`：
 1. 若 `session.running == true`：软中断旧 run，等待其结束
 2. 初始化 system prompt（仅首轮：BUILTIN + 全局 + Agent SYSTEM.md）
 3. QMD 检索该 Agent 的向量记忆，注入 system message
-4. ReAct 工具循环（最多 10 轮）
+4. ReAct 工具循环（轮次上限由 tools.maxChatToolRounds 配置，默认 0=无限制）
 5. JSONL 追加持久化（异步）
 6. `maybeCompress()`：超过阈值时触发摘要压缩
 

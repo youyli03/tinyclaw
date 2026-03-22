@@ -32,8 +32,8 @@ import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
-/** Chat 模式固定工具调用轮次上限 */
-const MAX_TOOL_ROUNDS = 10;
+/** Chat 模式工具调用轮次上限（在 config 中未配置时的后备默认值，0=无限制） */
+const MAX_TOOL_ROUNDS = 0;
 /** Slave 最大嵌套深度：0=Master，1=一级Slave，不允许 Slave 再 fork */
 const MAX_SLAVE_DEPTH = 1;
 /** 超过此时长（ms）且仍在执行工具时，自动 fork 为 Slave 继续执行 */
@@ -344,7 +344,7 @@ export interface AgentRunResult {
 
 /**
  * 单次 Agent 运行（一轮用户消息 → 完整响应）。
- * 支持多轮 tool_call（ReAct 循环），最多 MAX_TOOL_ROUNDS 轮。
+ * 支持多轮 tool_call（ReAct 循环），轮次上限由 tools.maxChatToolRounds 配置（0=无限制）。
  */
 /** 生成工具调用的单行摘要，用于日志 */
 function toolCallSummary(name: string, args: Record<string, unknown>): string {
@@ -507,9 +507,11 @@ export async function runAgent(
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
 
-  // code 模式轮次上限：0 = 无限制（用 Infinity 表示）；chat 模式固定 MAX_TOOL_ROUNDS
-  const configuredRounds = isCodeMode ? loadConfig().tools.maxCodeToolRounds : MAX_TOOL_ROUNDS;
-  const maxToolRounds = isCodeMode && configuredRounds === 0 ? Infinity : configuredRounds;
+  // 轮次上限：0 = 无限制（用 Infinity 表示）；chat/cron 模式读取 maxChatToolRounds，code 模式读取 maxCodeToolRounds
+  const configuredRounds = isCodeMode
+    ? loadConfig().tools.maxCodeToolRounds
+    : (loadConfig().tools.maxChatToolRounds ?? MAX_TOOL_ROUNDS);
+  const maxToolRounds = configuredRounds === 0 ? Infinity : configuredRounds;
   // code 模型 context window（供 token 预算检查用）
   const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code") : 0;
 
