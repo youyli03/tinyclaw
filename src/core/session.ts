@@ -465,13 +465,17 @@ export class Session {
   }
 
   /**
-   * 追加单条消息到 JSONL（chat 模式专用，code 模式依赖 rewriteCodeJsonl 做 crash 恢复）。
+   * 追加单条消息到 JSONL（chat/code 双模式）：
+   * - chat 模式 → `<id>.jsonl`
+   * - code 模式 → `<id>.code.jsonl`
    * 仅在 _persistReady 为 true 时执行（避免 loadFromJsonl 时重复追加）。
+   * 两种模式均实时追加，保证进程 crash 后能恢复到最近状态。
    */
   private _appendMsgToJsonl(msg: ChatMessage): void {
-    if (!this._persistReady || this.mode !== "chat") return;
+    if (!this._persistReady) return;
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, "chat");
+      const mode = this.mode === "code" ? "code" : "chat";
+      const filePath = Session.getJsonlPath(this.sessionId, mode);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.appendFileSync(filePath, Session.serializeMsgFull(msg, new Date().toISOString()) + "\n", "utf-8");
     } catch (err) {
@@ -539,7 +543,8 @@ export class Session {
   }
 
   /**
-   * Code 模式专用：将压缩后的 messages 覆写到 .code.jsonl。
+   * Code 模式专用：将压缩后的 messages 全量覆写到 .code.jsonl（仅在滑动窗口压缩时调用）。
+   * 日常每条消息的实时持久化由 _appendMsgToJsonl 完成（增量追加）。
    * 使用 serializeMsgFull 保证 tool_calls / tool_call_id 字段不丢失，
    * 确保 crash 恢复时工具调用链的完整性。
    */
@@ -619,7 +624,7 @@ export class Session {
           // 跳过格式损坏的行
         }
       }
-      // 加载后清理孤立的 role=tool 消息：
+      // ── Pass 1：清理孤立的 role=tool 消息 ──────────────────────────────────
       // 当会话历史被压缩时，可能出现 tool 消息排在最前而其对应的
       // assistant+tool_calls 已被移除的情况，OpenAI API 会拒绝该序列（400 Bad Request）。
       const validToolCallIds = new Set<string>();
@@ -640,6 +645,52 @@ export class Session {
           }
         }
       }
+
+      // ── Pass 2：修剪末尾不完整的工具调用链 ─────────────────────────────────
+      // crash 可能发生在 addAssistantWithToolCalls 之后、部分 addToolResultMessage 之前，
+      // 导致 JSONL 末尾存在 assistant+tool_calls 但缺少对应的 tool result，
+      // 发给 OpenAI API 时会返回 400 Bad Request。
+      // 修复：找到末尾最后一个带 tool_calls 的 assistant 消息，
+      // 若其 tool_call_id 集合与紧跟的 tool 消息不完全匹配，则将整条工具链（含已有 tool result）一起丢弃。
+      {
+        // 从末尾向前找最后一个 assistant+tool_calls 消息
+        let lastToolCallIdx = -1;
+        for (let i = sanitized.length - 1; i >= 0; i--) {
+          const m = sanitized[i]!;
+          if (m.role === "assistant") {
+            const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+            if (calls && calls.length > 0) {
+              lastToolCallIdx = i;
+            }
+            break; // assistant 消息（无论有没有 tool_calls）都是工具链的边界，找到即停
+          }
+        }
+        if (lastToolCallIdx >= 0) {
+          const assistantMsg = sanitized[lastToolCallIdx]!;
+          const expectedIds = new Set(
+            ((assistantMsg as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls ?? []).map((c) => c.id)
+          );
+          // 收集紧跟其后的 tool 消息 id
+          const gotIds = new Set<string>();
+          for (let i = lastToolCallIdx + 1; i < sanitized.length; i++) {
+            const m = sanitized[i]!;
+            if (m.role === "tool") {
+              gotIds.add(m.tool_call_id);
+            } else {
+              break; // 非 tool 消息打断了工具链，不再继续
+            }
+          }
+          // 若有任何 tool_call_id 没有对应 tool result → 整条工具链不完整，截断到 assistant 前
+          const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
+          if (missingIds.length > 0) {
+            console.warn(
+              `[session] loadFromJsonl: 检测到末尾不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
+            );
+            sanitized.splice(lastToolCallIdx); // 截断到 assistant+tool_calls 前（含）
+          }
+        }
+      }
+
       return sanitized.length > 0 ? sanitized : null;
     } catch (err) {
       console.error("[session] JSONL load failed:", err);
