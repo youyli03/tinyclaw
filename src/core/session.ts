@@ -175,11 +175,20 @@ export class Session {
       try { return loadConfig().tools.maxToolCallArgChars; } catch { return 4_000; }
     })();
     const tool_calls: OpenAIToolCall[] = calls.map((c) => {
-      const rawArgs = JSON.stringify(c.args);
-      // 截断单次参数总 JSON 长度（防止 edit_file 大 old_str/new_str 撑爆 context window）
-      const args = maxArgChars > 0 && rawArgs.length > maxArgChars
-        ? rawArgs.slice(0, maxArgChars) + `...[已截断，原始长度 ${rawArgs.length} 字符]`
-        : rawArgs;
+      // 截断每个字符串字段值（而非截断整个 JSON 字符串），保证序列化结果始终是合法 JSON。
+      // 截断整个 JSON 字符串会产生未闭合的字符串字面量，导致后续 LLM 请求返回 500 错误。
+      const args = (() => {
+        if (maxArgChars <= 0) return JSON.stringify(c.args);
+        const truncated = Object.fromEntries(
+          Object.entries(c.args as Record<string, unknown>).map(([k, v]) => {
+            if (typeof v === "string" && v.length > maxArgChars) {
+              return [k, v.slice(0, maxArgChars) + `...[截断，原 ${v.length} 字符]`];
+            }
+            return [k, v];
+          }),
+        );
+        return JSON.stringify(truncated);
+      })();
       return { id: c.callId, type: "function", function: { name: c.name, arguments: args } };
     });
     this.messages.push({ role: "assistant", content, tool_calls });

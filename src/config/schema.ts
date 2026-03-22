@@ -194,13 +194,13 @@ const ToolsSchema = z.object({
    */
   maxToolResultChars: z.number().int().min(0).default(20_000),
   /**
-   * 工具调用参数单个值的最大字符数，超出时写入 session 消息历史前自动截断，默认 4000。
-   * 防止 edit_file 等工具的大 old_str/new_str 参数全量写入 messages[]，
-   * 导致后续 LLM 请求 token 溢出（400 Bad Request）。
-   * 截断只影响存储副本，工具实际执行仍使用 LLM 返回的完整参数。
+   * 工具调用参数中单个字符串字段值的最大字符数，超出时截断该字段值（保留合法 JSON），默认 8000。
+   * 防止 edit_file 等工具的大 old_str/new_str 参数写入 messages[] 后撑爆 context window。
+   * 截断只影响存储副本（message history），工具实际执行仍使用 LLM 返回的完整参数。
+   * 注意：必须按字段值截断再重新序列化，而非截断整个 JSON 字符串（后者产生不合法 JSON）。
    * 0 = 不限制。
    */
-  maxToolCallArgChars: z.number().int().min(0).default(4_000),
+  maxToolCallArgChars: z.number().int().min(0).default(8_000),
 }).default({});
 
 // ── MemStore 配置（独立文件 ~/.tinyclaw/memstores.toml）──────────────────────────
@@ -265,6 +265,8 @@ export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 const RetryConfigSchema = z.object({
   /** 最多重试次数（不含首次尝试），默认 3；-1 = 无限重试 */
   maxAttempts: z.number().int().min(-1).default(-1),
+  /** 5xx 服务端错误的最大连续重试次数（独立于 maxAttempts），默认 5；-1 = 无限重试 */
+  max5xxAttempts: z.number().int().min(-1).default(5),
   /** 每次重试等待的固定延迟（毫秒），默认 1000 */
   baseDelayMs: z.number().int().positive().default(1000),
   /** 429 限流是否重试，默认 true */

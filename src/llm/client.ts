@@ -68,9 +68,12 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
   const MAX_RETRIES = policy?.maxAttempts ?? 0;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   const MAX_DURATION = policy?.maxRetryDurationMs ?? 0;
+  const MAX_5XX = policy?.max5xxAttempts ?? 5;
   const infinite = MAX_RETRIES === -1;
+  const infinite5xx = MAX_5XX === -1;
   const startedAt = MAX_DURATION > 0 ? Date.now() : 0;
   let lastErr: unknown;
+  let consecutive5xx = 0;
   for (let attempt = 0; infinite || attempt <= MAX_RETRIES; attempt++) {
     try {
       return await fn();
@@ -86,6 +89,20 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
       if (MAX_DURATION > 0 && Date.now() - startedAt >= MAX_DURATION) {
         console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试`);
         break;
+      }
+      // 5xx 单独计数：连续 5xx 超限时抛出专用错误（避免请求内容有问题时无限循环）
+      const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499);
+      if (is5xx) {
+        consecutive5xx++;
+        if (!infinite5xx && consecutive5xx > MAX_5XX) {
+          throw new LLMConnectionError(
+            err,
+            `⚠️ AI 服务持续返回 ${(err as APIError).status} 错误（已重试 ${consecutive5xx - 1} 次），` +
+            `可能是请求内容导致的问题（如工具参数过长），而非临时故障。建议发送 /new 清空上下文后重试。`,
+          );
+        }
+      } else {
+        consecutive5xx = 0; // 非 5xx 成功或其他错误重置计数
       }
       // 429：优先使用 Retry-After，否则固定 baseDelayMs
       const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined) ?? BASE_DELAY;
