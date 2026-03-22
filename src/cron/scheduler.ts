@@ -44,7 +44,7 @@ class CronScheduler {
   /** 正在执行的 jobId 集合（并发保护：同一 job 不允许多个实例同时运行） */
   private running = new Set<string>();
 
-  async start(connector: Connector): Promise<void> {
+  async start(connector: Connector | null): Promise<void> {
     this.connector = connector;
     const jobs = loadJobs();
     for (const job of jobs) {

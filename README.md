@@ -193,11 +193,19 @@ src/
 │   │       └── output/       # 输出文件
 │   └── <custom>/             # 自定义 Agent（tinyclaw agent new <id>）
 ├── sessions/                 # 对话 JSONL（崩溃恢复）
+├── memstores.toml            # 向量记忆库配置（可选，模板见 memstores.example.toml）
 ├── cron/                     # Cron 任务存储
 │   ├── jobs.json             # 定时任务持久化
 │   └── runs/                 # 每次运行日志
 ├── qqbot/session.json        # WS Session 持久化（断线续传）
 └── qqbot/downloads/          # 附件临时文件
+```
+
+`memstores.toml` 配置向量记忆库（供 `search_store` 工具和 news MCP 使用）。首次配置时复制模板：
+
+```bash
+cp memstores.example.toml ~/.tinyclaw/memstores.toml
+# 然后编辑填入各 store 的名称、描述和 embedder 配置
 ```
 
 ## CLI 命令速查
@@ -303,6 +311,31 @@ class TelegramConnector implements Connector {
 | `qrcode-terminal` | TOTP 绑定时在终端显示二维码 |
 
 > Copilot 后端无额外依赖，直接使用 `fetch` 调用 GitHub API。
+
+### 系统依赖（可选功能）
+
+以下系统依赖仅在使用对应功能时需要安装，不影响核心功能正常运行。
+
+**Plan / ask_user 消息渲染（Markdown → 图片，QQBot 消息使用）：**
+
+```bash
+# Debian/Ubuntu
+sudo apt install -y chromium-browser python3 python3-pip
+pip3 install markdown-it-py Pillow numpy
+```
+
+**Browser MCP server（`mcp-servers/browser/`）：**
+
+```bash
+# Playwright 需要 Chromium 可执行文件，路径通过 CHROMIUM_PATH 环境变量配置
+# 也可直接指向系统 chromium-browser（与上面共用）
+```
+
+**News MCP server（`mcp-servers/news/`）：**
+
+```bash
+pip3 install requests beautifulsoup4 lxml
+```
 
 ## License
 

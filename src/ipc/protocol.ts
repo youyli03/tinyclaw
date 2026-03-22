@@ -65,5 +65,8 @@ export type IpcResponse =
 
 export type IpcClientMessage =
   | IpcRequest
-  /** MFA 确认响应：客户端向服务端回复 */
-  | { type: "mfa_response"; approved: boolean };
+  /** MFA 确认响应：客户端向服务端回复。
+   *  - simple/msal 模式：approved=true/false
+   *  - TOTP 模式：approved 字段忽略，code 字段携带用户输入的 6 位验证码（服务端用 verifyCode 校验）
+   */
+  | { type: "mfa_response"; approved: boolean; code?: string };

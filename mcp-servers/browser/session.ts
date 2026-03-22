@@ -6,6 +6,7 @@
  *   cdp      — 连接到外部已运行的 Chromium（通过 CDP 协议），用于接入 OpenClaw 扩展
  *
  * 单例 session 随 MCP server 进程存活，工具调用时懒初始化。
+ * idle 超时：最后一次工具调用后 IDLE_TIMEOUT_MS 内无新调用则自动关闭浏览器（仅 headless）。
  */
 
 import { chromium } from "playwright-core";
@@ -15,11 +16,27 @@ export type BrowserMode = "headless" | "cdp";
 
 const CHROMIUM_PATH = process.env["CHROMIUM_PATH"] ?? "/usr/bin/chromium-browser";
 
+/** headless 模式的浏览器 idle 超时（默认 10 分钟） */
+const IDLE_TIMEOUT_MS = Number(process.env["BROWSER_IDLE_TIMEOUT_MS"] ?? 10 * 60 * 1000);
+
 export class BrowserSession {
   private browser: Browser | undefined;
   private context: BrowserContext | undefined;
   private page: Page | undefined;
   mode: BrowserMode = "headless";
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** 重置 idle 计时器；每次工具调用后调用 */
+  touch(): void {
+    if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
+    // 仅 headless 模式启用 idle 超时（CDP 模式管理外部浏览器，不自动关闭）
+    if (this.mode === "headless" && this.browser) {
+      this.idleTimer = setTimeout(() => {
+        console.error(`[browser] idle timeout (${IDLE_TIMEOUT_MS / 1000}s), closing browser`);
+        void this.close();
+      }, IDLE_TIMEOUT_MS);
+    }
+  }
 
   /** 确保 headless 会话已启动，若已有则直接返回 */
   async ensureSession(): Promise<void> {
@@ -79,6 +96,10 @@ export class BrowserSession {
 
   /** 关闭浏览器，仅在 headless 模式下实际 close（CDP 模式不关闭外部浏览器） */
   async close(): Promise<void> {
+    if (this.idleTimer !== undefined) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = undefined;
+    }
     if (this.mode === "headless" && this.browser) {
       await this.browser.close().catch(() => {});
     } else if (this.mode === "cdp" && this.browser) {

@@ -36,6 +36,7 @@ import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
+import { slaveManager } from "./core/slave-manager.js";
 import { parseCommand, executeCommand } from "./commands/registry.js";
 import "./commands/builtin.js";
 
@@ -76,19 +77,22 @@ async function main(): Promise<void> {
   agentManager.ensureDefault();
   console.log("[tinyclaw] Agent workspace ready");
 
-  // 3. 启动 QQBot
-  if (!cfg.channels.qqbot) {
-    console.log("[tinyclaw] QQBot not configured, exiting");
-    process.exit(0);
-  }
+  // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
+  let connector: QQBotConnector | null = null;
 
-  const connector = new QQBotConnector();
-  _activeConnector = connector;
-  _activeSessions  = sessions;
+  if (cfg.channels.qqbot) {
+    connector = new QQBotConnector();
+    _activeConnector = connector;
+  } else {
+    console.log("[tinyclaw] QQBot not configured, running in IPC-only mode");
+  }
+  _activeSessions = sessions;
 
   // ── QQBot 消息处理 ──────────────────────────────────────────────────────
 
   async function handleMessage(msg: InboundMessage): Promise<string> {
+    // connector 在此函数被注册前已检查非 null，此 guard 仅用于 TS 类型收窄
+    if (!connector) return "";
     const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
     const session = getSession(sessionId);
 
@@ -526,7 +530,9 @@ async function main(): Promise<void> {
 
   // ── 注册处理器并启动 ───────────────────────────────────────────────────
 
-  connector.onMessage(handleMessage);
+  if (connector) {
+    connector.onMessage(handleMessage);
+  }
 
   // 4. 启动 IPC server（供 CLI chat 命令通过 Unix socket 接入）
   const ipcServer = startIpcServer(sessions, connector);
@@ -535,38 +541,48 @@ async function main(): Promise<void> {
   // 5. 启动 Cron 调度器
   await cronScheduler.start(connector);
 
-  // 6. 优雅退出
+  // 6. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
+  const gcInterval = setInterval(() => { slaveManager.gc(); }, 60 * 60 * 1000);
+
+  // 7. 优雅退出
   const handleExit = async (signal: string) => {
     console.log(`\n[tinyclaw] Received ${signal}, shutting down...`);
+    clearInterval(gcInterval);
     ipcServer.close();
     cronScheduler.stop();
-    await connector.stop();
+    if (connector) await connector.stop();
     process.exit(0);
   };
 
   process.on("SIGINT", () => void handleExit("SIGINT"));
   process.on("SIGTERM", () => void handleExit("SIGTERM"));
 
-  console.log("[tinyclaw] Starting QQBot connector...");
+  if (connector) {
+    console.log("[tinyclaw] Starting QQBot connector...");
 
-  // 检查重启通知 marker（由 /restart 命令写入，用于重启后发送通知）
-  const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
-  if (fs.existsSync(RESTART_NOTIFY_FILE)) {
-    try {
-      const marker = JSON.parse(fs.readFileSync(RESTART_NOTIFY_FILE, "utf-8")) as {
-        peerId: string;
-        msgType: InboundMessage["type"];
-      };
-      fs.unlinkSync(RESTART_NOTIFY_FILE);
-      connector.onReady = () => {
-        void connector.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
-      };
-    } catch {
-      try { fs.unlinkSync(RESTART_NOTIFY_FILE); } catch { /* ignore */ }
+    // 检查重启通知 marker（由 /restart 命令写入，用于重启后发送通知）
+    const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
+    if (fs.existsSync(RESTART_NOTIFY_FILE)) {
+      try {
+        const marker = JSON.parse(fs.readFileSync(RESTART_NOTIFY_FILE, "utf-8")) as {
+          peerId: string;
+          msgType: InboundMessage["type"];
+        };
+        fs.unlinkSync(RESTART_NOTIFY_FILE);
+        connector.onReady = () => {
+          void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
+        };
+      } catch {
+        try { fs.unlinkSync(RESTART_NOTIFY_FILE); } catch { /* ignore */ }
+      }
     }
-  }
 
-  await connector.start(); // 阻塞直到 abort
+    await connector.start(); // 阻塞直到 abort
+  } else {
+    // IPC-only 模式：无限等待信号
+    console.log("[tinyclaw] Running in IPC-only mode (no QQBot). Send SIGTERM to stop.");
+    await new Promise<void>(() => { /* 永不 resolve，依靠 SIGTERM/SIGINT 退出 */ });
+  }
 }
 
 main().catch(async (err) => {

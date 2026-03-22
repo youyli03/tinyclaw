@@ -31,8 +31,12 @@ export function startIpcServer(
 
   const server = createServer((socket) => {
     let buf = "";
-    /** 当前待处理的 MFA 确认请求 */
-    let pendingMFA: { resolve: (v: boolean) => void; reject: (e: Error) => void } | null = null;
+    /** 当前待处理的 MFA 确认请求（含可选 TOTP verifyCode） */
+    let pendingMFA: {
+      resolve: (v: boolean) => void;
+      reject: (e: Error) => void;
+      verifyCode?: (code: string) => boolean;
+    } | null = null;
 
     socket.on("data", (data) => {
       buf += data.toString("utf-8");
@@ -46,7 +50,15 @@ export function startIpcServer(
 
         if (msg.type === "mfa_response") {
           if (pendingMFA) {
-            pendingMFA.resolve((msg as { type: "mfa_response"; approved: boolean }).approved);
+            const { approved } = msg as { type: "mfa_response"; approved: boolean };
+            // TOTP 模式：用 verifyCode 校验用户回复的 6 位码（approved 字段此时携带原始文本）
+            if (pendingMFA.verifyCode) {
+              const raw = String((msg as unknown as Record<string, unknown>)["code"] ?? "").trim();
+              const passed = /^\d{6}$/.test(raw) && pendingMFA.verifyCode(raw);
+              pendingMFA.resolve(passed);
+            } else {
+              pendingMFA.resolve(approved);
+            }
             pendingMFA = null;
           }
           continue;
@@ -76,7 +88,7 @@ async function handleRequest(
   socket: import("net").Socket,
   sessions: Map<string, Session>,
   connector: QQBotConnector | null,
-  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void } | null) => void
+  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } | null) => void
 ): Promise<void> {
   const send = (resp: IpcResponse): void => {
     if (!socket.destroyed) socket.write(JSON.stringify(resp) + "\n");
@@ -205,6 +217,8 @@ async function handleRequest(
       target.abortRequested = true;
       target.llmAbortController?.abort();
       target.abortPendingApproval();
+      target.abortPendingPlanApproval();
+      target.abortPendingAskUser();
       send({ type: "session_aborted", sessionId: matchedId, found: true });
       return;
     }
@@ -253,6 +267,8 @@ async function handleRequest(
     session.abortRequested = true;
     session.llmAbortController?.abort();
     session.abortPendingApproval();
+    session.abortPendingPlanApproval();
+    session.abortPendingAskUser();
     await session.currentRunPromise?.catch(() => {});
   }
 
@@ -268,9 +284,11 @@ async function handleRequest(
     },
     onMFARequest: (warningMessage, verifyCode) =>
       new Promise<boolean>((resolve, reject) => {
-        setPendingMFA({ resolve, reject });
+        // 保存 verifyCode，TOTP 模式下 mfa_response 时用其验证 6 位码
+        const mfaEntry: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } = { resolve, reject };
+        if (verifyCode) mfaEntry.verifyCode = verifyCode;
+        setPendingMFA(mfaEntry);
         send({ type: "mfa_request", warningMessage });
-        void verifyCode; // verifyCode 由 agent 层在 onMFARequest 中需要的地方调用，这里不需要
       }),
     onCompress: (phase, summary) => {
       if (phase === "start") {

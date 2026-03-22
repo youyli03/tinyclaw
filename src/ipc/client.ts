@@ -61,7 +61,12 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
           process.stdout.write(`\n${warningMsg}\n> `);
           rl.once("line", (answer) => {
             rl.close();
-            const reply: IpcClientMessage = { type: "mfa_response", approved: !/^(\u53d6\u6d88|n|no)$/i.test(answer.trim()) };
+            const trimmed = answer.trim();
+            // 若输入为 6 位数字，视为 TOTP 码：发送 code 字段供服务端 verifyCode 校验
+            const isTotp = /^\d{6}$/.test(trimmed);
+            const reply: IpcClientMessage = isTotp
+              ? { type: "mfa_response", approved: true, code: trimmed }
+              : { type: "mfa_response", approved: !/^(取消|n|no)$/i.test(trimmed) };
             socket.write(JSON.stringify(reply) + "\n");
           });
         } else if (resp.type === "done") {

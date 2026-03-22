@@ -196,6 +196,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args = {} } = req.params;
 
+  // 每次工具调用都重置 idle 计时器（仅对有效工具调用计时）
+  session.touch();
+
   try {
     switch (name) {
       // ── status ────────────────────────────────────────────────────────
