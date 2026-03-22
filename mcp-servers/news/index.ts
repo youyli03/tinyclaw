@@ -214,7 +214,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "search_local",
-      description: "在本地新闻存档中做全文关键词搜索（简单文本匹配，不依赖向量索引）。",
+      description: "在本地新闻存档中做全文关键词搜索（简单文本匹配，不依赖向量索引）。多个关键词空格分隔时为 OR 逻辑，任意一词命中即返回。",
       inputSchema: {
         type: "object",
         properties: {
@@ -372,7 +372,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             for (const line of lines) {
               if (matches.length >= maxResults) break;
               const ll = line.toLowerCase();
-              if (keywords.every((kw) => ll.includes(kw))) {
+              if (keywords.some((kw) => ll.includes(kw))) {
                 matches.push({ date, line: line.trim() });
               }
             }

@@ -180,6 +180,44 @@ def _l2_dedupe(items: list[dict], threshold: float = 0.65) -> list[dict]:
     return kept
 
 
+# ── 标题关键词过滤（HN / RSS 共用）─────────────────────────────────────────────
+
+_STOP_WORDS = {"price", "news", "data", "rate", "from", "with", "that", "this",
+               "will", "were", "have", "been", "they", "their", "about", "more"}
+
+
+def _build_kw_set(topics: list[str]) -> set[str]:
+    """将 topics 列表转换为关键词集合（支持多词短语拆分）。
+    多词短语（如 "gold price"）：整体保留 + 拆出 ≥4 字符非停用词单词。
+    """
+    kw_set: set[str] = set()
+    for t in topics:
+        t = t.strip().lower()
+        if not t or t == "*":
+            continue
+        kw_set.add(t)
+        if " " in t:
+            for word in t.split():
+                if len(word) >= 4 and word not in _STOP_WORDS:
+                    kw_set.add(word)
+    return kw_set
+
+
+def _title_matches_kw(title: str, kw_set: set[str]) -> bool:
+    """判断标题是否命中关键词集合（OR 逻辑，词边界匹配单词，子串匹配短语）。"""
+    if not kw_set:
+        return True
+    tl = title.lower()
+    for kw in kw_set:
+        if " " in kw:
+            if kw in tl:
+                return True
+        else:
+            if re.search(r"\b" + re.escape(kw) + r"\b", tl):
+                return True
+    return False
+
+
 # ── HackerNews 抓取 ───────────────────────────────────────────────────────────
 
 def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]:
@@ -189,6 +227,7 @@ def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]
         sys.stderr.write("[news_fetch] 无法导入 lib.hackernews，跳过 HN 源\n")
         return []
 
+    kw_set = _build_kw_set(topics)
     results = []
     now_utc = datetime.now(timezone.utc)
     from_date = (now_utc - timedelta(hours=since_hours)).strftime("%Y-%m-%d")
@@ -204,14 +243,21 @@ def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]
                 depth="default",
             )
             parsed = parse_hackernews_response(response, query=topic)
-            for item in parsed[:per_topic]:
+            count = 0
+            for item in parsed:
+                if count >= per_topic:
+                    break
+                title = item.get("title", "")
+                # 过滤掉标题不含关键词的条目（Algolia 会返回相关度较低的结果）
+                if not _title_matches_kw(title, kw_set):
+                    continue
                 object_id = item.get("object_id", "")
                 url = item.get("url") or f"https://news.ycombinator.com/item?id={object_id}"
                 results.append(
                     {
                         "source": "hackernews",
                         "id": f"hn_{object_id}",
-                        "title": item.get("title", ""),
+                        "title": title,
                         "url": url,
                         "text": "",
                         "topic": topic,
@@ -220,6 +266,7 @@ def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]
                         "author": item.get("author", ""),
                     }
                 )
+                count += 1
         except Exception as e:
             sys.stderr.write(f"[news_fetch] HN 抓取 topic={topic} 失败：{e}\n")
 
@@ -298,36 +345,8 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
-    # 关键词集合（小写，用于快速过滤）
-    # 对多词短语（如 "gold price"），同时保留整体短语 AND 拆出 4+ 字符单词，
-    # 任一命中即视为匹配，避免 "gold price" 无法匹配 "Gold slips" 标题的问题。
-    _STOP_WORDS = {"price", "news", "data", "rate", "from", "with", "that", "this",
-                   "will", "were", "have", "been", "they", "their", "about", "more"}
-    kw_set: set[str] = set()
-    for t in topics:
-        t = t.strip().lower()
-        if not t or t == "*":
-            continue
-        kw_set.add(t)  # 整体短语匹配（精确）
-        if " " in t:   # 多词短语：拆出有意义的单词（≥4 字符，非停用词）
-            for word in t.split():
-                if len(word) >= 4 and word not in _STOP_WORDS:
-                    kw_set.add(word)
-
-    def _title_matches(title: str) -> bool:
-        if not kw_set:
-            return True
-        tl = title.lower()
-        for kw in kw_set:
-            if " " in kw:
-                # 多词短语：整体子串匹配（"gold price" → 要求连续出现）
-                if kw in tl:
-                    return True
-            else:
-                # 单个词：词边界匹配，避免 "gold" 命中 "Goldman"
-                if re.search(r"\b" + re.escape(kw) + r"\b", tl):
-                    return True
-        return False
+    # 使用模块级 _build_kw_set / _title_matches_kw 进行标题过滤（与 HN 共用逻辑）
+    kw_set = _build_kw_set(topics)
 
     def _parse_date(s: str | None) -> datetime | None:
         if not s:
@@ -399,7 +418,7 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                     continue
                 if pub_dt and pub_dt < cutoff:
                     continue
-                if not _title_matches(title):
+                if not _title_matches_kw(title, kw_set):
                     continue
 
                 feed_items.append(
