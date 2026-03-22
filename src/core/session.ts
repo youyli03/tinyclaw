@@ -108,6 +108,9 @@ export class Session {
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
 
+  /** 构造函数完成加载后置为 true；为 false 时不写 JSONL（避免加载历史时重复追加） */
+  private _persistReady = false;
+
   // ── Agent Bind（父子关系）──────────────────────────────────────────────────
   /** 父 Session ID（由 code_assist / agent_fork 等创建时设置） */
   parentId?: string;
@@ -135,6 +138,7 @@ export class Session {
       this.mode = "code";
       this.messages = codeRestored;
       this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
+      this._persistReady = true;
       return;
     }
 
@@ -145,6 +149,7 @@ export class Session {
     } else if (opts.systemPrompt) {
       this.messages.push({ role: "system", content: opts.systemPrompt });
     }
+    this._persistReady = true;
   }
 
   getMessages(): ChatMessage[] {
@@ -153,10 +158,12 @@ export class Session {
 
   addUserMessage(content: string | ContentPart[]): void {
     this.messages.push({ role: "user", content });
+    this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
   addAssistantMessage(content: string): void {
     this.messages.push({ role: "assistant", content });
+    this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
   /**
@@ -176,6 +183,7 @@ export class Session {
       return { id: c.callId, type: "function", function: { name: c.name, arguments: args } };
     });
     this.messages.push({ role: "assistant", content, tool_calls });
+    this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
   /**
@@ -185,6 +193,7 @@ export class Session {
    */
   addToolResultMessage(toolCallId: string, content: string): void {
     this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+    this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
   addSystemMessage(content: string): void {
@@ -444,6 +453,21 @@ export class Session {
     const base: Record<string, unknown> = { role: m.role, content: m.content };
     if (ts) base["ts"] = ts;
     return JSON.stringify(base);
+  }
+
+  /**
+   * 追加单条消息到 JSONL（chat 模式专用，code 模式依赖 rewriteCodeJsonl 做 crash 恢复）。
+   * 仅在 _persistReady 为 true 时执行（避免 loadFromJsonl 时重复追加）。
+   */
+  private _appendMsgToJsonl(msg: ChatMessage): void {
+    if (!this._persistReady || this.mode !== "chat") return;
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId, "chat");
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, Session.serializeMsgFull(msg, new Date().toISOString()) + "\n", "utf-8");
+    } catch (err) {
+      console.error("[session] JSONL incremental append failed:", err);
+    }
   }
 
   /**

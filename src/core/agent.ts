@@ -856,10 +856,7 @@ export async function runAgent(
     }
   }
 
-  // 5. JSONL 持久化（异步，不阻塞响应返回）
-  if (finalContent) {
-    session.appendLastTurnToJsonl();
-  }
+  // 5. JSONL 持久化：各消息在 addUserMessage / addAssistantMessage 等调用时已逐条写入，无需在此重复。
 
   // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查；code 模式跳过）
   // 使用最后一轮实际 promptTokens（比字符估算更准确）

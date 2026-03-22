@@ -22,36 +22,79 @@ news_fetch.py  —  tinyclaw news MCP server 的多源抓取脚本
     "Gold slips near $4,500" 通过 \bgold\b 匹配 ✓
     "Goldman Sachs rises" 不匹配 \bgold\b ✗（词边界阻断误匹配）
 
-内置 RSS 源清单（DEFAULT_RSS_FEEDS）：
-  科技/通用：
+内置 RSS 源清单（DEFAULT_RSS_FEEDS，共 58 源）：
+
+  科技/通用（9）：
     BBC Technology    https://feeds.bbci.co.uk/news/technology/rss.xml
     Al Jazeera        https://www.aljazeera.com/xml/rss/all.xml
     36kr              https://36kr.com/feed
     InfoQ CN          https://www.infoq.cn/feed
     Solidot           https://www.solidot.org/index.rss
     HN RSS            https://hnrss.org/frontpage
+    The Verge         https://www.theverge.com/rss/index.xml
+    Ars Technica      https://feeds.arstechnica.com/arstechnica/index
+    The Register      https://www.theregister.com/headlines.rss
+    ZDNet             https://www.zdnet.com/news/rss.xml
+    Wired             https://www.wired.com/feed/rss
+    TechCrunch        https://techcrunch.com/feed/
+    MIT Tech Review   https://www.technologyreview.com/feed/
 
-  贵金属专项：
-    FX Street         https://www.fxstreet.com/rss/news         (XAU/USD、Gold、Silver 实时分析)
-    Seeking Alpha Gold   https://seekingalpha.com/tag/gold.xml
-    Seeking Alpha Silver https://seekingalpha.com/tag/silver.xml
+  AI/LLM 专项（5）：
+    HuggingFace Blog  https://huggingface.co/blog/feed.xml
+    VentureBeat AI    https://venturebeat.com/category/ai/feed
+    Google AI Blog    https://blog.google/innovation-and-ai/technology/ai/rss/
+    OpenAI Blog       https://openai.com/blog/rss.xml
+    LessWrong         https://www.lesswrong.com/feed.xml?view=curated-questions
 
-  大宗商品：
-    Seeking Alpha Commodities  https://seekingalpha.com/tag/commodities.xml
-    OilPrice.com               https://oilprice.com/rss/main
-    Seeking Alpha Copper       https://seekingalpha.com/tag/copper.xml
+  国际新闻（7）：
+    CNN Top Stories   http://rss.cnn.com/rss/edition.rss
+    CNN Business      http://rss.cnn.com/rss/money_news_international.rss
+    CNN Tech          http://rss.cnn.com/rss/edition_technology.rss
+    Financial Times   https://www.ft.com/rss/home/uk
+    Nikkei Asia       https://asia.nikkei.com/rss/feed/nar
+    South China MP    https://www.scmp.com/rss/91/feed
+    Japan Times       https://www.japantimes.co.jp/feed/topstories/
 
-  概念板块：
-    Seeking Alpha Energy    https://seekingalpha.com/tag/energy.xml
-    Seeking Alpha Materials https://seekingalpha.com/tag/materials.xml
-    CNBC Energy             https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768
-
-  综合财经/宏观：
+  综合财经/宏观（9）：
     MarketWatch       https://feeds.content.dowjones.io/public/rss/mw_marketpulse
     Bloomberg Markets https://feeds.bloomberg.com/markets/news.rss
     CNBC Finance      https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
     CNBC Investing    https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069
-    Investing.com Forex https://www.investing.com/rss/news_1.rss
+    Investing.com     https://www.investing.com/rss/news_1.rss
+    WSJ World News    https://feeds.a.dj.com/rss/RSSWorldNews.xml
+    WSJ Tech          https://feeds.a.dj.com/rss/RSSWSJD.xml
+    Yahoo Finance     https://finance.yahoo.com/news/rssindex
+    Wired Business    https://www.wired.com/feed/category/business/latest/rss
+
+  贵金属专项（3）：
+    FX Street         https://www.fxstreet.com/rss/news
+    Seeking Alpha Gold   https://seekingalpha.com/tag/gold.xml
+    Seeking Alpha Silver https://seekingalpha.com/tag/silver.xml
+
+  大宗商品（3）：
+    Seeking Alpha Commodities  https://seekingalpha.com/tag/commodities.xml
+    OilPrice.com               https://oilprice.com/rss/main
+    Seeking Alpha Copper       https://seekingalpha.com/tag/copper.xml
+
+  概念板块（3）：
+    Seeking Alpha Energy    https://seekingalpha.com/tag/energy.xml
+    Seeking Alpha Materials https://seekingalpha.com/tag/materials.xml
+    CNBC Energy             https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768
+
+  加密货币（5）：
+    CoinDesk          https://www.coindesk.com/arc/outboundfeeds/rss
+    CoinTelegraph     https://cointelegraph.com/rss
+    Decrypt           https://decrypt.co/feed
+    Bitcoin Magazine  https://bitcoinmagazine.com/.rss/full/
+    The Block         https://www.theblock.co/rss.xml
+
+  开源/GitHub（1）：
+    GitHub Trending   https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml
+
+  中文科技媒体（3）：
+    虎嗅              https://www.huxiu.com/rss/0.xml
+    少数派            https://sspai.com/feed
+    IT之家            https://www.ithome.com/rss/
 """
 
 import argparse
@@ -176,13 +219,28 @@ def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]
 
 # 内置 RSS 源列表（topics 用于标题关键词过滤；若 topic 为 "*" 则不过滤）
 DEFAULT_RSS_FEEDS: list[dict] = [
-    # ── 科技/通用 ──────────────────────────────────────────────────────────────
+    # ── 科技/通用（英文）────────────────────────────────────────────────────
     {"name": "BBC Technology", "url": "https://feeds.bbci.co.uk/news/technology/rss.xml", "topics": ["*"]},
     {"name": "Al Jazeera",     "url": "https://www.aljazeera.com/xml/rss/all.xml",        "topics": ["*"]},
-    {"name": "36kr",           "url": "https://36kr.com/feed",                            "topics": ["*"]},
-    {"name": "InfoQ CN",       "url": "https://www.infoq.cn/feed",                        "topics": ["*"]},
-    {"name": "Solidot",        "url": "https://www.solidot.org/index.rss",                "topics": ["*"]},
+    {"name": "The Verge",      "url": "https://www.theverge.com/rss/index.xml",           "topics": ["*"]},
+    {"name": "Wired",          "url": "https://www.wired.com/feed/rss",                   "topics": ["*"]},
+    {"name": "Ars Technica",   "url": "https://arstechnica.com/feed/",                    "topics": ["*"]},
     {"name": "HN RSS",         "url": "https://hnrss.org/frontpage",                      "topics": ["*"]},
+    # ── AI / LLM 专项 ────────────────────────────────────────────────────────
+    {"name": "VentureBeat AI", "url": "https://feeds.feedburner.com/venturebeat/SZYF",    "topics": ["*"]},
+    {"name": "AI News",        "url": "https://www.artificialintelligence-news.com/feed/","topics": ["*"]},
+    {"name": "LessWrong",      "url": "https://www.lesswrong.com/feed.xml",               "topics": ["*"]},
+    # ── 中文科技媒体 ──────────────────────────────────────────────────────────
+    {"name": "36kr",           "url": "https://36kr.com/feed",         "topics": ["*"]},
+    {"name": "InfoQ CN",       "url": "https://www.infoq.cn/feed",     "topics": ["*"]},
+    {"name": "虎嗅",            "url": "https://www.huxiu.com/rss/0.xml","topics": ["*"]},
+    {"name": "少数派",          "url": "https://sspai.com/feed",        "topics": ["*"]},
+    {"name": "爱范儿",          "url": "https://www.ifanr.com/feed",    "topics": ["*"]},
+    {"name": "Solidot",        "url": "https://www.solidot.org/index.rss","topics": ["*"]},
+    {"name": "稀土掘金",        "url": "https://juejin.cn/rss",         "topics": ["*"]},
+    # ── 开发者 / 开源 ─────────────────────────────────────────────────────────
+    {"name": "GitHub Blog",    "url": "https://github.blog/feed/",     "topics": ["*"]},
+    {"name": "Dev.to",         "url": "https://dev.to/feed",           "topics": ["*"]},
     # ── 贵金属专项 ────────────────────────────────────────────────────────────
     {"name": "FX Street",            "url": "https://www.fxstreet.com/rss/news",                   "topics": ["*"]},
     {"name": "Seeking Alpha Gold",   "url": "https://seekingalpha.com/tag/gold.xml",               "topics": ["*"]},
@@ -195,12 +253,16 @@ DEFAULT_RSS_FEEDS: list[dict] = [
     {"name": "Seeking Alpha Energy",    "url": "https://seekingalpha.com/tag/energy.xml",          "topics": ["*"]},
     {"name": "Seeking Alpha Materials", "url": "https://seekingalpha.com/tag/materials.xml",       "topics": ["*"]},
     {"name": "CNBC Energy",             "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19836768", "topics": ["*"]},
-    # ── 综合财经/宏观 ─────────────────────────────────────────────────────────
-    {"name": "MarketWatch",       "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",                             "topics": ["*"]},
-    {"name": "Bloomberg Markets", "url": "https://feeds.bloomberg.com/markets/news.rss",                                            "topics": ["*"]},
-    {"name": "CNBC Finance",      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",     "topics": ["*"]},
-    {"name": "CNBC Investing",    "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",     "topics": ["*"]},
-    {"name": "Investing.com Forex","url": "https://www.investing.com/rss/news_1.rss",                                              "topics": ["*"]},
+    # ── 综合财经 / 宏观 ───────────────────────────────────────────────────────
+    {"name": "MarketWatch",        "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",                         "topics": ["*"]},
+    {"name": "Bloomberg Markets",  "url": "https://feeds.bloomberg.com/markets/news.rss",                                        "topics": ["*"]},
+    {"name": "CNBC Finance",       "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "topics": ["*"]},
+    {"name": "CNBC Investing",     "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", "topics": ["*"]},
+    {"name": "Yahoo Finance",      "url": "https://finance.yahoo.com/news/rssindex",                                             "topics": ["*"]},
+    {"name": "Investing.com Forex","url": "https://www.investing.com/rss/news_1.rss",                                           "topics": ["*"]},
+    # ── 加密货币 ──────────────────────────────────────────────────────────────
+    {"name": "CoinDesk",       "url": "https://feeds.feedburner.com/CoinDesk",  "topics": ["*"]},
+    {"name": "CoinTelegraph",  "url": "https://cointelegraph.com/rss",          "topics": ["*"]},
 ]
 
 
