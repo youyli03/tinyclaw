@@ -64,7 +64,16 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   let resultText = "";
 
   try {
-    const result = await runAgent(session, job.message, { onMFARequest, systemPrompt: CRON_AGENT_SYSTEM });
+    const notifyFn = connector && job.output.peerId
+      ? async (message: string) => {
+          await connector.send(job.output.peerId!, job.output.msgType, message);
+        }
+      : undefined;
+    const result = await runAgent(session, job.message, {
+      onMFARequest,
+      systemPrompt: CRON_AGENT_SYSTEM,
+      ...(notifyFn ? { onNotify: notifyFn } : {}),
+    });
     resultText = result.content;
   } catch (err) {
     status = "error";
