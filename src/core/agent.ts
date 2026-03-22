@@ -430,6 +430,9 @@ export async function runAgent(
   const llmAc = new AbortController();
   session.llmAbortController = llmAc;
 
+  // 清理可能由上一次异常退出遗留的不完整工具调用链，防止 400 Bad Request 死循环
+  session.sanitizeMessages();
+
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
   // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
@@ -551,11 +554,9 @@ export async function runAgent(
         if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
           break;
         }
-        // 连接彻底失败：回滚本次注入的消息，保持 session 状态干净，无需重启
-        if (err instanceof LLMConnectionError) {
-          session.trimToLength(preRunLength);
-          toolThrottler?.stop();
-        }
+        // LLM 调用失败（连接错误、400/500、限流等）：回滚本次注入的消息，保持 session 状态干净
+        session.trimToLength(preRunLength);
+        toolThrottler?.stop();
         throw err;
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -638,16 +639,15 @@ export async function runAgent(
     // 有工具调用 → 执行并将结果追加到 messages
     // function calling 模式：assistant 消息需携带 tool_calls 数组（供 API 匹配 tool_call_id）
     // 文本模式：普通 assistant 消息即可
+    // 过滤掉 null/undefined（LLM 返回稀疏 index 时可能出现），避免孤立 tool_call_id
+    const validToolCalls = toolCalls.filter(Boolean);
     if (!textMode) {
-      session.addAssistantWithToolCalls(content || "", toolCalls);
+      session.addAssistantWithToolCalls(content || "", validToolCalls);
     } else {
       session.addAssistantMessage(content || "");
     }
 
-    for (const call of toolCalls) {
-      // 防御性检查：理论上不应出现 undefined（LLM 返回稀疏 index 时可能）
-      if (!call) continue;
-
+    for (const call of validToolCalls) {
       // 工具结果写入 session 的辅助函数：
       // - function calling 模式（!textMode）：role: "tool" + tool_call_id（API 强制要求）
       // - 文本模式（textMode）：system 消息（模型读纯文本，无 id 匹配需求）

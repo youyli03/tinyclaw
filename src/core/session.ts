@@ -244,6 +244,76 @@ export class Session {
   }
 
   /**
+   * 清理内存中 messages[] 的非法状态，与 loadFromJsonl 的 Pass 1 + Pass 2 逻辑一致。
+   * 在每次 runAgent() 开始时调用，确保上一次异常退出遗留的不完整工具调用链不会导致 400 错误。
+   *
+   * - Pass 1：移除孤立的 role=tool 消息（缺少对应 assistant.tool_calls[].id）
+   * - Pass 2：移除末尾不完整的工具调用链（assistant+tool_calls 但缺少部分 tool result）
+   */
+  sanitizeMessages(): void {
+    // ── Pass 1：清理孤立的 role=tool 消息 ────────────────────────────────────
+    const validToolCallIds = new Set<string>();
+    const sanitized: ChatMessage[] = [];
+    for (const m of this.messages) {
+      if (m.role === "tool") {
+        if (validToolCallIds.has(m.tool_call_id)) {
+          sanitized.push(m);
+          validToolCallIds.delete(m.tool_call_id);
+        }
+        // else: 孤立 tool 消息，静默丢弃
+      } else {
+        sanitized.push(m);
+        if (m.role === "assistant") {
+          const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+          if (calls) calls.forEach((c) => validToolCallIds.add(c.id));
+        }
+      }
+    }
+
+    // ── Pass 2：修剪末尾不完整的工具调用链 ──────────────────────────────────
+    {
+      let lastToolCallIdx = -1;
+      for (let i = sanitized.length - 1; i >= 0; i--) {
+        const m = sanitized[i]!;
+        if (m.role === "assistant") {
+          const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+          if (calls && calls.length > 0) {
+            lastToolCallIdx = i;
+          }
+          break;
+        }
+      }
+      if (lastToolCallIdx >= 0) {
+        const assistantMsg = sanitized[lastToolCallIdx]!;
+        const expectedIds = new Set(
+          ((assistantMsg as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls ?? []).map((c) => c.id)
+        );
+        const gotIds = new Set<string>();
+        for (let i = lastToolCallIdx + 1; i < sanitized.length; i++) {
+          const m = sanitized[i]!;
+          if (m.role === "tool") {
+            gotIds.add(m.tool_call_id);
+          } else {
+            break;
+          }
+        }
+        const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
+        if (missingIds.length > 0) {
+          console.warn(
+            `[session] sanitizeMessages: 检测到末尾不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
+          );
+          sanitized.splice(lastToolCallIdx);
+        }
+      }
+    }
+
+    if (sanitized.length !== this.messages.length) {
+      this.messages.length = 0;
+      for (const m of sanitized) this.messages.push(m);
+    }
+  }
+
+  /**
    * 执行摘要压缩：
    * 1. LLM 生成摘要 + persistSummary（写 memory/YYYY-MM/YYYY-MM-DD.md + QMD 索引）
    * 2. this.messages 替换为压缩后的 [system..., summary_assistant]
