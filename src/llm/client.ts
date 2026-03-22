@@ -67,7 +67,9 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
   })();
   const MAX_RETRIES = policy?.maxAttempts ?? 0;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
+  const MAX_DURATION = policy?.maxRetryDurationMs ?? 0;
   const infinite = MAX_RETRIES === -1;
+  const startedAt = MAX_DURATION > 0 ? Date.now() : 0;
   let lastErr: unknown;
   for (let attempt = 0; infinite || attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -80,6 +82,11 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
       }
       if (!policy || !isRetryableError(err, policy) || signal?.aborted) throw err;
       if (!infinite && attempt === MAX_RETRIES) break;
+      // 超出最大重试时长：停止重试
+      if (MAX_DURATION > 0 && Date.now() - startedAt >= MAX_DURATION) {
+        console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试`);
+        break;
+      }
       // 429：优先使用 Retry-After，否则固定 baseDelayMs
       const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined) ?? BASE_DELAY;
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;

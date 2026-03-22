@@ -507,7 +507,7 @@ async function main(): Promise<void> {
           ? err.message
           : "抱歉，处理消息时出现错误";
         try {
-          await connector.send(msg.peerId, msg.type, userMsg);
+          await connector.send(msg.peerId, msg.type, userMsg, msg.messageId);
         } catch {
           // 发送失败（如网络/证书错误），静默忽略，不能让进程崩溃
         }

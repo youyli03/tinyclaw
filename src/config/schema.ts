@@ -281,6 +281,12 @@ const RetryConfigSchema = z.object({
    * 设为 60s 是因为复杂推理任务（o1/claude 等）首个 chunk 可能延迟较长。
    */
   streamIdleTimeoutMs: z.number().int().min(0).default(60_000),
+  /**
+   * 整个重试循环的最大总时长（毫秒）；0 = 不限制。
+   * 超过后抛出 LLMConnectionError，用于配合 maxAttempts=-1 避免无限等待。
+   * 例：120000 表示无论重试多少次，最多累计等待 2 分钟。
+   */
+  maxRetryDurationMs: z.number().int().min(0).default(0),
 }).default({});
 export type RetryConfig = z.infer<typeof RetryConfigSchema>;
 
