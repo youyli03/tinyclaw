@@ -107,6 +107,7 @@ function runFetchScript(params: {
   sinceHours: number;
   sources: string;
   max: number;
+  date?: string;      // L1 去重日期（YYYY-MM-DD），默认今天
   noDedup?: boolean;
 }): { items: NewsItem[]; stderr: string; error?: string } {
   const args = [
@@ -115,6 +116,7 @@ function runFetchScript(params: {
     "--since-hours", String(params.sinceHours),
     "--sources", params.sources,
     "--max", String(params.max),
+    "--date", params.date ?? today(),   // 传入日期，实现按天分区去重
   ];
   if (params.noDedup) args.push("--no-dedup");
 

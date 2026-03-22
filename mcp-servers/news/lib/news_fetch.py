@@ -15,12 +15,13 @@ news_fetch.py  —  tinyclaw news MCP server 的多源抓取脚本
   NEWS_DATA_DIR   数据根目录，默认 ~/.tinyclaw/news
   LAST30_LIB_DIR  last30days lib 目录，默认 ~/last30days-skill/scripts/lib
 
-关键词匹配规则（_title_matches）：
-  - 多词短语（如 "gold price"）：标题必须包含该完整短语
-  - 多词短语同时拆词：每个 4+ 字符的非停用词单独作为关键词（\b 词边界匹配）
-    例：topics="gold price" → kw_set 中同时有 "gold price"、"gold"
-    "Gold slips near $4,500" 通过 \bgold\b 匹配 ✓
-    "Goldman Sachs rises" 不匹配 \bgold\b ✗（词边界阻断误匹配）
+关键词匹配规则（_title_matches_kw）：
+  - 短关键词（≤4 字符，如 "oil"、"WTI"）：直接整体保留，不做子词拆分
+  - 多词短语（如 "crude oil"）：整体保留 + 拆出 ≥5 字符非停用词子词（如 "crude"）
+  - 标题匹配：用 \\b 词边界匹配单词；多词短语做子串匹配
+    例：topics="crude oil" → kw_set 中有 "crude oil"、"crude"
+    "Brent crude climbs" 通过 \\bcrude\\b 匹配 ✓
+    "AI Slop" 不含任何油相关词 ✗（无误匹配）
 
 内置 RSS 源清单（DEFAULT_RSS_FEEDS，共 58 源）：
 
@@ -121,34 +122,52 @@ LAST30_LIB_DIR = Path(
 if str(LAST30_LIB_DIR.parent) not in sys.path:
     sys.path.insert(0, str(LAST30_LIB_DIR.parent))
 
-# ── L1 去重：SQLite seen_urls.db ──────────────────────────────────────────────
+# ── L1 去重：SQLite seen_urls.db（按日期分区，同日去重、跨日可重抓）──────────
 
 def _get_db() -> sqlite3.Connection:
     db_path = DATA_DIR / "seen_urls.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute(
         """CREATE TABLE IF NOT EXISTS seen_urls (
-            url      TEXT PRIMARY KEY,
+            url      TEXT NOT NULL,
+            date     TEXT NOT NULL,
             title    TEXT,
             source   TEXT,
-            seen_at  TEXT
+            seen_at  TEXT,
+            PRIMARY KEY (url, date)
         )"""
     )
+    # 兼容旧表（无 date 列）：若缺少 date 列则添加，PRIMARY KEY 不变（旧行保留）
+    try:
+        conn.execute("ALTER TABLE seen_urls ADD COLUMN date TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass  # 列已存在，忽略
     conn.commit()
     return conn
 
 
-def _is_seen(conn: sqlite3.Connection, url: str) -> bool:
-    row = conn.execute("SELECT 1 FROM seen_urls WHERE url=?", (url,)).fetchone()
+def _is_seen(conn: sqlite3.Connection, url: str, date: str) -> bool:
+    """同一天内 URL 已见过则返回 True；跨天不视为已见。"""
+    row = conn.execute(
+        "SELECT 1 FROM seen_urls WHERE url=? AND date=?", (url, date)
+    ).fetchone()
     return row is not None
 
 
-def _mark_seen(conn: sqlite3.Connection, url: str, title: str, source: str) -> None:
+def _mark_seen(conn: sqlite3.Connection, url: str, title: str, source: str, date: str) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     conn.execute(
-        "INSERT OR IGNORE INTO seen_urls(url,title,source,seen_at) VALUES(?,?,?,?)",
-        (url, title, source, ts),
+        "INSERT OR IGNORE INTO seen_urls(url,date,title,source,seen_at) VALUES(?,?,?,?,?)",
+        (url, date, title, source, ts),
     )
+    conn.commit()
+
+
+def _cleanup_old_seen(conn: sqlite3.Connection, keep_days: int = 7) -> None:
+    """清理超过 keep_days 天的旧记录，避免 DB 无限增长。"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    conn.execute("DELETE FROM seen_urls WHERE date != '' AND date < ?", (cutoff,))
     conn.commit()
 
 
@@ -188,7 +207,15 @@ _STOP_WORDS = {"price", "news", "data", "rate", "from", "with", "that", "this",
 
 def _build_kw_set(topics: list[str]) -> set[str]:
     """将 topics 列表转换为关键词集合（支持多词短语拆分）。
-    多词短语（如 "gold price"）：整体保留 + 拆出 ≥4 字符非停用词单词。
+
+    规则：
+    - 短关键词（≤4 字符，如 "oil"、"WTI"）：整体保留，不做子词拆分，避免噪声
+    - 多词短语（如 "crude oil"）：整体保留 + 拆出 ≥5 字符非停用词子词（如 "crude"）
+    - 单个 ≥5 字符词（如 "Brent"、"OPEC+"）：直接加入，不拆分
+
+    示例：
+      topics=["oil", "crude oil", "OPEC", "Brent", "WTI"]
+      → kw_set = {"oil", "crude oil", "crude", "opec", "brent", "wti"}
     """
     kw_set: set[str] = set()
     for t in topics:
@@ -197,8 +224,9 @@ def _build_kw_set(topics: list[str]) -> set[str]:
             continue
         kw_set.add(t)
         if " " in t:
+            # 多词短语：拆出 ≥5 字符的非停用词子词（避免 "oil"/"rate" 等短词泛滥）
             for word in t.split():
-                if len(word) >= 4 and word not in _STOP_WORDS:
+                if len(word) >= 5 and word not in _STOP_WORDS:
                     kw_set.add(word)
     return kw_set
 
@@ -470,10 +498,16 @@ def main():
     parser.add_argument("--sources", default="hn,rss", help="逗号分隔的源名称，如 'hn,rss'")
     parser.add_argument("--max", type=int, default=50, dest="max_items")
     parser.add_argument("--no-dedup", action="store_true", help="跳过 L1/L2 去重（调试用）")
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="L1 去重的日期范围（YYYY-MM-DD），默认为今天。同一天内 URL 不重复写入，跨天可重新抓取。",
+    )
     args = parser.parse_args()
 
     topics = [t.strip() for t in args.topics.split(",") if t.strip()]
     sources = {s.strip().lower() for s in args.sources.split(",") if s.strip()}
+    dedup_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     raw: list[dict] = []
 
@@ -490,15 +524,16 @@ def main():
     if not args.no_dedup:
         raw = _l2_dedupe(raw, threshold=0.65)
 
-    # L1 URL 精确去重（同时标记已见）
+    # L1 URL 精确去重（按日期分区：同日不重复，跨日可重抓）
     if not args.no_dedup:
         conn = _get_db()
+        _cleanup_old_seen(conn, keep_days=7)  # 清理 7 天前的旧记录
         filtered = []
         for item in raw:
             url = item["url"]
-            if not _is_seen(conn, url):
+            if not _is_seen(conn, url, dedup_date):
                 filtered.append(item)
-                _mark_seen(conn, url, item.get("title", ""), item.get("source", ""))
+                _mark_seen(conn, url, item.get("title", ""), item.get("source", ""), dedup_date)
         conn.close()
         raw = filtered
 
