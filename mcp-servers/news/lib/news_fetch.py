@@ -184,29 +184,40 @@ def _l2_dedupe(items: list[dict], threshold: float = 0.65) -> list[dict]:
 
 def _fetch_hn(topics: list[str], since_hours: int, max_items: int) -> list[dict]:
     try:
-        from lib.hackernews import search_stories  # type: ignore
+        from lib.hackernews import search_hackernews, parse_hackernews_response  # type: ignore
     except ImportError:
         sys.stderr.write("[news_fetch] 无法导入 lib.hackernews，跳过 HN 源\n")
         return []
 
     results = []
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    now_utc = datetime.now(timezone.utc)
+    from_date = (now_utc - timedelta(hours=since_hours)).strftime("%Y-%m-%d")
+    to_date = now_utc.strftime("%Y-%m-%d")
+    per_topic = max(1, max_items // max(len(topics), 1))
 
     for topic in topics:
         try:
-            items = search_stories(topic, depth="default", since=cutoff.strftime("%Y-%m-%d"))
-            for item in items[: max_items // max(len(topics), 1)]:
+            response = search_hackernews(
+                topic,
+                from_date=from_date,
+                to_date=to_date,
+                depth="default",
+            )
+            parsed = parse_hackernews_response(response, query=topic)
+            for item in parsed[:per_topic]:
+                object_id = item.get("object_id", "")
+                url = item.get("url") or f"https://news.ycombinator.com/item?id={object_id}"
                 results.append(
                     {
                         "source": "hackernews",
-                        "id": f"hn_{item.id}",
-                        "title": item.title,
-                        "url": item.url or f"https://news.ycombinator.com/item?id={item.id}",
+                        "id": f"hn_{object_id}",
+                        "title": item.get("title", ""),
+                        "url": url,
                         "text": "",
                         "topic": topic,
-                        "score": getattr(item, "score", 0),
-                        "date": item.date or "",
-                        "author": getattr(item, "author", ""),
+                        "score": item.get("engagement", {}).get("points", 0),
+                        "date": item.get("date") or "",
+                        "author": item.get("author", ""),
                     }
                 )
         except Exception as e:
@@ -281,11 +292,11 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
     try:
         import urllib.request
         import xml.etree.ElementTree as ET
+        from concurrent.futures import ThreadPoolExecutor, as_completed
     except ImportError:
         return []
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-    results = []
 
     # 关键词集合（小写，用于快速过滤）
     # 对多词短语（如 "gold price"），同时保留整体短语 AND 拆出 4+ 字符单词，
@@ -334,18 +345,37 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                 continue
         return None
 
-    for feed in DEFAULT_RSS_FEEDS:
-        try:
+    def _fetch_one_feed(feed: dict) -> list[dict]:
+        """抓取单个 RSS 源，返回匹配的条目列表（出错时返回空列表；SSL/网络错误自动重试一次）。"""
+        import time
+        import urllib.error
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+        def _do_fetch() -> bytes:
             headers = {"User-Agent": "Mozilla/5.0 (compatible; tinyclaw-news/0.1)"}
             req = urllib.request.Request(feed["url"], headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                xml_data = resp.read()
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return resp.read()
+
+        try:
+            try:
+                xml_data = _do_fetch()
+            except (urllib.error.URLError, OSError):
+                # 偶发 SSL EOF / 连接重置 → 等待 1 秒后重试一次
+                time.sleep(1)
+                xml_data = _do_fetch()
+
+        except Exception as e:
+            sys.stderr.write(f"[news_fetch] RSS {feed['name']} 抓取失败：{e}\n")
+            return []
+
+        try:
             root = ET.fromstring(xml_data)
 
             # 兼容 RSS 2.0 和 Atom
-            ns = {"atom": "http://www.w3.org/2005/Atom"}
             items_el = root.findall(".//item") or root.findall(".//atom:entry", ns)
 
+            feed_items: list[dict] = []
             for el in items_el:
                 def _text(tag: str, fallback: str = "", _el=el) -> str:
                     # 注意：必须用 `is not None` 而非布尔判断，
@@ -372,7 +402,7 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                 if not _title_matches(title):
                     continue
 
-                results.append(
+                feed_items.append(
                     {
                         "source": f"rss:{feed['name']}",
                         "id": f"rss_{abs(hash(link))}",
@@ -385,10 +415,29 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                         "author": "",
                     }
                 )
-                if len(results) >= max_items * 2:
+                if len(feed_items) >= max_items * 2:
                     break
+            return feed_items
         except Exception as e:
             sys.stderr.write(f"[news_fetch] RSS {feed['name']} 抓取失败：{e}\n")
+            return []
+
+    # 并发抓取所有 RSS 源；max_workers=12 避免过高并发引发 SSL EOF 握手竞争
+    # 每源 timeout=8s + 1 次 retry；总耗时约 8~16s（失败源自动重试）
+    results_by_feed: dict[int, list[dict]] = {}
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        future_to_idx = {
+            executor.submit(_fetch_one_feed, feed): idx
+            for idx, feed in enumerate(DEFAULT_RSS_FEEDS)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results_by_feed[idx] = future.result()
+
+    # 按原始 feed 顺序合并结果，保证输出稳定可预期
+    results: list[dict] = []
+    for idx in range(len(DEFAULT_RSS_FEEDS)):
+        results.extend(results_by_feed.get(idx, []))
 
     return results
 
