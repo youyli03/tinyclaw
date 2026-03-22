@@ -51,23 +51,25 @@ export class LLMConnectionError extends Error {
     const attempts = (() => {
       try { return getRetryPolicy().maxAttempts; } catch { return 3; }
     })();
+    const attemptsDesc = attempts === -1 ? "已多次" : `已重试 ${attempts} 次`;
     super(
       message ??
-      `⚠️ 与 AI 服务的连接失败（已重试 ${attempts} 次）：${cause instanceof Error ? cause.message : String(cause)}`
+      `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`
     );
     this.name = "LLMConnectionError";
   }
 }
 
-/** 按 RetryConfig 策略重试，指数退避 + jitter，abort 后不再重试 */
+/** 按 RetryConfig 策略重试，固定间隔，abort 后不再重试。maxAttempts=-1 为无限重试 */
 async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   const policy = (() => {
     try { return getRetryPolicy(); } catch { return undefined; }
   })();
-  const MAX_RETRIES = policy?.maxAttempts ?? 3;
+  const MAX_RETRIES = policy?.maxAttempts ?? 0;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
+  const infinite = MAX_RETRIES === -1;
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; infinite || attempt <= MAX_RETRIES; attempt++) {
     try {
       return await fn();
     } catch (err) {
@@ -77,11 +79,11 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
         throw new LLMConnectionError(err, `⚠️ AI 服务请求超时，请稍后重试`);
       }
       if (!policy || !isRetryableError(err, policy) || signal?.aborted) throw err;
-      if (attempt === MAX_RETRIES) break;
-      // 429：优先使用 Retry-After，否则指数退避
-      const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined)
-        ?? backoff(BASE_DELAY, attempt + 1);
-      console.warn(`[llm] retryable error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
+      if (!infinite && attempt === MAX_RETRIES) break;
+      // 429：优先使用 Retry-After，否则固定 baseDelayMs
+      const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined) ?? BASE_DELAY;
+      const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
+      console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
       await new Promise<void>((res, rej) => {
         const t = setTimeout(res, delay);
         signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("abort")); }, { once: true });

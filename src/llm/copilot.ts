@@ -164,9 +164,10 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
   const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
   const MAX_RETRIES = policy?.maxAttempts ?? 3;
   const BASE_DELAY = policy?.baseDelayMs ?? 500;
+  const infinite = MAX_RETRIES === -1;
 
   let resp: Response | undefined;
-  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+  for (let attempt = 1; infinite || attempt <= MAX_RETRIES + 1; attempt++) {
     try {
       resp = await fetch(TOKEN_URL, withCA({
         headers: {
@@ -177,12 +178,9 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
       }));
       break; // 成功，退出重试循环
     } catch (err: unknown) {
-      if (attempt > MAX_RETRIES) throw err;
-      const exp = Math.pow(2, Math.max(0, attempt - 1));
-      const jitter = 0.9 + Math.random() * 0.2;
-      const waitMs = Math.round(BASE_DELAY * exp * jitter);
-      console.warn(`[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${waitMs}ms 后重试…`);
-      await new Promise(r => setTimeout(r, waitMs));
+      if (!infinite && attempt > MAX_RETRIES) throw err;
+      console.warn(`[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`);
+      await new Promise(r => setTimeout(r, BASE_DELAY));
     }
   }
 
@@ -483,9 +481,10 @@ export async function getCopilotModels(
   const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
   const MAX_RETRIES = policy?.maxAttempts ?? 3;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
+  const infinite = MAX_RETRIES === -1;
 
   let resp: Response | undefined;
-  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+  for (let attempt = 1; infinite || attempt <= MAX_RETRIES + 1; attempt++) {
     try {
       resp = await fetch(`${COPILOT_API}/models`, withCA({
         headers: {
@@ -496,12 +495,9 @@ export async function getCopilotModels(
       }));
       break;
     } catch (err: unknown) {
-      if (attempt > MAX_RETRIES) throw err;
-      const exp = Math.pow(2, Math.max(0, attempt - 1));
-      const jitter = 0.9 + Math.random() * 0.2;
-      const waitMs = Math.round(BASE_DELAY * exp * jitter);
-      console.warn(`[tinyclaw] Copilot 模型列表请求失败（第 ${attempt} 次），${waitMs}ms 后重试…`);
-      await new Promise(r => setTimeout(r, waitMs));
+      if (!infinite && attempt > MAX_RETRIES) throw err;
+      console.warn(`[tinyclaw] Copilot 模型列表请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`);
+      await new Promise(r => setTimeout(r, BASE_DELAY));
     }
   }
 
