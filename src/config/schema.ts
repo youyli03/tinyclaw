@@ -94,8 +94,8 @@ const MFASchema = z.object({
   tools: z.array(z.string()).default(["delete_file", "write_file"]),
   /** exec_shell 命令级黑名单 */
   exec_shell_patterns: ExecShellPatternsSchema.default({}),
-  /** MFA 确认超时（秒），默认 60 */
-  timeoutSecs: z.number().int().positive().default(60),
+  /** MFA 确认超时（秒），0 = 不超时（永久等待），默认 0 */
+  timeoutSecs: z.number().int().min(0).default(0),
   /** MSAL Interface B 专用：Azure AD 租户 ID */
   tenantId: z.string().min(1).optional(),
   /** MSAL Interface B 专用：Azure AD 应用客户端 ID */

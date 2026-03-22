@@ -15,7 +15,7 @@ const ts = () => new Date().toLocaleTimeString("zh-CN", { hour12: false });
 interface PendingMFA {
   resolve: (approved: boolean) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
   verifyCode?: ((code: string) => boolean) | undefined;
 }
 
@@ -38,7 +38,7 @@ export class QQBotConnector implements Connector {
     const qqcfg = cfg.channels.qqbot;
     if (!qqcfg) throw new Error("channels.qqbot not configured");
     const mfaCfg = cfg.auth.mfa;
-    const mfaTimeoutMs = (mfaCfg?.timeoutSecs ?? 60) * 1000;
+    const mfaTimeoutMs = (mfaCfg?.timeoutSecs ?? 0) * 1000;
 
     initMarkdownSupport(qqcfg.markdownSupport);
     this.abortController = new AbortController();
@@ -55,7 +55,7 @@ export class QQBotConnector implements Connector {
         if (pending) {
           const text = msg.content.trim();
           pendingMFAMap.delete(msg.peerId);
-          clearTimeout(pending.timer);
+          clearTimeout(pending.timer ?? undefined);
           if (pending.verifyCode) {
             // TOTP 模式：验证数字码
             const digits = text.replace(/\s/g, "");
@@ -123,11 +123,14 @@ export class QQBotConnector implements Connector {
     verifyCode?: (code: string) => boolean
   ): Promise<boolean> {
     return new Promise<boolean>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pendingMFAMap.delete(peerId);
-        reject(new MFAError("MFA 确认超时，操作已取消"));
-        void this.send(peerId, type, "⏰ MFA 超时，操作已自动取消");
-      }, timeoutMs);
+      // timeoutMs === 0 表示不超时，永久等待用户确认
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+            pendingMFAMap.delete(peerId);
+            reject(new MFAError("MFA 确认超时，操作已取消"));
+            void this.send(peerId, type, "⏰ MFA 超时，操作已自动取消");
+          }, timeoutMs)
+        : null;
       pendingMFAMap.set(peerId, { resolve, reject, timer, ...(verifyCode ? { verifyCode } : {}) });
       void this.send(peerId, type, warningMessage);
     });

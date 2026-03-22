@@ -186,7 +186,7 @@ async function main(): Promise<void> {
     }
 
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
-    const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 60;
+    const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;
 
     /**
      * Slave 完成时的通知回调：

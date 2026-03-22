@@ -100,9 +100,12 @@ export async function requireMFA(
 
   // Device Code Flow（触发 number-matching 推送）
   return new Promise((resolve, reject) => {
-    const timeoutHandle = setTimeout(() => {
-      reject(new MFAError("MFA 确认超时，操作已取消"));
-    }, cfg.timeoutSecs * 1000);
+    // cfg.timeoutSecs === 0 表示不超时，永久等待用户确认
+    const timeoutHandle = cfg.timeoutSecs > 0
+      ? setTimeout(() => {
+          reject(new MFAError("MFA 确认超时，操作已取消"));
+        }, cfg.timeoutSecs * 1000)
+      : null;
 
     const request: DeviceCodeRequest = {
       scopes: MFA_SCOPES,
@@ -116,7 +119,7 @@ export async function requireMFA(
     app
       .acquireTokenByDeviceCode(request)
       .then((result) => {
-        clearTimeout(timeoutHandle);
+        clearTimeout(timeoutHandle ?? undefined);
         if (!result) {
           reject(new MFAError("MFA 认证失败：未获取到 token"));
           return;
@@ -124,7 +127,7 @@ export async function requireMFA(
         resolve(result);
       })
       .catch((err: unknown) => {
-        clearTimeout(timeoutHandle);
+        clearTimeout(timeoutHandle ?? undefined);
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("authorization_declined") || msg.includes("access_denied")) {
           reject(new MFAError("用户拒绝了 MFA 认证，操作已取消"));
