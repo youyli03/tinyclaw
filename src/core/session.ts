@@ -270,41 +270,42 @@ export class Session {
       }
     }
 
-    // ── Pass 2：修剪末尾不完整的工具调用链 ──────────────────────────────────
+    // ── Pass 2：全量扫描并移除所有不完整的工具调用链 ────────────────────────
+    // 与 loadFromJsonl 的算法保持一致：线性扫描，对每个 assistant+tool_calls 验证
+    // 其紧跟的 tool 结果是否完整；不完整则移除该 assistant 及已有的部分 tool result。
     {
-      let lastToolCallIdx = -1;
-      for (let i = sanitized.length - 1; i >= 0; i--) {
+      const validated: ChatMessage[] = [];
+      let i = 0;
+      while (i < sanitized.length) {
         const m = sanitized[i]!;
-        if (m.role === "assistant") {
-          const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
-          if (calls && calls.length > 0) {
-            lastToolCallIdx = i;
+        const calls = m.role === "assistant"
+          ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
+          : undefined;
+        if (calls && calls.length > 0) {
+          const expectedIds = new Set(calls.map((c) => c.id));
+          let j = i + 1;
+          const gotIds = new Set<string>();
+          while (j < sanitized.length && sanitized[j]!.role === "tool") {
+            gotIds.add((sanitized[j] as { role: "tool"; tool_call_id: string }).tool_call_id);
+            j++;
           }
-          break;
-        }
-      }
-      if (lastToolCallIdx >= 0) {
-        const assistantMsg = sanitized[lastToolCallIdx]!;
-        const expectedIds = new Set(
-          ((assistantMsg as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls ?? []).map((c) => c.id)
-        );
-        const gotIds = new Set<string>();
-        for (let i = lastToolCallIdx + 1; i < sanitized.length; i++) {
-          const m = sanitized[i]!;
-          if (m.role === "tool") {
-            gotIds.add(m.tool_call_id);
+          const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
+          if (missingIds.length > 0) {
+            console.warn(
+              `[session] sanitizeMessages: 检测到不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
+            );
+            i = j;
           } else {
-            break;
+            validated.push(...sanitized.slice(i, j));
+            i = j;
           }
-        }
-        const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
-        if (missingIds.length > 0) {
-          console.warn(
-            `[session] sanitizeMessages: 检测到末尾不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
-          );
-          sanitized.splice(lastToolCallIdx);
+        } else {
+          validated.push(m);
+          i++;
         }
       }
+      sanitized.length = 0;
+      validated.forEach((m) => sanitized.push(m));
     }
 
     if (sanitized.length !== this.messages.length) {
@@ -716,49 +717,47 @@ export class Session {
         }
       }
 
-      // ── Pass 2：修剪末尾不完整的工具调用链 ─────────────────────────────────
-      // crash 可能发生在 addAssistantWithToolCalls 之后、部分 addToolResultMessage 之前，
-      // 导致 JSONL 末尾存在 assistant+tool_calls 但缺少对应的 tool result，
-      // 发给 OpenAI API 时会返回 400 Bad Request。
-      // 修复：找到末尾最后一个带 tool_calls 的 assistant 消息，
-      // 若其 tool_call_id 集合与紧跟的 tool 消息不完全匹配，则将整条工具链（含已有 tool result）一起丢弃。
+      // ── Pass 2：全量扫描并移除所有不完整的工具调用链 ──────────────────────
+      // 旧版只检测尾部最后一个 assistant+tool_calls，若中间某个链不完整（如用户新消息
+      // 在工具执行前打断了当前轮），后续 assistant 消息会导致 break 提前退出，漏检该链。
+      // 新版：线性扫描整个数组，对每个 assistant+tool_calls 验证其紧跟的 tool 结果是否完整；
+      // 不完整则移除该 assistant 及其已有的部分 tool result，保留之后的消息。
       {
-        // 从末尾向前找最后一个 assistant+tool_calls 消息
-        let lastToolCallIdx = -1;
-        for (let i = sanitized.length - 1; i >= 0; i--) {
+        const validated: ChatMessage[] = [];
+        let i = 0;
+        while (i < sanitized.length) {
           const m = sanitized[i]!;
-          if (m.role === "assistant") {
-            const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
-            if (calls && calls.length > 0) {
-              lastToolCallIdx = i;
+          const calls = m.role === "assistant"
+            ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
+            : undefined;
+          if (calls && calls.length > 0) {
+            const expectedIds = new Set(calls.map((c) => c.id));
+            // 收集紧跟其后的连续 tool 消息
+            let j = i + 1;
+            const gotIds = new Set<string>();
+            while (j < sanitized.length && sanitized[j]!.role === "tool") {
+              gotIds.add((sanitized[j] as { role: "tool"; tool_call_id: string }).tool_call_id);
+              j++;
             }
-            break; // assistant 消息（无论有没有 tool_calls）都是工具链的边界，找到即停
-          }
-        }
-        if (lastToolCallIdx >= 0) {
-          const assistantMsg = sanitized[lastToolCallIdx]!;
-          const expectedIds = new Set(
-            ((assistantMsg as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls ?? []).map((c) => c.id)
-          );
-          // 收集紧跟其后的 tool 消息 id
-          const gotIds = new Set<string>();
-          for (let i = lastToolCallIdx + 1; i < sanitized.length; i++) {
-            const m = sanitized[i]!;
-            if (m.role === "tool") {
-              gotIds.add(m.tool_call_id);
+            const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
+            if (missingIds.length > 0) {
+              // 不完整：丢弃该 assistant + 已有的部分 tool result，保留之后的消息
+              console.warn(
+                `[session] loadFromJsonl: 检测到不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
+              );
+              i = j; // 跳过 assistant + 部分 tool result
             } else {
-              break; // 非 tool 消息打断了工具链，不再继续
+              // 完整：保留 assistant + 所有 tool result
+              validated.push(...sanitized.slice(i, j));
+              i = j;
             }
-          }
-          // 若有任何 tool_call_id 没有对应 tool result → 整条工具链不完整，截断到 assistant 前
-          const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
-          if (missingIds.length > 0) {
-            console.warn(
-              `[session] loadFromJsonl: 检测到末尾不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
-            );
-            sanitized.splice(lastToolCallIdx); // 截断到 assistant+tool_calls 前（含）
+          } else {
+            validated.push(m);
+            i++;
           }
         }
+        sanitized.length = 0;
+        validated.forEach((m) => sanitized.push(m));
       }
 
       return sanitized.length > 0 ? sanitized : null;
