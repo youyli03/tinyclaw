@@ -264,7 +264,7 @@ export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 
 const RetryConfigSchema = z.object({
   /** 最多重试次数（不含首次尝试），默认 3；-1 = 无限重试 */
-  maxAttempts: z.number().int().min(-1).default(3),
+  maxAttempts: z.number().int().min(-1).default(-1),
   /** 每次重试等待的固定延迟（毫秒），默认 1000 */
   baseDelayMs: z.number().int().positive().default(1000),
   /** 429 限流是否重试，默认 true */
