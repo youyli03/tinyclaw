@@ -524,6 +524,24 @@ export async function runAgent(
       ...(opts.customTools ?? []),
     ];
 
+    // ── 轮间压缩（chat 模式）：tool result 可能使 session 在循环中间超限 → 提前压缩避免 408 ──
+    // round 0 不需要检查（pre-flight 已处理），从 round 1 起才有 tool results 写入
+    if (round > 0 && !isCodeMode && !session.abortRequested
+        && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
+      console.log(`${logPrefix} ℹ️ Chat session 轮间检测到上下文超限（round ${round}），执行压缩`);
+      opts.onCompress?.("start");
+      await session.compress();
+      opts.onCompress?.("done");
+      // 压缩后更新 preRunLength：指向当前 user 消息位置，确保后续 LLM 失败时回滚正确
+      const msgsAfterCompress = session.getMessages();
+      for (let i = msgsAfterCompress.length - 1; i >= 0; i--) {
+        if (msgsAfterCompress[i]?.role === "user") {
+          preRunLength = i;
+          break;
+        }
+      }
+    }
+
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
     {

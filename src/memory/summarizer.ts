@@ -4,7 +4,7 @@ import { persistSummary } from "./store.js";
 import type { ChatMessage, OpenAIToolCall } from "../llm/client.js";
 
 const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。
-将给定的对话历史压缩为简洁的摘要（不超过 400 token），保留：
+将给定的对话历史压缩为详细摘要（不超过 10000 token），保留：
 - 用户的关键需求、偏好、结论
 - 已完成的重要操作及结果
 - 未解决的待办事项
@@ -224,22 +224,73 @@ export async function summarizeAndCompressCode(
   return compressed;
 }
 
+/** Chat 模式压缩后保留的最近完整轮次数（以 user 消息为轮次边界） */
+const CHAT_KEEP_TURNS = 4;
+
 /**
  * 将对话历史压缩：
  * 1. 存档到 QMD
  * 2. 用 summarizer LLM 生成摘要
- * 3. 返回只含 system + 摘要消息的新 messages[]，对用户无感
+ * 3. 返回 system + 摘要 + 最近 CHAT_KEEP_TURNS 轮完整对话的新 messages[]
  */
 export async function summarizeAndCompress(
   messages: ChatMessage[],
   agentId = "default"
 ): Promise<ChatMessage[]> {
-  // 1. 生成摘要
   const client = llmRegistry.get("summarizer");
-  // 使用 formatMsgForSummary 展开 tool_calls，确保工具调用名称/参数进入摘要
-  const historyText = messages
-    .filter((m) => m.role !== "system")
-    .map(formatMsgForSummary)
+
+  // 永久性 system messages（过滤 QMD 召回注入的临时 system messages）
+  const systemMessages = messages.filter(
+    (m) => m.role === "system" && (typeof m.content === "string" ? !m.content.startsWith("## 相关历史记忆") : true)
+  );
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
+
+  // 找出最后 CHAT_KEEP_TURNS 个 user 消息的起始位置，保留该位置起的全部消息
+  const userIndices = nonSystemMessages
+    .map((m, i) => (m.role === "user" ? i : -1))
+    .filter((i) => i >= 0);
+  const keepFromIdx =
+    userIndices.length > CHAT_KEEP_TURNS
+      ? userIndices[userIndices.length - CHAT_KEEP_TURNS]!
+      : 0;
+
+  const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
+  let toKeep = nonSystemMessages.slice(keepFromIdx);
+
+  // 如果没有足够旧的内容可压缩，直接返回原始消息
+  if (toSummarize.length === 0) {
+    return messages;
+  }
+
+  // 去除 toKeep 开头的孤立 role=tool 消息：
+  // 当对应的 assistant+tool_calls 已被移入 toSummarize 时，tool_call_id 找不到对应 assistant，
+  // OpenAI API 会拒绝该序列（400 Bad Request）
+  {
+    const validIds = new Set<string>();
+    for (const m of toKeep) {
+      if (m.role === "assistant") {
+        const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+        if (calls) calls.forEach((c) => validIds.add(c.id));
+      }
+    }
+    let keepStart = 0;
+    while (keepStart < toKeep.length) {
+      const m = toKeep[keepStart]!;
+      if (m.role === "tool" && !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)) {
+        keepStart++;
+      } else {
+        break;
+      }
+    }
+    toKeep = toKeep.slice(keepStart);
+  }
+
+  // 构建待摘要文本，使用 formatMsgForSummary 展开 tool_calls
+  const historyText = toSummarize
+    .map((m) => {
+      const text = formatMsgForSummary(m);
+      return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长，已截断]" : text;
+    })
     .filter(Boolean)
     .join("\n\n");
 
@@ -248,20 +299,16 @@ export async function summarizeAndCompress(
     { role: "user", content: historyText },
   ]);
 
-  // 2. 将摘要持久化到 QMD（仅摘要内容，不再逐轮写入）
+  // 将摘要持久化到 QMD
   persistSummary(result.content);
 
-  // 3. 保留永久性 system messages（BUILTIN_SYSTEM、SYSTEM.md），
-  //    过滤掉 QMD 召回注入的临时 system messages
-  const systemMessages = messages.filter(
-    (m) => m.role === "system" && (typeof m.content === "string" ? !m.content.startsWith("## 相关历史记忆") : true)
-  );
   const compressed: ChatMessage[] = [
     ...systemMessages,
     {
       role: "assistant",
       content: `[对话历史摘要]\n${result.content}`,
     },
+    ...toKeep,
   ];
 
   return compressed;
