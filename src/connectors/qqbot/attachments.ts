@@ -36,10 +36,47 @@ function guessExtension(contentType: string): string {
     "audio/wav": ".wav",
     "audio/ogg": ".ogg",
     "audio/silk": ".silk",
+    "audio/amr": ".amr",
+    "audio/aac": ".aac",
+    "audio/mp4": ".m4a",
+    "audio/flac": ".flac",
     "video/mp4": ".mp4",
     "video/webm": ".webm",
   };
   return map[contentType] ?? "";
+}
+
+/** 根据文件扩展名补全缺失或不精确的 content-type。
+ *  QQ Bot 有时对语音附件返回 application/octet-stream 或空字符串。 */
+function normalizeContentType(contentType: string, ext: string): string {
+  // 已经是规范 MIME 类型，直接使用
+  if (
+    contentType.startsWith("audio/") ||
+    contentType.startsWith("image/") ||
+    contentType.startsWith("video/") ||
+    contentType.startsWith("text/")
+  ) {
+    return contentType;
+  }
+  // 按扩展名推断
+  const byExt: Record<string, string> = {
+    ".amr":  "audio/amr",
+    ".silk": "audio/silk",
+    ".mp3":  "audio/mpeg",
+    ".wav":  "audio/wav",
+    ".ogg":  "audio/ogg",
+    ".flac": "audio/flac",
+    ".aac":  "audio/aac",
+    ".m4a":  "audio/mp4",
+    ".mp4":  "video/mp4",
+    ".webm": "video/webm",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".gif":  "image/gif",
+    ".webp": "image/webp",
+  };
+  return byExt[ext.toLowerCase()] ?? contentType;
 }
 
 /**
@@ -62,13 +99,13 @@ export async function downloadAttachments(
         continue;
       }
       const buffer = Buffer.from(await resp.arrayBuffer());
-      const effectiveContentType = att.voiceWavUrl
-        ? "audio/wav"
-        : att.contentType;
+      const rawContentType = att.voiceWavUrl ? "audio/wav" : att.contentType;
       const ext = att.filename
         ? path.extname(att.filename)
-        : guessExtension(effectiveContentType);
+        : guessExtension(rawContentType);
       const basename = att.filename ?? `${crypto.randomUUID()}${ext}`;
+      // 用扩展名修正 QQ 有时返回的不精确 content-type（如 application/octet-stream）
+      const effectiveContentType = normalizeContentType(rawContentType, ext);
       const localPath = path.join(destDir, basename);
       fs.writeFileSync(localPath, buffer);
       results.push({
