@@ -450,6 +450,7 @@ async function main(): Promise<void> {
         const voiceCfg = loadConfig().voice;
         for (const d of downloaded) {
           if (!d.contentType.startsWith("audio/")) continue;
+          console.log(`[whisper] 开始转录: ${d.filename} (model=${voiceCfg.model})`);
           try {
             const transcript = await transcribeAudio(
               d.localPath,
@@ -458,15 +459,18 @@ async function main(): Promise<void> {
             );
             if (transcript) {
               d.transcript = transcript;
+              console.log(`[whisper] 转录完成: "${transcript}"`);
               // 先把识别结果发给用户，让用户知道语音内容
               void connector.send(
                 msg.peerId,
                 msg.type,
                 `🎤 语音识别：${transcript}`
               );
+            } else {
+              console.log(`[whisper] 转录结果为空: ${d.filename}`);
             }
           } catch (err) {
-            console.warn("[whisper] 语音转文字失败，保留原始音频标签:", err);
+            console.warn(`[whisper] 语音转文字失败 (${d.filename}):`, err);
           }
         }
 
