@@ -27,6 +27,8 @@ import {
 import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const CLOB_API = "https://clob.polymarket.com";
@@ -35,6 +37,21 @@ const DATA_API = "https://data-api.polymarket.com";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PYTHON_HELPER = join(__dirname, "lib", "polymarket.py");
+
+/** Read proxyWallet from ~/.tinyclaw/polymarket.toml, returns undefined if not configured. */
+function loadDefaultWallet(): string | undefined {
+  const tomlPath = join(homedir(), ".tinyclaw", "polymarket.toml");
+  if (!existsSync(tomlPath)) return undefined;
+  try {
+    const text = readFileSync(tomlPath, "utf-8");
+    const m = text.match(/^\s*proxyWallet\s*=\s*"?(0x[0-9a-fA-F]+)"?/m);
+    return m?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+const DEFAULT_WALLET = loadDefaultWallet();
 
 async function apiFetch(
   url: string,
@@ -181,11 +198,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_trades",
-      description: "查询成交记录。可按 maker_address（钱包地址）或 market（conditionId）筛选。",
+      description: `查询成交记录。可按 maker_address（钱包地址）或 market（conditionId）筛选。若不传 maker_address，自动使用配置的默认钱包${DEFAULT_WALLET ? `（${DEFAULT_WALLET}）` : ""}。`,
       inputSchema: {
         type: "object",
         properties: {
-          maker_address: { type: "string", description: "钱包地址（0x...）" },
+          maker_address: { type: "string", description: `钱包地址（0x...），不填则使用配置的默认钱包${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
           market: { type: "string", description: "市场 conditionId" },
           limit: { type: "number", description: "返回数量上限，默认 20", default: 20 },
           offset: { type: "number", description: "分页偏移量，默认 0", default: 0 },
@@ -195,17 +212,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_positions",
-      description: "查询指定钱包地址在 Polymarket 的当前持仓（含盈亏数据）。",
+      description: `查询钱包地址在 Polymarket 的当前持仓（含盈亏数据）。若不传 user，自动使用配置文件中的钱包地址${DEFAULT_WALLET ? `（${DEFAULT_WALLET}）` : "（未配置，请传入 user 参数）"}。`,
       inputSchema: {
         type: "object",
         properties: {
-          user: { type: "string", description: "钱包地址（0x...）" },
+          user: { type: "string", description: `钱包地址（0x...），不填则使用配置的默认钱包${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
           market: { type: "string", description: "按市场 conditionId 筛选（可选）" },
           size_threshold: { type: "number", description: "最小持仓量筛选（可选）" },
           limit: { type: "number", description: "返回数量上限，默认 50", default: 50 },
           offset: { type: "number", description: "分页偏移量，默认 0", default: 0 },
         },
-        required: ["user"],
+        required: [],
       },
     },
     {
@@ -373,8 +390,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           limit?: number;
           offset?: number;
         };
+        const resolvedAddress = maker_address || DEFAULT_WALLET;
         const data = await apiFetch(`${DATA_API}/trades`, {
-          maker_address,
+          maker_address: resolvedAddress,
           market,
           limit,
           offset,
@@ -385,14 +403,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       // ── get_positions ───────────────────────────────────────────────────────
       case "get_positions": {
         const { user, market, size_threshold, limit = 50, offset = 0 } = args as {
-          user: string;
+          user?: string;
           market?: string;
           size_threshold?: number;
           limit?: number;
           offset?: number;
         };
+        const resolvedUser = user || DEFAULT_WALLET;
+        if (!resolvedUser) {
+          return errorResult("请传入 user（钱包地址），或在 ~/.tinyclaw/polymarket.toml 配置 proxyWallet");
+        }
         const data = await apiFetch(`${DATA_API}/positions`, {
-          user,
+          user: resolvedUser,
           market,
           sizeThreshold: size_threshold,
           limit,
