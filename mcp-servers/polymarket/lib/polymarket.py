@@ -11,9 +11,10 @@ polymarket.py — Polymarket 下单 / 撤单 helper（由 MCP server 的 place_o
 所有输出均为 JSON（stdout），错误时 {"error": "..."}
 
 认证：
-  私钥从 POLY_PRIVATE_KEY 环境变量读取，或从 ~/.tinyclaw/polymarket.key 读取。
-  funder 地址（proxy wallet）从 POLY_FUNDER 环境变量或 ~/.tinyclaw/polymarket_funder.key 读取（可选）。
-  signature_type 从 POLY_SIG_TYPE 环境变量读取，默认 0（EOA）。
+  配置优先级：环境变量 > ~/.tinyclaw/polymarket.toml > ~/.tinyclaw/polymarket.key（旧版兼容）
+  私钥从 POLY_PRIVATE_KEY 环境变量读取，或从 polymarket.toml [account].privateKey 读取。
+  funder 地址（proxy wallet）从 POLY_FUNDER 或 polymarket.toml [account].proxyWallet 读取。
+  signature_type 从 POLY_SIG_TYPE 或 polymarket.toml [account].sigType 读取，默认 0（EOA）。
 """
 
 import sys
@@ -24,11 +25,37 @@ from pathlib import Path
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137  # Polygon mainnet
 
+# ── 配置加载（优先级：环境变量 > polymarket.toml > 旧版 .key 文件）────────────
+
+def _load_toml_config() -> dict:
+    """读取 ~/.tinyclaw/polymarket.toml，返回 [account] 节的字典。"""
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return {}
+    toml_file = Path.home() / ".tinyclaw" / "polymarket.toml"
+    if not toml_file.exists():
+        return {}
+    with toml_file.open("rb") as f:
+        data = tomllib.load(f)
+    return data.get("account", {})
+
+
+_TOML_CFG: dict = _load_toml_config()
+
 
 def load_private_key() -> str | None:
+    # 1. 环境变量
     key = os.environ.get("POLY_PRIVATE_KEY")
     if key:
         return key.strip()
+    # 2. polymarket.toml
+    if _TOML_CFG.get("privateKey"):
+        return str(_TOML_CFG["privateKey"]).strip()
+    # 3. 旧版 .key 文件（兼容）
     key_file = Path.home() / ".tinyclaw" / "polymarket.key"
     if key_file.exists():
         return key_file.read_text().strip()
@@ -36,9 +63,14 @@ def load_private_key() -> str | None:
 
 
 def load_funder() -> str | None:
+    # 1. 环境变量
     funder = os.environ.get("POLY_FUNDER")
     if funder:
         return funder.strip()
+    # 2. polymarket.toml
+    if _TOML_CFG.get("proxyWallet"):
+        return str(_TOML_CFG["proxyWallet"]).strip()
+    # 3. 旧版 .key 文件（兼容）
     funder_file = Path.home() / ".tinyclaw" / "polymarket_funder.key"
     if funder_file.exists():
         return funder_file.read_text().strip()
@@ -46,7 +78,13 @@ def load_funder() -> str | None:
 
 
 def load_sig_type() -> int:
-    return int(os.environ.get("POLY_SIG_TYPE", "0"))
+    # 1. 环境变量
+    if os.environ.get("POLY_SIG_TYPE"):
+        return int(os.environ["POLY_SIG_TYPE"])
+    # 2. polymarket.toml
+    if "sigType" in _TOML_CFG:
+        return int(_TOML_CFG["sigType"])
+    return 0  # 默认 EOA
 
 
 def build_client():
