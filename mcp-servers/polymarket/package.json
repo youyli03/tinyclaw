@@ -1,0 +1,9 @@
+{
+  "name": "tinyclaw-mcp-polymarket",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Polymarket MCP server for tinyclaw — market data, orderbook, positions, trading",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  }
+}
