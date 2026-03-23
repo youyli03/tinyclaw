@@ -49,10 +49,11 @@ tinyclaw/
 │   │   ├── ask-master.ts     # ask_master（隐藏工具：daily 子 Agent 暂停向用户提问）
 │   │   ├── run-code-subagent.ts  # run_code_subagent（隐藏工具：daily 触发 code 子 Agent 执行）
 │   │   ├── render-diagram.ts # render_diagram（mermaid mmdc / mermaid.ink；python matplotlib）
+│   │   ├── send-report.ts    # send_report（Markdown → 图片，主动推送给用户）
 │   │   ├── notify.ts         # notify_user（不等 run 结束即推送消息）
 │   │   ├── skill-creator.ts  # create_skill（创建 Skill 文档并注册到 SKILLS.md）
 │   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_abort
-│   │   ├── cron.ts           # cron_add / cron_list / cron_remove / cron_enable / cron_disable / cron_run
+│   │   ├── cron.ts           # cron_add / cron_list / cron_remove / cron_enable / cron_disable / cron_run / cron_run
 │   │   └── mcp-manager.ts    # mcp_list_servers / mcp_enable_server / mcp_disable_server
 │   ├── code/                 # Code 模式（/code 斜杠命令）
 │   │   ├── index.ts          # 副作用入口，import 触发命令注册
@@ -64,10 +65,10 @@ tinyclaw/
 │   │   ├── registry.ts       # parseCommand() + executeCommand()
 │   │   └── builtin.ts        # 内置斜杠命令（/help /status /code /chat /plan /auto /new）
 │   ├── cron/                 # Cron 定时任务调度器
-│   │   ├── scheduler.ts      # 轮询 jobs.json，到时触发 runner
-│   │   ├── runner.ts         # 启动独立 Agent 会话执行 message，结果按策略推送
-│   │   ├── store.ts          # jobs.json CRUD（loadJobs / addJob / removeJob / updateJob）
-│   │   └── schema.ts         # Job 类型定义（Zod，兼容 once/every/daily）
+│   │   ├── scheduler.ts      # 轮询 jobs/ 目录，热加载 job JSON，到时触发 runner
+│   │   ├── runner.ts         # 单步/Pipeline 两种模式；结果按策略推送；session 自动清理
+│   │   ├── store.ts          # jobs/ 目录 CRUD（每个 job 独立 <id>.json 文件）
+│   │   └── schema.ts         # Job 类型定义（Zod，兼容 once/every/daily；Pipeline steps）
 │   ├── ipc/                  # Unix socket IPC（CLI chat ↔ daemon）
 │   │   ├── server.ts         # daemon 端：监听 socket，路由 chat/list/new 请求
 │   │   ├── client.ts         # CLI 端：连接 socket，流式打印 delta
@@ -83,11 +84,21 @@ tinyclaw/
 │   │       ├── gateway.ts    # WS 协议 + 消息队列 + 重连 + Session 持久化
 │   │       ├── api.ts        # QQ REST API 封装（token singleflight + send + markdown 派发）
 │   │       ├── outbound.ts   # 发送限流（1h/4次）+ 降级主动消息 + 媒体预检
-│   │       └── attachments.ts  # 附件下载到 workspace/downloads/ + 内容注入
+│   │       ├── transcribe.ts # 语音附件转写（SILK → WAV → faster-whisper ASR）
+│   │       └── attachments.ts  # 附件下载到 workspace/downloads/ + 内容注入（图片/语音）
 │   └── config/
 │       ├── schema.ts         # Zod schema（providers + backends + tools + cron + retry 等）
 │       ├── loader.ts         # 读 ~/.tinyclaw/config.toml，不存在时自动复制模板
 │       └── writer.ts         # 保留注释的 TOML 行级补丁（供 CLI config set 使用）
+├── scripts/
+│   └── transcribe.py         # faster-whisper 语音转文字脚本（供 transcribe.ts 调用）
+├── mcp-servers/
+│   ├── browser/              # Playwright 浏览器自动化 MCP server
+│   ├── news/                 # 多源新闻抓取/存档/检索 MCP server
+│   │   ├── index.ts          # MCP 工具注册：fetch_and_store / read_day / list_days / search_local / rebuild_index
+│   │   └── lib/
+│   │       └── news_fetch.py # HackerNews + 58 个 RSS 源；L1 SQLite 去重 + L2 n-gram Jaccard 去重
+│   └── polymarket/           # Polymarket 预测市场 MCP server
 ├── bin/
 │   └── tinyclaw.ts           # 全局命令入口（bun link 后注册为 tinyclaw）
 ├── docs/                     # 文档（本文件所在目录）
@@ -124,8 +135,13 @@ tinyclaw/
 │   ├── qqbot_c2c_<openid>.code.jsonl   # Code 模式独立文件
 │   └── cli_<uuid>.jsonl
 ├── cron/
-│   ├── jobs.json             # 定时任务持久化
-│   └── runs/                 # 每次运行日志
+│   ├── jobs/                 # 每个 job 独立 JSON 文件（<id>.json），调度器热加载
+│   └── logs/                 # 每次 run 的结果日志（<id>.jsonl，追加写入）
+├── news/                     # news MCP server 的新闻存档
+│   ├── YYYY-MM/
+│   │   └── YYYY-MM-DD.md     # 每日新闻存档（Markdown，fetch_and_store 写入）
+│   ├── seen_urls.db          # L1 URL 精确去重数据库（SQLite）
+│   └── .update-pending       # 存在时触发主进程 QMD 重新索引 news 知识库
 └── qqbot/
     ├── session.json          # WS Session 持久化（断线续传）
     └── downloads/            # 附件临时文件

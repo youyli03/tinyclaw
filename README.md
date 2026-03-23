@@ -8,10 +8,12 @@
 - **Agent 工作区**：每个 Agent 独立人格（SYSTEM.md）+ 持久记忆（MEM.md）+ 技能目录（SKILLS.md）+ 独立向量记忆命名空间
 - **QMD 向量记忆**：对话摘要自动索引至对应 Agent 命名空间，token 超 80% 自动摘要压缩
 - **Code 模式**：`/code` 切换为代码专注会话，独立历史、滑动窗口压缩、更高工具轮次上限；内置 Plan / Auto 子模式（AI 先规划后执行）
-- **内置工具集**：exec_shell / write_file / edit_file / delete_file / read_file / code_assist / render_diagram / notify_user / create_skill / agent_fork / cron_* / mcp_*
-- **Agent Fork**：agent_fork 工具在后台启动 Slave agent 异步执行耗时任务，不阻塞主对话，完成后自动通知用户
-- **Cron 定时任务**：内置调度器，支持一次性 / 固定间隔 / 每日定时三种类型，结果按策略推送到 QQ
-- **MCP 支持**：懒加载 MCP server，Agent 按需 enable/disable，不占用多余 token
+- **内置工具集**：exec_shell / write_file / edit_file / delete_file / read_file / code_assist / render_diagram / send_report / notify_user / create_skill / agent_fork / cron_* / mcp_*
+- **send_report**：将 Markdown 渲染为图片并主动推送，支持表格/代码块/Emoji，适合定时简报场景
+- **Agent Fork**：agent_fork 工具在后台启动 Slave agent 异步执行耗时任务，不阻塞主对话，完成后自动通知用户；支持定期进度汇报
+- **Cron 定时任务**：内置调度器，支持一次性 / 固定间隔 / 每日定时三种类型；**Pipeline 模式**（steps 数组）可精确编排 tool→msg 多步流水线，结果按策略推送到 QQ
+- **MCP 支持**：懒加载 MCP server，Agent 按需 enable/disable，不占用多余 token；内置 Browser / News / Polymarket 三个 MCP server
+- **语音转文字（ASR）**：QQBot 收到 SILK 语音消息时自动转写，基于本地 faster-whisper，支持在 MFA 确认、ask_user、plan 审批等所有对话阶段触发
 - **内置 QQBot**：无需插件，填配置即用；三档权限自动降级，自动重连，每用户串行消息队列；支持 Markdown 消息（`msg_type: 2`）
 - **GitHub Copilot 后端**：凭 Copilot 订阅自动发现所有可用模型，无需手动填 apiKey / baseUrl；自动检测模型 function calling 能力
 - **文本模式工具调用**：不支持 function calling 的模型自动切换为 `<tool_call>` XML 文本协议，工具能力不降级
@@ -278,7 +280,11 @@ tinyclaw completions bash/zsh/fish     # 输出补全脚本（手动 eval）
 | [docs/AGENT_LOOP.md](docs/AGENT_LOOP.md) | Agent 运行循环详细流程（ReAct、MFA、压缩、并发） |
 | [docs/SESSIONS_AND_AGENTS.md](docs/SESSIONS_AND_AGENTS.md) | Agent 工作区与会话生命周期 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 整体架构与模块关系 |
+| [docs/AGENT_LOOP.md](docs/AGENT_LOOP.md) | Agent ReAct 循环详细流程（Session 生命周期、MFA、压缩、并发） |
+| [docs/SESSIONS_AND_AGENTS.md](docs/SESSIONS_AND_AGENTS.md) | Agent 工作区与 Session 路由、记忆命名空间 |
 | [docs/CODE_MODE.md](docs/CODE_MODE.md) | Code 模式详解（Plan/Auto 子模式、持久化、上下文管理） |
+| [docs/CRON_PIPELINE.md](docs/CRON_PIPELINE.md) | Cron Pipeline 模式（多步流水线、防幻觉、分析层最佳实践） |
+| [docs/NEWS_MCP.md](docs/NEWS_MCP.md) | News MCP Server（多源抓取、去重、存档、实体关系分析层） |
 | [docs/RETRY_AND_STABILITY.md](docs/RETRY_AND_STABILITY.md) | LLM 连接稳定性（重试策略、流式 idle timeout、CA 证书） |
 
 ## 接入新平台
@@ -335,6 +341,13 @@ pip3 install markdown-it-py Pillow numpy
 
 ```bash
 pip3 install requests beautifulsoup4 lxml
+```
+
+**语音转文字（ASR）：**
+
+```bash
+pip3 install faster-whisper pilk
+# 首次运行会自动下载 Whisper 模型（~150MB）
 ```
 
 ## License

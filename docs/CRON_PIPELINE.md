@@ -232,3 +232,52 @@ Agent 会自动构建 steps 数组并调用 `cron_add`。
 3. **工具名称**：`tool` step 的 `name` 必须是已注册的工具（如 `exec_shell`、`write_file`、`send_report`、`notify_user` 等），错误的工具名会返回错误字符串并注入 session（不会抛出异常），后续 LLM step 可感知此错误
 4. **MFA 工具**：`exec_shell`、`write_file` 等需要 MFA 的工具在 pipeline `tool` step 中默认豁免（继承 `mfaExempt: true`）
 5. **session 清理**：Pipeline 模式（`stateful: false`）默认在每次 run 开始前自动清空 `~/.tinyclaw/sessions/cron_<id>.jsonl`，防止历史消息（含旧数据）跨 run 污染当次上下文。设置 `clearSessionOnRun: false` 可禁用此行为以保留历史记忆。`stateful: true` 的 job 不受影响
+
+---
+
+## 最佳实践：数据采集 → LLM 分析 Pipeline
+
+### 为什么 MCP Server 不应该内嵌 LLM 调用
+
+MCP Server 是**无状态工具提供方**，设计上只做同步执行。在 MCP 内部直接调 LLM 有以下问题：
+
+- 没有 session / tool_use 循环，无法多轮推理
+- 即使能调 LLM，也没有 `tool_call` 能力，不能再调 `search_store`、`send_report` 等工具
+- 本质上退化为普通 HTTP 请求，不是 Agent
+
+**正确做法**：`tool` step 负责数据采集，`msg` step 负责分析。`msg` 步骤在完整 Agent 环境中运行，拥有所有工具，天然支持多轮 ReACT 循环。
+
+### 示例：新闻抓取 → 实体关系分析 → 推送
+
+```
+steps[0]: tool(mcp_news_fetch_and_store)   ← 纯数据采集，不走 LLM
+steps[1]: tool(exec_shell, "python3 ...")  ← 拉取结构化行情数据
+steps[2]: msg("数据锚定：先原文打印上游数据，再执行实体分析，最后 send_report")
+          └─ msg 步骤在完整 Agent 里运行：
+             可调 search_store / mcp_news_* / send_report / exec_shell
+             支持多轮 tool_call（ReACT 循环）
+```
+
+### 防止数据幻觉的关键技巧
+
+在分析类 `msg` step 的 prompt 开头加**数据锚定**指令：
+
+```
+【第一动作：数据锚定】
+在做任何分析前，先原文打印 pipeline 上游数据：
+[数据锚定-Step2] <原文JSON>
+[数据锚定-Step3] <原文输出>
+
+锚定数据中没有的字段，后续报告一律写"⚠️ 数据缺失"，禁止用知识库数字替代。
+```
+
+这可以有效防止 LLM 在长 session 中混淆上游数字、退回到训练知识。
+
+### 报告格式建议
+
+`send_report` 的 markdown 使用**表格 + Emoji + 章节编号**比纯列表更易读：
+
+- 数值型数据（指数/价格）→ 表格，加数据日期列
+- 状态型数据（情绪/涨跌）→ Emoji 图标 + 粗体标注
+- 关系型数据（传导链/因果）→ `[实体A] --[关系]--> [实体B] → 市场含义`
+- 禁止在报告正文中写工作流执行过程，禁止留 XXX 占位符
