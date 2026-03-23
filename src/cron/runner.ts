@@ -90,7 +90,8 @@ async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined>
 /**
  * 执行 Pipeline Job：按顺序运行 job.steps，共享同一个 stateful session。
  *
- * - `tool` step：直接调用工具，输出注入 session（作为 assistant 消息），供后续 LLM 感知
+ * - `tool` step：直接调用工具，输出以合成 tool call 对（assistant+tool_calls + role:tool）注入 session，
+ *   使后续 LLM 步骤能以原生工具结果格式感知数据，避免将工具数据误认为普通 assistant 消息而忽略
  * - `msg`  step：向 session 注入 user 消息，触发 runAgent，LLM 生成回复
  *
  * 返回最终推送给用户的文本（最后一个 msg step 的 LLM 输出；若无 msg step 则取最后 tool 输出）。
@@ -122,8 +123,15 @@ async function runPipelineJob(
       const toolResult = await executeTool(step.name, step.args as Record<string, unknown>, toolCtx);
       lastResult = toolResult;
 
-      // 将工具输出注入 session 上下文，以 assistant 消息形式，供后续 LLM 步骤感知
-      session.addAssistantMessage(`[pipeline:tool:${step.name}]\n${toolResult}`);
+      // 将工具输出以合成 tool call 对注入 session：
+      // assistant(tool_calls) + tool(result)，使后续 LLM 步骤以原生工具结果格式感知数据
+      const syntheticCallId = `pipeline_step${i + 1}_${step.name}_${Date.now()}`;
+      session.addAssistantWithToolCalls("", [{
+        callId: syntheticCallId,
+        name: step.name,
+        args: step.args as Record<string, unknown>,
+      }]);
+      session.addToolResultMessage(syntheticCallId, toolResult);
       console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${toolResult.length}`);
 
     } else {
@@ -153,6 +161,15 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   const sessionId = (job.stateful || isPipeline)
     ? `cron:${job.id}`
     : `cron:${job.id}:${Date.now()}`;
+
+  // Pipeline 模式：若 clearSessionOnRun !== false（默认 true）且非 stateful，运行前清空 session JSONL，
+  // 防止历史消息（含旧行情数据）跨 run 污染当次上下文。必须在 new Session() 之前执行，
+  // 否则 Session 构造函数会先从 JSONL 加载旧历史
+  if (isPipeline && !job.stateful && job.clearSessionOnRun !== false) {
+    const sanitized = sessionId.replace(/[:/\\]/g, "_");
+    const jsonlPath = path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
+    try { fs.unlinkSync(jsonlPath); } catch { /* 文件不存在时忽略 */ }
+  }
 
   const session = new Session(sessionId, { agentId: job.agentId });
 

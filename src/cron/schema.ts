@@ -93,7 +93,7 @@ export const CronJobSchema = z.object({
    *
    * 提供此字段时，job 以 Pipeline 模式运行（忽略 `message` 字段的 prompt 用途，仅作描述）：
    * - 步骤按顺序串行执行，共享同一个 stateful session
-   * - `tool` 步骤：直接调用工具，输出作为上下文注入 session
+   * - `tool` 步骤：直接调用工具，输出以合成 tool call 对（assistant+tool_calls / role:tool）注入 session
    * - `msg` 步骤：向 session 注入 user 消息，触发 LLM 生成回复
    * - 最后一个 `msg` 步骤的 LLM 输出作为 job 的最终 resultText（用于推送/日志）
    * - 若无 `msg` 步骤，最后一个 `tool` 步骤的输出作为 resultText
@@ -101,6 +101,16 @@ export const CronJobSchema = z.object({
    * 不提供此字段时，job 走原有 `message` 单步模式。
    */
   steps: z.array(PipelineStepSchema).optional(),
+
+  /**
+   * Pipeline 模式每次运行前是否清空 session 历史（默认 true，即未设置时视为 true）。
+   *
+   * - 未设置或 true：每次运行前删除 session JSONL，避免跨 run 的历史消息（含旧数据）污染上下文
+   * - false：保留历史，适用于需要跨 run 记忆的场景
+   *
+   * 仅当 stateful=false 且 isPipeline=true 时生效；stateful job 不受此字段影响。
+   */
+  clearSessionOnRun: z.boolean().optional(),
 
   // ── 运行记录 ──────────────────────────────────────────────────────────────
   createdAt: z.string(),
