@@ -15,6 +15,8 @@ export interface DownloadedAttachment {
   localPath: string;
   contentType: string;
   filename: string;
+  /** 语音转文字结果（仅 audio/* 附件，转录成功后填充） */
+  transcript?: string;
 }
 
 function contentTypeToTag(contentType: string): string {
@@ -85,7 +87,8 @@ export async function downloadAttachments(
 
 /**
  * 将原始消息内容与已下载附件合并：
- * 每个附件以 <tag src="localPath" name="filename"/> 追加到内容末尾。
+ * - 音频附件：若已转录则输出 "[语音转文字]: {transcript}"，否则保留 <audio> 标签
+ * - 其他附件：以 <tag src="localPath" name="filename"/> 追加到内容末尾
  */
 export function buildEnrichedContent(
   originalContent: string,
@@ -94,8 +97,12 @@ export function buildEnrichedContent(
   if (downloaded.length === 0) return originalContent;
   const parts = [originalContent.trim()];
   for (const d of downloaded) {
-    const tag = contentTypeToTag(d.contentType);
-    parts.push(`<${tag} src="${d.localPath}" name="${d.filename}"/>`);
+    if (d.contentType.startsWith("audio/") && d.transcript !== undefined) {
+      parts.push(`[语音转文字]: ${d.transcript}`);
+    } else {
+      const tag = contentTypeToTag(d.contentType);
+      parts.push(`<${tag} src="${d.localPath}" name="${d.filename}"/>`);
+    }
   }
   return parts.join("\n");
 }

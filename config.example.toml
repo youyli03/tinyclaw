@@ -135,3 +135,14 @@ clientSecret = "your-client-secret"
 embedModel     = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
 tokenThreshold = 0.8    # 达到 contextWindow 的 80% 时触发摘要压缩
 # contextWindow = 128000  # 可选，默认 128000
+
+# ── 语音识别（faster-whisper 本地 ASR）──────────────────────────────────────
+# 收到语音消息时自动转文字，转录结果先发给用户，再带 [语音转文字] 前缀输入 AI。
+# 需先安装 Python 依赖：pip install faster-whisper
+# 首次运行时模型会自动从 HuggingFace 下载并缓存到 ~/.cache/huggingface/
+
+[voice]
+model    = "small"   # 模型大小：tiny / base / small / medium / large-v3
+                     # tiny ≈ 39M，small ≈ 244M，large-v3 ≈ 1.5G
+                     # 中文推荐 "small" 或 "medium"
+language = "zh"      # 语言代码（ISO 639-1），留空则自动检测

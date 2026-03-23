@@ -30,6 +30,7 @@ import { agentManager } from "./core/agent-manager.js";
 import { QQBotConnector } from "./connectors/qqbot/index.js";
 import type { InboundMessage } from "./connectors/base.js";
 import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
+import { transcribeAudio } from "./connectors/qqbot/transcribe.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
 import { startIpcServer } from "./ipc/server.js";
@@ -444,6 +445,31 @@ async function main(): Promise<void> {
           msg.attachments,
           agentManager.downloadsDir(session.agentId)
         );
+
+        // 对音频附件逐一转录（语音转文字）
+        const voiceCfg = loadConfig().voice;
+        for (const d of downloaded) {
+          if (!d.contentType.startsWith("audio/")) continue;
+          try {
+            const transcript = await transcribeAudio(
+              d.localPath,
+              voiceCfg.model,
+              voiceCfg.language
+            );
+            if (transcript) {
+              d.transcript = transcript;
+              // 先把识别结果发给用户，让用户知道语音内容
+              void connector.send(
+                msg.peerId,
+                msg.type,
+                `🎤 语音识别：${transcript}`
+              );
+            }
+          } catch (err) {
+            console.warn("[whisper] 语音转文字失败，保留原始音频标签:", err);
+          }
+        }
+
         messageContent = buildEnrichedContent(msg.content, downloaded);
       } catch (err) {
         console.warn("[qqbot] 附件下载失败:", err);

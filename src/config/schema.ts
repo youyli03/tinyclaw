@@ -311,6 +311,24 @@ const AgentSchema = z.object({
 }).default({});
 export type AgentConfig = z.infer<typeof AgentSchema>;
 
+// ── 语音识别配置 ──────────────────────────────────────────────────────────────
+
+const VoiceSchema = z.object({
+  /**
+   * faster-whisper 模型大小。
+   * 越大越准确但首次下载和推理越慢。
+   * 推荐：中文内容用 "small" 或 "medium"；纯英文可用 "tiny"。
+   * 可选值：tiny / base / small / medium / large-v2 / large-v3
+   */
+  model: z.string().default("small"),
+  /**
+   * 语言代码（ISO 639-1），留空则自动检测。
+   * 示例：zh / en / ja / ko
+   */
+  language: z.string().default(""),
+}).default({});
+export type VoiceConfig = z.infer<typeof VoiceSchema>;
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -322,6 +340,7 @@ export const ConfigSchema = z.object({
   memory: MemorySchema.default({}),
   tools: ToolsSchema,
   retry: RetryConfigSchema,
+  voice: VoiceSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
