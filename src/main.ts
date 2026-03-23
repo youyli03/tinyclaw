@@ -97,9 +97,42 @@ async function main(): Promise<void> {
     const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
     const session = getSession(sessionId);
 
+    // ── 附件预处理（语音转文字）——必须在所有早期 return 分支之前执行 ──────
+    // plan 审批、ask_user、MFA 等分支均需能接收语音消息作为输入。
+    let resolvedContent = msg.content;
+    let earlyDownloaded: import("./connectors/qqbot/attachments.js").DownloadedAttachment[] = [];
+    if (msg.attachments && msg.attachments.length > 0) {
+      try {
+        earlyDownloaded = await downloadAttachments(
+          msg.attachments,
+          agentManager.downloadsDir(session.agentId)
+        );
+        const voiceCfg = loadConfig().voice;
+        for (const d of earlyDownloaded) {
+          if (!d.contentType.startsWith("audio/")) continue;
+          console.log(`[whisper] 开始转录: ${d.filename} (model=${voiceCfg.model})`);
+          try {
+            const transcript = await transcribeAudio(d.localPath, voiceCfg.model, voiceCfg.language);
+            if (transcript) {
+              d.transcript = transcript;
+              console.log(`[whisper] 转录完成: "${transcript}"`);
+              resolvedContent = transcript; // 用转录文本替代原始消息内容
+              void connector.send(msg.peerId, msg.type, `🎤 语音识别：${transcript}`);
+            } else {
+              console.log(`[whisper] 转录结果为空: ${d.filename}`);
+            }
+          } catch (err) {
+            console.warn(`[whisper] 语音转文字失败 (${d.filename}):`, err);
+          }
+        }
+      } catch (err) {
+        console.warn("[qqbot] 附件下载失败:", err);
+      }
+    }
+
     // ── Plan 审批：检测 plan 子模式下等待用户选择操作的消息 ─────────────
     if (session.pendingPlanApproval) {
-      const trimmed = msg.content.trim();
+      const trimmed = resolvedContent.trim();
       const actions = session.pendingPlanApproval.actions;
       const n = parseInt(trimmed, 10);
 
@@ -121,7 +154,7 @@ async function main(): Promise<void> {
 
     // ── Interface A：检测 MFA 确认消息 ──────────────────────────────────
     if (session.pendingApproval) {
-      const trimmed = msg.content.trim();
+      const trimmed = resolvedContent.trim();
       if (trimmed === "确认") {
         session.pendingApproval.resolve(true);
         // "已收到，执行中..." 由 onMFARequest 的调用方在 resolve 后发送
@@ -137,14 +170,14 @@ async function main(): Promise<void> {
     if (session.pendingSlaveQuestion) {
       const { resolve } = session.pendingSlaveQuestion;
       session.pendingSlaveQuestion = null;
-      resolve(msg.content.trim());
+      resolve(resolvedContent.trim());
       void connector.send(msg.peerId, msg.type, "已收到，已转发给 AI 继续处理...", msg.messageId);
       return "";
     }
 
     // ── ask_user 拦截：AI 通过 ask_user 工具等待用户选择/输入时 ─────────
     if (session.pendingAskUser) {
-      const trimmed = msg.content.trim();
+      const trimmed = resolvedContent.trim();
       const { optionLabels, allowFreeform } = session.pendingAskUser;
       const n = parseInt(trimmed, 10);
 
@@ -437,48 +470,8 @@ async function main(): Promise<void> {
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
     session.running = true;
-    // 如果消息带有附件，先下载到 workspace/downloads/ 并将路径追加到消息内容
-    let messageContent = msg.content;
-    if (msg.attachments && msg.attachments.length > 0) {
-      try {
-        const downloaded = await downloadAttachments(
-          msg.attachments,
-          agentManager.downloadsDir(session.agentId)
-        );
-
-        // 对音频附件逐一转录（语音转文字）
-        const voiceCfg = loadConfig().voice;
-        for (const d of downloaded) {
-          if (!d.contentType.startsWith("audio/")) continue;
-          console.log(`[whisper] 开始转录: ${d.filename} (model=${voiceCfg.model})`);
-          try {
-            const transcript = await transcribeAudio(
-              d.localPath,
-              voiceCfg.model,
-              voiceCfg.language
-            );
-            if (transcript) {
-              d.transcript = transcript;
-              console.log(`[whisper] 转录完成: "${transcript}"`);
-              // 先把识别结果发给用户，让用户知道语音内容
-              void connector.send(
-                msg.peerId,
-                msg.type,
-                `🎤 语音识别：${transcript}`
-              );
-            } else {
-              console.log(`[whisper] 转录结果为空: ${d.filename}`);
-            }
-          } catch (err) {
-            console.warn(`[whisper] 语音转文字失败 (${d.filename}):`, err);
-          }
-        }
-
-        messageContent = buildEnrichedContent(msg.content, downloaded);
-      } catch (err) {
-        console.warn("[qqbot] 附件下载失败:", err);
-      }
-    }
+    // 附件已在 handleMessage 顶部完成下载和转录（earlyDownloaded），直接构建消息内容
+    let messageContent = buildEnrichedContent(msg.content, earlyDownloaded);
 
     // 在用户发出的消息前加上当前时间，方便 Agent 识别当前日期
     const nowStr = new Date().toLocaleString();
