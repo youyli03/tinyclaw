@@ -53,6 +53,14 @@ registerTool({
           peerId:        { type: "string",  description: "推送目标的 QQ peerId（不填则仅写 log）" },
           msgType:       { type: "string",  enum: ["c2c","group","guild","dm"], description: "消息类型（默认 c2c）" },
           model:         { type: "string",  description: "（可选）运行此 job 使用的模型，格式 \"provider/model-id\"，如 \"copilot/claude-sonnet-4.6\"。不填则使用 daily 后端。" },
+          steps: {
+            type: "array",
+            description: "【Pipeline 模式】多步骤流水线列表。提供此字段时，job 以 Pipeline 模式运行（忽略 message 字段的 prompt 用途，仅作描述）。所有步骤共享同一个 stateful session，前步的工具输出对后续 LLM 步骤完全可见。步骤按顺序串行执行：\n- { type: 'tool', name: '工具名', args: {...} }：直接调用工具，不走 LLM，输出注入 session 上下文\n- { type: 'msg', content: '...' }：向 session 注入 user 消息，触发 LLM 生成回复\n最后一个 msg step 的 LLM 输出作为最终推送内容；若无 msg step，则取最后一个 tool step 的输出。",
+            items: {
+              type: "object",
+              description: "Pipeline 步骤：{ type: 'tool', name, args } 或 { type: 'msg', content }",
+            },
+          },
         },
         required: ["message", "type"],
       },
@@ -95,6 +103,9 @@ registerTool({
       stateful: Boolean(args["stateful"] ?? false),
       mfaExempt: true, // agent 调用本身已经过 MFA，默认豁免
       ...(args["model"] ? { model: String(args["model"]) } : {}),
+      ...(Array.isArray(args["steps"]) && args["steps"].length > 0
+        ? { steps: args["steps"] as import("../cron/schema.js").PipelineStep[] }
+        : {}),
     });
 
     cronScheduler.reschedule(job.id);

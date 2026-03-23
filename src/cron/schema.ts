@@ -1,5 +1,31 @@
 import { z } from "zod";
 
+// ── Pipeline Step Schema ──────────────────────────────────────────────────────
+
+/**
+ * 流水线步骤（两种类型）：
+ * - `tool`：直接执行指定工具（不走 LLM），输出注入 session 上下文供后续步骤感知
+ * - `msg` ：向 session 注入 user 消息，触发完整 runAgent（LLM 生成回复）
+ *
+ * 多个步骤共享同一个 stateful session，前步的工具输出对后续 LLM 步骤完全可见。
+ */
+export const PipelineStepSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("tool"),
+    /** 工具名称（需已注册，如 exec_shell / send_report / notify_user 等） */
+    name: z.string().min(1),
+    /** 传给工具的参数 */
+    args: z.record(z.unknown()).default({}),
+  }),
+  z.object({
+    type: z.literal("msg"),
+    /** 注入给 agent 的 user 消息内容，将触发一次 runAgent */
+    content: z.string().min(1),
+  }),
+]);
+
+export type PipelineStep = z.infer<typeof PipelineStepSchema>;
+
 // ── Job 输出配置 ──────────────────────────────────────────────────────────────
 
 const CronOutputSchema = z.object({
@@ -61,6 +87,20 @@ export const CronJobSchema = z.object({
    * 不填则使用 daily 后端模型。
    */
   model: z.string().optional(),
+
+  /**
+   * 流水线步骤列表（Pipeline 模式）。
+   *
+   * 提供此字段时，job 以 Pipeline 模式运行（忽略 `message` 字段的 prompt 用途，仅作描述）：
+   * - 步骤按顺序串行执行，共享同一个 stateful session
+   * - `tool` 步骤：直接调用工具，输出作为上下文注入 session
+   * - `msg` 步骤：向 session 注入 user 消息，触发 LLM 生成回复
+   * - 最后一个 `msg` 步骤的 LLM 输出作为 job 的最终 resultText（用于推送/日志）
+   * - 若无 `msg` 步骤，最后一个 `tool` 步骤的输出作为 resultText
+   *
+   * 不提供此字段时，job 走原有 `message` 单步模式。
+   */
+  steps: z.array(PipelineStepSchema).optional(),
 
   // ── 运行记录 ──────────────────────────────────────────────────────────────
   createdAt: z.string(),

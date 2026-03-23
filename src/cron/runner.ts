@@ -1,8 +1,11 @@
 /**
  * Cron job 执行器
  *
- * 对每个 job 触发一次 runAgent()，结合 job.output.notify 策略决定是否推送结果，
- * 并将运行记录追加到日志文件。
+ * 支持两种运行模式：
+ * 1. 单步模式（message）：对每个 job 触发一次 runAgent()，向后兼容
+ * 2. Pipeline 模式（steps）：按顺序执行多个步骤（tool / msg），共享 stateful session
+ *
+ * 结合 job.output.notify 策略决定是否推送结果，并将运行记录追加到日志文件。
  */
 
 import * as fs from "node:fs";
@@ -13,10 +16,12 @@ import { runAgent } from "../core/agent.js";
 import type { Connector } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
-import { parseModelSymbol, llmRegistry } from "../llm/registry.js";
+import { parseModelSymbol } from "../llm/registry.js";
 import { buildCopilotClient } from "../llm/copilot.js";
 import { LLMClient } from "../llm/client.js";
 import { loadConfig } from "../config/loader.js";
+import { executeTool } from "../tools/registry.js";
+import type { ToolContext } from "../tools/registry.js";
 
 // ── Cron 专用 system prompt（约束 agent 不递归创建任务） ──────────────────────
 
@@ -38,11 +43,114 @@ const CRON_AGENT_SYSTEM = `## ⚠️ 你正在以【自动化 cron 任务】身�
 ### 输出规范（关键）
 8. **输出实际内容，禁止摘要**：你的最终文字回复将直接推送给用户，必须包含从工具中获取到的实际数据（如天气数值、查询结果、执行输出等），**严禁只输出"已执行"、"任务完成"、"操作成功"等摘要语句替代真实内容**`;
 
+// ── 构建 LLM override client（cron job 指定 model 时使用）──────────────────────
+
+async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined> {
+  if (!job.model) return undefined;
+  try {
+    const { provider, modelId } = parseModelSymbol(job.model);
+    if (provider === "copilot") {
+      const cfg = loadConfig();
+      const copilotCfg = cfg.providers.copilot;
+      if (!copilotCfg) {
+        throw new Error("job.model 使用 copilot provider，但 [providers.copilot] 未配置");
+      }
+      const { client } = await buildCopilotClient({
+        githubToken: copilotCfg.githubToken,
+        model: modelId,
+        timeoutMs: copilotCfg.timeoutMs,
+      });
+      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
+      return client;
+    } else if (provider === "openai") {
+      const cfg = loadConfig();
+      const openaiCfg = cfg.providers.openai;
+      if (!openaiCfg) {
+        throw new Error("job.model 使用 openai provider，但 [providers.openai] 未配置");
+      }
+      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
+      return new LLMClient({
+        baseUrl: openaiCfg.baseUrl,
+        apiKey: openaiCfg.apiKey,
+        model: modelId,
+        maxTokens: openaiCfg.maxTokens,
+        timeoutMs: openaiCfg.timeoutMs,
+      });
+    } else {
+      throw new Error(`job.model 使用未知 provider "${provider}"`);
+    }
+  } catch (err) {
+    console.error(`[cron] job=${job.id} 模型初始化失败，回退到 daily：`, err);
+    return undefined;
+  }
+}
+
+// ── Pipeline 模式执行 ─────────────────────────────────────────────────────────
+
+/**
+ * 执行 Pipeline Job：按顺序运行 job.steps，共享同一个 stateful session。
+ *
+ * - `tool` step：直接调用工具，输出注入 session（作为 assistant 消息），供后续 LLM 感知
+ * - `msg`  step：向 session 注入 user 消息，触发 runAgent，LLM 生成回复
+ *
+ * 返回最终推送给用户的文本（最后一个 msg step 的 LLM 输出；若无 msg step 则取最后 tool 输出）。
+ * 任意 step 失败则抛出异常，由调用方处理 status=error。
+ */
+async function runPipelineJob(
+  job: CronJob,
+  session: Session,
+  onMFARequest: (msg: string, verify?: (code: string) => boolean) => Promise<boolean>,
+  notifyFn: ((message: string) => Promise<void>) | undefined,
+  overrideClient: LLMClient | undefined,
+): Promise<string> {
+  const steps = job.steps!;
+  let lastResult = "";
+
+  // 构建工具执行上下文（pipeline tool steps 使用）
+  const toolCtx: ToolContext = {
+    sessionId: session.sessionId,
+    agentId: job.agentId,
+    cwd: os.homedir(),
+  };
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]!;
+    const stepLabel = `[pipeline step ${i + 1}/${steps.length}:${step.type}]`;
+
+    if (step.type === "tool") {
+      console.log(`[cron] job=${job.id} ${stepLabel} 执行工具: ${step.name}`);
+      const toolResult = await executeTool(step.name, step.args as Record<string, unknown>, toolCtx);
+      lastResult = toolResult;
+
+      // 将工具输出注入 session 上下文，以 assistant 消息形式，供后续 LLM 步骤感知
+      session.addAssistantMessage(`[pipeline:tool:${step.name}]\n${toolResult}`);
+      console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${toolResult.length}`);
+
+    } else {
+      // msg step：触发 LLM
+      console.log(`[cron] job=${job.id} ${stepLabel} 触发 LLM，msg: "${step.content.slice(0, 60)}"`);
+      const result = await runAgent(session, step.content, {
+        onMFARequest,
+        systemPrompt: CRON_AGENT_SYSTEM,
+        ...(notifyFn ? { onNotify: notifyFn } : {}),
+        ...(overrideClient ? { overrideClient } : {}),
+      });
+      lastResult = result.content;
+      console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${result.content.length}`);
+    }
+  }
+
+  return lastResult;
+}
+
 // ── 执行单个 Job ──────────────────────────────────────────────────────────────
 
 export async function runJob(job: CronJob, connector: Connector | null): Promise<void> {
   const now = new Date().toISOString();
-  const sessionId = job.stateful
+
+  // Pipeline 模式强制使用 stateful session（步骤间需共享上下文）
+  const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;
+  const sessionId = (job.stateful || isPipeline)
     ? `cron:${job.id}`
     : `cron:${job.id}:${Date.now()}`;
 
@@ -67,59 +175,29 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   let status: "success" | "error" = "success";
   let resultText = "";
 
-  // ── 按 job.model 构建自定义 LLM client（可选）────────────────────────────
-  let overrideClient: LLMClient | undefined;
-  if (job.model) {
-    try {
-      const { provider, modelId } = parseModelSymbol(job.model);
-      if (provider === "copilot") {
-        const cfg = loadConfig();
-        const copilotCfg = cfg.providers.copilot;
-        if (!copilotCfg) {
-          throw new Error("job.model 使用 copilot provider，但 [providers.copilot] 未配置");
-        }
-        const { client } = await buildCopilotClient({
-          githubToken: copilotCfg.githubToken,
-          model: modelId,
-          timeoutMs: copilotCfg.timeoutMs,
-        });
-        overrideClient = client;
-      } else if (provider === "openai") {
-        const cfg = loadConfig();
-        const openaiCfg = cfg.providers.openai;
-        if (!openaiCfg) {
-          throw new Error("job.model 使用 openai provider，但 [providers.openai] 未配置");
-        }
-        overrideClient = new LLMClient({
-          baseUrl: openaiCfg.baseUrl,
-          apiKey: openaiCfg.apiKey,
-          model: modelId,
-          maxTokens: openaiCfg.maxTokens,
-          timeoutMs: openaiCfg.timeoutMs,
-        });
-      } else {
-        throw new Error(`job.model 使用未知 provider "${provider}"`);
+  const overrideClient = await buildOverrideClient(job);
+
+  const notifyFn = connector && job.output.peerId
+    ? async (message: string) => {
+        await connector.send(job.output.peerId!, job.output.msgType, message);
       }
-      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
-    } catch (err) {
-      console.error(`[cron] job=${job.id} 模型初始化失败，回退到 daily：`, err);
-      overrideClient = undefined;
-    }
-  }
+    : undefined;
 
   try {
-    const notifyFn = connector && job.output.peerId
-      ? async (message: string) => {
-          await connector.send(job.output.peerId!, job.output.msgType, message);
-        }
-      : undefined;
-    const result = await runAgent(session, job.message, {
-      onMFARequest,
-      systemPrompt: CRON_AGENT_SYSTEM,
-      ...(notifyFn ? { onNotify: notifyFn } : {}),
-      ...(overrideClient ? { overrideClient } : {}),
-    });
-    resultText = result.content;
+    if (isPipeline) {
+      // ── Pipeline 模式 ──────────────────────────────────────────────────────
+      console.log(`[cron] job=${job.id} 以 Pipeline 模式运行（${job.steps!.length} 步）`);
+      resultText = await runPipelineJob(job, session, onMFARequest, notifyFn, overrideClient);
+    } else {
+      // ── 单步模式（向后兼容）────────────────────────────────────────────────
+      const result = await runAgent(session, job.message, {
+        onMFARequest,
+        systemPrompt: CRON_AGENT_SYSTEM,
+        ...(notifyFn ? { onNotify: notifyFn } : {}),
+        ...(overrideClient ? { overrideClient } : {}),
+      });
+      resultText = result.content;
+    }
   } catch (err) {
     status = "error";
     resultText = `执行失败：${err instanceof Error ? err.message : String(err)}`;
@@ -154,7 +232,8 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   });
 
   // ── 无状态模式：运行完删 JSONL ────────────────────────────────────────────
-  if (!job.stateful) {
+  // Pipeline 模式不删除（session 是其共享状态的载体；若需无状态可在 steps 执行完后清理）
+  if (!job.stateful && !isPipeline) {
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
     const jsonlPath = path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
     try { fs.unlinkSync(jsonlPath); } catch { /* 文件可能不存在，忽略 */ }
