@@ -85,15 +85,9 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
 
   const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
-    // 用 chunkPos 精确定位命中的 chunk（~3600 字符 = 900 token），
-    // 避免错误地取文件开头（与实际命中 chunk 无关）
-    let preview = "";
-    if (r.chunkPos !== undefined) {
-      try {
-        const raw = fs.readFileSync(r.filepath, "utf-8");
-        preview = raw.slice(r.chunkPos, r.chunkPos + 3600).trim();
-      } catch { /* 文件读取失败忽略 */ }
-    }
+    // r.body 即为命中 chunk 的完整文本（QMD 直接在结果中携带）
+    // 注意：r.filepath 是 "qmd://..." 虚拟路径，不能用 fs.readFileSync 读取
+    const preview = (r.body ?? "").trim();
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
   });
 
@@ -160,13 +154,8 @@ export async function searchStore(
 
   const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
-    let preview = "";
-    if (r.chunkPos !== undefined) {
-      try {
-        const raw = fs.readFileSync(r.filepath, "utf-8");
-        preview = raw.slice(r.chunkPos, r.chunkPos + 3600).trim();
-      } catch { /* ignore */ }
-    }
+    // r.body 即为命中 chunk 的完整文本，r.filepath 是 "qmd://..." 虚拟路径无法直接读取
+    const preview = (r.body ?? "").trim();
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
   });
 
