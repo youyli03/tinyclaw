@@ -104,8 +104,10 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
       } else {
         consecutive5xx = 0; // 非 5xx 成功或其他错误重置计数
       }
-      // 429：优先使用 Retry-After，否则固定 baseDelayMs
-      const delay = (err instanceof RateLimitError ? parseRetryAfterMs(err) : undefined) ?? BASE_DELAY;
+      // 429：优先使用 Retry-After，否则固定 baseDelayMs；其他错误使用指数退避
+      const delay = err instanceof RateLimitError
+        ? (parseRetryAfterMs(err) ?? BASE_DELAY)
+        : backoff(BASE_DELAY, attempt);
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
       console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
       await new Promise<void>((res, rej) => {
