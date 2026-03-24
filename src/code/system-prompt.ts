@@ -12,6 +12,7 @@
  */
 
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { agentManager } from "../core/agent-manager.js";
 
 export function buildCodeSystemPrompt(
@@ -33,8 +34,19 @@ export function buildCodeSystemPrompt(
 
 当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。` : "";
 
+  // 读取已有 PLAN.md（plan 模式下注入，让 AI 感知上次遗留计划）
+  let existingPlan: string | undefined;
   if (subMode === "plan") {
-    return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection });
+    try {
+      if (existsSync(planPath)) {
+        const content = readFileSync(planPath, "utf-8").trim();
+        if (content.length > 0) existingPlan = content;
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (subMode === "plan") {
+    return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan });
   }
   return buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection });
 }
@@ -45,6 +57,8 @@ interface PromptParts {
   workdirNote: string;
   visionSection: string;
   planPath?: string;
+  /** 已有 PLAN.md 内容（非空时注入到 prompt 末尾，供会话恢复后 AI 感知上次计划） */
+  existingPlan?: string | undefined;
 }
 
 function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection }: PromptParts): string {
@@ -104,7 +118,11 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次${visionSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection }: PromptParts): string {
+function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan }: PromptParts): string {
+  const existingPlanSection = existingPlan
+    ? `\n\n## 已有计划（上次会话遗留）\n\n> 会话中断前已完成以下计划，可在此基础上继续执行或根据新需求修改。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
+    : "";
+
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Plan）**，本次会话不保留长期历史。
 
 ## 工作原则
@@ -114,12 +132,14 @@ Plan 模式分为两个严格隔离的阶段：
 ### 阶段一：分析与规划
 1. 使用只读工具（read_file、exec_shell 只读命令）充分了解代码库结构
 2. 整理完整的修改方案（影响哪些文件、改什么、为什么）
-3. 调用 \`write_file\` 将详细计划写入 \`${planPath}\`（**必须完成**，这是阶段一唯一允许的写入操作）
+3. 将详细计划写入 \`${planPath}\`：
+   - **首次写入**：调用 \`write_file\` 创建 PLAN.md
+   - **迭代修改**（用户反馈后）：调用 \`edit_file\` 精确修改相关部分，**不要整体覆写**
 4. 调用 \`exit_plan_mode\` 工具提交计划摘要，\`planPath\` 参数传入 \`${planPath}\`，等待用户确认
 
 ### 阶段二：执行
 - **仅在 approved=true 后**才开始执行写入操作
-- 若 approved=false，根据 feedback 修改计划，再次调用 exit_plan_mode
+- 若 approved=false，根据 feedback 用 \`edit_file\` 修改计划，再次调用 exit_plan_mode
 - 执行阶段可使用全部工具
 - **语法检查（必须）**：每次写入或修改代码文件后，立即用 exec_shell 执行对应语法/编译检查，通过后再继续后续步骤；若检查失败须修复后重新检查直到通过。常用命令参考：
   - TypeScript：\`tsc --noEmit\`
@@ -133,6 +153,7 @@ Plan 模式分为两个严格隔离的阶段：
 ## 重要约束
 
 - 阶段一禁止调用任何写入类工具（write_file / edit_file / exec_shell 写入命令等），**唯一例外是写入 PLAN.md 文件**
+- PLAN.md **只在首次**用 write_file 创建；后续每次迭代修改必须用 edit_file 局部更新，保留修改轨迹
 - 提交计划前必须已充分探索，做到一次规划到位，减少反复迭代
 - 若任务是纯只读查询（如"解释这段代码"），无需 exit_plan_mode，直接回复即可
 
@@ -169,5 +190,5 @@ Plan 模式分为两个严格隔离的阶段：
   - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
-- 用中文回复，简洁明了${visionSection}`;
+- 用中文回复，简洁明了${visionSection}${existingPlanSection}`;
 }

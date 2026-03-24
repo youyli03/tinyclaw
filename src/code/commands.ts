@@ -113,7 +113,7 @@ registerCommand({
     if (session.codeSubMode === "plan") {
       return "ℹ️ 已处于 Plan 子模式。发送 `/auto` 可切换回直接执行模式。";
     }
-    session.codeSubMode = "plan";
+    session.saveCodeSubMode(agentManager.codeSubModePath(session.agentId), "plan");
     return [
       "📋 **已进入 Plan 子模式**",
       "",
@@ -136,7 +136,7 @@ registerCommand({
     if (session.codeSubMode === "auto") {
       return "ℹ️ 已处于 Auto 子模式（默认）。发送 `/plan` 可切换到规划子模式。";
     }
-    session.codeSubMode = "auto";
+    session.saveCodeSubMode(agentManager.codeSubModePath(session.agentId), "auto");
     return [
       "🚀 **已切换到 Auto 子模式**",
       "",
@@ -199,6 +199,13 @@ registerCommand({
     session.clearMessages();
     // 重新激活标记（clearMessages 会删除 .code.active，这里需要重建）
     session.activateCodeMode();
+    // 清除上一个任务遗留的 PLAN.md，新会话干净起步
+    try {
+      const planFile = agentManager.planPath(session.agentId);
+      if (fs.existsSync(planFile)) fs.unlinkSync(planFile);
+    } catch (err) {
+      console.error("[/new] failed to remove PLAN.md:", err);
+    }
     return [
       "🆕 **已开始全新编码会话**",
       "",

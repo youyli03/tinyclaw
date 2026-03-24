@@ -138,6 +138,7 @@ export class Session {
       this.mode = "code";
       this.messages = codeRestored;
       this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
+      this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
       this._persistReady = true;
       return;
     }
@@ -855,6 +856,19 @@ export class Session {
   }
 
   /**
+   * 读取 codesubmode 文件中保存的子模式（"plan" | "auto"）。
+   * 文件不存在或内容非法时返回 "auto"。
+   */
+  static readCodeSubMode(subModeFile: string): "auto" | "plan" {
+    try {
+      if (!fs.existsSync(subModeFile)) return "auto";
+      const val = fs.readFileSync(subModeFile, "utf-8").trim();
+      if (val === "plan" || val === "auto") return val;
+    } catch { /* ignore */ }
+    return "auto";
+  }
+
+  /**
    * 将工作目录持久化写入 codedir 文件，同时更新内存中的 codeWorkdir。
    * dir 为 null 时删除持久化文件并清空内存值。
    */
@@ -870,6 +884,19 @@ export class Session {
       }
     } catch (err) {
       console.error("[session] saveCodeDir failed:", err);
+    }
+  }
+
+  /**
+   * 将 plan/auto 子模式持久化写入 codesubmode 文件，同时更新内存中的 codeSubMode。
+   */
+  saveCodeSubMode(subModeFile: string, mode: "auto" | "plan"): void {
+    try {
+      fs.mkdirSync(path.dirname(subModeFile), { recursive: true });
+      fs.writeFileSync(subModeFile, mode, "utf-8");
+      this.codeSubMode = mode;
+    } catch (err) {
+      console.error("[session] saveCodeSubMode failed:", err);
     }
   }
 
