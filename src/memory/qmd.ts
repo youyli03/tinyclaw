@@ -161,6 +161,10 @@ function applyMMR(
 }
 
 const storeMap = new Map<string, QMDStore>();
+// Per-agentId initialization lock: prevents concurrent createStore calls that
+// trigger a Bun race condition where top-level await in db.js isn't settled yet,
+// leaving _Database undefined when multiple dynamic imports happen simultaneously.
+const storeInitLock = new Map<string, Promise<QMDStore | null>>();
 
 /**
  * 内部：展开 ~ 为用户主目录
@@ -179,43 +183,60 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   const existing = storeMap.get(agentId);
   if (existing) return existing;
 
-  const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
-  fs.mkdirSync(agentMemDir, { recursive: true });
+  // If another concurrent caller is already initializing this agentId, wait for it.
+  const inflight = storeInitLock.get(agentId);
+  if (inflight) return inflight;
 
-  // 禁用 Vulkan 编译尝试（此机器无 Vulkan，避免每次启动触发 cmake 噪音）
-  // 必须在 @tobilu/qmd 动态 import 之前设置，否则 node-llama-cpp 已经加载
-  process.env["NODE_LLAMA_CPP_GPU"] = "false";
-  process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
+  const init = (async (): Promise<QMDStore | null> => {
+    // Re-check after acquiring the lock slot (another call may have finished).
+    const already = storeMap.get(agentId);
+    if (already) return already;
 
-  const { createStore } = await import("@tobilu/qmd");
+    const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
+    fs.mkdirSync(agentMemDir, { recursive: true });
 
-  // 基础 memory collection
-  const collections: Record<string, { path: string; pattern: string }> = {
-    memory: {
-      path: agentMemDir,
-      pattern: "**/*.md",
-    },
-  };
+    // 禁用 Vulkan 编译尝试（此机器无 Vulkan，避免每次启动触发 cmake 噪音）
+    // 必须在 @tobilu/qmd 动态 import 之前设置，否则 node-llama-cpp 已经加载
+    process.env["NODE_LLAMA_CPP_GPU"] = "false";
+    process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
 
-  // 注册 memstores.toml 中启用的额外 store
-  const memStoresCfg = loadMemStoresConfig();
-  for (const store of memStoresCfg.stores) {
-    if (!store.enabled) continue;
-    const storePath = expandHome(store.path);
-    fs.mkdirSync(storePath, { recursive: true });
-    collections[store.name] = {
-      path: storePath,
-      pattern: store.pattern,
+    const { createStore } = await import("@tobilu/qmd");
+
+    // 基础 memory collection
+    const collections: Record<string, { path: string; pattern: string }> = {
+      memory: {
+        path: agentMemDir,
+        pattern: "**/*.md",
+      },
     };
+
+    // 注册 memstores.toml 中启用的额外 store
+    const memStoresCfg = loadMemStoresConfig();
+    for (const store of memStoresCfg.stores) {
+      if (!store.enabled) continue;
+      const storePath = expandHome(store.path);
+      fs.mkdirSync(storePath, { recursive: true });
+      collections[store.name] = {
+        path: storePath,
+        pattern: store.pattern,
+      };
+    }
+
+    const s = await createStore({
+      dbPath: path.join(agentMemDir, "index.sqlite"),
+      config: { collections },
+    });
+
+    storeMap.set(agentId, s);
+    return s;
+  })();
+
+  storeInitLock.set(agentId, init);
+  try {
+    return await init;
+  } finally {
+    storeInitLock.delete(agentId);
   }
-
-  const s = await createStore({
-    dbPath: path.join(agentMemDir, "index.sqlite"),
-    config: { collections },
-  });
-
-  storeMap.set(agentId, s);
-  return s;
 }
 
 /**
