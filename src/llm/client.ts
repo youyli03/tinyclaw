@@ -370,7 +370,7 @@ export class LLMClient {
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
     const idleTimeoutMs = (() => {
-      try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 30_000; }
+      try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
     })();
 
     return withRetry(async () => {
