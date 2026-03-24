@@ -61,11 +61,11 @@ export class QQBotConnector implements Connector {
             const digits = text.replace(/\s/g, "");
             if (/^\d{6}$/.test(digits) && pending.verifyCode(digits)) {
               pending.resolve(true);
-              void this.send(msg.peerId, msg.type, "✓ TOTP 验证通过，继续执行", msg.messageId);
+              void this.send(msg.peerId, msg.type, "✓ TOTP 验证通过，继续执行", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
               return "✓ TOTP 验证通过，继续执行";
             } else {
               pending.resolve(false);
-              void this.send(msg.peerId, msg.type, "✗ TOTP 验证失败，操作已取消", msg.messageId);
+              void this.send(msg.peerId, msg.type, "✗ TOTP 验证失败，操作已取消", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
               return "✗ TOTP 验证失败，操作已取消";
             }
           } else {
@@ -74,12 +74,12 @@ export class QQBotConnector implements Connector {
             const no = /^取消$|^n$|^no$/i.test(text);
             if (yes) {
               pending.resolve(true);
-              void this.send(msg.peerId, msg.type, "✓ 已确认，继续执行", msg.messageId);
+              void this.send(msg.peerId, msg.type, "✓ 已确认，继续执行", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
               return "✓ 已确认，继续执行";
             }
             if (no) {
               pending.resolve(false);
-              void this.send(msg.peerId, msg.type, "✗ 已取消，操作未执行", msg.messageId);
+              void this.send(msg.peerId, msg.type, "✗ 已取消，操作未执行", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
               return "✗ 已取消，操作未执行";
             }
             // 无法识别——提示重试
@@ -128,11 +128,11 @@ export class QQBotConnector implements Connector {
         ? setTimeout(() => {
             pendingMFAMap.delete(peerId);
             reject(new MFAError("MFA 确认超时，操作已取消"));
-            void this.send(peerId, type, "⏰ MFA 超时，操作已自动取消");
+            void this.send(peerId, type, "⏰ MFA 超时，操作已自动取消").catch((e: unknown) => console.error("[qqbot] send error:", e));
           }, timeoutMs)
         : null;
       pendingMFAMap.set(peerId, { resolve, reject, timer, ...(verifyCode ? { verifyCode } : {}) });
-      void this.send(peerId, type, warningMessage);
+      void this.send(peerId, type, warningMessage).catch((e: unknown) => console.error("[qqbot] send error:", e));
     });
   }
 

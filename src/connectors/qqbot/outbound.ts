@@ -141,6 +141,17 @@ function isTimeoutError(err: unknown): boolean {
   return false;
 }
 
+function isTLSError(err: unknown): boolean {
+  const msg = String(err);
+  return (
+    msg.includes("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") ||
+    msg.includes("certificate") ||
+    msg.includes("CERT_") ||
+    msg.includes("SSL") ||
+    msg.includes("TLS")
+  );
+}
+
 /** 指数退避：delay ms 后 resolve，不设上限 */
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -174,6 +185,10 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
               console.warn(`[qqbot] 发送超时，${backoffMs / 1000}s 后重试...`);
               await sleep(backoffMs);
               backoffMs *= 2;
+            } else if (isTLSError(err)) {
+              // TLS/证书错误：记录日志但不 throw，避免 unhandled rejection 导致进程崩溃
+              console.error(`[qqbot] TLS/证书错误，消息发送失败（已跳过）:`, err);
+              break;
             } else {
               throw err;
             }

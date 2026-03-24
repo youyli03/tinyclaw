@@ -117,7 +117,7 @@ async function main(): Promise<void> {
               d.transcript = transcript;
               console.log(`[whisper] 转录完成: "${transcript}"`);
               resolvedContent = transcript; // 用转录文本替代原始消息内容
-              void connector.send(msg.peerId, msg.type, `🎤 语音识别：${transcript}`);
+              void connector.send(msg.peerId, msg.type, `🎤 语音识别：${transcript}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
             } else {
               console.log(`[whisper] 转录结果为空: ${d.filename}`);
             }
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
         // 自由文本 → feedback，AI 将修改计划后重新提交
         session.pendingPlanApproval.resolve({ approved: false, feedback: trimmed });
       }
-      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId);
+      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       return "";
     }
 
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
       if (trimmed === "确认") {
         session.pendingApproval.resolve(true);
         // "已收到，执行中..." 由 onMFARequest 的调用方在 resolve 后发送
-        void connector.send(msg.peerId, msg.type, "已收到，执行中...", msg.messageId);
+        void connector.send(msg.peerId, msg.type, "已收到，执行中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       } else {
         // 任何非"确认"的回复视为取消
         session.pendingApproval.resolve(false);
@@ -171,7 +171,7 @@ async function main(): Promise<void> {
       const { resolve } = session.pendingSlaveQuestion;
       session.pendingSlaveQuestion = null;
       resolve(resolvedContent.trim());
-      void connector.send(msg.peerId, msg.type, "已收到，已转发给 AI 继续处理...", msg.messageId);
+      void connector.send(msg.peerId, msg.type, "已收到，已转发给 AI 继续处理...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       return "";
     }
 
@@ -193,10 +193,10 @@ async function main(): Promise<void> {
       } else {
         // 不允许自由输入，提示用户重新选择
         const hint = optionLabels.map((l, i) => `${i + 1}. ${l}`).join("\n");
-        void connector.send(msg.peerId, msg.type, `请输入选项编号（1～${optionLabels.length}）：\n${hint}`, msg.messageId);
+        void connector.send(msg.peerId, msg.type, `请输入选项编号（1～${optionLabels.length}）：\n${hint}`, msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
         return "";
       }
-      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId);
+      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       return "";
     }
 
@@ -260,14 +260,14 @@ async function main(): Promise<void> {
           );
         },
         onMFAPrompt: (statusMsg: string) => {
-          void connector.send(msg.peerId, msg.type, statusMsg);
+          void connector.send(msg.peerId, msg.type, statusMsg).catch((e: unknown) => console.error("[qqbot] send error:", e));
         },
         // 后台注入不需要心跳：用户没有主动发起请求，不应收到「仍在处理中」消息
         onCompress: (phase, summary) => {
           if (phase === "start") {
-            void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");
+            void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...").catch((e: unknown) => console.error("[qqbot] send error:", e));
           } else if (phase === "done" && summary) {
-            void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`);
+            void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
           }
         },
         // 不传 onSlaveComplete，避免 Slave 触发递归 fork
@@ -454,16 +454,16 @@ async function main(): Promise<void> {
         );
       },
       onMFAPrompt: (statusMsg: string) => {
-        void connector.send(msg.peerId, msg.type, statusMsg);
+        void connector.send(msg.peerId, msg.type, statusMsg).catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
       onHeartbeat: (msg2: string) => {
-        void connector.send(msg.peerId, msg.type, msg2);
+        void connector.send(msg.peerId, msg.type, msg2).catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
       onCompress: (phase, summary) => {
         if (phase === "start") {
-          void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...");
+          void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...").catch((e: unknown) => console.error("[qqbot] send error:", e));
         } else if (phase === "done" && summary) {
-          void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`);
+          void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
         }
       },
     };
