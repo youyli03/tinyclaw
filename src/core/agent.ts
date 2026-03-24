@@ -673,103 +673,37 @@ export async function runAgent(
       session.addAssistantMessage(content || "");
     }
 
-    for (const call of validToolCalls) {
-      // 工具结果写入 session 的辅助函数：
-      // - function calling 模式（!textMode）：role: "tool" + tool_call_id（API 强制要求）
-      // - 文本模式（textMode）：system 消息（模型读纯文本，无 id 匹配需求）
-      const addResult = (content: string) => {
-        if (!textMode) {
-          session.addToolResultMessage(call.callId, content);
-        } else {
-          session.addSystemMessage(`[tool_result:${call.name}]\n${content}`);
-        }
-      };
+    // ── 工具执行（支持批量并发）────────────────────────────────────────────
+    //
+    // 并发策略：
+    //   - 需要用户交互的工具（ask_user / ask_master / notify_user / MFA 工具）必须串行
+    //   - code_assist 需要维护调用计数器，必须串行
+    //   - agent_fork / run_code_subagent 涉及子 agent 状态，必须串行
+    //   - 其余只读/幂等工具（exec_shell、read_file、mcp_*、search_store 等）可并发
+    //
+    // 并发执行时，结果按原始顺序写入 session，保证 function calling 模式下
+    // tool_call_id 与 assistant.tool_calls[] 的顺序严格对应。
+    //
+    // 并发分批：遇到必须串行的工具时，先 flush 前面积累的并发批次，
+    // 再串行执行该工具，然后继续下一批。
+    // ─────────────────────────────────────────────────────────────────────────
+    const SERIAL_TOOLS = new Set([
+      "ask_user", "ask_master", "notify_user", "send_report", "render_diagram",
+      "code_assist", "code_assist_run",
+      "agent_fork", "run_code_subagent",
+      "exit_plan_mode",
+      "create_skill",
+    ]);
 
-      // ── 软中断检测：跳过未执行的工具 ──────────────────────────────────
-      if (session.abortRequested) {
-        addResult("操作被用户新消息中断，此工具调用未执行");
-        continue;
-      }
-
+    /**
+     * 执行单个工具调用，返回结果字符串（已截断）。
+     * 不写 session，仅返回结果供上层按顺序写入。
+     */
+    const runOneTool = async (call: (typeof validToolCalls)[number]): Promise<string> => {
       const toolDef = getTool(call.name);
-      if (!toolDef) {
-        addResult("未知工具");
-        continue;
-      }
+      if (!toolDef) return "未知工具";
 
-      toolsUsed.push(call.name);
-
-      // ── code_assist 调用次数限制 ──────────────────────────────────────
-      if (call.name === "code_assist") {
-        const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
-        if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
-          addResult(
-            `已达本次最大调用次数（${maxCalls}），此次调用未执行。` +
-            `请在当前回复中告知用户任务状态，用户可发新消息继续。`
-          );
-          continue;
-        }
-        codeAssistCallCount++;
-      }
-
-      // ── MFA 检查（执行工具前）────────────────────────────────────────
-      const mfaCfg = loadConfig().auth.mfa;
-      if (toolNeedsMFA(call.name, call.args, mfaCfg) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
-        let mfaPassed = false;
-        try {
-          if (mfaCfg?.interface === "msal") {
-            // Interface B: Microsoft Authenticator push
-            await requireMFA(opts.onMFAPrompt);
-            opts.onMFAPrompt?.("✓ MFA 已通过，继续执行");
-            mfaPassed = true;
-          } else if (mfaCfg?.interface === "totp") {
-            // Interface C: TOTP 验证码
-            if (opts.onMFARequest) {
-              const desc = describeToolCall(call.name, call.args);
-              const secretPath = mfaCfg.totpSecretPath;
-              mfaPassed = await opts.onMFARequest(
-                `⚠️ 即将执行：${desc}\n请打开 Authenticator App，将当前 6 位验证码回复给我（30 秒内有效）`,
-                (code: string) => {
-                  const ok = verifyTOTP(code, secretPath);
-                  return ok;
-                }
-              );
-              if (!mfaPassed) {
-                opts.onMFAPrompt?.("✗ TOTP 验证失败，操作已取消");
-              }
-            } else {
-              // CLI fallback
-              mfaPassed = true;
-            }
-          } else if (opts.onMFARequest) {
-            // Interface A: 文字确认
-            const desc = describeToolCall(call.name, call.args);
-            mfaPassed = await opts.onMFARequest(`⚠️ 即将执行：${desc}\n请回复 确认 / 取消`);
-            if (!mfaPassed) {
-              opts.onMFAPrompt?.("✗ MFA 被拒绝，操作已取消");
-            }
-          } else {
-            // CLI fallback：本地用户，自动通过
-            mfaPassed = true;
-          }
-        } catch {
-          // 超时或其他失败 → 取消操作
-          addResult("操作被取消：MFA 未通过");
-          continue;
-        }
-
-        if (!mfaPassed) {
-          addResult("操作被取消：用户拒绝了 MFA 确认");
-          continue;
-        }
-
-        session.mfaApprovedForThisRun = true;
-      }
-
-      // ── 执行工具 ──────────────────────────────────────────────────────
       console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
-
-      // code 模式：工具调用通过节流器汇总（每分钟一条），防止刷屏；notify_user 直接发送不节流
       if (call.name !== "notify_user") {
         toolThrottler?.add(call.name);
       }
@@ -782,7 +716,6 @@ export async function runAgent(
           sessionId: session.sessionId,
           agentId: session.agentId,
           masterSession: session,
-          // 只有未达深度上限时才注入 slaveRunFn；Slave 调用 agent_fork 时会收到明确错误
           ...(currentDepth < MAX_SLAVE_DEPTH
             ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) }) }
             : {}),
@@ -803,21 +736,145 @@ export async function runAgent(
         }
       }
 
-      // 工具结果截断：防止单条大输出占满 context window
+      // 工具结果截断
       const maxResultChars = loadConfig().tools.maxToolResultChars;
       if (maxResultChars > 0 && result.length > maxResultChars) {
-        const truncatedAt = maxResultChars;
-        result = result.slice(0, truncatedAt) +
-          `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${truncatedAt} 字符。如需查看更多请缩小范围重新调用。]`;
+        result = result.slice(0, maxResultChars) +
+          `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${maxResultChars} 字符。如需查看更多请缩小范围重新调用。]`;
+      }
+      return result;
+    };
+
+    /** 将 (call, result) 列表按顺序写入 session */
+    const flushResults = (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
+      for (const { call, result } of pairs) {
+        if (!textMode) {
+          session.addToolResultMessage(call.callId, result);
+        } else {
+          session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
+        }
+      }
+    };
+
+    // 积累并发批次，遇到串行工具时先 flush 再串行执行
+    let concurrentBatch: (typeof validToolCalls)[number][] = [];
+
+    const flushConcurrentBatch = async () => {
+      if (concurrentBatch.length === 0) return;
+      const batch = concurrentBatch;
+      concurrentBatch = [];
+      if (batch.length === 1) {
+        // 单个工具无需 Promise.all 开销
+        const result = await runOneTool(batch[0]!);
+        flushResults([{ call: batch[0]!, result }]);
+      } else {
+        // 并发执行，结果按原始顺序收集
+        const results = await Promise.all(batch.map(c => runOneTool(c)));
+        flushResults(batch.map((call, i) => ({ call, result: results[i]! })));
+      }
+    };
+
+    for (const call of validToolCalls) {
+      // ── 软中断检测 ────────────────────────────────────────────────────
+      if (session.abortRequested) {
+        await flushConcurrentBatch();
+        if (!textMode) {
+          session.addToolResultMessage(call.callId, "操作被用户新消息中断，此工具调用未执行");
+        } else {
+          session.addSystemMessage(`[tool_result:${call.name}]\n操作被用户新消息中断，此工具调用未执行`);
+        }
+        continue;
       }
 
-      // function calling 模式：role: "tool" + tool_call_id（API 要求格式）
-      // 文本模式：system 消息（模型读纯文本上下文，无需 id 匹配）
-      addResult(result);
+      const toolDef = getTool(call.name);
+      if (!toolDef) {
+        await flushConcurrentBatch();
+        if (!textMode) {
+          session.addToolResultMessage(call.callId, "未知工具");
+        } else {
+          session.addSystemMessage(`[tool_result:${call.name}]\n未知工具`);
+        }
+        continue;
+      }
 
-      // 工具执行完毕后再次检查 abort（新消息可能在工具运行期间到达）
-      if (session.abortRequested) break;
+      toolsUsed.push(call.name);
+
+      // ── code_assist 调用次数限制（串行处理）──────────────────────────
+      if (call.name === "code_assist") {
+        await flushConcurrentBatch();
+        const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
+        if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
+          const msg = `已达本次最大调用次数（${maxCalls}），此次调用未执行。请在当前回复中告知用户任务状态，用户可发新消息继续。`;
+          if (!textMode) session.addToolResultMessage(call.callId, msg);
+          else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
+          continue;
+        }
+        codeAssistCallCount++;
+      }
+
+      // ── MFA 检查（需要用户交互，先 flush 并发批次再串行）────────────
+      const mfaCfg = loadConfig().auth.mfa;
+      if (toolNeedsMFA(call.name, call.args, mfaCfg) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
+        await flushConcurrentBatch();
+        let mfaPassed = false;
+        try {
+          if (mfaCfg?.interface === "msal") {
+            await requireMFA(opts.onMFAPrompt);
+            opts.onMFAPrompt?.("✓ MFA 已通过，继续执行");
+            mfaPassed = true;
+          } else if (mfaCfg?.interface === "totp") {
+            if (opts.onMFARequest) {
+              const desc = describeToolCall(call.name, call.args);
+              const secretPath = mfaCfg.totpSecretPath;
+              mfaPassed = await opts.onMFARequest(
+                `⚠️ 即将执行：${desc}\n请打开 Authenticator App，将当前 6 位验证码回复给我（30 秒内有效）`,
+                (code: string) => verifyTOTP(code, secretPath)
+              );
+              if (!mfaPassed) opts.onMFAPrompt?.("✗ TOTP 验证失败，操作已取消");
+            } else {
+              mfaPassed = true;
+            }
+          } else if (opts.onMFARequest) {
+            const desc = describeToolCall(call.name, call.args);
+            mfaPassed = await opts.onMFARequest(`⚠️ 即将执行：${desc}\n请回复 确认 / 取消`);
+            if (!mfaPassed) opts.onMFAPrompt?.("✗ MFA 被拒绝，操作已取消");
+          } else {
+            mfaPassed = true;
+          }
+        } catch {
+          const msg = "操作被取消：MFA 未通过";
+          if (!textMode) session.addToolResultMessage(call.callId, msg);
+          else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
+          continue;
+        }
+
+        if (!mfaPassed) {
+          const msg = "操作被取消：用户拒绝了 MFA 确认";
+          if (!textMode) session.addToolResultMessage(call.callId, msg);
+          else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
+          continue;
+        }
+        session.mfaApprovedForThisRun = true;
+      }
+
+      // ── 分类：串行工具先 flush 再单独执行；其余加入并发批次 ──────────
+      if (SERIAL_TOOLS.has(call.name)) {
+        await flushConcurrentBatch();
+        const result = await runOneTool(call);
+        flushResults([{ call, result }]);
+      } else {
+        concurrentBatch.push(call);
+      }
+
+      // 工具执行完毕后再次检查 abort
+      if (session.abortRequested) {
+        await flushConcurrentBatch();
+        break;
+      }
     }
+
+    // flush 最后一批并发工具
+    await flushConcurrentBatch();
 
     // 一整批工具处理完，若已中断则退出轮次循环
     if (session.abortRequested) break;

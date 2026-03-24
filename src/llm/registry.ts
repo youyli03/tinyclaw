@@ -58,10 +58,12 @@ class LLMRegistry {
         );
       }
 
+      // code backend 默认超时 240s（探索大仓库时 LLM 单轮处理耗时更长）
+      const defaultTimeoutMs = name === "code" ? 240_000 : copilotCfg.timeoutMs;
       const { client, contextWindow } = await buildCopilotClient({
         githubToken: copilotCfg.githubToken,
         model: modelId,
-        timeoutMs: role.timeoutMs ?? copilotCfg.timeoutMs,
+        timeoutMs: role.timeoutMs ?? defaultTimeoutMs,
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
       });
       this.clients.set(name, client);
@@ -116,7 +118,8 @@ class LLMRegistry {
         apiKey: openaiCfg.apiKey,
         model: modelId,
         maxTokens: role.maxTokens ?? openaiCfg.maxTokens,
-        timeoutMs: role.timeoutMs ?? openaiCfg.timeoutMs,
+        // code backend 默认超时 240s
+        timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : openaiCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
       });
       this.clients.set(name, client);
