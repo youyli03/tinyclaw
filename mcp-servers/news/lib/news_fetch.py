@@ -434,6 +434,45 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                         return fallback
                     return (node.text or fallback).strip()
 
+                def _extract_summary(_el=el) -> str:
+                    """多路 fallback 提取摘要，去除 HTML 标签后截 300 字。"""
+                    import re as _re
+                    _strip_html = lambda s: _re.sub(r"<[^>]+>", " ", s or "").strip()
+                    _clean = lambda s: " ".join(_strip_html(s).split())[:300]
+
+                    # 1. <description>
+                    cand = _text("description")
+                    if cand and not cand.startswith("http"):
+                        cleaned = _clean(cand)
+                        if len(cleaned) > 30:
+                            return cleaned
+
+                    # 2. <summary> (Atom)
+                    cand = _text("summary")
+                    if cand:
+                        cleaned = _clean(cand)
+                        if len(cleaned) > 30:
+                            return cleaned
+
+                    # 3. <content:encoded> 或 <content>（部分 RSS 扩展）
+                    ns_content = {"content": "http://purl.org/rss/1.0/modules/content/"}
+                    for ctag in ("content:encoded", "content"):
+                        node = _el.find(ctag) or _el.find(f"content:{ctag.split(':')[-1]}", ns_content)
+                        if node is not None and node.text:
+                            cleaned = _clean(node.text)
+                            if len(cleaned) > 30:
+                                return cleaned
+
+                    # 4. <media:description>（Yahoo Finance 等）
+                    ns_media = {"media": "http://search.yahoo.com/mrss/"}
+                    node = _el.find("media:description", ns_media)
+                    if node is not None and node.text:
+                        cleaned = _clean(node.text)
+                        if len(cleaned) > 30:
+                            return cleaned
+
+                    return ""
+
                 title = _text("title")
                 link  = _text("link")
                 if not link:
@@ -455,7 +494,7 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
                         "id": f"rss_{abs(hash(link))}",
                         "title": title,
                         "url": link,
-                        "text": _text("description")[:500],
+                        "text": _extract_summary(),
                         "topic": ",".join(topics),
                         "score": 0,
                         "date": pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
