@@ -142,6 +142,8 @@ async function runPipelineJob(
         systemPrompt: CRON_AGENT_SYSTEM,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
+        // cron 场景下 slave 完成不额外推送用户，仅保证 agent_fork 正常工作
+        onSlaveComplete: async (_notif) => { /* no-op for cron pipeline */ },
       });
       lastResult = result.content;
       console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${result.content.length}`);

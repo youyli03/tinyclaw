@@ -31,6 +31,12 @@ export interface SlaveState {
   startedAt: string;
   finishedAt?: string;
   masterSessionId: string;
+  /**
+   * 结果交付模式：
+   * - `"inject"`（默认）：Slave 完成后自动注入 Master session，触发新一轮 LLM 推理
+   * - `"wait"`：Slave 完成后静默，Master 需主动调用 agent_wait(slave_id) 拉取结果
+   */
+  resultMode: "inject" | "wait";
 }
 
 export interface SlaveNotification {
@@ -56,7 +62,7 @@ export type SlaveRunFn = (
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
-const MAX_RESULT_LEN = 2000;
+const MAX_RESULT_LEN = 10000;
 const MAX_PARTIAL_LEN = 500;
 
 const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份运行（后台异步执行）
@@ -91,6 +97,7 @@ class SlaveManager {
    * @param onComplete          Slave 完成后的回调
    * @param reportIntervalSecs  定期进度推送间隔（秒），0 或不传则不启用
    * @param onProgressNotify    定期进度推送回调（每 reportIntervalSecs 秒调用一次）
+   * @param resultMode          结果交付模式："inject"（默认，完成后触发 onComplete）| "wait"（静默，Master 主动拉取）
    */
   fork(
     task: string,
@@ -99,7 +106,8 @@ class SlaveManager {
     runFn: SlaveRunFn,
     onComplete?: (notif: SlaveNotification) => Promise<void>,
     reportIntervalSecs?: number,
-    onProgressNotify?: SlaveProgressNotifyFn
+    onProgressNotify?: SlaveProgressNotifyFn,
+    resultMode: "inject" | "wait" = "inject",
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
 
@@ -110,6 +118,7 @@ class SlaveManager {
       progress: { round: 0, toolsUsed: [], partialOutput: "" },
       startedAt: new Date().toISOString(),
       masterSessionId: masterSession.sessionId,
+      resultMode,
     };
     this.states.set(slaveId, state);
 
@@ -143,7 +152,9 @@ class SlaveManager {
     console.log(`[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, task="${task.slice(0, 60)}"`);
 
     // 后台运行（fire-and-forget）
-    void this._run(slaveId, slaveSession, task, runFn, onComplete, reportIntervalSecs, onProgressNotify);
+    // wait 模式：Slave 完成后不触发 onComplete，Master 通过 agent_wait 主动拉取
+    const effectiveOnComplete = resultMode === "wait" ? undefined : onComplete;
+    void this._run(slaveId, slaveSession, task, runFn, effectiveOnComplete, reportIntervalSecs, onProgressNotify);
 
     return slaveId;
   }
@@ -173,6 +184,7 @@ class SlaveManager {
       progress: { round: 0, toolsUsed: [], partialOutput: "" },
       startedAt: new Date().toISOString(),
       masterSessionId: masterSession.sessionId,
+      resultMode: "inject",
     };
     this.states.set(slaveId, state);
 
@@ -225,6 +237,74 @@ class SlaveManager {
   /** 查询全部 Slave 状态快照 */
   listAll(): SlaveState[] {
     return Array.from(this.states.values());
+  }
+
+  /**
+   * 等待当前 master session 创建的所有 running slave 完成。
+   *
+   * @param masterSessionId  Master 的 sessionId（用于过滤出属于该 master 的 slave）
+   * @param timeoutMs        等待超时（毫秒），超时后将仍 running 的 slave 标记为 error
+   * @returns Map<slaveId, SlaveState>  所有属于该 master 的 slave 最终状态
+   */
+  async waitForByMaster(masterSessionId: string, timeoutMs: number): Promise<Map<string, SlaveState>> {
+    const deadline = Date.now() + timeoutMs;
+    const POLL_INTERVAL_MS = 200;
+
+    while (Date.now() < deadline) {
+      const mySlaves = Array.from(this.states.values()).filter(
+        (s) => s.masterSessionId === masterSessionId
+      );
+      const running = mySlaves.filter((s) => s.status === "running");
+      if (running.length === 0) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+
+    // 超时：将仍 running 的 slave 标记为 error
+    for (const state of this.states.values()) {
+      if (state.masterSessionId === masterSessionId && state.status === "running") {
+        state.status = "error";
+        state.result = `等待超时（>${Math.round(timeoutMs / 1000)}s），任务可能仍在后台运行`;
+        state.finishedAt = new Date().toISOString();
+        console.warn(`[slave:${state.slaveId}] waitForByMaster timeout`);
+      }
+    }
+
+    const result = new Map<string, SlaveState>();
+    for (const [id, state] of this.states) {
+      if (state.masterSessionId === masterSessionId) {
+        result.set(id, { ...state });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 等待指定单个 Slave 完成（适用于 result_mode="wait" 的 Slave）。
+   *
+   * @param slaveId    要等待的 Slave ID
+   * @param timeoutMs  等待超时（毫秒），超时后将 running 的 slave 标记为 error
+   * @returns SlaveState 快照（含最终 result），若 slaveId 不存在则返回 undefined
+   */
+  async waitForById(slaveId: string, timeoutMs: number): Promise<SlaveState | undefined> {
+    const state = this.states.get(slaveId);
+    if (!state) return undefined;
+
+    const deadline = Date.now() + timeoutMs;
+    const POLL_INTERVAL_MS = 200;
+
+    while (state.status === "running" && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+
+    // 超时处理
+    if (state.status === "running") {
+      state.status = "error";
+      state.result = `等待超时（>${Math.round(timeoutMs / 1000)}s），任务可能仍在后台运行`;
+      state.finishedAt = new Date().toISOString();
+      console.warn(`[slave:${slaveId}] waitForById timeout`);
+    }
+
+    return { ...state };
   }
 
   /** 清理已完成的 Slave（避免无限增长） */
