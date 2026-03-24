@@ -153,6 +153,57 @@ const MemorySchema = z.object({
   tokenThreshold: z.number().min(0.1).max(0.99).default(0.8),
   /** 上下文最大 token 数，用于计算阈值，默认 128000 */
   contextWindow: z.number().int().positive().default(128_000),
+
+  // ── 混合搜索（BM25 + 向量语义） ──────────────────────────────────────────
+  /**
+   * 是否启用 BM25 + 向量语义混合搜索（默认 true）。
+   * 关闭时退化为纯向量搜索（向后兼容）。
+   * BM25 擅长精确关键词匹配，向量搜索擅长语义理解，两路融合效果更佳。
+   */
+  hybridSearchEnabled: z.boolean().default(true),
+  /**
+   * BM25 在混合搜索中的权重（0-1），默认 0.3。
+   * 向量权重 = 1 - bm25Weight。推荐 0.2～0.4，向量主导语义方向。
+   */
+  bm25Weight: z.number().min(0).max(1).default(0.3),
+
+  // ── 时间衰减（模拟遗忘曲线） ──────────────────────────────────────────────
+  /**
+   * 时间衰减半衰期（天），默认 30 天。
+   * 记忆 chunk 的检索权重按 e^(-ln2/halfLife * daysSince) 随时间指数衰减。
+   * 0 = 禁用时间衰减，所有记忆等权。
+   */
+  decayHalfLifeDays: z.number().min(0).default(30),
+  /**
+   * 豁免时间衰减的文件名模式列表（文件名包含任一字符串即豁免）。
+   * 这些"常青记忆"文件代表长期稳定的核心知识，不随时间衰减。
+   * 默认：MEM.md、MEMORY.md、patterns.md
+   */
+  evergreenPatterns: z
+    .array(z.string())
+    .default(["MEM.md", "MEMORY.md", "patterns.md"]),
+
+  // ── MMR 多样性重排（去除冗余结果） ───────────────────────────────────────
+  /**
+   * 是否启用 MMR（Maximal Marginal Relevance）多样性重排（默认 true）。
+   * 防止搜索结果集中于同一文档的不同段落，提高 LLM 上下文信息密度。
+   */
+  mmrEnabled: z.boolean().default(true),
+  /**
+   * MMR 相关性权重（0-1），默认 0.7。
+   * MMR(d) = lambda * relevance(d) - (1-lambda) * max(similarity(d, selected))
+   * 值越大越偏向相关性，越小越偏向多样性。推荐 0.6～0.8。
+   */
+  mmrLambda: z.number().min(0).max(1).default(0.7),
+
+  // ── 记忆写入安全审查 ──────────────────────────────────────────────────────
+  /**
+   * 是否在写入长期记忆前做安全审查（默认 true）。
+   * 通过 summarizer LLM 检测摘要内容是否含提示词注入特征
+   * （如 ignore previous instructions、API key 外泄、URL 外发等）。
+   * 审查失败时跳过写入并输出告警日志，不中断对话。
+   */
+  memorySafetyCheck: z.boolean().default(true),
 });
 
 // ── 工具配置 ─────────────────────────────────────────────────────────────────

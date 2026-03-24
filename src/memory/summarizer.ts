@@ -300,7 +300,7 @@ export async function summarizeAndCompress(
   ]);
 
   // 将摘要持久化到 QMD
-  persistSummary(result.content);
+  await persistSummary(result.content, agentId);
 
   const compressed: ChatMessage[] = [
     ...systemMessages,
