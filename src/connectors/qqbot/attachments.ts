@@ -80,6 +80,35 @@ function normalizeContentType(contentType: string, ext: string): string {
 }
 
 /**
+ * 带重试的 fetch 封装。
+ * - 用 AbortController + setTimeout 手动实现超时（替代 AbortSignal.timeout，避免 hang 连接）
+ * - 失败后等待 1s 重试，最多重试 retries 次
+ */
+async function fetchWithRetry(
+  url: string,
+  timeoutMs: number,
+  retries = 1
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new DOMException("The operation timed out.", "TimeoutError")), timeoutMs);
+    try {
+      const resp = await fetch(url, { signal: ac.signal });
+      clearTimeout(timer);
+      return resp;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise(res => setTimeout(res, 1_000));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * 将消息附件列表批量下载到 destDir（自动创建）。
  * 对语音附件优先使用 voiceWavUrl（官方 WAV 直链，可跳过 SILK→WAV 转换）。
  */
@@ -93,7 +122,7 @@ export async function downloadAttachments(
   for (const att of attachments) {
     const downloadUrl = att.voiceWavUrl ?? att.url;
     try {
-      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
+      const resp = await fetchWithRetry(downloadUrl, 15_000);
       if (!resp.ok) {
         console.warn(`[attachments] 下载失败 ${downloadUrl}: ${resp.status}`);
         continue;
