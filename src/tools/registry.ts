@@ -88,6 +88,21 @@ export interface ToolDef {
 
 const tools = new Map<string, ToolDef>();
 
+/**
+ * MCP 工具的 agent 过滤回调。
+ * 由 mcpManager.init() 注入，避免 registry ↔ mcp/client 循环依赖。
+ * 签名：(toolName, agentId) => boolean（true = 允许，false = 过滤掉）
+ */
+let _mcpAgentFilter: ((toolName: string, agentId: string) => boolean) | undefined;
+
+/**
+ * 注册 MCP 工具的 agent 过滤回调（由 mcpManager.init() 调用）。
+ * 仅需调用一次；重复调用会覆盖前一个回调。
+ */
+export function setMcpAgentFilter(fn: (toolName: string, agentId: string) => boolean): void {
+  _mcpAgentFilter = fn;
+}
+
 /** 注册工具 */
 export function registerTool(def: ToolDef): void {
   const name = def.spec.function.name;
@@ -102,9 +117,22 @@ export function getTool(name: string): ToolDef | undefined {
   return tools.get(name);
 }
 
-/** 获取所有工具的 OpenAI spec 列表（供 chat completions 使用，已隐藏的工具不包含在内） */
-export function getAllToolSpecs(): ChatCompletionTool[] {
-  return Array.from(tools.values()).filter((t) => !t.hidden).map((t) => t.spec);
+/**
+ * 获取所有工具的 OpenAI spec 列表（供 chat completions 使用）。
+ * - 已隐藏（hidden=true）的工具不包含在内
+ * - 若传入 agentId，MCP 工具（名称以 mcp_ 开头）额外经过 agent 白名单过滤
+ */
+export function getAllToolSpecs(agentId?: string): ChatCompletionTool[] {
+  return Array.from(tools.values())
+    .filter((t) => {
+      if (t.hidden) return false;
+      // 对 MCP 工具做 agent 权限过滤
+      if (agentId && _mcpAgentFilter && t.spec.function.name.startsWith("mcp_")) {
+        return _mcpAgentFilter(t.spec.function.name, agentId);
+      }
+      return true;
+    })
+    .map((t) => t.spec);
 }
 
 /** 设置工具的可见性（hidden=true 则从 getAllToolSpecs() 中隐藏） */

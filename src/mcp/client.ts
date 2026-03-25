@@ -12,7 +12,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { registerTool, setToolVisibility } from "../tools/registry.js";
+import { registerTool, setToolVisibility, setMcpAgentFilter } from "../tools/registry.js";
 import { loadMcpConfig, loadConfig } from "../config/loader.js";
 import type { MCPConfig, MCPServerConfig } from "../config/schema.js";
 
@@ -40,6 +40,11 @@ export interface MCPServerStatus {
   toolCount: number;
   /** 最近的连接错误（若有） */
   error?: string;
+  /**
+   * Agent 白名单（来自 mcp.toml agents 字段）。
+   * undefined / 空数组 = 所有 agent 可用。
+   */
+  agents?: string[];
 }
 
 /** Sanitize server/tool name: 只保留字母数字下划线，截断到 32 字符 */
@@ -59,6 +64,7 @@ class MCPClientManager {
   /**
    * 初始化：只加载配置，不连接任何 server。
    * 若 mcp.toml 不存在则静默跳过。
+   * 同时向 registry 注册 MCP 工具的 agent 过滤回调（解决循环依赖）。
    */
   async init(): Promise<void> {
     this.loadedConfig = loadMcpConfig();
@@ -69,40 +75,89 @@ class MCPClientManager {
     if (entries.length > 0) {
       console.log(`[mcp] loaded config: ${entries.length} server(s) (lazy mode, none connected)`);
     }
+    // 向 registry 注册过滤回调，供 getAllToolSpecs(agentId) 调用
+    setMcpAgentFilter((toolName: string, agentId: string) => this.isToolAllowedForAgent(toolName, agentId));
   }
 
   /**
-   * 列出所有已配置的 MCP server（轻量，无 tool schema）。
+   * 判断某个 MCP server 是否对指定 agent 可见。
+   * - server 未配置 agents 白名单（或为空）→ 所有 agent 可用
+   * - server 配置了白名单 → 只有白名单内的 agentId 可用
+   * - agentId 为 undefined → 不限制（CLI / cron 无 agent 上下文场景）
+   */
+  isAllowedForAgent(serverName: string, agentId?: string): boolean {
+    if (!agentId) return true;
+    const cfg = this.loadedConfig.servers[serverName];
+    if (!cfg) return false;
+    const agents = cfg.agents;
+    if (!agents || agents.length === 0) return true;
+    return agents.includes(agentId);
+  }
+
+  /**
+   * 判断某个已注册的 MCP 工具名是否对指定 agent 可见。
+   * 从工具名反推 server 名（mcp_<server>_<tool>），再调用 isAllowedForAgent。
+   * 供 registry 的 getAllToolSpecs 过滤回调使用。
+   */
+  isToolAllowedForAgent(toolName: string, agentId: string): boolean {
+    // 工具名格式：mcp_<sanitizedServerName>_<sanitizedToolName>
+    // sanitizeName 将非字母数字下划线替换为 _，无法精确反推原始 server 名，
+    // 改为遍历所有已知 server，检查该工具是否属于该 server 且该 server 允许此 agent
+    for (const [serverName, rt] of this.runtimes) {
+      if (rt.toolNames.includes(toolName)) {
+        return this.isAllowedForAgent(serverName, agentId);
+      }
+    }
+    // 工具尚未注册（server 未连接），尝试从工具名前缀匹配 server
+    // mcp_<sanitizedServerName>_ 前缀匹配
+    for (const serverName of Object.keys(this.loadedConfig.servers)) {
+      const prefix = `mcp_${sanitizeName(serverName)}_`;
+      if (toolName.startsWith(prefix)) {
+        return this.isAllowedForAgent(serverName, agentId);
+      }
+    }
+    // 未知工具，允许通过（不影响非 MCP 工具）
+    return true;
+  }
+
+  /**
+   * 列出已配置的 MCP server（轻量，无 tool schema）。
+   * 若传入 agentId，只返回该 agent 有权访问的 server。
    * 供 mcp_list_servers meta-tool 使用。
    */
-  listServers(): MCPServerStatus[] {
-    return Object.entries(this.loadedConfig.servers).map(([name, cfg]) => {
-      const rt = this.runtimes.get(name) ?? { toolNames: [], connected: false };
-      const status: MCPServerStatus = {
-        name,
-        enabled: cfg.enabled !== false,
-        connected: rt.connected,
-        toolCount: rt.toolNames.length,
-      };
-      // exactOptionalPropertyTypes: only assign when value is present
-      if (cfg.description !== undefined) status.description = cfg.description;
-      if (rt.error !== undefined) status.error = rt.error;
-      return status;
-    });
+  listServers(agentId?: string): MCPServerStatus[] {
+    return Object.entries(this.loadedConfig.servers)
+      .filter(([name]) => this.isAllowedForAgent(name, agentId))
+      .map(([name, cfg]) => {
+        const rt = this.runtimes.get(name) ?? { toolNames: [], connected: false };
+        const status: MCPServerStatus = {
+          name,
+          enabled: cfg.enabled !== false,
+          connected: rt.connected,
+          toolCount: rt.toolNames.length,
+        };
+        if (cfg.description !== undefined) status.description = cfg.description;
+        if (rt.error !== undefined) status.error = rt.error;
+        if (cfg.agents && cfg.agents.length > 0) status.agents = cfg.agents;
+        return status;
+      });
   }
 
   /**
    * 启用指定 server：懒连接（若尚未连接）→ 将工具设为 visible → 返回格式化工具文档。
+   * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_enable_server meta-tool 使用。
-   * 返回值是 Markdown 格式的工具文档，让 Agent 在同一轮即可了解如何使用这些工具。
    */
-  async enableServer(name: string): Promise<string> {
+  async enableServer(name: string, agentId?: string): Promise<string> {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"，请先用 mcp_list_servers 查看可用列表。`;
     }
     if (cfg.enabled === false) {
       return `错误：server "${name}" 在 mcp.toml 中已被禁用（enabled = false），无法启用。`;
+    }
+    if (!this.isAllowedForAgent(name, agentId)) {
+      return `错误：agent "${agentId}" 无权访问 MCP server "${name}"。`;
     }
 
     const rt = this.runtimes.get(name)!;
@@ -131,12 +186,16 @@ class MCPClientManager {
 
   /**
    * 禁用指定 server：将工具设为 hidden（保持连接，避免重连延迟）。
+   * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_disable_server meta-tool 使用。
    */
-  disableServer(name: string): string {
+  disableServer(name: string, agentId?: string): string {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"。`;
+    }
+    if (!this.isAllowedForAgent(name, agentId)) {
+      return `错误：agent "${agentId}" 无权访问 MCP server "${name}"。`;
     }
     const rt = this.runtimes.get(name);
     if (!rt || !rt.connected) {

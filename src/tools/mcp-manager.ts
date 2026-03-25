@@ -27,10 +27,10 @@ registerTool({
     },
   },
   requiresMFA: false,
-  execute: async () => {
-    const servers = mcpManager.listServers();
+  execute: async (args, ctx) => {
+    const servers = mcpManager.listServers(ctx?.agentId);
     if (servers.length === 0) {
-      return "当前未配置任何 MCP server。请在 ~/.tinyclaw/mcp.toml 中添加配置。";
+      return "当前没有你可访问的 MCP server。请联系管理员在 ~/.tinyclaw/mcp.toml 中配置，或检查 agents 白名单设置。";
     }
     const lines = ["## MCP Servers\n"];
     for (const s of servers) {
@@ -75,10 +75,10 @@ registerTool({
     },
   },
   requiresMFA: false,
-  execute: async (args) => {
+  execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.enableServer(name);
+    return mcpManager.enableServer(name, ctx?.agentId);
   },
 });
 
@@ -103,9 +103,9 @@ registerTool({
     },
   },
   requiresMFA: false,
-  execute: async (args) => {
+  execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.disableServer(name);
+    return mcpManager.disableServer(name, ctx?.agentId);
   },
 });

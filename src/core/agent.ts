@@ -442,7 +442,7 @@ export async function runAgent(
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
   // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
-  const initialTools = getAllToolSpecs().filter(
+  const initialTools = getAllToolSpecs(session.agentId).filter(
     (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
   );
   const textMode = !client.supportsToolCalls;
@@ -525,7 +525,7 @@ export async function runAgent(
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
     const tools = [
-      ...getAllToolSpecs().filter(
+      ...getAllToolSpecs(session.agentId).filter(
         (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
       ),
       ...(opts.customTools ?? []),

@@ -296,6 +296,11 @@ const MCPStdioServerSchema = z.object({
   env: z.record(z.string()).optional(),
   /** 在 mcp_list_servers 中展示给 Agent 的服务描述 */
   description: z.string().optional(),
+  /**
+   * Agent 白名单：只有列表中的 agentId 才能看到并使用此 server。
+   * 不填（或空数组）= 所有 agent 均可使用（向后兼容）。
+   */
+  agents: z.array(z.string()).optional(),
 });
 
 const MCPSSEServerSchema = z.object({
@@ -305,6 +310,11 @@ const MCPSSEServerSchema = z.object({
   headers: z.record(z.string()).optional(),
   /** 在 mcp_list_servers 中展示给 Agent 的服务描述 */
   description: z.string().optional(),
+  /**
+   * Agent 白名单：只有列表中的 agentId 才能看到并使用此 server。
+   * 不填（或空数组）= 所有 agent 均可使用（向后兼容）。
+   */
+  agents: z.array(z.string()).optional(),
 });
 
 const MCPServerSchema = z.discriminatedUnion("transport", [
