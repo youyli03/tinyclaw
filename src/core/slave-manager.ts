@@ -12,6 +12,9 @@
 
 import { Session } from "./session.js";
 import type { ChatMessage, ContentPart } from "../llm/client.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -314,11 +317,37 @@ class SlaveManager {
       if (state.status !== "running" && state.finishedAt) {
         const age = now - new Date(state.finishedAt).getTime();
         if (age > 24 * 60 * 60 * 1000) { // 24h 后清理
+          // 兜底：清理内存状态前确保 JSONL 已删除
+          const session = this.sessions.get(id);
+          if (session) {
+            try { session.deleteJsonl(); } catch { /* 静默忽略 */ }
+          }
           this.states.delete(id);
           this.sessions.delete(id);
         }
       }
     }
+
+    // 扫描 sessions 目录，清理孤立的 slave_*.jsonl（进程重启后内存状态丢失遗留的文件）
+    try {
+      const sessDir = path.join(os.homedir(), ".tinyclaw", "sessions");
+      if (fs.existsSync(sessDir)) {
+        for (const entry of fs.readdirSync(sessDir)) {
+          // 匹配 slave_<8位hex>.jsonl（不含 .code.jsonl）
+          if (/^slave_[0-9a-f]{8}\.jsonl$/.test(entry)) {
+            const slaveId = entry.replace(/^slave_/, "").replace(/\.jsonl$/, "");
+            // 若内存中仍有运行中的 slave，不删除
+            const state = this.states.get(slaveId);
+            if (!state || state.status !== "running") {
+              try {
+                fs.unlinkSync(path.join(sessDir, entry));
+                console.log(`[slave:gc] 清理孤立 JSONL: ${entry}`);
+              } catch { /* 静默忽略 */ }
+            }
+          }
+        }
+      }
+    } catch { /* 静默忽略，GC 失败不影响正常运行 */ }
   }
 
   // ── 内部实现 ────────────────────────────────────────────────────────────────
@@ -374,6 +403,14 @@ class SlaveManager {
 
     state.finishedAt = new Date().toISOString();
     console.log(`[slave:${slaveId}] ${state.status} (${state.finishedAt})`);
+
+    // 立即删除 Slave JSONL（Slave Session 的 chat JSONL 仅用于 crash 恢复，
+    // Slave 完成后无需保留，避免磁盘无限堆积）
+    try {
+      session.deleteJsonl();
+    } catch {
+      // 静默忽略，不影响正常完成流程
+    }
 
     if (!onComplete) return;
 

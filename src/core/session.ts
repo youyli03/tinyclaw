@@ -768,11 +768,27 @@ export class Session {
     }
   }
 
-  private static getJsonlPath(sessionId: string, mode: "chat" | "code" = "chat"): string {
+  static getJsonlPath(sessionId: string, mode: "chat" | "code" = "chat"): string {
     // 将 sessionId 中的 : / \ 替换为 _ 作为合法文件名
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
     const suffix = mode === "code" ? ".code.jsonl" : ".jsonl";
     return path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}${suffix}`);
+  }
+
+  /**
+   * 删除当前 session 对应的 JSONL 文件（chat 模式）。
+   * 供 SlaveManager 在 slave 完成后调用，防止 slave JSONL 无限堆积。
+   * 若文件不存在则静默忽略。
+   */
+  deleteJsonl(): void {
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId, "chat");
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.error("[session] deleteJsonl failed:", err);
+    }
   }
 
   /** `.code.active` 标记文件路径（存在表示当前 session 正处于 code 模式，用于区分 crash 和主动切换） */
