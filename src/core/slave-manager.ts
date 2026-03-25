@@ -348,6 +348,38 @@ class SlaveManager {
         }
       }
     } catch { /* 静默忽略，GC 失败不影响正常运行 */ }
+
+    // 扫描 sessions 目录，清理孤立的 cron_*.jsonl
+    // Stateful / pipeline cron job 使用固定 sessionId `cron:<jobId>`，
+    // 对应 JSONL 文件名为 `cron_<jobId>.jsonl`。
+    // 当 job 被删除后，该文件不再有 job 与之对应，需要清理。
+    // 通过扫描 ~/.tinyclaw/cron/jobs/ 目录（无需解析 JSON，仅取文件名）获取现存 job ID 集合，
+    // 避免 import cron/store.ts 引入额外依赖。
+    try {
+      const sessDir = path.join(os.homedir(), ".tinyclaw", "sessions");
+      const cronJobsDir = path.join(os.homedir(), ".tinyclaw", "cron", "jobs");
+      if (fs.existsSync(sessDir) && fs.existsSync(cronJobsDir)) {
+        // 收集现存 job ID（文件名去掉 .json 后缀）
+        const existingJobIds = new Set(
+          fs.readdirSync(cronJobsDir)
+            .filter((f) => f.endsWith(".json"))
+            .map((f) => f.slice(0, -5))
+        );
+        for (const entry of fs.readdirSync(sessDir)) {
+          // 匹配 cron_<jobId>.jsonl（jobId 仅含字母数字和连字符，不含下划线）
+          // 无状态 session 的 sessionId 为 `cron:<jobId>:<ts>`，sanitized 后含下划线分隔时间戳，不匹配
+          const match = /^cron_([a-zA-Z0-9-]+)\.jsonl$/.exec(entry);
+          if (!match) continue;
+          const jobId = match[1]!;
+          if (!existingJobIds.has(jobId)) {
+            try {
+              fs.unlinkSync(path.join(sessDir, entry));
+              console.log(`[cron:gc] 清理孤立 session JSONL: ${entry}`);
+            } catch { /* 静默忽略 */ }
+          }
+        }
+      }
+    } catch { /* 静默忽略，GC 失败不影响正常运行 */ }
   }
 
   // ── 内部实现 ────────────────────────────────────────────────────────────────
