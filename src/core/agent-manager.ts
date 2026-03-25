@@ -71,6 +71,35 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "PLAN.md");
   }
 
+  /**
+   * Agent 级 MCP 权限配置文件路径。
+   * 格式：~/.tinyclaw/agents/<id>/mcp.toml
+   * 内容示例：servers = ["polymarket", "browser"]
+   */
+  agentMcpPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "mcp.toml");
+  }
+
+  /**
+   * 读取 agent 的 MCP server 白名单。
+   * - 文件不存在 → 返回 null（表示无限制，全量访问）
+   * - 文件存在但 servers 为空数组 → 返回 []（表示禁用所有 MCP）
+   * - 文件存在且有值 → 返回 server 名称列表
+   */
+  readMcpServers(id: string): string[] | null {
+    const p = this.agentMcpPath(id);
+    if (!fs.existsSync(p)) return null;
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const parsed = parse(content) as Record<string, unknown>;
+      const servers = parsed["servers"];
+      if (!Array.isArray(servers)) return null;
+      return servers.filter((s): s is string => typeof s === "string");
+    } catch {
+      return null;
+    }
+  }
+
   /** Code 模式持久化工作目录文件路径 */
   codeDirPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "codedir");

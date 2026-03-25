@@ -15,6 +15,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { registerTool, setToolVisibility, setMcpAgentFilter } from "../tools/registry.js";
 import { loadMcpConfig, loadConfig } from "../config/loader.js";
 import type { MCPConfig, MCPServerConfig } from "../config/schema.js";
+import { agentManager } from "../core/agent-manager.js";
 
 /** 单个 server 的运行时状态 */
 interface MCPRuntime {
@@ -40,11 +41,6 @@ export interface MCPServerStatus {
   toolCount: number;
   /** 最近的连接错误（若有） */
   error?: string;
-  /**
-   * Agent 白名单（来自 mcp.toml agents 字段）。
-   * undefined / 空数组 = 所有 agent 可用。
-   */
-  agents?: string[];
 }
 
 /** Sanitize server/tool name: 只保留字母数字下划线，截断到 32 字符 */
@@ -81,17 +77,17 @@ class MCPClientManager {
 
   /**
    * 判断某个 MCP server 是否对指定 agent 可见。
-   * - server 未配置 agents 白名单（或为空）→ 所有 agent 可用
-   * - server 配置了白名单 → 只有白名单内的 agentId 可用
+   * 读取 agent 目录下的 mcp.toml（~/.tinyclaw/agents/<agentId>/mcp.toml）：
+   * - 文件不存在 → 所有 server 可用（向后兼容）
+   * - 文件存在且 servers 列表包含此 server → 可用
+   * - 文件存在但 servers 列表不包含此 server → 不可用
    * - agentId 为 undefined → 不限制（CLI / cron 无 agent 上下文场景）
    */
   isAllowedForAgent(serverName: string, agentId?: string): boolean {
     if (!agentId) return true;
-    const cfg = this.loadedConfig.servers[serverName];
-    if (!cfg) return false;
-    const agents = cfg.agents;
-    if (!agents || agents.length === 0) return true;
-    return agents.includes(agentId);
+    const allowed = agentManager.readMcpServers(agentId);
+    if (allowed === null) return true;          // 文件不存在 → 全量访问
+    return allowed.includes(serverName);
   }
 
   /**
@@ -138,7 +134,6 @@ class MCPClientManager {
         };
         if (cfg.description !== undefined) status.description = cfg.description;
         if (rt.error !== undefined) status.error = rt.error;
-        if (cfg.agents && cfg.agents.length > 0) status.agents = cfg.agents;
         return status;
       });
   }
