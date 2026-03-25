@@ -108,10 +108,23 @@ async function runPipelineJob(
   let lastResult = "";
 
   // 构建工具执行上下文（pipeline tool steps 使用）
+  // 必须包含 masterSession 和 slaveRunFn，否则 agent_fork / agent_wait 工具会因缺少上下文而返回错误字符串
   const toolCtx: ToolContext = {
     sessionId: session.sessionId,
     agentId: job.agentId,
     cwd: os.homedir(),
+    // ── agent_fork / agent_wait 所需 ──────────────────────────────────────
+    masterSession: session,
+    slaveRunFn: (s, c, o) =>
+      runAgent(s, c, {
+        ...(o as Parameters<typeof runAgent>[2]),
+        slaveDepth: 1,
+        ...(notifyFn ? { onNotify: notifyFn } : {}),
+      }),
+    // cron pipeline 用 result_mode="wait" + agent_wait 汇总结果，inject 回调保持 no-op
+    onSlaveComplete: async (_notif) => { /* no-op */ },
+    // 透传推送回调，SubAgent 内部调用 notify_user 时可正常推送
+    ...(notifyFn ? { onNotify: notifyFn } : {}),
   };
 
   for (let i = 0; i < steps.length; i++) {
