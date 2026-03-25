@@ -1,0 +1,9 @@
+{
+  "name": "tinyclaw-mcp-sts2",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "STS2AIAgent Mod MCP server for tinyclaw",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  }
+}
