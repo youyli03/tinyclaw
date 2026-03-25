@@ -5,15 +5,18 @@
  *   config show           格式化显示当前配置（密钥脱敏）
  *   config edit           用 $EDITOR 打开配置文件（fallback: nano → vi）
  *   config path           打印配置文件路径
+ *   config get <key>      读取指定配置项（dot path）
  *   config set <key> <v>  修改单个字段（dotted path，如 llm.backends.daily.model）
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as os from "node:os";
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { parse } from "smol-toml";
 import { ConfigSchema } from "../../config/schema.js";
 import { CONFIG_PATH, patchTomlField } from "../../config/writer.js";
+import { loadMemStoresConfig, loadMcpConfig } from "../../config/loader.js";
 import { printTable, prompt, bold, dim, green, red, yellow, cyan, section } from "../ui.js";
 
 // ── 脱敏辅助 ──────────────────────────────────────────────────────────────────
@@ -47,57 +50,221 @@ async function cmdShow(): Promise<void> {
     console.log(dim("\n以下为原始内容："));
   }
 
+  // 使用已解析并带默认值的数据（若解析失败则回退到 raw）
+  const cfg = parsed.success ? parsed.data : undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r = raw as any;
+
+  // ── Providers ─────────────────────────────────────────────────────────────
+  section("Providers（凭证）");
+  const providers = r?.providers ?? {};
+  if (providers.openai) {
+    const p = providers.openai;
+    console.log(`  ${bold("[openai]")}`);
+    console.log(`    baseUrl    = ${p.baseUrl ?? "https://api.openai.com/v1"}`);
+    console.log(`    apiKey     = ${dim(mask(String(p.apiKey ?? "")))}`);
+    console.log(`    maxTokens  = ${p.maxTokens ?? 4096}`);
+    console.log(`    timeoutMs  = ${p.timeoutMs ?? 120000}`);
+  }
+  if (providers.copilot) {
+    const p = providers.copilot;
+    console.log(`  ${bold("[copilot]")}`);
+    const tok = String(p.githubToken ?? "gh_cli");
+    console.log(`    githubToken= ${tok === "gh_cli" || tok === "env" ? cyan(tok) : dim(mask(tok))}`);
+    console.log(`    timeoutMs  = ${p.timeoutMs ?? 120000}`);
+  }
+  if (!providers.openai && !providers.copilot) {
+    console.log(`  ${dim("(未配置任何 provider)")}`);
+  }
+
   // ── LLM 后端 ────────────────────────────────────────────────────────────────
   section("LLM 后端");
-  const llm = (raw as any)?.llm?.backends ?? {};
-  for (const [name, b] of Object.entries(llm) as [string, any][]) {
-    if (!b) continue;
-    console.log(`\n  ${bold(`[${name}]`)}`);
-    if (b.provider === "copilot") {
-      console.log(`    provider     = ${cyan("copilot")}`);
-      console.log(`    githubToken  = ${dim(mask(String(b.githubToken ?? "")))}`);
-      console.log(`    model        = ${cyan(String(b.model ?? "auto"))}`);
-    } else {
-      console.log(`    provider     = openai-compatible`);
-      console.log(`    baseUrl      = ${b.baseUrl ?? "-"}`);
-      console.log(`    apiKey       = ${dim(mask(String(b.apiKey ?? "")))}`);
-      console.log(`    model        = ${cyan(String(b.model ?? "-"))}`);
-      if (b.maxTokens) console.log(`    maxTokens    = ${b.maxTokens}`);
+  const backends = r?.llm?.backends ?? {};
+  const roleNames = ["daily", "code", "summarizer"];
+  for (const name of roleNames) {
+    const b = backends[name];
+    if (!b) {
+      if (name !== "daily") {
+        console.log(`\n  ${bold(`[${name}]`)} ${dim("(未配置，回退到 daily)")}`);
+      }
+      continue;
     }
+    console.log(`\n  ${bold(`[${name}]`)}`);
+    console.log(`    model          = ${cyan(String(b.model ?? "-"))}`);
+    if (b.maxTokens !== undefined)  console.log(`    maxTokens      = ${b.maxTokens}`);
+    if (b.timeoutMs !== undefined)  console.log(`    timeoutMs      = ${b.timeoutMs}`);
+    if (b.supportsVision !== undefined) console.log(`    supportsVision = ${b.supportsVision}`);
   }
 
-  // ── Auth ─────────────────────────────────────────────────────────────────────
-  section("Auth");
-  const mfa = (raw as any)?.auth?.mfa;
+  // ── Auth / MFA ────────────────────────────────────────────────────────────
+  section("Auth / MFA");
+  const mfa = r?.auth?.mfa;
   if (mfa) {
-    console.log(`  tenantId    = ${dim(mask(String(mfa.tenantId ?? "")))}`);
-    console.log(`  clientId    = ${dim(mask(String(mfa.clientId ?? "")))}`);
-    console.log(`  timeoutSecs = ${mfa.timeoutSecs ?? 60}`);
+    console.log(`  interface   = ${cyan(String(mfa.interface ?? "simple"))}`);
+    console.log(`  timeoutSecs = ${mfa.timeoutSecs ?? 0}`);
+    const mfaTools: string[] = mfa.tools ?? ["delete_file", "write_file"];
+    console.log(`  tools       = [${mfaTools.join(", ")}]`);
+    const patterns: string[] = mfa.exec_shell_patterns?.patterns ?? ["rm", "sudo", "chmod", "chown", "dd", "mv"];
+    console.log(`  patterns    = [${patterns.join(", ")}]`);
+    if (mfa.tenantId) console.log(`  tenantId    = ${dim(mask(String(mfa.tenantId)))}`);
+    if (mfa.clientId) console.log(`  clientId    = ${dim(mask(String(mfa.clientId)))}`);
+    if (mfa.totpSecretPath) console.log(`  totpSecretPath = ${mfa.totpSecretPath}`);
+  } else {
+    console.log(`  ${dim("(未配置 MFA，使用默认：interface=simple)")}`);
   }
 
-  // ── Channels ─────────────────────────────────────────────────────────────────
+  // ── Channels ─────────────────────────────────────────────────────────────
   section("Channels");
-  const qqbot = (raw as any)?.channels?.qqbot;
+  const qqbot = r?.channels?.qqbot;
   if (qqbot) {
-    console.log(`  QQBot:`);
-    console.log(`    appId          = ${dim(mask(String(qqbot.appId ?? "")))}`);
-    console.log(`    clientSecret   = ${dim(mask(String(qqbot.clientSecret ?? "")))}`);
-    console.log(`    allowFrom      = [${((qqbot.allowFrom as string[]) ?? []).join(", ")}]`);
-    console.log(`    markdownSupport= ${qqbot.markdownSupport ?? true}`);
+    console.log(`  ${bold("QQBot:")}`);
+    console.log(`    appId            = ${dim(mask(String(qqbot.appId ?? "")))}`);
+    console.log(`    clientSecret     = ${dim(mask(String(qqbot.clientSecret ?? "")))}`);
+    console.log(`    allowFrom        = [${((qqbot.allowFrom as string[]) ?? []).join(", ")}]`);
+    console.log(`    markdownSupport  = ${qqbot.markdownSupport ?? true}`);
+    if (qqbot.imageServerBaseUrl) {
+      console.log(`    imageServerBaseUrl = ${qqbot.imageServerBaseUrl}`);
+      console.log(`    imageServerPort    = ${qqbot.imageServerPort ?? 18765}`);
+    }
+    if (qqbot.systemPrompt) {
+      const preview = String(qqbot.systemPrompt).slice(0, 60);
+      console.log(`    systemPrompt     = ${dim(preview + (qqbot.systemPrompt.length > 60 ? "…" : ""))}`);
+    }
   } else {
     console.log(`  ${dim("(未配置)")}`);
   }
 
-  // ── Memory ───────────────────────────────────────────────────────────────────
+  // ── Memory ───────────────────────────────────────────────────────────────
   section("Memory");
-  const mem = (raw as any)?.memory;
+  const mem = cfg?.memory ?? r?.memory;
   if (mem) {
-    console.log(`  embedModel     = ${String(mem.embedModel ?? "-")}`);
-    console.log(`  tokenThreshold = ${mem.tokenThreshold ?? 0.8}`);
-    console.log(`  contextWindow  = ${mem.contextWindow ?? 128000}`);
+    const enabledStr = mem.enabled ? green("true") : dim("false");
+    console.log(`  enabled             = ${enabledStr}`);
+    console.log(`  embedModel          = ${dim(String(mem.embedModel ?? "-"))}`);
+    console.log(`  tokenThreshold      = ${mem.tokenThreshold ?? 0.8}`);
+    console.log(`  contextWindow       = ${mem.contextWindow ?? 128000}`);
+    console.log(`  hybridSearchEnabled = ${mem.hybridSearchEnabled ?? true}`);
+    console.log(`  bm25Weight          = ${mem.bm25Weight ?? 0.3}`);
+    console.log(`  decayHalfLifeDays   = ${mem.decayHalfLifeDays ?? 30}`);
+    const eg: string[] = mem.evergreenPatterns ?? ["MEM.md", "MEMORY.md", "patterns.md"];
+    console.log(`  evergreenPatterns   = [${eg.join(", ")}]`);
+    console.log(`  mmrEnabled          = ${mem.mmrEnabled ?? true}`);
+    console.log(`  mmrLambda           = ${mem.mmrLambda ?? 0.7}`);
+    console.log(`  memorySafetyCheck   = ${mem.memorySafetyCheck ?? true}`);
+  } else {
+    console.log(`  ${dim("(使用默认值，memory 未在配置文件中定义)")}`);
   }
 
-  console.log(`\n${dim(`配置文件：${CONFIG_PATH}`)}`);
+  // ── Tools ────────────────────────────────────────────────────────────────
+  section("Tools");
+  const tools = cfg?.tools ?? r?.tools;
+  if (tools) {
+    const ca = tools.code_assist ?? {};
+    console.log(`  code_assist.backend        = ${cyan(String(ca.backend ?? "copilot"))}`);
+    if (ca.model) console.log(`  code_assist.model          = ${ca.model}`);
+    console.log(`  code_assist.maxCallsPerRun = ${ca.maxCallsPerRun ?? 5}`);
+    console.log(`  maxCodeToolRounds          = ${tools.maxCodeToolRounds ?? 0}`);
+    console.log(`  maxChatToolRounds          = ${tools.maxChatToolRounds ?? 0}`);
+    console.log(`  maxToolResultChars         = ${tools.maxToolResultChars ?? 20000}`);
+    console.log(`  maxToolCallArgChars        = ${tools.maxToolCallArgChars ?? 8000}`);
+  } else {
+    console.log(`  ${dim("(使用默认值)")}`);
+  }
+
+  // ── Agent 行为 ────────────────────────────────────────────────────────────
+  section("Agent 行为");
+  const agentCfg = cfg?.agent ?? r?.agent;
+  if (agentCfg) {
+    console.log(`  heartbeatIntervalSecs = ${agentCfg.heartbeatIntervalSecs ?? 120}`);
+  } else {
+    console.log(`  ${dim("(使用默认值：heartbeatIntervalSecs=120)")}`);
+  }
+
+  // ── Voice ─────────────────────────────────────────────────────────────────
+  section("Voice（语音识别）");
+  const voice = cfg?.voice ?? r?.voice;
+  if (voice) {
+    console.log(`  model    = ${cyan(String(voice.model ?? "small"))}`);
+    console.log(`  language = ${voice.language ? String(voice.language) : dim("(自动检测)")}`);
+  } else {
+    console.log(`  ${dim("(使用默认值：model=small，自动检测语言)")}`);
+  }
+
+  // ── Retry ─────────────────────────────────────────────────────────────────
+  section("Retry（重试策略）");
+  const retry = cfg?.retry ?? r?.retry;
+  if (retry) {
+    console.log(`  maxAttempts         = ${retry.maxAttempts ?? -1}  ${dim("(-1 = 无限)")}`);
+    console.log(`  max5xxAttempts      = ${retry.max5xxAttempts ?? 5}`);
+    console.log(`  baseDelayMs         = ${retry.baseDelayMs ?? 1000}`);
+    console.log(`  retry429            = ${retry.retry429 ?? true}`);
+    console.log(`  retry5xx            = ${retry.retry5xx ?? true}`);
+    console.log(`  retryTransport      = ${retry.retryTransport ?? true}`);
+    console.log(`  retryTimeout        = ${retry.retryTimeout ?? false}`);
+    console.log(`  streamIdleTimeoutMs = ${retry.streamIdleTimeoutMs ?? 60000}`);
+    console.log(`  maxRetryDurationMs  = ${retry.maxRetryDurationMs ?? 0}  ${dim("(0 = 不限制)")}`);
+  } else {
+    console.log(`  ${dim("(使用默认值)")}`);
+  }
+
+  // ── MCP Servers ───────────────────────────────────────────────────────────
+  const mcpTomlPath = path.join(os.homedir(), ".tinyclaw", "mcp.toml");
+  section(`MCP Servers  ${dim(`(${mcpTomlPath})`)}`);
+  if (!fs.existsSync(mcpTomlPath)) {
+    console.log(`  ${dim("(mcp.toml 不存在，无 MCP server 配置)")}`);
+  } else {
+    try {
+      const mcpCfg = loadMcpConfig();
+      const servers = Object.entries(mcpCfg.servers);
+      if (servers.length === 0) {
+        console.log(`  ${dim("(无 server 定义)")}`);
+      } else {
+        const rows = servers.map(([name, srv]) => {
+          const tag = srv.enabled !== false ? green("enabled") : dim("disabled");
+          const transport = srv.transport;
+          const endpoint = srv.transport === "stdio"
+            ? dim(`${srv.command} ${srv.args?.join(" ") ?? ""}`.trim().slice(0, 60))
+            : dim(srv.url ?? "");
+          return [cyan(name), `[${tag}]`, transport, endpoint];
+        });
+        printTable(["Name", "Status", "Transport", "Command / URL"], rows);
+        if (servers.some(([, s]) => s.description)) {
+          console.log();
+          for (const [name, srv] of servers) {
+            if (srv.description) {
+              console.log(`  ${cyan(name)}: ${dim(srv.description.slice(0, 80))}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`  ${red(`读取 mcp.toml 失败：${e}`)}`);
+    }
+  }
+
+  // ── MemStores ─────────────────────────────────────────────────────────────
+  const memstoresTomlPath = path.join(os.homedir(), ".tinyclaw", "memstores.toml");
+  section(`MemStores  ${dim(`(${memstoresTomlPath})`)}`);
+  if (!fs.existsSync(memstoresTomlPath)) {
+    console.log(`  ${dim("(memstores.toml 不存在，无额外知识库配置)")}`);
+  } else {
+    try {
+      const msCfg = loadMemStoresConfig();
+      if (msCfg.stores.length === 0) {
+        console.log(`  ${dim("(无 store 定义)")}`);
+      } else {
+        const rows = msCfg.stores.map((s) => {
+          const tag = s.enabled ? green("enabled") : dim("disabled");
+          return [cyan(s.name), `[${tag}]`, s.title, dim(s.path)];
+        });
+        printTable(["Name", "Status", "Title", "Path"], rows);
+      }
+    } catch (e) {
+      console.log(`  ${red(`读取 memstores.toml 失败：${e}`)}`);
+    }
+  }
+
+  console.log(`\n${dim(`主配置文件：${CONFIG_PATH}`)}`);
 }
 
 async function cmdEdit(): Promise<void> {
