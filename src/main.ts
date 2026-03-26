@@ -35,6 +35,7 @@ import { validateMediaContent, extractTextContent } from "./connectors/qqbot/out
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
+import { loopRunner } from "./core/loop-runner.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
@@ -564,15 +565,19 @@ async function main(): Promise<void> {
   // 5. 启动 Cron 调度器
   await cronScheduler.start(connector);
 
-  // 6. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
+  // 6. 启动 Loop Agent 轮询引擎
+  await loopRunner.start(connector);
+
+  // 7. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
   const gcInterval = setInterval(() => { slaveManager.gc(); }, 60 * 60 * 1000);
 
-  // 7. 优雅退出
+  // 8. 优雅退出
   const handleExit = async (signal: string) => {
     console.log(`\n[tinyclaw] Received ${signal}, shutting down...`);
     clearInterval(gcInterval);
     ipcServer.close();
     cronScheduler.stop();
+    loopRunner.stop();
     if (connector) await connector.stop();
     process.exit(0);
   };

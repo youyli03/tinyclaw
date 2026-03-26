@@ -32,6 +32,16 @@ export interface AgentDef {
   bindings: AgentBinding[];
 }
 
+export interface LoopConfig {
+  enabled: boolean;
+  tickSeconds: number;
+  taskFile: string;
+  notify: "always" | "on_change" | "on_error" | "never";
+  peerId?: string;
+  msgType?: string;
+  model?: string;
+}
+
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
 export const DEFAULT_AGENT_ID = "default";
 
@@ -130,6 +140,37 @@ export class AgentManager {
       return {
         mode,
         tools: tools.filter((t): t is string => typeof t === "string"),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 读取 agent 的 Loop 配置（来自 agent.toml 中的 [loop] 表）。
+   * - [loop] 不存在或 enabled = false → 返回 null
+   * - 否则返回补全默认值后的 LoopConfig
+   */
+  readLoopConfig(id: string): LoopConfig | null {
+    const p = this.tomlPath(id);
+    if (!fs.existsSync(p)) return null;
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const parsed = parse(content) as Record<string, unknown>;
+      const loop = parsed["loop"];
+      if (!loop || typeof loop !== "object") return null;
+      const l = loop as Record<string, unknown>;
+      if (l["enabled"] === false) return null;
+      return {
+        enabled: true,
+        tickSeconds: typeof l["tickSeconds"] === "number" ? l["tickSeconds"] : 60,
+        taskFile: typeof l["taskFile"] === "string" ? l["taskFile"] : "TASK.md",
+        notify: (["always", "on_change", "on_error", "never"].includes(l["notify"] as string)
+          ? l["notify"]
+          : "never") as LoopConfig["notify"],
+        ...(typeof l["peerId"] === "string" ? { peerId: l["peerId"] } : {}),
+        ...(typeof l["msgType"] === "string" ? { msgType: l["msgType"] } : {}),
+        ...(typeof l["model"] === "string" && l["model"] ? { model: l["model"] } : {}),
       };
     } catch {
       return null;
