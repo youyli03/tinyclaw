@@ -107,7 +107,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
   - Rust：\`cargo check\`
   - 其他语言/框架：根据项目实际情况选择合适命令
 - **任务完成时**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
-- **自动提交（Auto Commit）**：任务完成且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。**本仓库（tinyclaw）除外**——tinyclaw 由用户自行决定提交时机。
+- **自动提交（Auto Commit）**：任务完成且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
 - 用中文回复，简洁明了
 
 ## 图表与可视化
@@ -151,7 +151,7 @@ Plan 模式分为两个严格隔离的阶段：
   - Rust：\`cargo check\`
   - 其他语言/框架：根据项目实际情况选择合适命令
 - **执行完毕**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
-- **自动提交（Auto Commit）**：执行完毕且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。**本仓库（tinyclaw）除外**——tinyclaw 由用户自行决定提交时机。
+- **自动提交（Auto Commit）**：执行完毕且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
 
 ## 重要约束
 
