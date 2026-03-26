@@ -47,7 +47,7 @@ registerTool({
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
           timeOfDay:     { type: "string",  description: "[daily] 触发时间，格式 HH:MM（本地时间）" },
-          agentId:       { type: "string",  description: "使用的 agent（默认 default）" },
+          agentId:       { type: "string",  description: "使用的 agent（默认 default）。注意：在交互式会话中，实际使用的 agentId 由调用方 agent 决定，此参数仅在 CLI 等无 agent 上下文的场景下生效。" },
           notify:        { type: "string",  enum: ["always","on_change","on_error","never"], description: "通知策略（默认 always）" },
           stateful:      { type: "boolean", description: "是否保留跨 run 对话历史（默认 false）" },
           peerId:        { type: "string",  description: "推送目标的 QQ peerId（不填则仅写 log）" },
@@ -88,7 +88,7 @@ registerTool({
     const job = addJob({
       id: nanoid(),
       enabled: true,
-      agentId: String(args["agentId"] ?? "default"),
+      agentId: ctx?.agentId ?? String(args["agentId"] ?? "default"),
       message,
       type,
       runAt: args["runAt"] ? String(args["runAt"]) : undefined,
