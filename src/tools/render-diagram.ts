@@ -117,6 +117,10 @@ _OUTPUT_FILE = _os.environ.get("DIAGRAM_OUTPUT_FILE", "/tmp/diagram_out.png")
 try:
     import matplotlib as _mpl
     _mpl.use("Agg")
+    import matplotlib.font_manager as _fm
+    _fm.fontManager.addfont('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
+    _mpl.rcParams['font.family'] = 'Noto Sans CJK JP'
+    _mpl.rcParams['axes.unicode_minus'] = False
     import matplotlib.pyplot as _plt
 except ImportError:
     pass
