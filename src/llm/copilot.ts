@@ -450,6 +450,8 @@ export interface CopilotModelInfo {
   maxContextWindow: number;
   /** 是否支持 tool_calls（function calling） */
   supportsToolCalls: boolean;
+  /** 是否支持并行工具调用（parallel_tool_calls） */
+  supportsParallelToolCalls: boolean;
   /** 是否出现在 Copilot 模型选择器中 */
   isPickerEnabled: boolean;
   /** 是否为 Copilot 标记的默认聊天模型（个人账户通常不返回此字段） */
@@ -520,6 +522,7 @@ export async function getCopilotModels(
       maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
       maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
       supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
+      supportsParallelToolCalls: m.capabilities.supports.parallel_tool_calls ?? false,
       isPickerEnabled: m.model_picker_enabled,
       isDefault: m.is_chat_default ?? false,
       isPremium: m.billing?.is_premium ?? (multiplier != null && multiplier > 0),
@@ -626,6 +629,7 @@ export async function buildCopilotClient(
       maxTokens: resolvedModel.maxOutputTokens,
       timeoutMs: config.timeoutMs,
       supportsToolCalls: resolvedModel.supportsToolCalls,
+      supportsParallelToolCalls: resolvedModel.supportsParallelToolCalls,
       isCopilotProvider: true,
       ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
     },

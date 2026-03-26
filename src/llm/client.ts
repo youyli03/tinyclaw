@@ -133,6 +133,8 @@ export interface ResolvedBackend {
   supportsToolCalls?: boolean;
   /** 是否支持视觉能力（图片输入）。未设置时视为 false。 */
   supportsVision?: boolean;
+  /** 是否支持并行工具调用（parallel_tool_calls）。未设置时视为 false。 */
+  supportsParallelToolCalls?: boolean;
   /**
    * 是否为 GitHub Copilot provider。
    * 设为 true 时，LLM 调用会根据 ChatOptions.isUserInitiated 设置 X-Initiator header，
@@ -305,6 +307,11 @@ export class LLMClient {
     return this.backend.supportsVision ?? false;
   }
 
+  /** 该模型是否支持并行工具调用（parallel_tool_calls） */
+  get supportsParallelToolCalls(): boolean {
+    return this.backend.supportsParallelToolCalls ?? false;
+  }
+
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
@@ -322,7 +329,11 @@ export class LLMClient {
         max_tokens: opts.maxTokens ?? this.backend.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(canUseTools
-          ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
+          ? {
+              tools: opts.tools!,
+              tool_choice: opts.tool_choice ?? "auto",
+              ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
+            }
           : {}),
       },
       {
@@ -390,7 +401,11 @@ export class LLMClient {
           max_tokens: opts.maxTokens ?? this.backend.maxTokens,
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           ...(canUseTools
-            ? { tools: opts.tools!, tool_choice: opts.tool_choice ?? "auto" }
+            ? {
+                tools: opts.tools!,
+                tool_choice: opts.tool_choice ?? "auto",
+                ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
+              }
             : {}),
           stream: true,
           stream_options: { include_usage: true },
