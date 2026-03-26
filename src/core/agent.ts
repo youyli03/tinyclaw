@@ -3,6 +3,7 @@ import { llmRegistry } from "../llm/registry.js";
 import { LLMConnectionError } from "../llm/client.js";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { searchMemory } from "../memory/qmd.js";
 import { shouldSummarize, shouldSummarizeCode } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
@@ -573,6 +574,17 @@ export async function runAgent(
         }, heartbeatSecs * 1000);
       }
 
+      // ── 并发限流：等待空闲 LLM slot（FIFO 排队）────────────────────────
+      // 工具执行期间不占用 slot，仅在真正发起 LLM 请求时持有。
+      // release 在 finally 中保证执行，工具执行代码在 finally 之后，slot 已归还。
+      try {
+        await acquireLLMSlot(llmAc.signal);
+      } catch (err) {
+        // acquire 被 AbortSignal 中断（软中断打断等待）
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        break;
+      }
+
       try {
         response = await client.streamChat(
           session.getMessages(),
@@ -595,6 +607,8 @@ export async function runAgent(
         toolThrottler?.stop();
         throw err;
       } finally {
+        // LLM 请求已结束（无论成功/失败），立即释放 slot，工具执行期间不占用
+        releaseLLMSlot();
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
     }

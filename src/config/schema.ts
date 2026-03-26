@@ -350,6 +350,19 @@ const RetryConfigSchema = z.object({
 }).default({});
 export type RetryConfig = z.infer<typeof RetryConfigSchema>;
 
+// ── 并发控制配置 ──────────────────────────────────────────────────────────────
+
+const ConcurrencySchema = z.object({
+  /**
+   * 全局 LLM 推理最大并发数。
+   * 仅统计正在进行 LLM HTTP 请求的 session 数，工具执行期间不占用槽位。
+   * 0 = 不限制（默认），设为正整数（如 3~5）可防止高并发时触发 API Rate Limit。
+   * 推荐值：Copilot Pro/Pro+ 用户设 3，企业用户可按套餐设更大值。
+   */
+  maxConcurrentLLMRequests: z.number().int().min(0).default(0),
+}).default({});
+export type ConcurrencyConfig = z.infer<typeof ConcurrencySchema>;
+
 // ── Agent 行为配置 ────────────────────────────────────────────────────────────
 
 const AgentSchema = z.object({
@@ -386,6 +399,7 @@ export const ConfigSchema = z.object({
   providers: ProvidersSchema,
   llm: LLMSchema,
   agent: AgentSchema,
+  concurrency: ConcurrencySchema,
   auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),

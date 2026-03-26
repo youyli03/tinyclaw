@@ -24,6 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "./config/loader.js";
 import { llmRegistry } from "./llm/registry.js";
+import { initLLMConcurrency } from "./llm/concurrency.js";
 import { Session, type PlanApprovalResult } from "./core/session.js";
 import { runAgent, type AgentRunOptions } from "./core/agent.js";
 import { agentManager } from "./core/agent-manager.js";
@@ -71,6 +72,9 @@ async function main(): Promise<void> {
   // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
   await llmRegistry.init();
   console.log(`[tinyclaw] LLM backend ready (model=${llmRegistry.get("daily").model})`);
+
+  // 初始化全局 LLM 并发限流器（在接受请求之前配置）
+  initLLMConcurrency(cfg.concurrency.maxConcurrentLLMRequests);
 
   // 3. 初始化 MCP servers（读取 ~/.tinyclaw/mcp.toml，注册工具到 registry）
   await mcpManager.init();
