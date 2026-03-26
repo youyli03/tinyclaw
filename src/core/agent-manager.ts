@@ -12,6 +12,8 @@
  *       tmp/        — 临时文件
  *       output/     — 输出物
  *     memory/       — QMD 向量索引
+ *     mcp.toml      — MCP server 白名单（可选）
+ *     tools.toml    — 内置工具黑/白名单（可选）
  */
 
 
@@ -95,6 +97,40 @@ export class AgentManager {
       const servers = parsed["servers"];
       if (!Array.isArray(servers)) return null;
       return servers.filter((s): s is string => typeof s === "string");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Agent 级内置工具黑/白名单配置文件路径。
+   * 格式：~/.tinyclaw/agents/<id>/tools.toml
+   */
+  agentToolsPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "tools.toml");
+  }
+
+  /**
+   * 读取 agent 的内置工具过滤配置。
+   * - 文件不存在 → 返回 null（不限制，全量访问）
+   * - mode = "allowlist" → 只有 tools 列出的工具对该 agent 可见
+   * - mode = "denylist"  → tools 列出的工具对该 agent 不可见
+   * MCP 工具（mcp_ 前缀）不受此配置影响，由 mcp.toml 单独控制。
+   */
+  readToolsConfig(id: string): { mode: "allowlist" | "denylist"; tools: string[] } | null {
+    const p = this.agentToolsPath(id);
+    if (!fs.existsSync(p)) return null;
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const parsed = parse(content) as Record<string, unknown>;
+      const mode = parsed["mode"];
+      if (mode !== "allowlist" && mode !== "denylist") return null;
+      const tools = parsed["tools"];
+      if (!Array.isArray(tools)) return null;
+      return {
+        mode,
+        tools: tools.filter((t): t is string => typeof t === "string"),
+      };
     } catch {
       return null;
     }

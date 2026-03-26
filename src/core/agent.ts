@@ -5,7 +5,7 @@ import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { searchMemory } from "../memory/qmd.js";
 import { shouldSummarize, shouldSummarizeCode } from "../memory/summarizer.js";
-import { getAllToolSpecs, getTool, executeTool } from "../tools/registry.js";
+import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
@@ -31,6 +31,16 @@ import "../tools/ask-user-tool.js";
 import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
+
+// 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
+// 读取 ~/.tinyclaw/agents/<id>/tools.toml，对非 mcp_ 工具应用黑/白名单过滤
+setBuiltinAgentFilter((toolName: string, agentId: string): boolean => {
+  const cfg = agentManager.readToolsConfig(agentId);
+  if (!cfg) return true; // 文件不存在 → 不限制
+  if (cfg.mode === "allowlist") return cfg.tools.includes(toolName);
+  if (cfg.mode === "denylist")  return !cfg.tools.includes(toolName);
+  return true;
+});
 
 /** Chat 模式工具调用轮次上限（在 config 中未配置时的后备默认值，0=无限制） */
 const MAX_TOOL_ROUNDS = 0;

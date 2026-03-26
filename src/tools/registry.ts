@@ -103,6 +103,21 @@ export function setMcpAgentFilter(fn: (toolName: string, agentId: string) => boo
   _mcpAgentFilter = fn;
 }
 
+/**
+ * 内置工具的 agent 过滤回调。
+ * 由 agent.ts 顶层（模块加载时）注入，读取各 agent 的 tools.toml。
+ * 签名：(toolName, agentId) => boolean（true = 允许，false = 过滤掉）
+ */
+let _builtinAgentFilter: ((toolName: string, agentId: string) => boolean) | undefined;
+
+/**
+ * 注册内置工具的 agent 过滤回调（由 agent.ts 模块加载时调用）。
+ * 仅需调用一次；重复调用会覆盖前一个回调。
+ */
+export function setBuiltinAgentFilter(fn: (toolName: string, agentId: string) => boolean): void {
+  _builtinAgentFilter = fn;
+}
+
 /** 注册工具 */
 export function registerTool(def: ToolDef): void {
   const name = def.spec.function.name;
@@ -120,15 +135,23 @@ export function getTool(name: string): ToolDef | undefined {
 /**
  * 获取所有工具的 OpenAI spec 列表（供 chat completions 使用）。
  * - 已隐藏（hidden=true）的工具不包含在内
- * - 若传入 agentId，MCP 工具（名称以 mcp_ 开头）额外经过 agent 白名单过滤
+ * - 若传入 agentId，MCP 工具（mcp_ 前缀）经过 mcp.toml agent 白名单过滤
+ * - 若传入 agentId，内置工具经过 tools.toml 黑/白名单过滤
  */
 export function getAllToolSpecs(agentId?: string): ChatCompletionTool[] {
   return Array.from(tools.values())
     .filter((t) => {
       if (t.hidden) return false;
-      // 对 MCP 工具做 agent 权限过滤
-      if (agentId && _mcpAgentFilter && t.spec.function.name.startsWith("mcp_")) {
-        return _mcpAgentFilter(t.spec.function.name, agentId);
+      const name = t.spec.function.name;
+      if (agentId) {
+        // MCP 工具：走 mcp.toml agent 白名单
+        if (_mcpAgentFilter && name.startsWith("mcp_")) {
+          return _mcpAgentFilter(name, agentId);
+        }
+        // 内置工具：走 tools.toml 黑/白名单
+        if (_builtinAgentFilter && !name.startsWith("mcp_")) {
+          return _builtinAgentFilter(name, agentId);
+        }
       }
       return true;
     })
