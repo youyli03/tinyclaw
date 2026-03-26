@@ -120,3 +120,158 @@ export function section(title: string): void {
   console.log(`\n${bold(title)}`);
   hr();
 }
+
+// ── TTY raw mode 交互基础 ─────────────────────────────────────────────────────
+
+/** 是否有可用的 TTY（stdin 是终端） */
+function hasTTY(): boolean {
+  return Boolean(process.stdin.isTTY);
+}
+
+/**
+ * 在 raw mode 下读取一个按键，返回按键标识字符串。
+ * 调用者负责在调用前后设置/恢复 raw mode。
+ */
+function readKey(): Promise<string> {
+  return new Promise((resolve) => {
+    const onData = (buf: Buffer) => {
+      process.stdin.removeListener("data", onData);
+      const s = buf.toString();
+      // 方向键转义序列
+      if (s === "\x1b[A") { resolve("up");    return; }
+      if (s === "\x1b[B") { resolve("down");  return; }
+      if (s === "\r" || s === "\n") { resolve("enter"); return; }
+      if (s === " ")                { resolve("space"); return; }
+      if (s === "\x1b" || s === "q" || s === "\x03") { resolve("quit"); return; }
+      resolve(s);
+    };
+    process.stdin.once("data", onData);
+  });
+}
+
+/** 用 ANSI 上移 n 行并清除到底部，用于重绘菜单 */
+function clearLines(n: number): void {
+  for (let i = 0; i < n; i++) {
+    process.stdout.write("\x1b[1A\x1b[2K");
+  }
+}
+
+// ── singleSelect ──────────────────────────────────────────────────────────────
+
+/**
+ * 单选菜单：↑↓ 移动，Enter 确认。
+ * 非 TTY 时 fallback 到数字编号输入（与现有 select() 行为一致）。
+ */
+export async function singleSelect<T>(
+  title: string,
+  items: { label: string; value: T; note?: string }[],
+): Promise<T> {
+  if (!hasTTY()) {
+    // fallback：数字编号
+    return select(title, items);
+  }
+
+  let cursor = 0;
+
+  const render = (first: boolean) => {
+    if (!first) clearLines(items.length + 2);
+    console.log(`\n${bold(title)}`);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const note = item.note ? `  ${dim(item.note)}` : "";
+      const prefix = i === cursor ? cyan("❯ ") : "  ";
+      const label = i === cursor ? bold(item.label) : item.label;
+      console.log(`${prefix}${label}${note}`);
+    }
+  };
+
+  render(true);
+  console.log(dim("↑↓ 移动  Enter 确认"));
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf-8");
+
+  try {
+    while (true) {
+      const key = await readKey();
+      if (key === "up")    { cursor = (cursor - 1 + items.length) % items.length; render(false); }
+      else if (key === "down")  { cursor = (cursor + 1) % items.length; render(false); }
+      else if (key === "enter") { clearLines(items.length + 2); break; }
+      else if (key === "quit")  { process.exit(0); }
+    }
+  } finally {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  }
+
+  return items[cursor]!.value;
+}
+
+// ── multiSelect ───────────────────────────────────────────────────────────────
+
+/**
+ * 多选菜单：↑↓ 移动，空格切换勾选，Enter 确认，返回已勾选的 value 数组。
+ * 非 TTY 时 fallback 到逗号/空格分隔输入。
+ */
+export async function multiSelect(
+  title: string,
+  items: { value: string; label?: string }[],
+  initialSelected: string[] = [],
+): Promise<string[]> {
+  if (!hasTTY()) {
+    // fallback：显示列表，让用户输入空格分隔的 value
+    console.log(`\n${bold(title)}`);
+    console.log(dim("可选项：") + items.map((i) => i.value).join("  "));
+    if (initialSelected.length > 0) {
+      console.log(dim("当前已选：") + initialSelected.join(", "));
+    }
+    const answer = await prompt("输入选中项（空格分隔，直接回车保持不变）: ");
+    const t = answer.trim();
+    if (!t) return initialSelected;
+    return t.split(/[\s,]+/).filter((v) => items.some((i) => i.value === v));
+  }
+
+  const selected = new Set<string>(initialSelected);
+  let cursor = 0;
+
+  const render = (first: boolean) => {
+    if (!first) clearLines(items.length + 2);
+    console.log(`\n${bold(title)}`);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const label = item.label ?? item.value;
+      const checked = selected.has(item.value) ? green("[✓]") : dim("[ ]");
+      const arrow = i === cursor ? cyan("❯") : " ";
+      const text = i === cursor ? bold(label) : label;
+      console.log(`${arrow} ${checked} ${text}`);
+    }
+  };
+
+  render(true);
+  console.log(dim("↑↓ 移动  Space 切换  Enter 确认"));
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf-8");
+
+  try {
+    while (true) {
+      const key = await readKey();
+      if (key === "up")    { cursor = (cursor - 1 + items.length) % items.length; render(false); }
+      else if (key === "down")  { cursor = (cursor + 1) % items.length; render(false); }
+      else if (key === "space") {
+        const v = items[cursor]!.value;
+        if (selected.has(v)) selected.delete(v); else selected.add(v);
+        render(false);
+      }
+      else if (key === "enter") { clearLines(items.length + 2); break; }
+      else if (key === "quit")  { process.exit(0); }
+    }
+  } finally {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  }
+
+  return Array.from(selected);
+}
