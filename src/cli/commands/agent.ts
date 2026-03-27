@@ -54,6 +54,18 @@ export const BUILTIN_TOOLS = [
   "mcp_disable_server",
   "ask_user",
   "exit_plan_mode",
+  "memory_read_mem",
+  "memory_write_mem",
+  "memory_search",
+  "memory_append",
+] as const;
+
+/** memory-only 模板的工具白名单（最小安全 Agent，仅允许记忆读写/搜索/追加） */
+export const MEMORY_ONLY_TOOLS = [
+  "memory_read_mem",
+  "memory_write_mem",
+  "memory_search",
+  "memory_append",
 ] as const;
 
 // ── 模板 ─────────────────────────────────────────────────────────────────────
@@ -80,13 +92,34 @@ const SAMPLE_SYSTEM = (id: string) =>
 在此描述该 Agent 的角色、风格和专业方向。
 `;
 
+const SAMPLE_SYSTEM_MEMORY_ONLY = (id: string) =>
+  `# ${id} 系统提示
+
+你是一个专注于知识记录与检索的 AI 助手。
+
+## 能力范围
+- 读取、更新、搜索本 Agent 的持久记忆（MEM.md 及历史存档）
+
+## 可用工具
+- memory_read_mem  ：读取 MEM.md 当前完整内容
+- memory_write_mem ：覆盖或追加写入 MEM.md（mode: overwrite | append）
+- memory_search    ：向量搜索历史记忆存档
+- memory_append    ：向当日历史存档追加一条记忆并触发索引更新
+
+## 限制
+- 无文件系统访问权限（无 read_file / write_file / exec_shell）
+- 无外部 MCP 工具访问权限
+- 无通知、提问等其他工具
+- 仅使用上述 4 个工具完成所有任务
+`;
+
 // ── 帮助 ─────────────────────────────────────────────────────────────────────
 
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
   agent list                       列出所有 Agent
-  agent new <id>                   创建新 Agent
+  agent new <id> [-t <template>]   创建新 Agent（可选：-t memory-only）
   agent show <id>                  显示 Agent 详情（含权限配置）
   agent edit <id>                  用 $EDITOR 编辑系统提示（SYSTEM.md）
   agent delete <id>                删除 Agent（default 不可删除）
@@ -103,6 +136,9 @@ ${bold("用法：")}
 
   agent perm <id>                  ${cyan("★")} 交互式权限配置向导（工具 + MCP）
 
+${bold("模板（-t / --template）：")}
+  memory-only    最小安全 Agent，仅允许 4 个 memory_* 工具，禁用全部 MCP
+
 ${bold("说明：")}
   每个 Agent 是独立工作区 ${dim("~/.tinyclaw/agents/<id>/")}
     ${dim("agent.toml")}       — 元数据与绑定规则
@@ -118,7 +154,9 @@ ${bold("说明：")}
     tinyclaw chat -s <sessionId> bind <agentId>
 
 ${bold("示例：")}
-  agent perm loop-01               # 交互式配置 loop-01 的工具和 MCP 权限
+  agent new my-agent                           # 创建普通 Agent
+  agent new my-mem -t memory-only              # 创建最小安全 memory-only Agent
+  agent perm loop-01                           # 交互式配置 loop-01 的工具和 MCP 权限
   agent tools loop-01 set-deny exec_shell write_file delete_file
   agent mcp trader set polymarket browser
 `);
@@ -137,7 +175,7 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "list":   return runList(mgr);
-    case "new":    return runNew(mgr, args[1]);
+    case "new":    return runNew(mgr, args.slice(1));
     case "show":   return runShow(mgr, args[1]);
     case "edit":   return runEdit(mgr, args[1]);
     case "delete": return runDelete(mgr, args[1]);
@@ -195,10 +233,39 @@ function runList(mgr: AgentManager): void {
 
 // ── new ──────────────────────────────────────────────────────────────────────
 
-function runNew(mgr: AgentManager, id: string | undefined): void {
+/** 支持的模板名 */
+type AgentTemplate = "memory-only";
+const KNOWN_TEMPLATES: AgentTemplate[] = ["memory-only"];
+
+function runNew(mgr: AgentManager, args: string[]): void {
+  // 解析参数：第一个非 flag 参数为 id，--template/-t <name> 为模板
+  let id: string | undefined;
+  let template: AgentTemplate | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--template" || a === "-t") {
+      const tname = args[i + 1];
+      if (!tname) {
+        console.error(red("错误：--template 需要指定模板名"));
+        console.error(dim(`可用模板：${KNOWN_TEMPLATES.join(", ")}`));
+        process.exit(1);
+      }
+      if (!KNOWN_TEMPLATES.includes(tname as AgentTemplate)) {
+        console.error(red(`错误：未知模板 "${tname}"`));
+        console.error(dim(`可用模板：${KNOWN_TEMPLATES.join(", ")}`));
+        process.exit(1);
+      }
+      template = tname as AgentTemplate;
+      i++; // 跳过模板名
+    } else if (!a.startsWith("-")) {
+      id = a;
+    }
+  }
+
   if (!id) {
     console.error(red("错误：请指定 Agent ID"));
-    console.error(dim("用法：tinyclaw agent new <id>"));
+    console.error(dim("用法：tinyclaw agent new <id> [-t memory-only]"));
     process.exit(1);
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
@@ -214,8 +281,22 @@ function runNew(mgr: AgentManager, id: string | undefined): void {
   mgr.save({ id, createdAt: new Date().toISOString(), bindings: [] });
   console.log(green(`✓ Agent "${id}" 已创建`));
   console.log(dim(`  工作区：  ${mgr.agentDir(id)}`));
-  console.log(dim(`  设置提示：tinyclaw agent edit ${id}`));
-  console.log(dim(`  配置权限：tinyclaw agent perm ${id}`));
+
+  if (template === "memory-only") {
+    // 写入 tools.toml：allowlist，仅 4 个 memory 工具
+    writeToolsToml(mgr, id, "allowlist", [...MEMORY_ONLY_TOOLS]);
+    // 写入 mcp.toml：空白名单，禁用全部 MCP
+    writeMcpToml(mgr, id, []);
+    // 写入 SYSTEM.md：memory-only 专属提示词
+    writeFileSync(mgr.systemPromptPath(id), SAMPLE_SYSTEM_MEMORY_ONLY(id), "utf-8");
+    console.log(green(`  ✓ 已应用模板 memory-only`));
+    console.log(dim(`     工具限制：allowlist [${MEMORY_ONLY_TOOLS.join(", ")}]`));
+    console.log(dim(`     MCP 限制：全部禁用（servers = []）`));
+    console.log(dim(`     SYSTEM.md：已写入 memory-only 提示词`));
+  } else {
+    console.log(dim(`  设置提示：tinyclaw agent edit ${id}`));
+    console.log(dim(`  配置权限：tinyclaw agent perm ${id}`));
+  }
 }
 
 // ── show ─────────────────────────────────────────────────────────────────────
