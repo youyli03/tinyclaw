@@ -31,6 +31,7 @@ import "../tools/search-store.js";
 import "../tools/ask-user-tool.js";
 import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
+import "../tools/memory.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 // 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
@@ -53,9 +54,23 @@ const AUTO_FORK_THRESHOLD_MS = 120_000;
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
 
 /**
- * 内置系统提示词（动态生成，含 code_assist 次数限制）。
+ * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
+ * 仅用于 system prompt 动态描述生成，与工具的实际执行路由无关。
+ * 文件不存在 → 全量可用（返回 true）。
  */
-function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, supportsVision = false): string {
+function isToolAvailable(toolName: string, agentId: string): boolean {
+  const cfg = agentManager.readToolsConfig(agentId);
+  if (!cfg) return true;
+  if (cfg.mode === "allowlist") return cfg.tools.includes(toolName);
+  if (cfg.mode === "denylist")  return !cfg.tools.includes(toolName);
+  return true;
+}
+
+/**
+ * 内置系统提示词（动态生成，含 code_assist 次数限制）。
+ * agentId 仅用于读取 tools.toml 以决定 MEM.md 操作说明的措辞，与记忆的操作对象无关。
+ */
+function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, supportsVision = false, agentId = "default"): string {
   const limitNote =
     maxCodeAssistCalls > 0
       ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
@@ -63,6 +78,37 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
   const agentDir = join(workspacePath, '..');
   const memFilePath = join(agentDir, 'MEM.md');
   const skillsFilePath = join(agentDir, 'SKILLS.md');
+
+  // ── MEM.md 操作说明（动态，根据 agent tools.toml 决定使用哪种工具描述） ──────
+  const hasWriteFile     = isToolAvailable("write_file",      agentId);
+  const hasExecShell     = isToolAvailable("exec_shell",      agentId);
+  const hasMemWriteTool  = isToolAvailable("memory_write_mem", agentId);
+  const hasMemReadTool   = isToolAvailable("memory_read_mem",  agentId);
+
+  let memWriteDesc: string;
+  let memReadDesc: string;
+  if (hasWriteFile && hasMemWriteTool) {
+    // 两者均可用：优先推荐 memory_write_mem（无需 MFA），write_file 作备选
+    memWriteDesc = `优先调用 memory_write_mem 工具（无需 MFA）；也可用 write_file 写入 ${memFilePath}`;
+    memReadDesc  = hasMemReadTool
+      ? `调用 memory_read_mem；也可用 exec_shell 执行 cat ${memFilePath}`
+      : (hasExecShell ? `用 exec_shell 执行 cat ${memFilePath}` : `调用 memory_read_mem`);
+  } else if (hasWriteFile) {
+    // 只有 write_file 可用（默认/无限制 agent 且未配置 memory_write_mem）
+    memWriteDesc = `直接用 write_file 写入 ${memFilePath}`;
+    memReadDesc  = hasExecShell
+      ? `用 exec_shell 执行 cat ${memFilePath}`
+      : (hasMemReadTool ? `调用 memory_read_mem 工具` : `（暂无可用方式）`);
+  } else if (hasMemWriteTool) {
+    // 受限 agent：write_file/exec_shell 被禁，仅有 memory_write_mem 可用
+    memWriteDesc = `调用 memory_write_mem 工具（支持 overwrite 覆盖 / append 追加两种模式）`;
+    memReadDesc  = hasMemReadTool ? `调用 memory_read_mem 工具` : `（暂无可用方式）`;
+  } else {
+    // 两者均不可用（极度受限 agent）
+    memWriteDesc = `（当前 Agent 无写入权限，MEM.md 由管理员维护）`;
+    memReadDesc  = hasMemReadTool ? `调用 memory_read_mem 工具` : `（当前 Agent 无读取权限）`;
+  }
+
   return `你是 tinyclaw，一个简洁高效的 AI 助手。
 
 ## 工具使用优先级
@@ -95,8 +141,13 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 
 ## MEM.md（持久记忆）
 - MEM.md 是跨 session 的持久笔记，已在本 session 初始化时一次性加载
-- 如需更新（记录用户偏好、重要结论、待办事项等），直接用 write_file 写入 ${memFilePath}
-- 要获取最新内容（本 session 内被更新过），用 exec_shell 执行 cat ${memFilePath}
+- 如需更新，${memWriteDesc}
+- 要获取最新内容（本 session 内被更新过），${memReadDesc}
+
+### 应主动记录到 MEM.md 的内容
+- 用户明确表达的偏好、习惯或固定要求
+- 重要结论、决策和项目关键信息（路径、技术栈、配置等）
+- 跨 session 仍需记住的待办事项
 
 ## SKILLS.md（技能目录）
 - SKILLS.md 列出当前 Agent 所知技能和工作流程，已在本 session 初始化时一次性加载
@@ -241,7 +292,7 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
 function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false, suffix?: string): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
-  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision)];
+  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision, agentId)];
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
