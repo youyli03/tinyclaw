@@ -212,6 +212,20 @@ const MemorySchema = z.object({
    * 审查失败时跳过写入并输出告警日志，不中断对话。
    */
   memorySafetyCheck: z.boolean().default(true),
+
+  // ── 内置每日记忆维护调度器 ────────────────────────────────────────────────
+  /**
+   * 是否启用内置每日记忆维护（默认 true）。
+   * 启用后进程启动时自动定时对所有 Agent 执行：
+   * 1. QMD 向量索引全量重建（补全 exec_shell/write_file 直写文件的盲区）
+   * 2. diary → MEM.md 增量知识提炼（summarizer LLM）
+   * 同时自动禁用旧版 mem-distill cron job（若存在）。
+   */
+  dailyMaintenanceEnabled: z.boolean().default(true),
+  /**
+   * 内置每日维护的触发时间（本地时间 HH:MM，默认 "04:00"）。
+   */
+  dailyMaintenanceTime: z.string().regex(/^\d{2}:\d{2}$/).default("04:00"),
 });
 
 // ── 工具配置 ─────────────────────────────────────────────────────────────────

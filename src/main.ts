@@ -37,6 +37,7 @@ import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js"
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
+import { memoryMaintenance } from "./core/memory-maintenance.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
@@ -572,6 +573,9 @@ async function main(): Promise<void> {
   // 6. 启动 Loop Agent 轮询引擎
   await loopRunner.start(connector);
 
+  // 7. 启动内置每日记忆维护调度器
+  memoryMaintenance.start();
+
   // 7. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
   const gcInterval = setInterval(() => { slaveManager.gc(); }, 60 * 60 * 1000);
 
@@ -582,6 +586,7 @@ async function main(): Promise<void> {
     ipcServer.close();
     cronScheduler.stop();
     loopRunner.stop();
+    memoryMaintenance.stop();
     if (connector) await connector.stop();
     process.exit(0);
   };
