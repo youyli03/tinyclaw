@@ -16,9 +16,11 @@ import { listSessions, memorizeSession } from "../../ipc/client.js";
 import { searchMemory, updateMemoryIndex, rebuildMemoryIndex, type UpdateProgress, type EmbedProgress } from "../../memory/qmd.js";
 import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
+import { memoryMaintenance } from "../../core/memory-maintenance.js";
+import { agentManager } from "../../core/agent-manager.js";
 
 export const description = "管理 Agent 长期记忆（摘要、搜索、向量索引）";
-export const usage = "memory <save|list|search|index> [options]";
+export const usage = "memory <save|list|search|index|maintain> [options]";
 
 function parseAgent(args: string[]): { agentId: string; rest: string[] } {
   const idx = args.findIndex((a) => a === "-a" || a === "--agent");
@@ -214,24 +216,58 @@ async function cmdIndex(args: string[]): Promise<void> {
   console.log();
 }
 
+// ── maintain ──────────────────────────────────────────────────────────────────
+
+async function cmdMaintain(args: string[]): Promise<void> {
+  // 解析 --all flag 和 --agent/-a <id>
+  const hasAll = args.includes("--all");
+  const { agentId, rest } = parseAgent(args.filter((a) => a !== "--all"));
+  void rest;
+
+  // 若显式指定了 -a <id>（且无 --all），只处理该 agent；否则处理全部
+  const hasAgentFlag = args.some((a) => a === "-a" || a === "--agent");
+  const targetId: string | undefined = (!hasAll && hasAgentFlag) ? agentId : undefined;
+
+  if (targetId) {
+    section(`记忆维护 — agent: ${targetId}`);
+    console.log(dim("Step 1: 重建向量索引..."));
+    console.log(dim("Step 2: 提炼 diary → MEM.md..."));
+    console.log();
+    await memoryMaintenance.runNow(targetId);
+    console.log(`\n${green("✅ 维护完成")}  agent: ${cyan(targetId)}\n`);
+  } else {
+    const agents = agentManager.loadAll();
+    section(`记忆维护 — 全部 agent（${agents.length} 个）`);
+    console.log(dim(`处理：${agents.map((a) => a.id).join(", ")}\n`));
+    await memoryMaintenance.runNow();
+    console.log(`\n${green("✅ 全部维护完成")}\n`);
+  }
+}
+
 // ── help ─────────────────────────────────────────────────────────────────────
 
 function printHelp(): void {
   console.log(`
 ${bold("用法：")}
-  memory save [sessionId]            整理并向量化指定 session 的历史对话
-  memory list [-a <agentId>]         列出所有记忆文件及条目数
+  memory save [sessionId]                        整理并向量化指定 session 的历史对话
+  memory list [-a <agentId>]                     列出所有记忆文件及条目数
   memory search <query> [-a <agentId>] [-n <N>]  搜索记忆（验证 QMD 工作正常）
-  memory index [-a <agentId>]        手动重建 QMD 向量索引
+  memory index [-a <agentId>]                    手动重建 QMD 向量索引
+  memory maintain [-a <agentId>|--all]           立即执行一次记忆维护（索引重建 + diary 提炼）
 
 ${bold("选项：")}
-  -a, --agent <id>    指定 agent（默认 default）
+  -a, --agent <id>    指定 agent（默认 default；maintain 不传则处理全部）
+  --all               maintain 处理所有 agent（与不传 -a 等价）
   -n <N>              search 结果数量（默认 5）
 
 ${bold("说明：")}
   save 命令连接运行中的 tinyclaw 服务，对指定 session 执行：
     LLM 摘要 → memory/YYYY-MM/YYYY-MM-DD.md → QMD 增量索引
   同时向 qqbot session 绑定的 QQ 用户发送开始/完成通知。
+
+  maintain 命令在 CLI 进程中直接执行（无需 tinyclaw 服务运行），对指定/全部 agent：
+    Step 1: QMD 向量索引全量重建（rebuildMemoryIndex）
+    Step 2: 近期 diary → MEM.md 增量知识提炼（summarizer LLM）
 `);
 }
 
@@ -245,6 +281,7 @@ export async function run(args: string[]): Promise<void> {
     case "list":  cmdList(args.slice(1)); break;
     case "search": await cmdSearch(args.slice(1)); break;
     case "index": await cmdIndex(args.slice(1)); break;
+    case "maintain": await cmdMaintain(args.slice(1)); break;
     case "--help":
     case "-h":
     case "help":
