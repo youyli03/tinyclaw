@@ -33,6 +33,8 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
     if (err.status >= 500) return policy.retry5xx;
     // 499：GitHub Copilot 服务端主动中断（模型繁忙/上游断路器），属于瞬态错误，重试 5xx 策略
     if (err.status === 499) return policy.retry5xx;
+    // 408：服务端读请求体超时（context 过大或网络慢），属于瞬态错误，重试 5xx 策略
+    if (err.status === 408) return policy.retry5xx;
   }
   if (err instanceof APIConnectionError) return policy.retryTransport;
   if (err instanceof Error) {
@@ -103,15 +105,15 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
         break;
       }
       // 5xx 单独计数：连续 5xx 超限时抛出专用错误（避免请求内容有问题时无限循环）
-      const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499);
+      const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499 || err.status === 408);
       if (is5xx) {
         consecutive5xx++;
         if (!infinite5xx && consecutive5xx > MAX_5XX) {
-          throw new LLMConnectionError(
-            err,
-            `⚠️ AI 服务持续返回 ${(err as APIError).status} 错误（已重试 ${consecutive5xx - 1} 次），` +
-            `可能是请求内容导致的问题（如工具参数过长），而非临时故障。建议发送 /new 清空上下文后重试。`,
-          );
+          const statusCode = (err as APIError).status;
+          const statusHint = statusCode === 408
+            ? `请求体过大导致服务端读取超时（408），建议发送 /new 清空上下文后重试`
+            : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），可能是请求内容导致的问题（如工具参数过长），而非临时故障。建议发送 /new 清空上下文后重试`;
+          throw new LLMConnectionError(err, `⚠️ ${statusHint}`);
         }
       } else {
         consecutive5xx = 0; // 非 5xx 成功或其他错误重置计数
