@@ -576,9 +576,11 @@ export async function runAgent(
 
       // ── 并发限流：等待空闲 LLM slot（FIFO 排队）────────────────────────
       // 工具执行期间不占用 slot，仅在真正发起 LLM 请求时持有。
-      // release 在 finally 中保证执行，工具执行代码在 finally 之后，slot 已归还。
+      // slotHeld 追踪当前是否持有 slot，防止 onRetryWait 和 finally 双重 release。
+      let slotHeld = false;
       try {
         await acquireLLMSlot(llmAc.signal);
+        slotHeld = true;
       } catch (err) {
         // acquire 被 AbortSignal 中断（软中断打断等待）
         if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -595,6 +597,17 @@ export async function runAgent(
               : {}),
             signal: llmAc.signal,
             isUserInitiated: round === 0 && !opts.skipPreamble,
+            _retryHooks: {
+              onRetryWait: () => {
+                // 进入重试等待：归还 slot，其他请求可趁机推进
+                if (slotHeld) { releaseLLMSlot(); slotHeld = false; }
+              },
+              onRetryResume: async () => {
+                // 重试等待结束：重新排队获取 slot（若 abort 则 throw）
+                await acquireLLMSlot(llmAc.signal);
+                slotHeld = true;
+              },
+            },
           }
         );
       } catch (err) {
@@ -607,8 +620,8 @@ export async function runAgent(
         toolThrottler?.stop();
         throw err;
       } finally {
-        // LLM 请求已结束（无论成功/失败），立即释放 slot，工具执行期间不占用
-        releaseLLMSlot();
+        // LLM 请求已结束（无论成功/失败），释放 slot（若尚未被 onRetryWait 释放）
+        if (slotHeld) { releaseLLMSlot(); slotHeld = false; }
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
     }

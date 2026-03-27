@@ -60,8 +60,20 @@ export class LLMConnectionError extends Error {
   }
 }
 
+/**
+ * withRetry 的可选外部 hooks，用于并发 slot 控制。
+ * 当 withRetry 进入重试等待延迟前调用 onRetryWait()，延迟结束后调用 onRetryResume()，
+ * 使 slot 在等待期间归还给其他请求，避免 429 无限重试时 slot 被永久占用。
+ */
+export interface RetryHooks {
+  /** 即将进入重试等待延迟时调用（此时应 release slot） */
+  onRetryWait?: () => void;
+  /** 重试等待延迟结束、即将重新发起请求时调用（此时应重新 acquire slot）。若 abort 则应 throw。 */
+  onRetryResume?: () => Promise<void>;
+}
+
 /** 按 RetryConfig 策略重试，固定间隔，abort 后不再重试。maxAttempts=-1 为无限重试 */
-async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks): Promise<T> {
   const policy = (() => {
     try { return getRetryPolicy(); } catch { return undefined; }
   })();
@@ -110,6 +122,8 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
         : backoff(BASE_DELAY, attempt);
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
       console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
+      // 进入等待前通知外部（release slot），等待期间让其他请求使用 slot
+      hooks?.onRetryWait?.();
       await new Promise<void>((res, rej) => {
         const t = setTimeout(res, delay);
         signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("abort")); }, { once: true });
@@ -117,6 +131,10 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise
         if (signal?.aborted) throw e;
       });
       if (signal?.aborted) throw new Error("abort");
+      // 等待结束后重新 acquire slot（若 abort 则 onRetryResume 内部 throw，向上传播）
+      if (hooks?.onRetryResume) {
+        await hooks.onRetryResume();
+      }
     }
   }
   throw new LLMConnectionError(lastErr);
@@ -194,6 +212,12 @@ export interface ChatOptions {
    * 未设置时不发送此 header。
    */
   isUserInitiated?: boolean;
+  /**
+   * 并发控制 hooks（框架内部使用，外部调用方无需设置）。
+   * 用于在 withRetry 重试等待期间 release/reacquire LLM slot，
+   * 防止 429 无限重试时 slot 被永久占用导致其他请求卡死。
+   */
+  _retryHooks?: RetryHooks;
 }
 
 export interface ChatResult {
@@ -340,7 +364,7 @@ export class LLMClient {
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
       }
-    ), opts.signal);
+    ), opts.signal, opts._retryHooks);
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");
@@ -477,6 +501,6 @@ export class LLMClient {
           : undefined;
 
       return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
-    }, opts.signal);
+    }, opts.signal, opts._retryHooks);
   }
 }
