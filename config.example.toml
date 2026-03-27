@@ -24,6 +24,9 @@
 #   githubToken = "gh_cli"   # "gh_cli"=自动, "env"=$GITHUB_TOKEN, 或直接填 token
 #   model       = "auto"     # "auto"=默认模型, 或填具体 model ID（如 "gpt-4o"）
 #   # timeoutMs = 120000  # 可选，默认 120000ms
+#   # maxContextWindow = 200000  # 可选，手动限制有效 context window（tokens）
+#                                # 用于修正模型上报值与实际 prompt 上限不一致的情况
+#                                # （通常无需设置，tinyclaw 会自动从 max_prompt_tokens 修正）
 #
 # Copilot 后端会从 https://api.githubcopilot.com/models 自动获取所有可用模型，
 # 并将 max_output_tokens / max_context_window_tokens 等参数一一对应到 tinyclaw 配置。

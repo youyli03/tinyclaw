@@ -65,6 +65,7 @@ class LLMRegistry {
         model: modelId,
         timeoutMs: role.timeoutMs ?? defaultTimeoutMs,
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.maxContextWindow !== undefined ? { maxContextWindowOverride: role.maxContextWindow } : {}),
       });
       this.clients.set(name, client);
       this.contextWindows.set(name, contextWindow);

@@ -446,8 +446,15 @@ export interface CopilotModelInfo {
   preview: boolean;
   /** 最大输出 token 数（对应 LLMClient.maxTokens） */
   maxOutputTokens: number;
-  /** 完整上下文窗口大小（对应 summarizer 阈值计算） */
+  /** 完整上下文窗口大小（prompt + output，来自 max_context_window_tokens） */
   maxContextWindow: number;
+  /**
+   * 实际可用的提示词 token 上限（来自 max_prompt_tokens）。
+   * 部分模型（如 oswe-vscode-prime）的 max_context_window_tokens 大于 API 实际接受的
+   * prompt 上限，直接用前者计算摘要阈值会导致 400 溢出；此字段反映真实限制。
+   * 未提供时回退到 maxContextWindow。
+   */
+  maxPromptTokens: number;
   /** 是否支持 tool_calls（function calling） */
   supportsToolCalls: boolean;
   /** 是否支持并行工具调用（parallel_tool_calls） */
@@ -521,6 +528,10 @@ export async function getCopilotModels(
       preview: m.preview ?? false,
       maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
       maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
+      // max_prompt_tokens 是 API 真实接受的 prompt 上限，未提供时回退到 maxContextWindow
+      maxPromptTokens: m.capabilities.limits?.max_prompt_tokens
+        ?? m.capabilities.limits?.max_context_window_tokens
+        ?? 128_000,
       supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
       supportsParallelToolCalls: m.capabilities.supports.parallel_tool_calls ?? false,
       isPickerEnabled: m.model_picker_enabled,
@@ -541,6 +552,11 @@ export interface CopilotBuildParams {
   /** 模型 ID，或 "auto"（使用 Copilot 标记的默认模型） */
   model: string;
   timeoutMs: number;
+  /**
+   * 可选：手动限制有效 context window 大小（tokens）。
+   * 最终值取 min(模型上报值, maxContextWindowOverride)，用于摘要触发阈值计算。
+   */
+  maxContextWindowOverride?: number;
 }
 
 export interface CopilotClientResult {
@@ -636,5 +652,17 @@ export async function buildCopilotClient(
     copilotFetch
   );
 
-  return { client, contextWindow: resolvedModel.maxContextWindow };
+  // 有效 context window 取以下三者的最小值：
+  // 1. max_context_window_tokens（总窗口）
+  // 2. max_prompt_tokens（API 实际接受的 prompt 上限，防止如 oswe-vscode-prime 溢出）
+  // 3. maxContextWindowOverride（config.toml 中手动指定的上限，可选）
+  let effectiveContextWindow = Math.min(
+    resolvedModel.maxContextWindow,
+    resolvedModel.maxPromptTokens
+  );
+  if (config.maxContextWindowOverride != null && config.maxContextWindowOverride > 0) {
+    effectiveContextWindow = Math.min(effectiveContextWindow, config.maxContextWindowOverride);
+  }
+
+  return { client, contextWindow: effectiveContextWindow };
 }

@@ -55,6 +55,14 @@ const BackendRoleSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
   /** 是否支持视觉（图片输入）能力，默认 false */
   supportsVision: z.boolean().optional(),
+  /**
+   * 手动限制 Copilot 后端有效 context window（tokens），可选。
+   * 用于修正模型上报的 max_context_window_tokens 与实际 prompt 上限不一致的情况。
+   * 最终值取 min(模型自动检测值, maxContextWindow)。
+   * 示例：oswe-vscode-prime 上报 256k 但实际 prompt 上限 200k，设为 200000 可防止溢出。
+   * （自动检测已通过 max_prompt_tokens 修复，此选项作为额外安全兜底）
+   */
+  maxContextWindow: z.number().int().positive().optional(),
 });
 export type BackendRole = z.infer<typeof BackendRoleSchema>;
 
