@@ -98,6 +98,8 @@ tinyclaw/
 │   │   ├── index.ts          # MCP 工具注册：fetch_and_store / read_day / list_days / search_local / rebuild_index
 │   │   └── lib/
 │   │       └── news_fetch.py # HackerNews + 58 个 RSS 源；L1 SQLite 去重 + L2 n-gram Jaccard 去重
+│   ├── notes/                # 动态笔记知识库 MCP server（Agent 隔离，支持 structured/timestamped/freeform）
+│   │   └── index.ts          # 工具：list_categories / create_category / add_note / query_notes / search_notes / delete_note / get_due_reminders
 │   └── polymarket/           # Polymarket 预测市场 MCP server
 ├── bin/
 │   └── tinyclaw.ts           # 全局命令入口（bun link 后注册为 tinyclaw）
@@ -120,11 +122,13 @@ tinyclaw/
 │   └── totp.key              # TOTP 共享密钥（auth mfa-setup 生成，0600 权限）
 ├── agents/                   # Agent 工作区（每个 Agent 独立）
 │   ├── default/
-│   │   ├── agent.toml        # 元数据（id、createdAt、bindings）
+│   │   ├── agent.toml        # 元数据（id、createdAt、bindings、[loop] 可选）
 │   │   ├── SYSTEM.md         # Agent 系统提示（可选）
 │   │   ├── MEM.md            # 持久记忆（跨 session 偏好与结论）
 │   │   ├── SKILLS.md         # 技能目录（技能名 → 主文档路径）
+│   │   ├── TASK.md           # Loop Agent 任务指令文件（[loop] 启用时读取）
 │   │   ├── memory/           # 向量索引（index.sqlite）+ 压缩摘要 YYYY-MM-DD.md
+│   │   ├── notes/            # Notes MCP 数据（index.json + <category>.md + remind_state.json）
 │   │   ├── skills/           # 技能脚本目录
 │   │   └── workspace/        # exec_shell 默认 cwd
 │   │       ├── tmp/          # 临时文件

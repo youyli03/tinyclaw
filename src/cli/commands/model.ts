@@ -17,8 +17,8 @@ import {
   bold, dim, green, yellow, cyan, red, section,
 } from "../ui.js";
 
-type BackendName = "daily" | "summarizer";
-const BACKEND_NAMES: BackendName[] = ["daily", "summarizer"];
+type BackendName = "daily" | "code" | "summarizer";
+const BACKEND_NAMES: BackendName[] = ["daily", "code", "summarizer"];
 
 // ── 子命令实现 ────────────────────────────────────────────────────────────────
 
@@ -29,7 +29,8 @@ async function cmdShow(): Promise<void> {
   const rows: string[][] = [];
   for (const name of BACKEND_NAMES) {
     const role =
-      name === "daily" ? cfg.llm.backends.daily
+      name === "daily"       ? cfg.llm.backends.daily
+      : name === "code"      ? cfg.llm.backends.code
       : cfg.llm.backends.summarizer;
 
     if (!role) {
@@ -131,13 +132,14 @@ async function cmdSet(args: string[]): Promise<void> {
   if (args[0] && BACKEND_NAMES.includes(args[0] as BackendName)) {
     backendName = args[0] as BackendName;
   } else if (args[0]) {
-    console.error(red(`未知后端 "${args[0]}"，可选：daily / summarizer`));
-    console.log(dim("用法：model set [daily|summarizer]"));
+    console.error(red(`未知后端 "${args[0]}"，可选：daily / code / summarizer`));
+    console.log(dim("用法：model set [daily|code|summarizer]"));
     return;
   }
 
   const currentRole =
-    backendName === "daily" ? cfg.llm.backends.daily
+    backendName === "daily"       ? cfg.llm.backends.daily
+    : backendName === "code"      ? cfg.llm.backends.code
     : cfg.llm.backends.summarizer;
 
   const currentSymbol = currentRole?.model ?? dim("(未配置)");
@@ -222,7 +224,7 @@ ${bold("用法：")}
   model set  [backend]     交互式选择模型（默认后端: daily）
   model set  summarizer    切换摘要压缩模型
 
-${bold("后端名：")}  daily | summarizer
+${bold("后端名：")}  daily | code | summarizer
 
 ${bold("模型 Symbol 格式：")}  provider/model-id
   示例：copilot/gpt-4o  copilot/auto  openai/gpt-4o-mini

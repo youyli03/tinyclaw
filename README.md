@@ -73,7 +73,7 @@ tinyclaw agent edit <id>               # 编辑系统提示
 tinyclaw agent list                    # 列出所有 Agent
 
 tinyclaw model list [backend]          # 可用模型列表
-tinyclaw model set  [backend]          # 交互式切换模型
+tinyclaw model set [daily|code|summarizer]  # 交互式切换模型
 
 tinyclaw cron list                     # 定时任务列表
 tinyclaw cron add / remove / run <id>  # 添加 / 删除 / 立即触发
@@ -113,6 +113,8 @@ tinyclaw completions install           # 安装 tab 补全
 - [AGENT_LOOP.md](docs/AGENT_LOOP.md) — ReAct 循环与 MFA
 - [CODE_MODE.md](docs/CODE_MODE.md) — Code 模式（Plan/Auto）
 - [CRON_PIPELINE.md](docs/CRON_PIPELINE.md) — Cron Pipeline 多步流水线
+- [LOOP_AGENT.md](docs/LOOP_AGENT.md) — Loop Agent 自主持续运行
+- [NOTES_MCP.md](docs/NOTES_MCP.md) — Notes MCP 笔记知识库
 - [RETRY_AND_STABILITY.md](docs/RETRY_AND_STABILITY.md) — 连接稳定性与重试策略
 
 ## License
