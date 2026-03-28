@@ -127,7 +127,9 @@ async function tryChromium(code: string, outFile: string): Promise<string | null
   const mermaidJs = readFileSync(mermaidJsPath, "utf-8");
 
   // 生成内嵌 mermaid.js 的 HTML 临时文件
-  const escapedCode = code.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 不能对 code 做 HTML 实体转义（否则 --> 等箭头语法会被破坏）
+  // 改为用 JS textContent 动态注入，完全规避 HTML 转义问题
+  const escapedCodeJson = JSON.stringify(code);
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -140,8 +142,11 @@ body { background: white; padding: 24px; display: inline-block; font-family: san
 <script>${mermaidJs}</script>
 </head>
 <body>
-<div class="mermaid">${escapedCode}</div>
-<script>mermaid.initialize({startOnLoad:true,theme:'neutral'});</script>
+<div class="mermaid" id="diagram"></div>
+<script>
+document.getElementById('diagram').textContent = ${escapedCodeJson};
+mermaid.initialize({startOnLoad:true,theme:'neutral'});
+</script>
 </body>
 </html>`;
 
