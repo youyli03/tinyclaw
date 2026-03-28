@@ -23,6 +23,9 @@ config.toml
 # 运行时数据
 data/
 
+# 防止 ~ 未展开产生的误目录（如 write_file 传入 ~/... 但未展开时）
+~/
+
 # 编辑器 / IDE
 .vscode/settings.json
 .vscode/launch.json

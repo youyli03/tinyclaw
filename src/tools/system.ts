@@ -1,7 +1,15 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
+
+function expandHome(p: string): string {
+  if (p === "~" || p.startsWith("~/")) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
+}
 
 // ── exec_shell ────────────────────────────────────────────────────────────────
 
@@ -78,7 +86,7 @@ async function writeFileImpl(args: Record<string, unknown>): Promise<string> {
   const content = String(args["content"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(expandHome(filePath));
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, content, "utf-8");
   return `已写入：${resolved}（${content.length} 字节）`;
@@ -110,7 +118,7 @@ async function deleteFileImpl(args: Record<string, unknown>): Promise<string> {
   const filePath = String(args["path"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(expandHome(filePath));
   if (!fs.existsSync(resolved)) {
     return `文件不存在：${resolved}`;
   }
@@ -146,7 +154,7 @@ async function editFileImpl(args: Record<string, unknown>): Promise<string> {
   if (!filePath) return "错误：缺少 path 参数";
   if (!oldStr) return "错误：缺少 old_str 参数";
 
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(expandHome(filePath));
   if (!fs.existsSync(resolved)) return `文件不存在：${resolved}`;
 
   const content = fs.readFileSync(resolved, "utf-8");
@@ -186,7 +194,7 @@ async function readFileImpl(args: Record<string, unknown>): Promise<string> {
   const filePath = String(args["path"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(expandHome(filePath));
   if (!fs.existsSync(resolved)) return `文件不存在：${resolved}`;
 
   const maxBytes = 50_000;
