@@ -122,7 +122,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan }: PromptParts): string {
   const existingPlanSection = existingPlan
-    ? `\n\n## 已有计划（上次会话遗留）\n\n> 会话中断前已完成以下计划，可在此基础上继续执行或根据新需求修改。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
+    ? `\n\n## 已有计划（上次会话遗留）\n\n> 会话中断前已完成以下计划，可在此基础上继续执行或根据新需求修改。新任务规划时直接用 write_file 覆盖 PLAN.md 即可。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
     : "";
 
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Plan）**，本次会话不保留长期历史。
