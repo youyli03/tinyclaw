@@ -74,7 +74,7 @@ function formatMsgForSummary(m: ChatMessage): string {
 }
 
 /** Code 模式压缩后保留的最近消息数（除 system 以外）*/
-const CODE_KEEP_RECENT_MESSAGES = 8;
+const CODE_KEEP_RECENT_MESSAGES = 4;
 
 /**
  * 检查当前 messages 的 token 使用率是否超过阈值。
