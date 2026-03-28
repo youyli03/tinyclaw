@@ -2,12 +2,13 @@
  * tinyclaw Notes MCP Server
  *
  * 工具（agent 侧名前缀 mcp_notes_*）：
- *   list_categories   — 列出当前 agent 所有笔记分类
- *   create_category   — 新建笔记分类（指定类型、字段、描述）
- *   add_note          — 向某分类写入一条笔记
- *   query_notes       — 读取某分类的笔记（可限制条数）
- *   search_notes      — 在所有/指定分类中关键词搜索
- *   delete_note       — 按 note_id 删除某条笔记
+ *   list_categories      — 列出当前 agent 所有笔记分类
+ *   create_category      — 新建笔记分类（指定类型、字段、描述）
+ *   add_note             — 向某分类写入一条笔记
+ *   query_notes          — 读取某分类的笔记（可限制条数）
+ *   search_notes         — 在所有/指定分类中关键词搜索
+ *   delete_note          — 按 note_id 删除某条笔记
+ *   get_due_reminders    — 获取需要提醒的条目（每条24小时内不重复），对话开始时调用
  *
  * 启动方式：bun run /path/to/mcp-servers/notes/index.ts --agent-id <id>
  * 配置方式：~/.tinyclaw/mcp.toml [servers.notes]
@@ -15,6 +16,7 @@
  * 数据目录：~/.tinyclaw/agents/<agent-id>/notes/
  *   index.json          分类元数据（名称、类型、字段定义、描述）
  *   <category>.md       各分类笔记数据（Markdown 格式）
+ *   remind_state.json   每条提醒的最后提醒时间（用于去重，24h 内不重复提示）
  *
  * 三种格式类型：
  *   structured    严格字段格式，字段由创建分类时指定（交易记录等）
@@ -46,6 +48,7 @@ function parseAgentId(): string {
 const AGENT_ID = parseAgentId();
 const NOTES_DIR = path.join(os.homedir(), ".tinyclaw", "agents", AGENT_ID, "notes");
 const INDEX_FILE = path.join(NOTES_DIR, "index.json");
+const REMIND_STATE_FILE = path.join(NOTES_DIR, "remind_state.json");
 
 fs.mkdirSync(NOTES_DIR, { recursive: true });
 
@@ -156,6 +159,46 @@ function ensureDefaultCategories(): void {
     }
   }
   if (changed) saveIndex(index);
+}
+
+// ── 提醒状态管理（remind_state.json） ─────────────────────────────────────────
+
+/** remind_state.json 结构：{ [note_id]: ISO时间字符串（上次提醒时间） } */
+type RemindState = Record<string, string>;
+
+function loadRemindState(): RemindState {
+  if (fs.existsSync(REMIND_STATE_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(REMIND_STATE_FILE, "utf-8")) as RemindState;
+    } catch { /* 损坏则重建 */ }
+  }
+  return {};
+}
+
+function saveRemindState(state: RemindState): void {
+  fs.writeFileSync(REMIND_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+}
+
+/**
+ * 从 reminders.md 中解析所有笔记条目。
+ * timestamped 格式：`- **[时间]** 内容 <!-- note-id -->`
+ * 返回 { noteId, text } 数组。
+ */
+function parseReminderEntries(content: string): Array<{ noteId: string; text: string }> {
+  const results: Array<{ noteId: string; text: string }> = [];
+  for (const line of content.split("\n")) {
+    const m = line.match(/<!--\s*(note-\S+)\s*-->/);
+    if (!m) continue;
+    const noteId = m[1]!;
+    // 提取可读文本（去除 Markdown 语法和注释）
+    const text = line
+      .replace(/<!--.*?-->/g, "")
+      .replace(/\*\*\[.*?\]\*\*/g, "")
+      .replace(/^[-\s]+/, "")
+      .trim();
+    if (text) results.push({ noteId, text });
+  }
+  return results;
 }
 
 // ── 笔记写入工具函数 ───────────────────────────────────────────────────────────
@@ -332,6 +375,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["category", "note_id"],
       },
+    },
+    {
+      name: "get_due_reminders",
+      description:
+        "【每次对话开始时调用】获取 reminders 分类中需要提醒的条目。\n" +
+        "同一条提醒 24 小时内只返回一次（内部记录上次提醒时间），避免频繁打扰。\n" +
+        "返回值：{ due: [{note_id, text}], total_reminders: N }\n" +
+        "- due 为空数组时表示当前无需提醒（静默，不要向用户说没有提醒）\n" +
+        "- due 不为空时，在回复用户第一条消息时顺带提示这些内容",
+      inputSchema: { type: "object", properties: {} },
     },
   ],
 }));
@@ -590,6 +643,57 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         fs.writeFileSync(filePath, filtered, "utf-8");
         return ok({ message: `已删除笔记 ${noteId}（分类：${catName}）` });
+      }
+
+      // ── get_due_reminders ─────────────────────────────────────────────
+      case "get_due_reminders": {
+        const index = loadIndex();
+        const meta = getCategoryMeta(index, "reminders");
+        if (!meta) {
+          return ok({ due: [], total_reminders: 0, message: "reminders 分类不存在" });
+        }
+
+        const filePath = path.join(NOTES_DIR, meta.file);
+        if (!fs.existsSync(filePath)) {
+          return ok({ due: [], total_reminders: 0 });
+        }
+
+        const content = fs.readFileSync(filePath, "utf-8");
+        const entries = parseReminderEntries(content);
+
+        if (entries.length === 0) {
+          return ok({ due: [], total_reminders: 0 });
+        }
+
+        const state = loadRemindState();
+        const now = Date.now();
+        const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 小时
+
+        const due: Array<{ note_id: string; text: string }> = [];
+        let stateChanged = false;
+
+        for (const entry of entries) {
+          const lastReminded = state[entry.noteId];
+          const shouldRemind =
+            !lastReminded || now - new Date(lastReminded).getTime() >= INTERVAL_MS;
+
+          if (shouldRemind) {
+            due.push({ note_id: entry.noteId, text: entry.text });
+            state[entry.noteId] = new Date().toISOString();
+            stateChanged = true;
+          }
+        }
+
+        if (stateChanged) saveRemindState(state);
+
+        return ok({
+          due,
+          total_reminders: entries.length,
+          message:
+            due.length > 0
+              ? `有 ${due.length} 条待提醒（共 ${entries.length} 条提醒）`
+              : `所有 ${entries.length} 条提醒均在 24 小时内已提醒过，本次静默`,
+        });
       }
 
       default:
