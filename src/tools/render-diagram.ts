@@ -44,14 +44,22 @@ async function renderMermaid(
   const mmdFile = outPath.replace(/\.png$/, ".mmd");
   writeFileSync(mmdFile, code, "utf-8");
 
-  // 尝试本地 mmdc（优先）
+  // 1. 尝试本地 mmdc（已安装时最优）
   const mmdc = await tryMmdc(mmdFile, outPath);
   if (mmdc !== null) {
     if (mmdc === "") return; // 成功
     throw new Error(mmdc);
   }
 
-  // fallback: mermaid.ink HTTP API
+  // 2. 本地 chromium headless（离线，主要 fallback）
+  const chromium = await tryChromium(code, outPath);
+  if (chromium !== null) {
+    if (chromium === "") return; // 成功
+    // chromium 存在但失败了，继续尝试 mermaid.ink
+    console.warn(`[render-diagram] chromium 渲染失败，尝试 mermaid.ink：${chromium}`);
+  }
+
+  // 3. mermaid.ink HTTP API（最后兜底，需要网络）
   await tryMermaidInk(code, outPath);
 }
 
@@ -91,7 +99,134 @@ function tryMmdc(mmdFile: string, outFile: string): Promise<string | null> {
   });
 }
 
-/** 通过 mermaid.ink 公共 API 下载图片 */
+/** 本地 chromium headless 渲染 mermaid（完全离线）
+ *  返回 null（未找到 chromium）、""（成功）、或错误信息字符串
+ */
+async function tryChromium(code: string, outFile: string): Promise<string | null> {
+  // 查找 chromium 可执行文件
+  const candidates = ["chromium-browser", "chromium", "google-chrome"];
+  let chromiumBin: string | null = null;
+  for (const bin of candidates) {
+    const found = await new Promise<boolean>((resolve) => {
+      const child = spawn("which", [bin], { stdio: "ignore" });
+      child.on("close", (c) => resolve(c === 0));
+      child.on("error", () => resolve(false));
+    });
+    if (found) { chromiumBin = bin; break; }
+  }
+  if (!chromiumBin) return null;
+
+  // 读取本地 mermaid.min.js（离线，从 node_modules 获取）
+  const mermaidJsPath = new URL(
+    "../../node_modules/mermaid/dist/mermaid.min.js",
+    import.meta.url
+  ).pathname;
+  if (!existsSync(mermaidJsPath)) {
+    return "未找到 node_modules/mermaid/dist/mermaid.min.js，请运行 bun install";
+  }
+  const mermaidJs = readFileSync(mermaidJsPath, "utf-8");
+
+  // 生成内嵌 mermaid.js 的 HTML 临时文件
+  const escapedCode = code.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: white; padding: 24px; display: inline-block; font-family: sans-serif; }
+.mermaid svg { max-width: none !important; }
+</style>
+<script>${mermaidJs}</script>
+</head>
+<body>
+<div class="mermaid">${escapedCode}</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'neutral'});</script>
+</body>
+</html>`;
+
+  const htmlFile = outFile.replace(/\.png$/, "_chromium.html");
+  writeFileSync(htmlFile, html, "utf-8");
+
+  // chromium headless 截图（全页面）
+  const rawScreenshot = outFile.replace(/\.png$/, "_raw.png");
+  const chromiumErr = await new Promise<string>((resolve) => {
+    const child = spawn(chromiumBin!, [
+      "--headless",
+      "--no-sandbox",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--window-size=1400,1000",
+      `--screenshot=${rawScreenshot}`,
+      `file://${htmlFile}`,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    const errChunks: Buffer[] = [];
+    child.stderr.on("data", (d: Buffer) => errChunks.push(d));
+    child.on("close", (c) => {
+      if (c === 0 && existsSync(rawScreenshot)) {
+        resolve("");
+      } else {
+        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
+        resolve(`chromium 退出码 ${c}\n${stderr}`);
+      }
+    });
+    child.on("error", (err) => resolve(`chromium 启动失败：${err.message}`));
+  });
+
+  if (chromiumErr) return chromiumErr;
+
+  // 用 Python PIL 裁剪白边
+  const cropScript = `
+from PIL import Image
+import numpy as np, sys
+
+img = Image.open(${JSON.stringify(rawScreenshot)}).convert("RGB")
+arr = np.array(img)
+non_white = (arr < 248).any(axis=2)
+rows = np.where(non_white.any(axis=1))[0]
+cols = np.where(non_white.any(axis=0))[0]
+if len(rows) == 0 or len(cols) == 0:
+    sys.exit(1)
+pad = 20
+top    = max(0, rows[0] - pad)
+bottom = min(arr.shape[0], rows[-1] + pad + 1)
+left   = max(0, cols[0] - pad)
+right  = min(arr.shape[1], cols[-1] + pad + 1)
+img.crop((left, top, right, bottom)).save(${JSON.stringify(outFile)})
+`;
+  const cropErr = await new Promise<string>((resolve) => {
+    const child = spawn("python3", ["-c", cropScript], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const errChunks: Buffer[] = [];
+    child.stderr.on("data", (d: Buffer) => errChunks.push(d));
+    child.on("close", (c) => {
+      if (c === 0 && existsSync(outFile)) {
+        resolve("");
+      } else {
+        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
+        resolve(`PIL 裁剪失败（退出码 ${c}）：${stderr || "图片可能全白，渲染未生效"}`);
+      }
+    });
+    child.on("error", (err) => resolve(`python3 启动失败：${err.message}`));
+  });
+
+  if (cropErr) {
+    // 裁剪失败时降级：直接使用未裁剪的原始截图
+    try {
+      const { copyFileSync } = await import("node:fs");
+      copyFileSync(rawScreenshot, outFile);
+      return ""; // 仍然算成功，只是没裁剪
+    } catch {
+      return cropErr;
+    }
+  }
+
+  return "";
+}
+
+/** 通过 mermaid.ink 公共 API 下载图片（最后兜底，需要网络） */
 async function tryMermaidInk(code: string, outFile: string): Promise<void> {
   const encoded = Buffer.from(code, "utf-8").toString("base64url");
   const url = `https://mermaid.ink/img/${encoded}?type=png&bgColor=white`;
