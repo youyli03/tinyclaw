@@ -117,14 +117,17 @@ async function tryChromium(code: string, outFile: string): Promise<string | null
   if (!chromiumBin) return null;
 
   // 读取本地 mermaid.min.js（离线，从 node_modules 获取）
-  const mermaidJsPath = new URL(
-    "../../node_modules/mermaid/dist/mermaid.min.js",
-    import.meta.url
-  ).pathname;
-  if (!existsSync(mermaidJsPath)) {
-    return "未找到 node_modules/mermaid/dist/mermaid.min.js，请运行 bun install";
+  // tinyclaw 进程 cwd 就是项目根目录，直接从 cwd 定位
+  const mermaidJsCandidates = [
+    join(process.cwd(), "node_modules/mermaid/dist/mermaid.min.js"),
+    join(homedir(), "tinyclaw/node_modules/mermaid/dist/mermaid.min.js"),
+    "/home/lyy/tinyclaw/node_modules/mermaid/dist/mermaid.min.js",
+  ];
+  const resolvedMermaidPath = mermaidJsCandidates.find(existsSync) ?? null;
+  if (!resolvedMermaidPath) {
+    return "未找到 node_modules/mermaid/dist/mermaid.min.js，请在 tinyclaw 目录运行 bun install";
   }
-  const mermaidJs = readFileSync(mermaidJsPath, "utf-8");
+  const mermaidJs = readFileSync(resolvedMermaidPath, "utf-8");
 
   // 生成内嵌 mermaid.js 的 HTML 临时文件
   // 不能对 code 做 HTML 实体转义（否则 --> 等箭头语法会被破坏）
