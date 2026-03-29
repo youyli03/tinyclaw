@@ -165,35 +165,25 @@ function outputCompletions(words: string[]): void {
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
 function printHelp(): void {
-  const maxUsage = Math.max(...Object.values(COMMANDS).map((c) => c.usage.length));
+  const maxName = Math.max(...Object.keys(COMMANDS).map((n) => n.length));
 
   console.log(`
 ${bold("tinyclaw CLI")}  —  配置与管理工具
 
 ${bold("用法：")}
   tinyclaw <command> [subcommand] [args...]
+  tinyclaw <command> -h            查看该命令的子命令列表
+  tinyclaw <command> <sub> -h      查看子命令的完整参数说明
 
 ${bold("命令：")}`,
   );
 
   for (const [name, cmd] of Object.entries(COMMANDS)) {
-    const padded = cmd.usage.padEnd(maxUsage + 2);
+    const padded = name.padEnd(maxName + 2);
     console.log(`  ${cyan(padded)} ${dim(cmd.description)}`);
   }
 
-  console.log(`
-${bold("示例：")}
-  tinyclaw model list              # 列出 Copilot 可用模型
-  tinyclaw model set daily         # 交互式选择 daily 后端模型
-  tinyclaw config show             # 显示当前配置（密钥脱敏）
-  tinyclaw config set llm.backends.daily.model gpt-4o
-  tinyclaw auth github             # 重新授权 GitHub Copilot
-  tinyclaw status                  # 服务运行状态
-  tinyclaw restart                 # 重启 tinyclaw
-  tinyclaw completions install     # 安装 tab 补全（bash/zsh/fish）
-
-${dim("每个命令支持 `help` 子命令查看详细说明，如：tinyclaw model help")}
-  `);
+  console.log();
 }
 
 // ── 主入口 ────────────────────────────────────────────────────────────────────

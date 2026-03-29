@@ -246,42 +246,122 @@ async function cmdMaintain(args: string[]): Promise<void> {
 
 // ── help ─────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  memory save [sessionId]                        整理并向量化指定 session 的历史对话
-  memory list [-a <agentId>]                     列出所有记忆文件及条目数
-  memory search <query> [-a <agentId>] [-n <N>]  搜索记忆（验证 QMD 工作正常）
-  memory index [-a <agentId>]                    手动重建 QMD 向量索引
-  memory maintain [-a <agentId>|--all]           立即执行一次记忆维护（索引重建 + diary 提炼）
+${bold("tinyclaw memory")}  —  Agent 长期记忆管理
 
-${bold("选项：")}
-  -a, --agent <id>    指定 agent（默认 default；maintain 不传则处理全部）
-  --all               maintain 处理所有 agent（与不传 -a 等价）
-  -n <N>              search 结果数量（默认 5）
+${bold("子命令：")}
+  ${cyan("save")}              整理并向量化指定 session 的历史对话
+  ${cyan("list")}              列出所有记忆文件及条目数
+  ${cyan("search")}            搜索记忆内容（验证 QMD）
+  ${cyan("index")}             手动重建 QMD 向量索引
+  ${cyan("maintain")}          立即执行一次记忆维护（索引重建 + diary 提炼）
+
+${dim("运行 tinyclaw memory <sub> -h 查看子命令详细参数")}
+`);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "save":
+      console.log(`
+${bold("tinyclaw memory save")} [sessionId]
+
+${bold("参数：")}
+  sessionId    要整理的 session ID（可省略，省略时交互式选择）
 
 ${bold("说明：")}
-  save 命令连接运行中的 tinyclaw 服务，对指定 session 执行：
+  连接运行中的 tinyclaw 服务，对指定 session 执行：
     LLM 摘要 → memory/YYYY-MM/YYYY-MM-DD.md → QMD 增量索引
-  同时向 qqbot session 绑定的 QQ 用户发送开始/完成通知。
-
-  maintain 命令在 CLI 进程中直接执行（无需 tinyclaw 服务运行），对指定/全部 agent：
-    Step 1: QMD 向量索引全量重建（rebuildMemoryIndex）
-    Step 2: 近期 diary → MEM.md 增量知识提炼（summarizer LLM）
+  同时向绑定的 QQ 用户发送开始/完成通知。
 `);
+      break;
+    case "list":
+      console.log(`
+${bold("tinyclaw memory list")} [-a <agentId>]
+
+${bold("选项：")}
+  -a, --agent <id>    指定 agent（默认 default）
+
+${bold("说明：")}
+  遍历 memory/YYYY-MM/ 目录，列出所有记忆文件及摘要条目数。
+`);
+      break;
+    case "search":
+      console.log(`
+${bold("tinyclaw memory search")} <query> [-a <agentId>] [-n <N>]
+
+${bold("参数：")}
+  query               搜索关键词（支持自然语言）
+
+${bold("选项：")}
+  -a, --agent <id>    指定 agent（默认 default）
+  -n <N>              返回结果数量（默认 5）
+`);
+      break;
+    case "index":
+      console.log(`
+${bold("tinyclaw memory index")} [-a <agentId>]
+
+${bold("选项：")}
+  -a, --agent <id>    指定 agent（默认 default）
+
+${bold("说明：")}
+  全量重建 QMD 向量索引，分两阶段：
+    阶段 1：扫描文件，检测变更
+    阶段 2：生成 embedding（增量，跳过未变更文件）
+  需在 config.toml 中设置 [memory] enabled = true。
+`);
+      break;
+    case "maintain":
+      console.log(`
+${bold("tinyclaw memory maintain")} [-a <agentId> | --all]
+
+${bold("选项：")}
+  -a, --agent <id>    只处理指定 agent
+  --all               处理全部 agent（与不传 -a 等价）
+
+${bold("说明：")}
+  在 CLI 进程中直接执行（无需 tinyclaw 服务运行）：
+    Step 1：QMD 向量索引全量重建
+    Step 2：近期 diary → MEM.md 增量知识提炼（summarizer LLM）
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "help";
+  const rest = args.slice(1);
 
   switch (sub) {
-    case "save":  await cmdSave(args.slice(1)); break;
-    case "list":  cmdList(args.slice(1)); break;
-    case "search": await cmdSearch(args.slice(1)); break;
-    case "index": await cmdIndex(args.slice(1)); break;
-    case "maintain": await cmdMaintain(args.slice(1)); break;
+    case "save":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("save"); break; }
+      await cmdSave(rest);
+      break;
+    case "list":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); break; }
+      cmdList(rest);
+      break;
+    case "search":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("search"); break; }
+      await cmdSearch(rest);
+      break;
+    case "index":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("index"); break; }
+      await cmdIndex(rest);
+      break;
+    case "maintain":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("maintain"); break; }
+      await cmdMaintain(rest);
+      break;
     case "--help":
     case "-h":
     case "help":

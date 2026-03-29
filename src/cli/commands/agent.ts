@@ -115,51 +115,151 @@ const SAMPLE_SYSTEM_MEMORY_ONLY = (id: string) =>
 
 // ── 帮助 ─────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  agent list                       列出所有 Agent
-  agent new <id> [-t <template>]   创建新 Agent（可选：-t memory-only）
-  agent show <id>                  显示 Agent 详情（含权限配置）
-  agent edit <id>                  用 $EDITOR 编辑系统提示（SYSTEM.md）
-  agent delete <id>                删除 Agent（default 不可删除）
-  agent repair [id|--all]          补全缺失目录和配置文件
+${bold("tinyclaw agent")}  —  管理 Agent 工作区
 
-  agent mcp <id>                   查看 MCP server 白名单
-  agent mcp <id> set <s...>        设置 MCP 白名单（覆盖写入 mcp.toml）
-  agent mcp <id> clear             清除白名单（删除 mcp.toml，恢复全量访问）
+${bold("子命令：")}
+  ${cyan("list")}              列出所有 Agent
+  ${cyan("new")}               创建新 Agent
+  ${cyan("show")}              显示 Agent 详情（含权限配置）
+  ${cyan("edit")}              用 \$EDITOR 编辑系统提示（SYSTEM.md）
+  ${cyan("delete")}            删除 Agent
+  ${cyan("repair")}            补全缺失目录和配置文件
+  ${cyan("mcp")}               查看/设置 MCP server 白名单
+  ${cyan("tools")}             查看/设置内置工具黑/白名单
+  ${cyan("perm")}              ★ 交互式权限配置向导（工具 + MCP）
+  ${cyan("loop")}              查看/触发 loop 配置
 
-  agent tools <id>                 查看内置工具黑/白名单
-  agent tools <id> set-allow <t...> 设置工具白名单（allowlist 模式）
-  agent tools <id> set-deny  <t...> 设置工具黑名单（denylist 模式）
-  agent tools <id> clear           清除限制（删除 tools.toml）
+${dim("运行 tinyclaw agent <sub> -h 查看子命令详细参数")}
+`);
+}
 
-  agent perm <id>                  ${cyan("★")} 交互式权限配置向导（工具 + MCP）
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "list":
+      console.log(`
+${bold("tinyclaw agent list")}
 
-${bold("模板（-t / --template）：")}
-  memory-only    最小安全 Agent，仅允许 4 个 memory_* 工具，禁用全部 MCP
+  列出所有 Agent，显示 ID、SYSTEM.md 状态、绑定来源、MCP 及工具限制。
+  无需额外参数。
+`);
+      break;
+    case "new":
+      console.log(`
+${bold("tinyclaw agent new")} <id> [-t <template>]
+
+${bold("参数：")}
+  id                Agent ID（只能包含字母、数字、下划线和连字符）
+
+${bold("选项：")}
+  -t, --template    使用模板创建
+    memory-only     最小安全 Agent：仅允许 4 个 memory_* 工具，禁用全部 MCP
 
 ${bold("说明：")}
-  每个 Agent 是独立工作区 ${dim("~/.tinyclaw/agents/<id>/")}
-    ${dim("agent.toml")}       — 元数据与绑定规则
-    ${dim("SYSTEM.md")}        — 自定义系统提示（可选）
-    ${dim("MEM.md")}           — 持久记忆（跨 session）
-    ${dim("SKILLS.md")}        — 技能目录
-    ${dim("mcp.toml")}         — MCP server 白名单（可选，缺失则不限制）
-    ${dim("tools.toml")}       — 内置工具黑/白名单（可选，缺失则不限制）
-    ${dim("memory/")}          — 独立向量记忆
-    ${dim("workspace/")}       — 工作区根目录
-
-  将终端会话绑定到 Agent：
-    tinyclaw chat -s <sessionId> bind <agentId>
-
-${bold("示例：")}
-  agent new my-agent                           # 创建普通 Agent
-  agent new my-mem -t memory-only              # 创建最小安全 memory-only Agent
-  agent perm loop-01                           # 交互式配置 loop-01 的工具和 MCP 权限
-  agent tools loop-01 set-deny exec_shell write_file delete_file
-  agent mcp trader set polymarket browser
+  创建后工作区位于 ~/.tinyclaw/agents/<id>/
+  编辑提示词：tinyclaw agent edit <id>
+  配置权限：  tinyclaw agent perm <id>
 `);
+      break;
+    case "show":
+      console.log(`
+${bold("tinyclaw agent show")} <id>
+
+${bold("参数：")}
+  id    Agent ID
+
+  显示 Agent 详情：创建时间、工作区路径、SYSTEM.md 前 10 行、
+  绑定来源、内置工具权限、MCP 访问权限、Loop 配置。
+`);
+      break;
+    case "edit":
+      console.log(`
+${bold("tinyclaw agent edit")} <id>
+
+${bold("参数：")}
+  id    Agent ID
+
+  用 \$EDITOR（或 \$VISUAL / nano）打开该 Agent 的 SYSTEM.md 进行编辑。
+`);
+      break;
+    case "delete":
+      console.log(`
+${bold("tinyclaw agent delete")} <id>
+
+${bold("参数：")}
+  id    Agent ID（default 不可删除）
+
+  删除整个 Agent 工作区。
+`);
+      break;
+    case "repair":
+      console.log(`
+${bold("tinyclaw agent repair")} [id | --all]
+
+${bold("参数：")}
+  id      指定要修复的 Agent ID
+  --all   修复所有 Agent（默认，不传 id 时等同于 --all）
+
+  补全缺失的目录（memory/、workspace/ 等）和模板文件（SYSTEM.md、MEM.md、SKILLS.md）。
+`);
+      break;
+    case "mcp":
+      console.log(`
+${bold("tinyclaw agent mcp")} <id> [show | set <server...> | clear]
+
+${bold("参数：")}
+  id                      Agent ID
+
+${bold("子操作：")}
+  show                    查看当前 MCP 白名单（默认）
+  set <server1> ...       设置白名单（覆盖写入 mcp.toml）；空列表 = 禁用所有
+  clear                   清除白名单（删除 mcp.toml，恢复全量访问）
+`);
+      break;
+    case "tools":
+      console.log(`
+${bold("tinyclaw agent tools")} <id> [show | set-allow <t...> | set-deny <t...> | clear]
+
+${bold("参数：")}
+  id                      Agent ID
+
+${bold("子操作：")}
+  show                    查看当前工具限制（默认）
+  set-allow <tool...>     设置工具白名单（只允许列出的工具）
+  set-deny  <tool...>     设置工具黑名单（禁止列出的工具）
+  clear                   清除限制（删除 tools.toml）
+`);
+      break;
+    case "perm":
+      console.log(`
+${bold("tinyclaw agent perm")} <id>
+
+${bold("参数：")}
+  id    Agent ID
+
+  交互式向导，分步配置：
+    Step 1：内置工具限制模式（不限制 / 白名单 / 黑名单）
+    Step 2：MCP server 白名单（多选）
+`);
+      break;
+    case "loop":
+      console.log(`
+${bold("tinyclaw agent loop")} <id> [trigger]
+
+${bold("参数：")}
+  id        Agent ID
+  trigger   立即触发一次 loop（可选）
+
+  查看或立即触发 Agent 的 loop 配置（需在 agent.toml 中配置 [loop] 块）。
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 入口 ─────────────────────────────────────────────────────────────────────
@@ -172,18 +272,39 @@ export async function run(args: string[]): Promise<void> {
 
   const mgr = new AgentManager();
   const sub = args[0];
+  const rest = args.slice(1);
 
   switch (sub) {
-    case "list":   return runList(mgr);
-    case "new":    return runNew(mgr, args.slice(1));
-    case "show":   return runShow(mgr, args[1]);
-    case "edit":   return runEdit(mgr, args[1]);
-    case "delete": return runDelete(mgr, args[1]);
-    case "repair": return runRepair(mgr, args[1]);
-    case "mcp":    return runMcp(mgr, args.slice(1));
-    case "tools":  return runTools(mgr, args.slice(1));
-    case "perm":   return runPerm(mgr, args[1]);
-    case "loop":   return runLoopCmd(mgr, args.slice(1));
+    case "list":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
+      return runList(mgr);
+    case "new":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("new"); return; }
+      return runNew(mgr, rest);
+    case "show":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      return runShow(mgr, args[1]);
+    case "edit":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("edit"); return; }
+      return runEdit(mgr, args[1]);
+    case "delete":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("delete"); return; }
+      return runDelete(mgr, args[1]);
+    case "repair":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("repair"); return; }
+      return runRepair(mgr, args[1]);
+    case "mcp":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("mcp"); return; }
+      return runMcp(mgr, rest);
+    case "tools":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("tools"); return; }
+      return runTools(mgr, rest);
+    case "perm":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("perm"); return; }
+      return runPerm(mgr, args[1]);
+    case "loop":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("loop"); return; }
+      return runLoopCmd(mgr, rest);
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();

@@ -400,21 +400,82 @@ async function cmdSet(args: string[]): Promise<void> {
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  config show                  格式化显示当前配置（密钥脱敏）
-  config get <key>             读取指定配置项（dot path）
-  config edit                  用 $EDITOR 打开配置文件
-  config path                  打印配置文件路径
-  config set <key> <value>     修改配置字段
+${bold("tinyclaw config")}  —  配置管理
+
+${bold("子命令：")}
+  ${cyan("show")}              格式化显示当前配置（密钥脱敏）
+  ${cyan("get")}               读取指定配置项（dot path）
+  ${cyan("edit")}              用 \$EDITOR 打开配置文件
+  ${cyan("path")}              打印配置文件路径
+  ${cyan("set")}               修改单个配置字段
+
+${dim("运行 tinyclaw config <sub> -h 查看子命令详细参数")}
+`);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "show":
+      console.log(`
+${bold("tinyclaw config show")}
+
+  格式化显示当前配置文件内容，敏感字段（apiKey、token 等）自动脱敏。
+  无需额外参数。
+`);
+      break;
+    case "get":
+      console.log(`
+${bold("tinyclaw config get")} <key>
+
+${bold("参数：")}
+  key    配置项的 dot path，如 llm.backends.daily.model
 
 ${bold("示例：")}
   config get llm.backends.daily.model
+  config get channels.qqbot.appId
+`);
+      break;
+    case "edit":
+      console.log(`
+${bold("tinyclaw config edit")}
+
+  用 \$EDITOR（或 \$VISUAL / nano / vi）打开配置文件直接编辑。
+  无需额外参数。
+`);
+      break;
+    case "path":
+      console.log(`
+${bold("tinyclaw config path")}
+
+  打印配置文件的完整路径及文件大小、修改时间。
+  无需额外参数。
+`);
+      break;
+    case "set":
+      console.log(`
+${bold("tinyclaw config set")} <key> <value>
+
+${bold("参数：")}
+  key      配置项的 dot path（至少两段，如 llm.backends.daily.model）
+  value    新值；类型自动推断：
+             "true"/"false" → 布尔
+             纯整数          → 数字
+             其他            → 字符串
+
+${bold("示例：")}
   config set llm.backends.daily.model gpt-4o
   config set llm.backends.daily.maxTokens 8192
   config set channels.qqbot.markdownSupport false
 `);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
@@ -427,11 +488,21 @@ export async function run(args: string[]): Promise<void> {
   const rest = args.slice(1);
 
   switch (sub) {
-    case "show":  return cmdShow();
-    case "get":   return cmdGet(rest);
-    case "edit":  return cmdEdit();
-    case "path":  return cmdPath();
-    case "set":   return cmdSet(rest);
+    case "show":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      return cmdShow();
+    case "get":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("get"); return; }
+      return cmdGet(rest);
+    case "edit":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("edit"); return; }
+      return cmdEdit();
+    case "path":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("path"); return; }
+      return cmdPath();
+    case "set":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("set"); return; }
+      return cmdSet(rest);
     case "--help":
     case "-h":
     case "help":  printHelp(); return;

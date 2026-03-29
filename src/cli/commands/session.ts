@@ -14,8 +14,64 @@ import { bold, dim, cyan, green, yellow, red, section, select } from "../ui.js";
 export const description = "管理活跃 session（list / abort / memory）";
 export const usage = "session <list|abort|memory> [id]";
 
+/** 第二层：只列子命令 */
+function printHelp(): void {
+  console.log(`
+${bold("tinyclaw session")}  —  管理活跃 session
+
+${bold("子命令：")}
+  ${cyan("list")}              列出所有活跃 session 及运行状态
+  ${cyan("abort")}             向指定 session 发送中断信号
+  ${cyan("memory")}            整理指定 session 的对话记忆
+
+${dim("运行 tinyclaw session <sub> -h 查看子命令详细参数")}
+`);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "list":
+      console.log(`
+${bold("tinyclaw session list")}
+
+  列出服务中所有活跃 session 及其运行状态（运行中/空闲）、消息数、最后一条用户消息。
+  无需额外参数。需要 tinyclaw 服务正在运行。
+`);
+      break;
+    case "abort":
+      console.log(`
+${bold("tinyclaw session abort")} <id>
+
+${bold("参数：")}
+  id    session ID 或其末尾子串（如日志中显示的 12 位短 ID）
+
+${bold("说明：")}
+  向指定 session 发送中断信号，终止其正在执行的 runAgent() 循环。
+  运行 tinyclaw session list 可查看所有 session ID。
+`);
+      break;
+    case "memory":
+      console.log(`
+${bold("tinyclaw session memory")} [sessionId]
+
+${bold("参数：")}
+  sessionId    要整理的 session ID（可省略，省略时交互式选择）
+
+${bold("说明：")}
+  对指定 session 执行：压缩 → 持久化 → 向量化。
+  需要 tinyclaw 服务正在运行。
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
+}
+
 export async function run(args: string[]): Promise<void> {
   const sub = args[0];
+  const rest = args.slice(1);
 
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
     printHelp();
@@ -23,11 +79,13 @@ export async function run(args: string[]): Promise<void> {
   }
 
   if (sub === "list") {
+    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
     await cmdList();
     return;
   }
 
   if (sub === "abort") {
+    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("abort"); return; }
     const id = args[1];
     if (!id) {
       console.error(red("用法：tinyclaw session abort <sessionId|suffix>"));
@@ -39,11 +97,12 @@ export async function run(args: string[]): Promise<void> {
   }
 
   if (sub === "memory") {
+    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("memory"); return; }
     await cmdMemory(args[1]);
     return;
   }
 
-  console.error(red(`未知子命令 "${sub}"。运行 tinyclaw session help 查看帮助。`));
+  console.error(red(`未知子命令 "${sub}"。运行 tinyclaw session -h 查看帮助。`));
   process.exitCode = 1;
 }
 
@@ -156,29 +215,4 @@ async function cmdMemory(sessionId?: string): Promise<void> {
   console.log();
 }
 
-// ── help ──────────────────────────────────────────────────────────────────────
 
-function printHelp(): void {
-  console.log(`
-${bold("tinyclaw session")}  —  管理活跃 session
-
-${bold("用法：")}
-  tinyclaw session list
-  tinyclaw session abort <id>
-  tinyclaw session memory [sessionId]
-
-${bold("子命令：")}
-  ${cyan("list")}                  列出服务中所有活跃 session 及其运行状态
-  ${cyan("abort <id>")}            向指定 session 发送中断信号，终止其正在执行的 runAgent() 循环
-                          <id> 可为完整 sessionId 或末尾子串（如日志中显示的 12 位短 ID）
-  ${cyan("memory [sessionId]")}    整理指定 session 的对话历史（压缩 → 持久化 → 向量化）
-                          不指定时交互式选择
-
-${bold("示例：")}
-  tinyclaw session list
-  tinyclaw session abort cron:9xpyhnmh
-  tinyclaw session abort 773847979014
-  tinyclaw session memory
-  tinyclaw session memory qqbot:c2c:5E93DFF4A42AFE45D206DEA724E5ECD2
-  `);
-}

@@ -268,17 +268,101 @@ function cmdLogs(id: string, n: number): void {
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  cron list                  列出所有 jobs
-  cron add                   交互式创建 job
-  cron remove  <id>          删除 job
-  cron enable  <id>          启用 job
-  cron disable <id>          停用 job
-  cron run     <id>          立即运行一次（不影响计划）
-  cron logs    <id> [-n N]   查看最近 N 条日志（默认 20）
+${bold("tinyclaw cron")}  —  Cron 定时任务管理
+
+${bold("子命令：")}
+  ${cyan("list")}              列出所有 jobs
+  ${cyan("add")}               交互式创建 job
+  ${cyan("remove")}            删除 job
+  ${cyan("enable")}            启用 job
+  ${cyan("disable")}           停用 job
+  ${cyan("run")}               立即触发一次（不影响计划）
+  ${cyan("logs")}              查看 job 运行日志
+
+${dim("运行 tinyclaw cron <sub> -h 查看子命令详细参数")}
 `);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "list":
+      console.log(`
+${bold("tinyclaw cron list")}
+
+  列出所有 cron jobs，显示 ID、状态、类型、计划、上次运行和通知策略。
+  无需额外参数。
+`);
+      break;
+    case "add":
+      console.log(`
+${bold("tinyclaw cron add")}
+
+  通过交互式向导创建新 cron job。
+  向导会依次询问：
+    1. 触发时的指令内容（prompt）
+    2. 调度类型：once / every / daily
+    3. 时间参数（一次性时间 / 间隔秒数 / 每天时刻）
+    4. QQ 推送目标（可选）
+    5. 通知策略：always / on_change / on_error / never
+    6. 使用的 agent（默认 default）
+    7. 是否保留跨 run 对话历史（stateful）
+    8. 是否豁免 MFA
+`);
+      break;
+    case "remove":
+      console.log(`
+${bold("tinyclaw cron remove")} <id>
+
+${bold("参数：")}
+  id    要删除的 job ID（运行 cron list 查看）
+`);
+      break;
+    case "enable":
+      console.log(`
+${bold("tinyclaw cron enable")} <id>
+
+${bold("参数：")}
+  id    要启用的 job ID
+`);
+      break;
+    case "disable":
+      console.log(`
+${bold("tinyclaw cron disable")} <id>
+
+${bold("参数：")}
+  id    要停用的 job ID
+`);
+      break;
+    case "run":
+      console.log(`
+${bold("tinyclaw cron run")} <id>
+
+${bold("参数：")}
+  id    要立即触发的 job ID
+
+${bold("说明：")}
+  优先通过 IPC 委托守护进程执行（无需重新初始化 LLM）。
+  守护进程未运行时在本地执行。
+  不影响原有定时计划。
+`);
+      break;
+    case "logs":
+      console.log(`
+${bold("tinyclaw cron logs")} <id> [-n <N>]
+
+${bold("参数：")}
+  id        job ID
+  -n <N>    显示最近 N 条日志（默认 20）
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
@@ -288,15 +372,35 @@ export const usage = "cron <list|add|remove|enable|disable|run|logs>";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "list";
+  const rest = args.slice(1);
 
   switch (sub) {
-    case "list":    cmdList(); break;
-    case "add":     await cmdAdd(); break;
-    case "remove":  await cmdRemove(args[1] ?? ""); break;
-    case "enable":  cmdEnable(args[1] ?? ""); break;
-    case "disable": cmdDisable(args[1] ?? ""); break;
-    case "run":     await cmdRun(args[1] ?? ""); break;
+    case "list":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); break; }
+      cmdList();
+      break;
+    case "add":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("add"); break; }
+      await cmdAdd();
+      break;
+    case "remove":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("remove"); break; }
+      await cmdRemove(args[1] ?? "");
+      break;
+    case "enable":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("enable"); break; }
+      cmdEnable(args[1] ?? "");
+      break;
+    case "disable":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("disable"); break; }
+      cmdDisable(args[1] ?? "");
+      break;
+    case "run":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("run"); break; }
+      await cmdRun(args[1] ?? "");
+      break;
     case "logs": {
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("logs"); break; }
       const nIdx = args.indexOf("-n");
       const n = nIdx >= 0 ? parseInt(args[nIdx + 1] ?? "20", 10) : 20;
       cmdLogs(args[1] ?? "", n);

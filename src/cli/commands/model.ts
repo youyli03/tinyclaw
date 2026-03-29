@@ -216,30 +216,63 @@ async function cmdSet(args: string[]): Promise<void> {
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  model show               显示各后端当前使用的模型 symbol
-  model list [-a]          列出所有 provider 的可用模型
-  model set  [backend]     交互式选择模型（默认后端: daily）
-  model set  summarizer    切换摘要压缩模型
+${bold("tinyclaw model")}  —  LLM 模型管理
 
-${bold("后端名：")}  daily | code | summarizer
+${bold("子命令：")}
+  ${cyan("show")}              显示各后端当前使用的模型 symbol
+  ${cyan("list")}              列出所有 provider 的可用模型
+  ${cyan("set")}               交互式选择并切换模型
 
-${bold("模型 Symbol 格式：")}  provider/model-id
-  示例：copilot/gpt-4o  copilot/auto  openai/gpt-4o-mini
+${dim("运行 tinyclaw model <sub> -h 查看子命令详细参数")}
+`);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "show":
+      console.log(`
+${bold("tinyclaw model show")}
+
+  显示 daily / code / summarizer 三个后端当前配置的模型 symbol。
+  无需额外参数。
+`);
+      break;
+    case "list":
+      console.log(`
+${bold("tinyclaw model list")} [-a]
 
 ${bold("参数：")}
-  -a, --all   list 时显示全量模型（Copilot 含 picker_disabled；OpenAI 调用 /models）
+  -a, --all   显示全量模型
+              Copilot：含 picker_disabled 的模型
+              OpenAI：调用 /models 接口枚举
 
-${bold("Provider 配置（~/.tinyclaw/config.toml）：")}
-  [providers.copilot]
-  githubToken = "gh_cli"
-
-  [providers.openai]
-  apiKey  = "sk-..."
-  baseUrl = "https://api.openai.com/v1"
+${bold("说明：")}
+  不加 -a 时，Copilot 仅显示 model_picker_enabled 的模型；
+  OpenAI provider 仅打印提示信息。
 `);
+      break;
+    case "set":
+      console.log(`
+${bold("tinyclaw model set")} [daily|code|summarizer]
+
+${bold("参数：")}
+  backend     目标后端名（默认 daily）
+              可选：daily | code | summarizer
+
+${bold("说明：")}
+  交互式列出可用模型，选择后写入 ~/.tinyclaw/config.toml。
+  模型 symbol 格式：provider/model-id
+    示例：copilot/gpt-4o  copilot/auto  openai/gpt-4o-mini
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
@@ -252,9 +285,15 @@ export async function run(args: string[]): Promise<void> {
   const rest = args.slice(1);
 
   switch (sub) {
-    case "show":   return cmdShow();
-    case "list":   return cmdList(rest);
-    case "set":    return cmdSet(rest);
+    case "show":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      return cmdShow();
+    case "list":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
+      return cmdList(rest);
+    case "set":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("set"); return; }
+      return cmdSet(rest);
     case "--help":
     case "-h":
     case "help":   printHelp(); return;

@@ -107,13 +107,56 @@ async function cmdMFASetup(): Promise<void> {
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  auth github      重新执行 GitHub Device Flow OAuth
-  auth status      检查当前 token 有效性
-  auth mfa-setup   生成/绑定 TOTP 密钥（终端插入 QR 码）
+${bold("tinyclaw auth")}  —  认证管理
+
+${bold("子命令：")}
+  ${cyan("github")}            重新执行 GitHub Device Flow OAuth
+  ${cyan("status")}            检查当前 token 有效性及 MFA 配置
+  ${cyan("mfa-setup")}         生成/绑定 TOTP 密钥（终端插入 QR 码）
+
+${dim("运行 tinyclaw auth <sub> -h 查看子命令详细说明")}
 `);
+}
+
+/** 第三层：显示指定子命令的完整说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "github":
+      console.log(`
+${bold("tinyclaw auth github")}
+
+  重新执行 GitHub Device Flow OAuth，获取并保存新的 GitHub token。
+  需要在浏览器中完成授权操作。
+  无需额外参数。
+`);
+      break;
+    case "status":
+      console.log(`
+${bold("tinyclaw auth status")}
+
+  检查当前 GitHub token 是否有效，并显示 MFA 配置状态。
+    - 验证 Copilot API 可达性
+    - 若 interface = totp，检查 TOTP 密钥是否已绑定
+    - 若 interface = msal，检查 tenantId / clientId 是否已配置
+  无需额外参数。
+`);
+      break;
+    case "mfa-setup":
+      console.log(`
+${bold("tinyclaw auth mfa-setup")}
+
+  生成 TOTP 密钥并在终端显示二维码，扫码后绑定到验证器 App。
+  绑定后需在 config.toml [auth.mfa] 中设置 interface = "totp" 以启用。
+  无需额外参数。
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
@@ -123,11 +166,18 @@ export const usage = "auth <github|status|mfa-setup>";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "status";
+  const rest = args.slice(1);
 
   switch (sub) {
-    case "github":    return cmdGithub();
-    case "status":    return cmdStatus();
-    case "mfa-setup": return cmdMFASetup();
+    case "github":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("github"); return; }
+      return cmdGithub();
+    case "status":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("status"); return; }
+      return cmdStatus();
+    case "mfa-setup":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("mfa-setup"); return; }
+      return cmdMFASetup();
     case "--help":
     case "-h":
     case "help":    printHelp(); return;
