@@ -23,7 +23,7 @@ import type { LoopSessionConfig as _LoopSessionConfig } from "../../core/agent-m
 import { stringify } from "smol-toml";
 
 export const description = "管理 Agent 工作区（独立人格与记忆命名空间）";
-export const usage = "agent <list|new|show|edit|delete|repair|mcp|tools|perm|loop> [id|--all]";
+export const usage = "agent <list|new|show|edit|delete|repair|mcp|tools|perm|access|loop> [id|--all]";
 
 // ── 所有内置工具名（静态枚举，与 src/tools/ 下注册的工具同步） ──────────────
 
@@ -58,6 +58,8 @@ export const BUILTIN_TOOLS = [
   "memory_write_mem",
   "memory_search",
   "memory_append",
+  "session_get",
+  "session_send",
 ] as const;
 
 /** memory-only 模板的工具白名单（最小安全 Agent，仅允许记忆读写/搜索/追加） */
@@ -129,7 +131,8 @@ ${bold("子命令：")}
   ${cyan("repair")}            补全缺失目录和配置文件
   ${cyan("mcp")}               查看/设置 MCP server 白名单
   ${cyan("tools")}             查看/设置内置工具黑/白名单
-  ${cyan("perm")}              ★ 交互式权限配置向导（工具 + MCP）
+  ${cyan("perm")}              ★ 交互式权限配置向导（工具 + MCP + 跨 session）
+  ${cyan("access")}            查看/设置跨 session 通信权限（access.toml）
   ${cyan("loop")}              查看/触发 loop 配置
 
 ${dim("运行 tinyclaw agent <sub> -h 查看子命令详细参数")}
@@ -243,6 +246,30 @@ ${bold("参数：")}
   交互式向导，分步配置：
     Step 1：内置工具限制模式（不限制 / 白名单 / 黑名单）
     Step 2：MCP server 白名单（多选）
+    Step 3：跨 session 通信权限（can_access / allow_from）
+`);
+      break;
+    case "access":
+      console.log(`
+${bold("tinyclaw agent access")} <id> [show | set-can-access | set-allow-from | add-can-access | add-allow-from | clear-can-access | clear-allow-from | clear]
+
+${bold("参数：")}
+  id                            Agent ID
+
+${bold("子操作：")}
+  show                          查看当前 access.toml（默认）
+  set-can-access <agentId...>   覆盖写入 can_access（本 agent 可向哪些 agent 发消息）
+  set-allow-from <agentId...>   覆盖写入 allow_from（允许哪些 agent 向本 session 发消息）
+  add-can-access <agentId...>   追加到 can_access（不重复）
+  add-allow-from <agentId...>   追加到 allow_from（不重复）
+  clear-can-access              清空 can_access = []
+  clear-allow-from              清空 allow_from = []
+  clear                         删除整个 access.toml（恢复默认 deny）
+
+${bold("说明：")}
+  双向 allow-list 权限模型：发送方的 can_access 包含接收方 agentId，
+  且接收方的 allow_from 包含发送方 agentId，才允许跨 session 通信。
+  文件不存在 = 默认拒绝所有跨 session 通信。
 `);
       break;
     case "loop":
@@ -302,6 +329,9 @@ export async function run(args: string[]): Promise<void> {
     case "perm":
       if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("perm"); return; }
       return runPerm(mgr, args[1]);
+    case "access":
+      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("access"); return; }
+      return runAccess(mgr, rest);
     case "loop":
       if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("loop"); return; }
       return runLoopCmd(mgr, rest);
@@ -484,6 +514,29 @@ function runShow(mgr: AgentManager, id: string | undefined): void {
   console.log(`\n${bold("Loop 配置：")}`);
   console.log(dim("  Loop 已迁移到 Session 维度"));
   console.log(dim("  请用 tinyclaw chat loop 查看/管理 loop 配置"));
+
+  // 跨 session 通信权限
+  const accessCfg = mgr.readAccessConfig(id);
+  console.log(`\n${bold("跨 Session 通信权限：")}`);
+  const hasAccess = accessCfg.can_access.length > 0 || accessCfg.allow_from.length > 0;
+  if (!hasAccess) {
+    console.log(`  ${dim("未配置（access.toml 不存在，默认拒绝所有跨 session 通信）")}`);
+    console.log(dim(`  配置：tinyclaw agent access ${id}`));
+  } else {
+    if (accessCfg.can_access.length > 0) {
+      console.log(`  ${cyan("can_access")}  （可向谁的 session 发消息）：`);
+      for (const a of accessCfg.can_access) console.log(`    ${cyan("•")} ${a}`);
+    } else {
+      console.log(`  ${dim("can_access  = []（不可主动发出消息）")}`);
+    }
+    if (accessCfg.allow_from.length > 0) {
+      console.log(`  ${green("allow_from")} （允许谁向本 session 发消息）：`);
+      for (const a of accessCfg.allow_from) console.log(`    ${green("•")} ${a}`);
+    } else {
+      console.log(`  ${dim("allow_from  = []（不接受来自其他 agent 的消息）")}`);
+    }
+    console.log(dim(`  路径：${mgr.accessConfigPath(id)}`));
+  }
 }
 
 // ── edit ─────────────────────────────────────────────────────────────────────
@@ -700,6 +753,124 @@ function writeMcpToml(mgr: AgentManager, id: string, servers: string[]): void {
   );
 }
 
+/** 写入 access.toml */
+function writeAccessToml(mgr: AgentManager, id: string, cfg: import("../../core/agent-manager.js").AccessConfig): void {
+  const lines = [
+    `# 跨 Session 通信权限 — Agent: ${id}`,
+    `# can_access: 本 agent 可以向哪些 agentId 的 session 发消息`,
+    `# allow_from: 允许哪些 agentId 的 agent 向本 session 发消息`,
+    `# 双向均满足才允许通信；文件不存在 = 默认拒绝所有跨 session 通信`,
+    ``,
+    `can_access = [${cfg.can_access.map(a => `"${a}"`).join(", ")}]`,
+    `allow_from = [${cfg.allow_from.map(a => `"${a}"`).join(", ")}]`,
+  ];
+  writeFileSync(mgr.accessConfigPath(id), lines.join("\n") + "\n", "utf-8");
+}
+
+// ── access（跨 session 通信权限管理）────────────────────────────────────────
+
+function runAccess(mgr: AgentManager, args: string[]): void {
+  const id = args[0];
+  if (!id) {
+    console.error(red("错误：请指定 Agent ID"));
+    console.error(dim("用法：agent access <id> [show|set-can-access|set-allow-from|...]"));
+    process.exit(1);
+  }
+  try { mgr.load(id); } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  }
+
+  const sub = args[1];
+
+  if (!sub || sub === "show") {
+    const cfg = mgr.readAccessConfig(id);
+    console.log(`\n${bold(`Agent "${id}" 的跨 Session 通信权限`)}`);
+    console.log(dim("  双向 allow-list 权限模型（发送方+接收方都需配置才能通信）"));
+    console.log();
+    if (cfg.can_access.length === 0) {
+      console.log(`  ${dim("can_access  = []  (不可主动向其他 agent 的 session 发消息)")}`);
+    } else {
+      console.log(`  ${cyan("can_access")}（可向以下 agent 的 session 发消息）：`);
+      for (const a of cfg.can_access) console.log(`    ${cyan("•")} ${a}`);
+    }
+    console.log();
+    if (cfg.allow_from.length === 0) {
+      console.log(`  ${dim("allow_from  = []  (不接受来自其他 agent 的跨 session 消息)")}`);
+    } else {
+      console.log(`  ${green("allow_from")}（允许以下 agent 向本 session 发消息）：`);
+      for (const a of cfg.allow_from) console.log(`    ${green("•")} ${a}`);
+    }
+    console.log();
+    const p = mgr.accessConfigPath(id);
+    console.log(dim(`  路径：${p}`));
+    if (!existsSync(p)) console.log(dim("  （文件不存在，以上为默认值）"));
+    console.log();
+    return;
+  }
+
+  if (sub === "clear") {
+    const p = mgr.accessConfigPath(id);
+    if (!existsSync(p)) {
+      console.log(dim(`Agent "${id}" 没有 access.toml，已是默认 deny 状态。`));
+      return;
+    }
+    unlinkSync(p);
+    console.log(green(`✓ Agent "${id}" 的 access.toml 已删除（恢复默认 deny）`));
+    return;
+  }
+
+  if (sub === "set-can-access") {
+    const agents = args.slice(2).filter(Boolean);
+    const cur = mgr.readAccessConfig(id);
+    writeAccessToml(mgr, id, { ...cur, can_access: agents });
+    console.log(green(`✓ Agent "${id}" can_access = [${agents.join(", ")}]`));
+    return;
+  }
+
+  if (sub === "set-allow-from") {
+    const agents = args.slice(2).filter(Boolean);
+    const cur = mgr.readAccessConfig(id);
+    writeAccessToml(mgr, id, { ...cur, allow_from: agents });
+    console.log(green(`✓ Agent "${id}" allow_from = [${agents.join(", ")}]`));
+    return;
+  }
+
+  if (sub === "add-can-access") {
+    const toAdd = args.slice(2).filter(Boolean);
+    const cur = mgr.readAccessConfig(id);
+    const merged = [...new Set([...cur.can_access, ...toAdd])];
+    writeAccessToml(mgr, id, { ...cur, can_access: merged });
+    console.log(green(`✓ Agent "${id}" can_access = [${merged.join(", ")}]`));
+    return;
+  }
+
+  if (sub === "add-allow-from") {
+    const toAdd = args.slice(2).filter(Boolean);
+    const cur = mgr.readAccessConfig(id);
+    const merged = [...new Set([...cur.allow_from, ...toAdd])];
+    writeAccessToml(mgr, id, { ...cur, allow_from: merged });
+    console.log(green(`✓ Agent "${id}" allow_from = [${merged.join(", ")}]`));
+    return;
+  }
+
+  if (sub === "clear-can-access") {
+    const cur = mgr.readAccessConfig(id);
+    writeAccessToml(mgr, id, { ...cur, can_access: [] });
+    console.log(green(`✓ Agent "${id}" can_access 已清空`));
+    return;
+  }
+
+  if (sub === "clear-allow-from") {
+    const cur = mgr.readAccessConfig(id);
+    writeAccessToml(mgr, id, { ...cur, allow_from: [] });
+    console.log(green(`✓ Agent "${id}" allow_from 已清空`));
+    return;
+  }
+
+  console.error(red(`未知子命令 "${sub}"，可用：show / set-can-access / set-allow-from / add-can-access / add-allow-from / clear-can-access / clear-allow-from / clear`));
+  process.exit(1);
+}
+
 // ── perm（交互式向导）────────────────────────────────────────────────────────
 
 async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void> {
@@ -784,6 +955,47 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
     }
   }
 
+  // ── Step 3：跨 session 通信权限 ────────────────────────────────────
+  const currentAccess = mgr.readAccessConfig(id);
+  const currentAccessDesc = (currentAccess.can_access.length === 0 && currentAccess.allow_from.length === 0)
+    ? dim("当前：未配置（默认拒绝所有跨 session 通信）")
+    : `${cyan("can_access")}=[${currentAccess.can_access.join(",")}]  ${green("allow_from")}=[${currentAccess.allow_from.join(",")}]`;
+
+  console.log(`\n${bold("── 跨 Session 通信权限 ────────────────────────────")}`);
+  console.log(`  ${currentAccessDesc}`);
+  console.log(dim("  双向 allow-list：发送方 can_access + 接收方 allow_from 均满足才允许通信"));
+
+  type AccessMode = "none" | "both" | "can_access" | "allow_from" | "keep";
+  const accessMode = await singleSelect<AccessMode>("选择配置操作", [
+    { label: "不配置（默认拒绝所有跨 session 通信）", value: "none", note: "删除 access.toml" },
+    { label: "配置双向权限（can_access + allow_from）", value: "both" },
+    { label: "只配置 can_access（本 agent 可向谁发消息）", value: "can_access" },
+    { label: "只配置 allow_from（允许谁向本 agent 发消息）", value: "allow_from" },
+    { label: "保持不变", value: "keep" },
+  ]);
+
+  let finalAccess: import("../../core/agent-manager.js").AccessConfig | null = null;
+  const { prompt } = await import("../ui.js");
+
+  const parseAgentIds = (input: string): string[] =>
+    input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+
+  if (accessMode === "both" || accessMode === "can_access") {
+    const input = await prompt(
+      `  can_access（可向哪些 agent 发消息，空格或逗号分隔，当前：[${currentAccess.can_access.join(", ")}]）: `
+    );
+    const canAccess = input.trim() ? parseAgentIds(input) : currentAccess.can_access;
+    finalAccess = { ...(finalAccess ?? currentAccess), can_access: canAccess };
+  }
+
+  if (accessMode === "both" || accessMode === "allow_from") {
+    const input = await prompt(
+      `  allow_from（允许哪些 agent 发来消息，空格或逗号分隔，当前：[${currentAccess.allow_from.join(", ")}]）: `
+    );
+    const allowFrom = input.trim() ? parseAgentIds(input) : currentAccess.allow_from;
+    finalAccess = { ...(finalAccess ?? currentAccess), allow_from: allowFrom };
+  }
+
   // ── 写入 ────────────────────────────────────────────────────────────
   console.log(`\n${bold("── 应用配置 ────────────────────────────────────────")}`);
 
@@ -807,6 +1019,17 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
     console.log(green(`  ✓ mcp.toml 已写入：allowlist [${finalServers!.join(", ")}]`));
   } else {
     console.log(dim("  ─ MCP 配置：保持不变"));
+  }
+
+  if (accessMode === "none") {
+    const p = mgr.accessConfigPath(id);
+    if (existsSync(p)) { unlinkSync(p); console.log(green("  ✓ access.toml 已删除（默认 deny）")); }
+    else console.log(dim("  ─ access.toml 本就不存在，无需操作"));
+  } else if (finalAccess !== null) {
+    writeAccessToml(mgr, id, finalAccess);
+    console.log(green(`  ✓ access.toml 已写入：can_access=[${finalAccess.can_access.join(", ")}], allow_from=[${finalAccess.allow_from.join(", ")}]`));
+  } else {
+    console.log(dim("  ─ access 配置：保持不变"));
   }
 
   console.log(dim(`\n  运行 tinyclaw agent show ${id} 查看完整权限配置`));
