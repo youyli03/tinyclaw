@@ -379,6 +379,12 @@ export interface AgentRunOptions {
    */
   skipPreamble?: boolean;
   /**
+   * 跳过向 session 添加用户消息（step 4）。
+   * 用于 loop session：task 消息已通过 session.addLoopTaskMessage() 预先注入，
+   * 避免 runAgent 内部重复 addUserMessage。
+   */
+  skipAddUserMessage?: boolean;
+  /**
    * 自动 fork 的时间阈值（毫秒）。超过该时间后，每批工具执行完毕即触发 auto-fork。
    * 默认 120_000（2 分钟）。设为 0 可禁用 auto-fork。
    */
@@ -576,8 +582,10 @@ export async function runAgent(
     }
 
     // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
-    const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
-    session.addUserMessage(msgContent);
+    if (!opts.skipAddUserMessage) {
+      const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
+      session.addUserMessage(msgContent);
+    }
   }
 
   let finalContent = "";
@@ -652,7 +660,7 @@ export async function runAgent(
 
       try {
         response = await client.streamChat(
-          session.getMessages(),
+          session.getMessagesForLLM(),
           (delta) => opts.onChunk?.(delta),
           {
             ...(tools.length > 0 && client.supportsToolCalls
@@ -1015,7 +1023,7 @@ export async function runAgent(
     // 最后一轮，强制用 LLM 生成总结（注入系统提示告知已达轮次上限）
     if (round === maxToolRounds - 1) {
       const summaryMessages = [
-        ...session.getMessages(),
+        ...session.getMessagesForLLM(),
         {
           role: "system" as const,
           content:

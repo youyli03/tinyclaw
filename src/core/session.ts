@@ -58,7 +58,11 @@ export class Session {
   readonly sessionId: string;
   /** 当前会话绑定的 Agent ID（未绑定时为 "default"） */
   readonly agentId: string;
-  private messages: ChatMessage[] = [];
+  /**
+   * 内部消息数组。元素可能带有运行时字段 `_loopTaskRef`（loop task 文件路径），
+   * 该字段仅存于内存；持久化时写为 `loop_task_ref`，传给 LLM 时通过 getMessagesForLLM() 折叠。
+   */
+  private messages: Array<ChatMessage & { _loopTaskRef?: string }> = [];
 
   // ── 并发控制 ──────────────────────────────────────────────────────────────
   /** 当前是否有 runAgent() 正在运行 */
@@ -155,6 +159,53 @@ export class Session {
 
   getMessages(): ChatMessage[] {
     return this.messages;
+  }
+
+  /**
+   * 返回适合直接传给 LLM 的消息列表。
+   * 对于带 `_loopTaskRef` 的 loop task user 消息：
+   * - 最后一条：展开文件实际内容（执行时始终使用最新 task 文件）
+   * - 非最后一条：折叠为单行摘要（减少 token，避免上下文膨胀）
+   */
+  getMessagesForLLM(): ChatMessage[] {
+    const result: Array<ChatMessage> = [];
+    // 找到最后一条带 _loopTaskRef 的 user 消息的索引
+    let lastLoopIdx = -1;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]!._loopTaskRef) { lastLoopIdx = i; break; }
+    }
+    for (let i = 0; i < this.messages.length; i++) {
+      const m = this.messages[i]!;
+      if (!m._loopTaskRef) {
+        // 普通消息：原样透传
+        const { _loopTaskRef: _ignored, ...plain } = m as ChatMessage & { _loopTaskRef?: string };
+        result.push(plain as ChatMessage);
+      } else if (i === lastLoopIdx) {
+        // 最后一条 loop task 消息：展开文件内容
+        let expanded: string;
+        try {
+          expanded = require("node:fs").readFileSync(m._loopTaskRef, "utf-8") as string;
+        } catch {
+          expanded = typeof m.content === "string" ? m.content : "[loop task file not found]";
+        }
+        result.push({ role: "user", content: expanded });
+      } else {
+        // 历史 loop task 消息：折叠为单行
+        const ref = m._loopTaskRef;
+        result.push({ role: "user", content: `[Loop Task @ ${ref}]` });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 注入 loop task 消息（带文件路径标记）。
+   * content 为 task 文件内容；_loopTaskRef 保存文件路径供 getMessagesForLLM 使用。
+   */
+  addLoopTaskMessage(taskFilePath: string, content: string): void {
+    const msg: ChatMessage & { _loopTaskRef?: string } = { role: "user", content, _loopTaskRef: taskFilePath };
+    this.messages.push(msg);
+    this._appendMsgToJsonl(msg);
   }
 
   addUserMessage(content: string | ContentPart[]): void {
@@ -518,7 +569,7 @@ export class Session {
    * - 其他角色：仅 role + content
    * 可附带 ts 时间戳（append 时使用，rewrite 时不带）。
    */
-  private static serializeMsgFull(m: ChatMessage, ts?: string): string {
+  private static serializeMsgFull(m: ChatMessage & { _loopTaskRef?: string }, ts?: string): string {
     if (m.role === "assistant") {
       const base: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
@@ -532,6 +583,7 @@ export class Session {
     }
     // system / user
     const base: Record<string, unknown> = { role: m.role, content: m.content };
+    if (m._loopTaskRef) base["loop_task_ref"] = m._loopTaskRef;
     if (ts) base["ts"] = ts;
     return JSON.stringify(base);
   }
@@ -690,7 +742,12 @@ export class Session {
             (role === "system" || role === "user") &&
             (typeof content === "string" || Array.isArray(content))
           ) {
-            messages.push({ role, content: content as string | ContentPart[] });
+            const msgEntry: ChatMessage & { _loopTaskRef?: string } = { role, content: content as string | ContentPart[] };
+            const loopTaskRef = entry["loop_task_ref"];
+            if (role === "user" && typeof loopTaskRef === "string") {
+              msgEntry._loopTaskRef = loopTaskRef;
+            }
+            messages.push(msgEntry);
           }
         } catch {
           // 跳过格式损坏的行

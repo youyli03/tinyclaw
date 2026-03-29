@@ -644,17 +644,19 @@ async function main(): Promise<void> {
   _sessionSendFn = sessionSendFn;
   _sessionGetFn = sessionGetFn;
 
-  const loopTick = async (sessionId: string, content: string): Promise<void> => {
+  const loopTick = async (sessionId: string, content: string, taskFilePath: string): Promise<void> => {
     const session = getSession(sessionId);
     // stateful=false：每轮开始前清空历史，避免 context 无限积累
     const loopCfg = agentManager.readSessionLoop(sessionId);
     if (loopCfg && !loopCfg.stateful) {
       session.clearMessages();
     }
-    const nowStr = new Date().toLocaleString();
-    await runAgent(session, `[${nowStr}] ${content}`, {
+    // 通过 addLoopTaskMessage 注入 loop task，携带 taskFilePath 用于 getMessagesForLLM 折叠
+    session.addLoopTaskMessage(taskFilePath, content);
+    await runAgent(session, content, {
       sessionSendFn,
       sessionGetFn,
+      skipAddUserMessage: true,
     });
   };
   await loopRunner.start(loopTick);
