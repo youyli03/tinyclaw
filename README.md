@@ -78,6 +78,12 @@ tinyclaw model set [daily|code|summarizer]  # 交互式切换模型
 tinyclaw cron list                     # 定时任务列表
 tinyclaw cron add / remove / run <id>  # 添加 / 删除 / 立即触发
 
+tinyclaw chat loop list                    # 查看所有 loop session
+tinyclaw chat loop enable <sessionId>      # 启用（或新建）loop
+tinyclaw chat loop disable <sessionId>     # 禁用 loop
+tinyclaw chat loop set <sessionId> <k=v>   # 修改配置字段
+tinyclaw chat loop trigger <sessionId>     # 立即触发一次 tick
+
 tinyclaw config show / edit            # 查看（脱敏）/ 编辑配置
 tinyclaw auth github / mfa-setup       # GitHub 授权 / TOTP 绑定
 
@@ -95,7 +101,7 @@ tinyclaw completions install           # 安装 tab 补全
 │   ├── MEM.md           # 持久记忆
 │   ├── SKILLS.md        # 技能目录
 │   └── workspace/       # Shell 命令默认 cwd
-├── sessions/            # 对话 JSONL（崩溃恢复）
+├── sessions/            # 对话 JSONL（崩溃恢复）+ loop 配置 .toml
 └── cron/jobs/           # 定时任务持久化
 ```
 
@@ -113,8 +119,9 @@ tinyclaw completions install           # 安装 tab 补全
 - [AGENT_LOOP.md](docs/AGENT_LOOP.md) — ReAct 循环与 MFA
 - [CODE_MODE.md](docs/CODE_MODE.md) — Code 模式（Plan/Auto）
 - [CRON_PIPELINE.md](docs/CRON_PIPELINE.md) — Cron Pipeline 多步流水线
-- [LOOP_AGENT.md](docs/LOOP_AGENT.md) — Loop Agent 自主持续运行
+- [LOOP_SESSION.md](docs/LOOP_SESSION.md) — Loop Session 持续自主执行
 - [NOTES_MCP.md](docs/NOTES_MCP.md) — Notes MCP 笔记知识库
+- [SESSIONS_AND_AGENTS.md](docs/SESSIONS_AND_AGENTS.md) — Session 与 Agent 生命周期
 - [RETRY_AND_STABILITY.md](docs/RETRY_AND_STABILITY.md) — 连接稳定性与重试策略
 
 ## License

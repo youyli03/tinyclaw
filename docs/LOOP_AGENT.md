@@ -1,7 +1,15 @@
-# Loop Agent
+# Loop Agent（已废弃）
 
-> Loop Agent 是一种**自主持续运行**的 Agent 模式：按固定间隔读取任务文件（`TASK.md`），
-> 调用 LLM 执行任务，结果按策略推送到 QQ。无需用户手动触发，适合监控、定期汇报、自动化巡检等场景。
+> ⚠️ **此文档已废弃。**
+>
+> Loop 配置已从 **Agent 维度**（`agent.toml [loop]`）迁移到 **Session 维度**（`sessions/<id>.toml [loop]`）。
+> CLI 入口从 `tinyclaw agent loop` 改为 `tinyclaw chat loop`。
+>
+> **请查阅新文档：[LOOP_SESSION.md](./LOOP_SESSION.md)**
+
+---
+
+> 以下内容仅作历史参考，**勿用于新部署**。
 
 ---
 
@@ -83,9 +91,20 @@ msgType     = "c2c"        # c2c / group / guild / dm
 
 ## CLI 管理
 
+> ⚠️ 以下命令已废弃，请使用 `tinyclaw chat loop` 系列命令。
+
 目前 Loop Agent 通过直接编辑 `agent.toml` 启停，重启 tinyclaw 生效：
 
 ```bash
+# ❌ 已废弃：不再支持在 agent.toml 中配置 [loop]
 tinyclaw agent edit <id>    # 编辑 agent.toml（含 [loop] 配置）
 tinyclaw restart            # 重启服务使配置生效
+```
+
+**新方式：**
+
+```bash
+tinyclaw chat loop enable <sessionId>   # 启用/新建 loop
+tinyclaw chat loop set <sessionId> <key=value>  # 配置字段
+tinyclaw restart                         # 重启生效
 ```

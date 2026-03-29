@@ -323,5 +323,77 @@ tinyclaw chat -s cli:<uuid> bind work    # 将会话绑定到 work Agent
 # 查看记忆文件
 ls ~/.tinyclaw/agents/default/memory/    # 默认 Agent 的压缩摘要
 ls ~/.tinyclaw/agents/work/memory/       # work Agent 的压缩摘要
-ls ~/.tinyclaw/sessions/                 # 原始对话 JSONL
+ls ~/.tinyclaw/sessions/                 # 原始对话 JSONL + loop .toml 配置
 ```
+
+---
+
+## 九、Loop Session 生命周期
+
+Loop Session 是在普通 Session 之上叠加的"自主持续执行"能力，不创建新的 Session，而是为已有 Session 配置 `[loop]` 块。
+
+### 配置文件位置
+
+```
+~/.tinyclaw/sessions/<sanitized-sessionId>.toml
+```
+
+与 JSONL 持久化文件同目录，文件名仅后缀不同（`.toml` vs `.jsonl`）。
+
+### 启用 Loop
+
+```bash
+# 为一个已有或未来会话开启 loop（不要求 JSONL 已存在）
+tinyclaw chat loop enable cli:abc-123
+
+# 配置参数
+tinyclaw chat loop set cli:abc-123 agentId=monitor
+tinyclaw chat loop set cli:abc-123 tickSeconds=300
+tinyclaw chat loop set cli:abc-123 notify=on_change
+tinyclaw chat loop set cli:abc-123 peerId=你的QQ号
+
+# 重启后生效
+tinyclaw restart
+```
+
+### tick 执行流程
+
+```
+setInterval 触发 tick(sessionId, cfg)
+│
+├─ 并发保护：session 仍在执行中 → 跳过
+├─ 读取 taskFile（默认 agentDir/TASK.md）→ 空或不存在则跳过
+├─ 复用常驻 Session 实例（messages[] 跨 tick 持久，记忆累积）
+│    首次 tick 时创建 Session，后续 tick 复用同一实例
+├─ runAgent(session, taskContent)
+│    注入 Loop 专用 system prompt（无人值守规则）
+├─ 写日志：~/.tinyclaw/cron/logs/loop:<sanitized-sessionId>.jsonl
+└─ 按 notify 策略推送结果
+     always → 每次推送
+     on_change → 与上次结果不同时推送
+     on_error → 执行出错时推送
+     never → 仅写日志
+```
+
+### 停止 / 禁用
+
+```bash
+tinyclaw chat loop disable cli:abc-123   # 设 enabled=false，重启后停止
+tinyclaw restart
+```
+
+### 立即触发（调试用）
+
+```bash
+# 服务运行时，通过 IPC 立即触发一次 tick（不影响定时计划）
+tinyclaw chat loop trigger cli:abc-123
+```
+
+### 查看状态
+
+```bash
+tinyclaw chat loop list                  # 列出所有启用的 loop session
+tinyclaw chat loop show cli:abc-123      # 查看详细配置
+```
+
+详见 [LOOP_SESSION.md](./LOOP_SESSION.md)。
