@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import { registerTool } from "./registry.js";
@@ -127,28 +127,38 @@ async function tryChromium(code: string, outFile: string): Promise<string | null
   if (!resolvedMermaidPath) {
     return "未找到 node_modules/mermaid/dist/mermaid.min.js，请在 tinyclaw 目录运行 bun install";
   }
-  const mermaidJs = readFileSync(resolvedMermaidPath, "utf-8");
+  // 不再内联 mermaid.min.js，改用 file:// 外链
 
-  // 生成内嵌 mermaid.js 的 HTML 临时文件
-  // 不能对 code 做 HTML 实体转义（否则 --> 等箭头语法会被破坏）
-  // 改为用 JS textContent 动态注入，完全规避 HTML 转义问题
+  // 生成 HTML 文件，通过 file:// 外链 mermaid.min.js
+  // 不内联，避免 mermaid.min.js 内部的 </body></html> 字符串破坏 HTML 文档结构
+  // 使用 mermaid.render() async API + startOnLoad:false，
+  // 配合 --virtual-time-budget 确保截图时 SVG 已挂载完成
   const escapedCodeJson = JSON.stringify(code);
+  const mermaidSrc = `file://${resolvedMermaidPath}`;
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: white; padding: 24px; display: inline-block; font-family: sans-serif; }
-.mermaid svg { max-width: none !important; }
+body { background: white; padding: 24px; font-family: sans-serif; }
+#diagram svg { max-width: none !important; }
 </style>
-<script>${mermaidJs}</script>
+<script src="${mermaidSrc}"></script>
 </head>
 <body>
-<div class="mermaid" id="diagram"></div>
+<div id="diagram"></div>
 <script>
-document.getElementById('diagram').textContent = ${escapedCodeJson};
-mermaid.initialize({startOnLoad:true,theme:'neutral'});
+(async function() {
+  const code = ${escapedCodeJson};
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+  try {
+    const { svg } = await mermaid.render('mermaid-svg', code);
+    document.getElementById('diagram').innerHTML = svg;
+  } catch (e) {
+    document.body.textContent = 'mermaid render error: ' + e.message;
+  }
+})();
 </script>
 </body>
 </html>`;
@@ -165,6 +175,7 @@ mermaid.initialize({startOnLoad:true,theme:'neutral'});
       "--disable-gpu",
       "--disable-software-rasterizer",
       "--window-size=1400,1000",
+      "--virtual-time-budget=5000",
       `--screenshot=${rawScreenshot}`,
       `file://${htmlFile}`,
     ], { stdio: ["ignore", "pipe", "pipe"] });
