@@ -18,6 +18,7 @@ import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 import { memoryMaintenance } from "../../core/memory-maintenance.js";
 import { agentManager } from "../../core/agent-manager.js";
+import { llmRegistry } from "../../llm/registry.js";
 
 export const description = "管理 Agent 长期记忆（摘要、搜索、向量索引）";
 export const usage = "memory <save|list|search|index|maintain> [options]";
@@ -227,6 +228,9 @@ async function cmdMaintain(args: string[]): Promise<void> {
   // 若显式指定了 -a <id>（且无 --all），只处理该 agent；否则处理全部
   const hasAgentFlag = args.some((a) => a === "-a" || a === "--agent");
   const targetId: string | undefined = (!hasAll && hasAgentFlag) ? agentId : undefined;
+
+  // CLI 独立运行时需要手动初始化 LLM 注册表（主服务已在 start 时初始化）
+  await llmRegistry.init();
 
   if (targetId) {
     section(`记忆维护 — agent: ${targetId}`);

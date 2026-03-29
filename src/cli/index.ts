@@ -75,10 +75,10 @@ const SUBCOMMANDS: Record<string, string[]> = {
   status:      [],
   restart:     [],
   start:       [],
-  chat:        ["list", "new"],
-  agent:       ["list", "new", "show", "edit", "delete", "repair"],
+  chat:        ["list", "new", "loop", "-s", "--agent", "-a", "help"],
+  agent:       ["list", "new", "show", "edit", "delete", "repair", "perm", "access", "memoryonly"],
   cron:        ["list", "add", "remove", "enable", "disable", "run", "logs", "help"],
-  memory:      ["save", "list", "search", "index", "help"],
+  memory:      ["save", "list", "search", "index", "maintain", "help"],
   session:     ["list", "abort", "memory", "help"],
   logs:        ["-f", "--follow", "-n", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
@@ -153,6 +153,10 @@ function outputCompletions(words: string[]): void {
     }
   } else if (cmd === "completions" && sub === "install") {
     candidates = ["bash", "zsh", "fish"];
+  } else if (cmd === "chat" && sub === "loop") {
+    candidates = ["list", "show", "enable", "disable", "trigger", "set"];
+  } else if (cmd === "agent" && sub === "access") {
+    candidates = ["show", "set", "add", "clear"];
   } else {
     candidates = [];
   }
