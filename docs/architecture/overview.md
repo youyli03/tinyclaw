@@ -492,3 +492,100 @@ clientSecret = "your-client-secret"
 embedModel     = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
 tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
 ```
+
+---
+
+## IPC 协议对照
+
+| 请求类型 | 参数 | 说明 |
+|---|---|---|
+| `chat` | `sessionId`, `message` | 向会话发送消息（流式回复） |
+| `list` | — | 获取所有内存中的会话快照 |
+| `new` | `agentId?` | 创建新终端会话 |
+
+| 响应类型 | 字段 | 说明 |
+|---|---|---|
+| `chunk` | `delta` | 流式文本片段 |
+| `done` | — | 本次回复结束 |
+| `error` | `message` | 错误信息 |
+| `sessions` | `sessions[]` | 会话列表（响应 `list`） |
+| `created` | `sessionId` | 新会话 ID（响应 `new`） |
+
+---
+
+## 子 Agent 绑定（Session Bind）
+
+`code_assist` 等工具会创建子 Agent Session，并通过 **bind** 机制维护父子关系。
+
+### 绑定字段（`session.ts`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `parentId` | `string \| null` | 父 Session ID（Master 或上级 daily Agent）|
+| `childIds` | `string[]` | 子 Session ID 列表 |
+| `mfaPreApproved` | `boolean` | 是否已通过一次性 MFA 预授权（跳过后续 MFA 弹窗）|
+| `pendingSlaveQuestion` | `{ question, resolve } \| null` | daily 子 Agent 调用 `ask_master` 时的挂起问题 |
+
+### 绑定方法
+
+```typescript
+// 在子 Session 上调用，同时更新父 Session 的 childIds[]
+childSession.bindParent(masterSession);
+
+// 子 Agent 完成时清理父 Session 的 childIds[]
+masterSession.removeChild(childSession.sessionId);
+```
+
+### ask_master 阻塞流程
+
+```
+daily 子 Agent 调用 ask_master(question, context, planPath?)
+  └→ 将问题 + plan.md 渲染为图片发给用户
+  └→ 在 masterSession.pendingSlaveQuestion 设置 { question, resolve }
+  └→ 阻塞等待（async Promise）
+
+用户回复消息
+  └→ main.ts handleMessage() 检测 session.pendingSlaveQuestion
+  └→ session.pendingSlaveQuestion = null
+  └→ resolve(userMessage)  ← 解除 daily 子 Agent 阻塞
+  └→ 发送"已收到，已转发给 AI 继续处理..."
+  └→ return（不触发 runAgent）
+
+daily 子 Agent 继续运行（获得用户回复作为工具返回值）
+```
+
+### 层级关系示意
+
+```
+masterSession（chat，slaveDepth=0）
+  └─ dailySession（daily LLM，slaveDepth=1，mfaPreApproved=true）
+       └─ codeSession（code LLM，slaveDepth=2，mfaPreApproved=true）
+```
+
+- `slaveDepth=2` 的 code Session 不允许再 fork（`agent_fork` 返回错误）
+- `slaveDepth=2` 的 code Session 不持有 `ask_master` 工具（只注入给 daily）
+
+---
+
+## 常用操作速查
+
+```bash
+# Agent 管理
+tinyclaw agent new work          # 创建名为 work 的 Agent
+tinyclaw agent edit work         # 编辑 work 的系统提示
+tinyclaw agent list              # 列出所有 Agent
+tinyclaw agent show work         # 查看 work 的详情
+tinyclaw agent delete work       # 删除 work（含其记忆）
+
+# 会话操作
+tinyclaw chat new                        # 新建终端会话（默认 Agent）
+tinyclaw chat new --agent work           # 新建绑定到 work 的会话
+tinyclaw chat list                       # 查看所有会话（只读）
+tinyclaw chat -s cli:<uuid> 你好         # 发送消息
+tinyclaw chat -s cli:<uuid> bind work    # 将会话绑定到 work Agent
+
+# 查看记忆文件
+ls ~/.tinyclaw/agents/default/memory/    # 默认 Agent 的压缩摘要
+ls ~/.tinyclaw/agents/work/memory/       # work Agent 的压缩摘要
+ls ~/.tinyclaw/sessions/                 # 原始对话 JSONL + loop .toml 配置
+```

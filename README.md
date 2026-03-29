@@ -115,14 +115,22 @@ tinyclaw completions install           # 安装 tab 补全
 
 ## 文档
 
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 整体架构
-- [AGENT_LOOP.md](docs/AGENT_LOOP.md) — ReAct 循环与 MFA
-- [CODE_MODE.md](docs/CODE_MODE.md) — Code 模式（Plan/Auto）
-- [CRON_PIPELINE.md](docs/CRON_PIPELINE.md) — Cron Pipeline 多步流水线
-- [LOOP_SESSION.md](docs/LOOP_SESSION.md) — Loop Session 持续自主执行
-- [NOTES_MCP.md](docs/NOTES_MCP.md) — Notes MCP 笔记知识库
-- [SESSIONS_AND_AGENTS.md](docs/SESSIONS_AND_AGENTS.md) — Session 与 Agent 生命周期
-- [RETRY_AND_STABILITY.md](docs/RETRY_AND_STABILITY.md) — 连接稳定性与重试策略
+**架构**
+
+- [architecture/overview.md](docs/architecture/overview.md) — 整体架构、模块说明、IPC 协议、操作速查
+- [architecture/agent-loop.md](docs/architecture/agent-loop.md) — ReAct 循环、MFA、压缩、并发处理
+- [architecture/retry.md](docs/architecture/retry.md) — 连接稳定性与重试策略
+
+**功能命令参考**
+
+- [commands/code-mode.md](docs/commands/code-mode.md) — Code 模式（/code /plan /auto）
+- [commands/cron-pipeline.md](docs/commands/cron-pipeline.md) — Cron Pipeline 多步流水线
+- [commands/loop-session.md](docs/commands/loop-session.md) — Loop Session 持续自主执行
+
+**MCP Server**
+
+- [mcp/news.md](docs/mcp/news.md) — 多源新闻抓取/存档/检索
+- [mcp/notes.md](docs/mcp/notes.md) — 结构化笔记知识库
 
 ## License
 
