@@ -14,6 +14,7 @@
  *     memory/       — QMD 向量索引
  *     mcp.toml      — MCP server 白名单（可选）
  *     tools.toml    — 内置工具黑/白名单（可选）
+ *     access.toml   — 跨 session 通信权限配置（可选）
  */
 
 
@@ -21,6 +22,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
+
+/**
+ * 跨 session 通信权限配置（存储在 agents/<agentId>/access.toml）。
+ * 双向 allow-list：发送方 can_access 包含接收方 agentId，且接收方 allow_from 包含发送方 agentId，才允许通信。
+ * 文件不存在视为两个列表均为空（默认 deny）。
+ */
+export interface AccessConfig {
+  /** 本 agent 可以向哪些 agentId 的 session 发送消息 */
+  can_access: string[];
+  /** 允许哪些 agentId 的 agent 向本 agent 的 session 发送消息 */
+  allow_from: string[];
+}
 
 export interface AgentBinding {
   source: string;
@@ -148,6 +161,37 @@ export class AgentManager {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Agent 级跨 session 通信权限配置文件路径。
+   * 格式：~/.tinyclaw/agents/<id>/access.toml
+   */
+  accessConfigPath(id: string): string {
+    return path.join(AGENTS_ROOT, id, "access.toml");
+  }
+
+  /**
+   * 读取 agent 的跨 session 通信权限配置。
+   * - 文件不存在 → 返回 { can_access: [], allow_from: [] }（默认 deny）
+   */
+  readAccessConfig(id: string): AccessConfig {
+    const p = this.accessConfigPath(id);
+    const empty: AccessConfig = { can_access: [], allow_from: [] };
+    if (!fs.existsSync(p)) return empty;
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const parsed = parse(content) as Record<string, unknown>;
+      const can_access = Array.isArray(parsed["can_access"])
+        ? (parsed["can_access"] as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+      const allow_from = Array.isArray(parsed["allow_from"])
+        ? (parsed["allow_from"] as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
+      return { can_access, allow_from };
+    } catch {
+      return empty;
     }
   }
 

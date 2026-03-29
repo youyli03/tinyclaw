@@ -2,6 +2,16 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { Session } from "../core/session.js";
 import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
 
+/** 跨 session 通信：单个 session 的信息（由 sessionGetFn 返回） */
+export interface SessionInfo {
+  sessionId: string;
+  agentId: string;
+  /** 当前是否正在执行 runAgent */
+  running: boolean;
+  /** 是否为 loop session（有 [loop] enabled=true 配置） */
+  isLoop: boolean;
+}
+
 /** 工具执行上下文（由 runAgent 提供） */
 export interface ToolContext {
   /** exec_shell 的默认工作目录 */
@@ -73,6 +83,21 @@ export interface ToolContext {
    * daily subagent 调用此函数向 code subagent 发送指令，同步等待执行结果。
    */
   codeRunFn?: (instruction: string) => Promise<string>;
+  /**
+   * 跨 session 通信：向目标 session 注入一条消息（由 main.ts 注入）。
+   * 内部完成双向 access.toml 权限检查，等待目标 session 空闲后调用 runAgent。
+   * CLI/cron 模式下未注入，工具调用时返回错误提示。
+   */
+  sessionSendFn?: (
+    targetSessionId: string,
+    message: string,
+    fromAgentId: string,
+  ) => Promise<string>;
+  /**
+   * 跨 session 通信：获取当前 Agent 可见的 session 列表（由 main.ts 注入）。
+   * 过滤出发送方有权访问的 session（双向 access.toml 检查）。
+   */
+  sessionGetFn?: (fromAgentId: string) => Promise<SessionInfo[]>;
 }
 
 export interface ToolDef {

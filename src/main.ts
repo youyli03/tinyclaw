@@ -49,6 +49,10 @@ import "./commands/builtin.js";
 let _activeConnector: import("./connectors/qqbot/index.js").QQBotConnector | null = null;
 let _activeSessions: Map<string, Session> | null = null;
 
+// ── 跨 session 通信（session_send / session_get）——模块级引用，在 startApp() 中赋值 ──
+let _sessionSendFn: import("./tools/registry.js").ToolContext["sessionSendFn"] | null = null;
+let _sessionGetFn: import("./tools/registry.js").ToolContext["sessionGetFn"] | null = null;
+
 // ── Session 注册表（key 为 sessionId，格式：qqbot:<type>:<peerId>）────────────
 
 const sessions = new Map<string, Session>();
@@ -277,6 +281,8 @@ async function main(): Promise<void> {
           }
         },
         // 不传 onSlaveComplete，避免 Slave 触发递归 fork
+        ...(_sessionSendFn ? { sessionSendFn: _sessionSendFn } : {}),
+        ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
       };
 
       // 将 slave 结果注入 Master session 并运行 agent → 通知用户
@@ -472,6 +478,8 @@ async function main(): Promise<void> {
           void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
         }
       },
+      ...(_sessionSendFn ? { sessionSendFn: _sessionSendFn } : {}),
+      ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
     };
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
@@ -573,10 +581,74 @@ async function main(): Promise<void> {
   // 6. 启动 Loop Session 引擎
   // loopTick：将 TASK.md 内容作为用户消息，直接调 runAgent，走完整 agent 路径。
   // Loop session 本身无 QQ 回调，Agent 若需推送结果通过 notify_user / send_report 工具自行完成。
+
+  // ── 跨 session 通信（session_send / session_get）────────────────────────
+  // 双向 access.toml 权限检查：发送方 can_access 包含接收方 agentId，且接收方 allow_from 包含发送方 agentId。
+  const sessionSendFn = async (
+    targetSessionId: string,
+    message: string,
+    fromAgentId: string,
+  ): Promise<string> => {
+    // 获取目标 session（不存在时 lazy 创建）
+    const targetSession = getSession(targetSessionId);
+    const targetAgentId = targetSession.agentId;
+
+    // 双向权限检查
+    const senderAccess = agentManager.readAccessConfig(fromAgentId);
+    if (!senderAccess.can_access.includes(targetAgentId)) {
+      return `权限拒绝：agent "${fromAgentId}" 未配置对 agent "${targetAgentId}" 的访问权限（在 ${agentManager.accessConfigPath(fromAgentId)} 中添加 can_access = ["${targetAgentId}"]）`;
+    }
+    const receiverAccess = agentManager.readAccessConfig(targetAgentId);
+    if (!receiverAccess.allow_from.includes(fromAgentId)) {
+      return `权限拒绝：agent "${targetAgentId}" 未允许来自 agent "${fromAgentId}" 的消息（在 ${agentManager.accessConfigPath(targetAgentId)} 中添加 allow_from = ["${fromAgentId}"]）`;
+    }
+
+    // 等待目标 session 空闲
+    if (targetSession.running && targetSession.currentRunPromise) {
+      await targetSession.currentRunPromise.catch(() => {});
+    }
+
+    // 注入消息，走完整 runAgent 路径
+    const nowStr = new Date().toLocaleString();
+    await runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
+      sessionSendFn,
+      sessionGetFn,
+    });
+    return `消息已成功注入 session "${targetSessionId}"`;
+  };
+
+  const sessionGetFn = async (
+    fromAgentId: string,
+  ): Promise<import("./tools/registry.js").SessionInfo[]> => {
+    const senderAccess = agentManager.readAccessConfig(fromAgentId);
+    const result: import("./tools/registry.js").SessionInfo[] = [];
+    for (const [sid, session] of sessions) {
+      const targetAgentId = session.agentId;
+      if (!senderAccess.can_access.includes(targetAgentId)) continue;
+      const receiverAccess = agentManager.readAccessConfig(targetAgentId);
+      if (!receiverAccess.allow_from.includes(fromAgentId)) continue;
+      const loopCfg = agentManager.readSessionLoop(sid);
+      result.push({
+        sessionId: sid,
+        agentId: targetAgentId,
+        running: session.running,
+        isLoop: loopCfg !== null,
+      });
+    }
+    return result;
+  };
+
+  // 注册到模块级变量，供 handleMessage 中的 opts 引用
+  _sessionSendFn = sessionSendFn;
+  _sessionGetFn = sessionGetFn;
+
   const loopTick = async (sessionId: string, content: string): Promise<void> => {
     const session = getSession(sessionId);
     const nowStr = new Date().toLocaleString();
-    await runAgent(session, `[${nowStr}] ${content}`, {});
+    await runAgent(session, `[${nowStr}] ${content}`, {
+      sessionSendFn,
+      sessionGetFn,
+    });
   };
   await loopRunner.start(loopTick);
 

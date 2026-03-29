@@ -32,6 +32,7 @@ import "../tools/ask-user-tool.js";
 import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
 import "../tools/memory.js";
+import "../tools/session-bridge.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 // 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
@@ -401,6 +402,16 @@ export interface AgentRunOptions {
    * 透传到 ToolContext，供 run_code_subagent 工具使用。
    */
   codeRunFn?: import("../tools/registry.js").ToolContext["codeRunFn"];
+  /**
+   * 跨 session 消息注入函数（由 main.ts 注入）。
+   * 透传到 ToolContext，供 session_send 工具使用。
+   */
+  sessionSendFn?: import("../tools/registry.js").ToolContext["sessionSendFn"];
+  /**
+   * 跨 session 可见列表函数（由 main.ts 注入）。
+   * 透传到 ToolContext，供 session_get 工具使用。
+   */
+  sessionGetFn?: import("../tools/registry.js").ToolContext["sessionGetFn"];
 }
 
 export interface AgentRunResult {
@@ -781,6 +792,7 @@ export async function runAgent(
       "agent_fork", "run_code_subagent",
       "exit_plan_mode",
       "create_skill",
+      "session_send",
     ]);
 
     /**
@@ -815,6 +827,8 @@ export async function runAgent(
           ...(opts.onMFARequest ? { onMFARequest: opts.onMFARequest } : {}),
           ...(opts.onAskMaster ? { onAskMaster: opts.onAskMaster } : {}),
           ...(opts.codeRunFn ? { codeRunFn: opts.codeRunFn } : {}),
+          ...(opts.sessionSendFn ? { sessionSendFn: opts.sessionSendFn } : {}),
+          ...(opts.sessionGetFn ? { sessionGetFn: opts.sessionGetFn } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {
