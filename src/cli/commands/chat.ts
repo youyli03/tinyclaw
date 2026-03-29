@@ -21,32 +21,78 @@ import type { SessionInfo } from "../../ipc/protocol.js";
 export const description = "会话管理与消息发送";
 export const usage = "chat <list|new|-s <id> <msg>>";
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  chat list                                               列出所有会话（只读）
-  chat new [--agent <id>]                                 新建终端会话
-  chat new qqbot --app-id <id> --secret <secret>          配置 QQBot 渠道
-  chat -s <sessionId> <消息>                              发送消息到指定会话
-  chat -s <sessionId> bind <agentId>                      将会话绑定到 Agent
+${bold("tinyclaw chat")}  —  会话管理与消息发送
 
-${bold("示例：")}
-  tinyclaw chat new                                       新建默认 Agent 的会话
-  tinyclaw chat new --agent mywork                        新建绑定到 mywork Agent 的会话
-  tinyclaw chat new qqbot --app-id 1234 --secret abc123   配置 QQBot 并写入 config.toml
-  tinyclaw chat -s cli:<uuid> 你好                        向指定会话发送消息
-  tinyclaw chat -s cli:<uuid> bind work                   将会话绑定到 work Agent
-  tinyclaw chat list                                      查看所有会话
+${bold("子命令：")}
+  ${cyan("list")}              列出所有会话（只读）
+  ${cyan("new")}               新建终端会话
+  ${cyan("-s <id> <消息>")}    发送消息到指定会话
+  ${cyan("-s <id> bind")}      将会话绑定到指定 Agent
+
+${dim("运行 tinyclaw chat <sub> -h 查看子命令详细参数")}
+`);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "list":
+      console.log(`
+${bold("tinyclaw chat list")}
+
+  列出所有会话（持久化记录 + 内存中活跃 session）。
+  显示状态（运行中/空闲）、消息数、最后一条用户消息。
+  无需额外参数。
 
 ${bold("会话 ID 格式：")}
-  ${cyan("cli:<uuid>")}                  终端会话（chat new 自动生成）
-  ${cyan("qqbot:c2c:<openid>")}          QQ 私聊会话（QQ 用户主动发消息后自动出现）
-  ${cyan("qqbot:group:<openid>")}        QQ 群聊会话
-
-${bold("QQBot 说明：")}
-  配置后需重启守护进程：${cyan("tinyclaw restart")}
-  QQ 用户向机器人发消息后，会话将自动以 ${cyan("qqbot:c2c:<openid>")} 格式出现在 ${cyan("chat list")} 中。
+  ${cyan("cli:<uuid>")}               终端会话
+  ${cyan("qqbot:c2c:<openid>")}       QQ 私聊会话
+  ${cyan("qqbot:group:<openid>")}     QQ 群聊会话
 `);
+      break;
+    case "new":
+      console.log(`
+${bold("tinyclaw chat new")} [qqbot | --agent <id>]
+
+${bold("选项：")}
+  --agent, -a <id>                        绑定到指定 Agent（默认 default）
+
+${bold("QQBot 子模式：")}
+  chat new qqbot --app-id <id> --secret <secret>
+    --app-id <id>     QQBot 应用 ID
+    --secret <secret> QQBot ClientSecret
+    写入 config.toml 后需重启服务：tinyclaw restart
+`);
+      break;
+    case "send":
+      console.log(`
+${bold("tinyclaw chat -s <sessionId> <消息>")}
+
+  向指定会话发送消息，等待并打印 Agent 回复。
+
+${bold("参数：")}
+  -s, --session <id>   目标会话 ID（运行 chat list 查看）
+  <消息>               要发送的消息文本
+`);
+      break;
+    case "bind":
+      console.log(`
+${bold("tinyclaw chat -s <sessionId> bind <agentId>")}
+
+  将指定会话绑定到指定 Agent，后续消息将由该 Agent 处理。
+
+${bold("参数：")}
+  -s, --session <id>   目标会话 ID
+  <agentId>            目标 Agent ID（运行 tinyclaw agent list 查看）
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 export async function run(args: string[]): Promise<void> {
@@ -58,7 +104,7 @@ export async function run(args: string[]): Promise<void> {
   // ── list 子命令 ─────────────────────────────────────────────────────────────
   if (args[0] === "list") {
     if (args.includes("-h") || args.includes("--help")) {
-      printHelp();
+      printSubHelp("list");
       return;
     }
     await runList();
@@ -68,7 +114,7 @@ export async function run(args: string[]): Promise<void> {
   // ── new 子命令 ──────────────────────────────────────────────────────────────
   if (args[0] === "new") {
     if (args.includes("-h") || args.includes("--help")) {
-      printHelp();
+      printSubHelp("new");
       return;
     }
     const rest = args.slice(1);
@@ -100,19 +146,22 @@ export async function run(args: string[]): Promise<void> {
   }
 
   // ── chat -s <id> bind <agentId> ────────────────────────────────────────────
-  if (sessionId && rest[0] === "bind" && rest[1]) {
-    runBind(sessionId, rest[1]);
-    return;
+  if (sessionId && rest[0] === "bind") {
+    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("bind"); return; }
+    if (rest[1]) { runBind(sessionId, rest[1]); return; }
   }
 
   // ── 无 -s 时拒绝（不自动生成）────────────────────────────────────────────
   if (!sessionId) {
+    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("send"); return; }
     console.error(red("错误：必须通过 -s 指定会话 ID"));
     console.error(dim("  新建会话：tinyclaw chat new"));
     console.error(dim("  查看会话：tinyclaw chat list"));
     printHelp();
     process.exit(1);
   }
+
+  if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("send"); return; }
 
   const message = rest.join(" ").trim();
   if (!message) {

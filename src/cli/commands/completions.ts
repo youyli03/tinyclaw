@@ -168,27 +168,76 @@ async function install(shellArg: string | undefined): Promise<void> {
 
 // ── 子命令 ────────────────────────────────────────────────────────────────────
 
+/** 第二层：只列子命令 */
 function printHelp(): void {
   console.log(`
-${bold("用法：")}
-  completions bash              输出 bash 补全脚本
-  completions zsh               输出 zsh 补全脚本
-  completions fish              输出 fish 补全脚本
-  completions install [shell]   自动安装（默认根据 $SHELL 检测）
+${bold("tinyclaw completions")}  —  Shell Tab 补全
 
-${bold("快速安装：")}
-  tinyclaw completions install
+${bold("子命令：")}
+  ${cyan("bash")}              输出 bash 补全脚本
+  ${cyan("zsh")}               输出 zsh 补全脚本
+  ${cyan("fish")}              输出 fish 补全脚本
+  ${cyan("install")}           自动安装到 shell rc 文件
 
-${bold("手动安装（bash）：")}
-  # 在 ~/.bashrc 末尾添加：
-  eval "$(tinyclaw completions bash)"
-  source ~/.bashrc
-
-${bold("手动安装（zsh）：")}
-  # 在 ~/.zshrc 末尾添加：
-  eval "$(tinyclaw completions zsh)"
-  source ~/.zshrc
+${dim("运行 tinyclaw completions <sub> -h 查看子命令详细说明")}
 `);
+}
+
+/** 第三层：显示指定子命令的完整参数说明 */
+function printSubHelp(sub: string): void {
+  switch (sub) {
+    case "bash":
+      console.log(`
+${bold("tinyclaw completions bash")}
+
+  输出 bash 补全脚本（用于 eval 安装）。
+
+${bold("手动安装：")}
+  在 ~/.bashrc 末尾添加：
+    eval "$(tinyclaw completions bash)"
+  然后运行：source ~/.bashrc
+`);
+      break;
+    case "zsh":
+      console.log(`
+${bold("tinyclaw completions zsh")}
+
+  输出 zsh 补全脚本（用于 eval 安装）。
+
+${bold("手动安装：")}
+  在 ~/.zshrc 末尾添加：
+    eval "$(tinyclaw completions zsh)"
+  然后运行：source ~/.zshrc
+`);
+      break;
+    case "fish":
+      console.log(`
+${bold("tinyclaw completions fish")}
+
+  输出 fish 补全脚本。
+
+${bold("手动安装：")}
+  tinyclaw completions fish > ~/.config/fish/completions/tinyclaw.fish
+`);
+      break;
+    case "install":
+      console.log(`
+${bold("tinyclaw completions install")} [bash|zsh|fish]
+
+${bold("参数：")}
+  shell    目标 shell（可省略，省略时根据 \$SHELL 自动检测）
+           可选：bash | zsh | fish
+
+${bold("说明：")}
+  bash/zsh：将 eval 行追加到 ~/.bashrc 或 ~/.zshrc
+  fish：将脚本写入 ~/.config/fish/completions/tinyclaw.fish
+  安装后重新打开终端或 source rc 文件即可生效。
+`);
+      break;
+    default:
+      console.error(red(`未知子命令 "${sub}"`));
+      printHelp();
+  }
 }
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
@@ -197,16 +246,28 @@ export const description = "生成并安装 shell tab 补全脚本（bash/zsh/fi
 export const usage = "completions <bash|zsh|fish|install>";
 
 export async function run(args: string[]): Promise<void> {
-  const sub = args[0] ?? "bash";
+  const sub = args[0];
+
+  if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
+    printHelp(); return;
+  }
+
+  const rest = args.slice(1);
+  const wantsHelp = rest.includes("-h") || rest.includes("--help");
 
   switch (sub) {
-    case "bash":    process.stdout.write(bashScript()); return;
-    case "zsh":     process.stdout.write(zshScript()); return;
-    case "fish":    process.stdout.write(fishScript()); return;
-    case "install": return install(args[1]);
-    case "--help":
-    case "-h":
-    case "help":    printHelp(); return;
+    case "bash":
+      if (wantsHelp) { printSubHelp("bash"); return; }
+      process.stdout.write(bashScript()); return;
+    case "zsh":
+      if (wantsHelp) { printSubHelp("zsh"); return; }
+      process.stdout.write(zshScript()); return;
+    case "fish":
+      if (wantsHelp) { printSubHelp("fish"); return; }
+      process.stdout.write(fishScript()); return;
+    case "install":
+      if (wantsHelp) { printSubHelp("install"); return; }
+      return install(args[1]);
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();
