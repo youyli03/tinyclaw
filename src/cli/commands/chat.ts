@@ -9,7 +9,7 @@
  *   chat loop <sub> [args...]             管理 loop session（list/show/enable/disable/trigger/set）
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendToAgent, listSessions, createSession, triggerLoop } from "../../ipc/client.js";
@@ -344,14 +344,19 @@ async function runNew(agentId?: string, loopOpts?: { interval: number }): Promis
     console.log(green(`✓ 新会话已创建：${sessionId}`));
     if (agentId) console.log(dim(`  Agent：${agentId}`));
     if (loopOpts) {
+      const resolvedAgentId = agentId ?? "default";
+      const taskFile = `tasks/${sessionId}.md`;
       agentManager.writeSessionLoop(sessionId, {
         enabled: true,
-        agentId: agentId ?? "default",
+        agentId: resolvedAgentId,
         tickSeconds: loopOpts.interval,
-        taskFile: "TASK.md",
+        taskFile,
       });
+      // 自动创建任务文件
+      createTaskFile(resolvedAgentId, sessionId, loopOpts.interval);
       console.log(green(`✓ loop 已启用（tickSeconds=${loopOpts.interval}）`));
       console.log(dim(`  配置文件：${agentManager.getSessionTomlPath(sessionId)}`));
+      console.log(dim(`  任务文件：${join(agentManager.agentDir(resolvedAgentId), taskFile)}`));
       console.log(dim("  修改配置：tinyclaw chat loop set <sessionId> <key=value>"));
     }
     console.log(dim(`  发送消息：tinyclaw chat -s ${sessionId} <消息>`));
@@ -508,14 +513,21 @@ function runLoopEnable(sessionId: string | undefined): void {
   }
   // 读取已有配置（若有），以保留已有字段
   const existing = agentManager.readSessionLoop(sessionId);
+  const isNew = !existing;
+  const taskFile = isNew ? `tasks/${sessionId}.md` : (existing.taskFile ?? `tasks/${sessionId}.md`);
   const cfg: LoopSessionConfig = existing ?? {
     enabled: true,
     agentId: "default",
     tickSeconds: 60,
-    taskFile: "TASK.md",
+    taskFile,
   };
   cfg.enabled = true;
   agentManager.writeSessionLoop(sessionId, cfg);
+  // 首次启用时自动创建任务文件
+  if (isNew) {
+    createTaskFile(cfg.agentId, sessionId, cfg.tickSeconds);
+    console.log(dim(`  任务文件：${join(agentManager.agentDir(cfg.agentId), taskFile)}`));
+  }
   console.log(green(`✓ loop 已启用：${sessionId}`));
   console.log(dim(`  配置文件：${agentManager.getSessionTomlPath(sessionId)}`));
   console.log(dim(`  默认每 ${cfg.tickSeconds}s 执行一次 ${cfg.taskFile}`));
@@ -627,4 +639,24 @@ function runLoopSet(sessionId: string | undefined, kvPair: string | undefined): 
   agentManager.writeSessionLoop(sessionId, cfg);
   console.log(green(`✓ ${sessionId} [loop].${key} = ${value}`));
   console.log(dim("  重启服务后生效：tinyclaw restart"));
+}
+
+// ── 辅助函数 ──────────────────────────────────────────────────────────────────
+
+/** 在 agentDir/tasks/<sessionId>.md 创建任务文件模板（若已存在则跳过） */
+function createTaskFile(agentId: string, sessionId: string, tickSeconds: number): void {
+  const tasksDir = join(agentManager.agentDir(agentId), "tasks");
+  const taskPath = join(tasksDir, `${sessionId}.md`);
+  if (existsSync(taskPath)) return;
+  mkdirSync(tasksDir, { recursive: true });
+  const template = `# Loop Task — ${sessionId}
+
+此文件每隔 ${tickSeconds} 秒被读取一次，内容将作为用户消息发送给 Agent（${agentId}）执行。
+修改此文件后无需重启服务，下次 tick 时自动生效。
+
+## 任务
+
+在这里描述你希望 Agent 定期执行的任务。
+`;
+  writeFileSync(taskPath, template, "utf-8");
 }
