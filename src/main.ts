@@ -646,6 +646,11 @@ async function main(): Promise<void> {
 
   const loopTick = async (sessionId: string, content: string): Promise<void> => {
     const session = getSession(sessionId);
+    // stateful=false：每轮开始前清空历史，避免 context 无限积累
+    const loopCfg = agentManager.readSessionLoop(sessionId);
+    if (loopCfg && !loopCfg.stateful) {
+      session.clearMessages();
+    }
     const nowStr = new Date().toLocaleString();
     await runAgent(session, `[${nowStr}] ${content}`, {
       sessionSendFn,

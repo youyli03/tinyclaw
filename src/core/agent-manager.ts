@@ -57,6 +57,12 @@ export interface LoopSessionConfig {
   tickSeconds: number;
   /** 绝对路径，或相对于 agentDir 的相对路径 */
   taskFile: string;
+  /**
+   * 是否跨轮次保留对话历史（默认 true）。
+   * 设为 false 时，每次 tick 开始前自动清空 session messages，
+   * 避免长时间运行后 context 积累过长导致模型跳步骤。
+   */
+  stateful: boolean;
 }
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
@@ -224,6 +230,7 @@ export class AgentManager {
         agentId: typeof l["agentId"] === "string" && l["agentId"] ? l["agentId"] : DEFAULT_AGENT_ID,
         tickSeconds: typeof l["tickSeconds"] === "number" ? l["tickSeconds"] : 60,
         taskFile: typeof l["taskFile"] === "string" ? l["taskFile"] : "TASK.md",
+        stateful: l["stateful"] !== false,
       };
     } catch {
       return null;
@@ -252,6 +259,7 @@ export class AgentManager {
       agentId: cfg.agentId,
       tickSeconds: cfg.tickSeconds,
       taskFile: cfg.taskFile,
+      stateful: cfg.stateful,
     };
 
     existing["loop"] = loopBlock;

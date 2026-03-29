@@ -351,6 +351,7 @@ async function runNew(agentId?: string, loopOpts?: { interval: number }): Promis
         agentId: resolvedAgentId,
         tickSeconds: loopOpts.interval,
         taskFile,
+        stateful: true,
       });
       // 自动创建任务文件
       createTaskFile(resolvedAgentId, sessionId, loopOpts.interval);
@@ -520,6 +521,7 @@ function runLoopEnable(sessionId: string | undefined): void {
     agentId: "default",
     tickSeconds: 60,
     taskFile,
+    stateful: true,
   };
   cfg.enabled = true;
   agentManager.writeSessionLoop(sessionId, cfg);
@@ -550,6 +552,7 @@ function runLoopDisable(sessionId: string | undefined): void {
       agentId: "default",
       tickSeconds: 60,
       taskFile: "TASK.md",
+      stateful: true,
     });
   } else {
     cfg.enabled = false;
@@ -607,9 +610,10 @@ function runLoopSet(sessionId: string | undefined, kvPair: string | undefined): 
     agentId: "default",
     tickSeconds: 60,
     taskFile: "TASK.md",
+    stateful: true,
   };
 
-  const validKeys = ["agentId", "tickSeconds", "taskFile", "enabled"];
+  const validKeys = ["agentId", "tickSeconds", "taskFile", "enabled", "stateful"];
   if (!validKeys.includes(key)) {
     console.error(red(`未知配置字段 "${key}"`));
     console.error(dim(`  可用字段：${validKeys.join(", ")}`));
