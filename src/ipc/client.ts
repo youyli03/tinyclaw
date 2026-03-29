@@ -316,3 +316,106 @@ export async function triggerLoop(sessionId: string): Promise<{ found: boolean }
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
+
+/** 暂停指定 loop session 的定时触发（不重启，立即生效）。found=false 表示该 session 未在运行。 */
+export async function pauseLoop(sessionId: string): Promise<{ found: boolean }> {
+  return simpleLoopRequest({ type: "loop_pause", sessionId }, "loop_paused");
+}
+
+/** 恢复指定 loop session 的定时触发（不重启，立即生效）。found=false 表示该 session 未在运行。 */
+export async function resumeLoop(sessionId: string): Promise<{ found: boolean }> {
+  return simpleLoopRequest({ type: "loop_resume", sessionId }, "loop_resumed");
+}
+
+/** 查询指定 loop session 的实时运行状态。 */
+export async function getLoopStatus(sessionId: string): Promise<{ status: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "loop_status", sessionId };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === "loop_status_result") {
+          settle(() => resolve({ status: resp.status }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+/** 列出所有已调度 loop session 的实时状态（含 agentId / tickSeconds）。 */
+export async function listLoopStatus(): Promise<Array<{ sessionId: string; status: string; agentId: string; tickSeconds: number }>> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "loop_list_status" };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === "loop_list_status_result") {
+          settle(() => resolve(resp.items));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+/** 通用辅助：发送一个带 sessionId 的 loop 请求，等待指定 found 响应类型 */
+function simpleLoopRequest(req: IpcRequest, responseType: "loop_paused" | "loop_resumed"): Promise<{ found: boolean }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+
+    socket.on("connect", () => { socket.write(JSON.stringify(req) + "\n"); });
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === responseType) {
+          settle(() => resolve({ found: (resp as { found: boolean }).found }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}

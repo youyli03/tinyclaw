@@ -24,10 +24,16 @@ class LoopRunner {
   private stopped = new Set<string>();
   /** 正在执行 tick 的 sessionId 集合（并发保护：triggerNow 时如已在跑则跳过） */
   private running = new Set<string>();
+  /** 暂停中的 sessionId 集合（循环继续跑，但每次 delay 后跳过 tick） */
+  private paused = new Set<string>();
+  /** 已调度（循环已启动）的 sessionId 集合 */
+  private scheduled = new Set<string>();
 
   async start(loopTick: LoopTickFn): Promise<void> {
     this.loopTick = loopTick;
     this.stopped.clear();
+    this.paused.clear();
+    this.scheduled.clear();
     const loops = agentManager.listSessionLoops();
     let count = 0;
     for (const { sessionId, cfg } of loops) {
@@ -51,6 +57,7 @@ class LoopRunner {
   restartSession(sessionId: string): void {
     // 停掉旧循环
     this.stopped.add(sessionId);
+    this.scheduled.delete(sessionId);
 
     const cfg = agentManager.readSessionLoop(sessionId);
     if (cfg && this.loopTick) {
@@ -61,6 +68,48 @@ class LoopRunner {
     } else {
       console.log(`[loop] session=${sessionId} loop 已停用或配置不存在`);
     }
+  }
+
+  /** 暂停指定 session 的定时触发（循环继续，tick 被跳过）；返回 false 表示未找到该 session */
+  pause(sessionId: string): boolean {
+    if (!this.scheduled.has(sessionId)) return false;
+    this.paused.add(sessionId);
+    console.log(`[loop] session=${sessionId} 已暂停`);
+    return true;
+  }
+
+  /** 恢复指定 session 的定时触发；返回 false 表示未找到该 session */
+  resume(sessionId: string): boolean {
+    if (!this.scheduled.has(sessionId)) return false;
+    this.paused.delete(sessionId);
+    console.log(`[loop] session=${sessionId} 已恢复`);
+    return true;
+  }
+
+  /**
+   * 获取指定 session 的运行状态：
+   * - "running"   : 正在执行 tick
+   * - "paused"    : 已暂停（循环活跃但跳过 tick）
+   * - "idle"      : 空闲（等待下次 tick）
+   * - "not_found" : 未调度（未启动或已停止）
+   */
+  getStatus(sessionId: string): "running" | "paused" | "idle" | "not_found" {
+    if (!this.scheduled.has(sessionId)) return "not_found";
+    if (this.running.has(sessionId)) return "running";
+    if (this.paused.has(sessionId)) return "paused";
+    return "idle";
+  }
+
+  /** 列出所有已调度 session 的状态（用于 loop list 命令） */
+  listStatus(): Array<{ sessionId: string; status: "running" | "paused" | "idle" }> {
+    return Array.from(this.scheduled).map((sessionId) => ({
+      sessionId,
+      status: this.running.has(sessionId)
+        ? "running"
+        : this.paused.has(sessionId)
+        ? "paused"
+        : "idle",
+    }));
   }
 
   /** 立即触发一次 tick（不影响定时计划；若已在运行则跳过） */
@@ -77,6 +126,7 @@ class LoopRunner {
 
   private scheduleSession(sessionId: string, cfg: LoopSessionConfig): void {
     console.log(`[loop] session=${sessionId} 已启动（每 ${cfg.tickSeconds}s tick）`);
+    this.scheduled.add(sessionId);
     // 启动串行循环（不立即执行第一次，等待第一个 delay 后再触发）
     void this.loop(sessionId, cfg);
   }
@@ -89,6 +139,12 @@ class LoopRunner {
 
       if (this.stopped.has(sessionId) || !this.loopTick) break;
 
+      // 暂停中：跳过本次 tick，继续循环等待
+      if (this.paused.has(sessionId)) {
+        console.log(`[loop] session=${sessionId} tick 跳过（已暂停）`);
+        continue;
+      }
+
       // 重新读取配置（支持动态修改 tickSeconds/taskFile）
       const latestCfg = agentManager.readSessionLoop(sessionId);
       if (!latestCfg) {
@@ -98,6 +154,7 @@ class LoopRunner {
 
       await this.tick(sessionId, latestCfg);
     }
+    this.scheduled.delete(sessionId);
   }
 
   private async tick(sessionId: string, cfg: LoopSessionConfig): Promise<void> {

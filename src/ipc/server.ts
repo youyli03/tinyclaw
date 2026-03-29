@@ -123,6 +123,51 @@ async function handleRequest(
     return;
   }
 
+  // ── loop_pause 请求：暂停指定 loop session 的定时触发 ─────────────────────
+  if (req.type === "loop_pause") {
+    const { sessionId: loopSid } = req as { type: "loop_pause"; sessionId: string };
+    const { loopRunner } = await import("../core/loop-runner.js");
+    const found = loopRunner.pause(loopSid);
+    send({ type: "loop_paused", sessionId: loopSid, found });
+    return;
+  }
+
+  // ── loop_resume 请求：恢复指定 loop session 的定时触发 ────────────────────
+  if (req.type === "loop_resume") {
+    const { sessionId: loopSid } = req as { type: "loop_resume"; sessionId: string };
+    const { loopRunner } = await import("../core/loop-runner.js");
+    const found = loopRunner.resume(loopSid);
+    send({ type: "loop_resumed", sessionId: loopSid, found });
+    return;
+  }
+
+  // ── loop_status 请求：查询指定 loop session 的实时状态 ────────────────────
+  if (req.type === "loop_status") {
+    const { sessionId: loopSid } = req as { type: "loop_status"; sessionId: string };
+    const { loopRunner } = await import("../core/loop-runner.js");
+    const status = loopRunner.getStatus(loopSid);
+    send({ type: "loop_status_result", sessionId: loopSid, status });
+    return;
+  }
+
+  // ── loop_list_status 请求：列出所有 loop session 的实时状态 ───────────────
+  if (req.type === "loop_list_status") {
+    const { loopRunner } = await import("../core/loop-runner.js");
+    const statusList = loopRunner.listStatus();
+    // 合并 toml 配置（agentId / tickSeconds）
+    const items = statusList.map(({ sessionId: sid, status }) => {
+      const cfg = agentManager.readSessionLoop(sid);
+      return {
+        sessionId: sid,
+        status,
+        agentId: cfg?.agentId ?? "unknown",
+        tickSeconds: cfg?.tickSeconds ?? 0,
+      };
+    });
+    send({ type: "loop_list_status_result", items });
+    return;
+  }
+
   // ── memorize 请求：手动触发 session 摘要 → 持久化 → QMD 向量化 ───────────
   if (req.type === "memorize") {
     const { sessionId: memSid } = req as { type: "memorize"; sessionId: string };

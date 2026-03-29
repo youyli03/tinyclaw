@@ -44,6 +44,14 @@ export type IpcRequest =
   | { type: "memorize"; sessionId: string }
   /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
   | { type: "loop_trigger"; sessionId: string }
+  /** 暂停指定 loop session 的定时触发（不重启，立即生效） */
+  | { type: "loop_pause"; sessionId: string }
+  /** 恢复指定 loop session 的定时触发（不重启，立即生效） */
+  | { type: "loop_resume"; sessionId: string }
+  /** 查询指定 loop session 的实时运行状态 */
+  | { type: "loop_status"; sessionId: string }
+  /** 列出所有已调度 loop session 的实时状态 */
+  | { type: "loop_list_status" }
   /**
    * 软中断指定 session 的 runAgent() 循环。
    * idOrSuffix 可为完整 sessionId，或 sessionId 的末尾子串（如日志中显示的 12 位后缀）。
@@ -62,6 +70,14 @@ export type IpcResponse =
   | { type: "cron_triggered"; jobId: string }
   /** loop_trigger 请求的响应 */
   | { type: "loop_triggered"; sessionId: string; found: boolean }
+  /** loop_pause 请求的响应 */
+  | { type: "loop_paused"; sessionId: string; found: boolean }
+  /** loop_resume 请求的响应 */
+  | { type: "loop_resumed"; sessionId: string; found: boolean }
+  /** loop_status 请求的响应 */
+  | { type: "loop_status_result"; sessionId: string; status: "running" | "paused" | "idle" | "not_found" }
+  /** loop_list_status 请求的响应 */
+  | { type: "loop_list_status_result"; items: Array<{ sessionId: string; status: "running" | "paused" | "idle"; agentId: string; tickSeconds: number }> }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */
