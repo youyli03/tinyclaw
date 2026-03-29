@@ -5,6 +5,10 @@ import { tmpdir, homedir } from "node:os";
 import { registerTool } from "./registry.js";
 import type { ToolContext } from "./registry.js";
 
+// ── beautiful-mermaid 主题配置（改这里换主题）────────────────────────────────
+const MERMAID_THEME_LIGHT = "solarized-light";
+const MERMAID_THEME_DARK  = "tokyo-night";
+
 // ── 工具结果格式化 ────────────────────────────────────────────────────────────
 
 function ok(imgPath: string): string {
@@ -38,7 +42,8 @@ function timestampName(filename?: string, ext = "png"): string {
 
 async function renderMermaid(
   code: string,
-  outPath: string
+  outPath: string,
+  theme: "light" | "dark" = "light"
 ): Promise<void> {
   // 写临时 .mmd 文件
   const mmdFile = outPath.replace(/\.png$/, ".mmd");
@@ -51,16 +56,102 @@ async function renderMermaid(
     throw new Error(mmdc);
   }
 
-  // 2. 本地 chromium headless（离线，主要 fallback）
+  // 2. beautiful-mermaid（高质量本地渲染，支持大多数图表类型）
+  const bm = await tryBeautifulMermaid(code, outPath, theme);
+  if (bm !== null) {
+    if (bm === "") return; // 成功
+    // beautiful-mermaid 失败（不支持的图表类型等），fallback
+    console.warn(`[render-diagram] beautiful-mermaid 失败，fallback 到 mermaid.js：${bm}`);
+  }
+
+  // 3. 本地 Playwright + mermaid.js（支持 gantt/pie 等更多类型）
   const chromium = await tryChromium(code, outPath);
   if (chromium !== null) {
     if (chromium === "") return; // 成功
-    // chromium 存在但失败了，继续尝试 mermaid.ink
     console.warn(`[render-diagram] chromium 渲染失败，尝试 mermaid.ink：${chromium}`);
   }
 
-  // 3. mermaid.ink HTTP API（最后兜底，需要网络）
+  // 4. mermaid.ink HTTP API（最后兜底，需要网络）
   await tryMermaidInk(code, outPath);
+}
+
+/** 使用 beautiful-mermaid 渲染（高质量，零字体依赖）
+ *  返回 null（不支持该图表类型）、""（成功）、或错误信息字符串
+ */
+async function tryBeautifulMermaid(
+  code: string,
+  outFile: string,
+  theme: "light" | "dark"
+): Promise<string | null> {
+  // 动态 import，避免启动时报错
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let renderMermaidSVG: (code: string, opts: any) => string;
+  let THEMES: Record<string, unknown>;
+  try {
+    const bm = await import("beautiful-mermaid");
+    renderMermaidSVG = bm.renderMermaidSVG;
+    THEMES = bm.THEMES as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  // 选主题
+  const themeName = theme === "dark" ? MERMAID_THEME_DARK : MERMAID_THEME_LIGHT;
+  const themeOpts = THEMES[themeName];
+  if (!themeOpts) return `未找到主题：${themeName}`;
+
+  // 渲染 SVG（同步）
+  let svg: string;
+  try {
+    svg = renderMermaidSVG(code, themeOpts);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // "Invalid mermaid header" = 不支持的图表类型，返回 null 触发 fallback
+    if (msg.includes("Invalid mermaid header") || msg.includes("Expected")) {
+      return null;
+    }
+    return msg;
+  }
+
+  // 用 playwright-core 截图（DPR=2 保证清晰度）
+  let playwrightChromium: import("playwright-core").BrowserType;
+  try {
+    const pw = await import("playwright-core");
+    playwrightChromium = pw.chromium;
+  } catch {
+    return "playwright-core 不可用";
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>*{margin:0;padding:0;}body{background:${theme === "dark" ? "#1a1b26" : "#fdf6e3"};display:inline-block;padding:24px;}</style>
+</head><body>${svg}</body></html>`;
+  const htmlFile = outFile.replace(/\.png$/, "_bm.html");
+  writeFileSync(htmlFile, html, "utf-8");
+
+  try {
+    const browser = await playwrightChromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-gpu", "--disable-software-rasterizer"],
+    });
+    try {
+      const page = await browser.newPage({ deviceScaleFactor: 2 });
+      page.setDefaultTimeout(15000);
+      await page.goto(`file://${htmlFile}`);
+      await page.waitForSelector("svg", { timeout: 8000 });
+      const el = await page.$("svg");
+      if (!el) {
+        return "未找到 SVG 元素";
+      }
+      await el.screenshot({ path: outFile, type: "png" });
+    } finally {
+      await browser.close();
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Playwright 截图失败：${msg}`;
+  }
+
+  return "";
 }
 
 /** 尝试运行本地 mmdc，返回 null（未安装）、"" （成功）、或错误信息字符串 */
@@ -286,8 +377,7 @@ registerTool({
     function: {
       name: "render_diagram",
       description:
-        "将图表代码渲染为图片，通过 QQ 发送。" +
-        "支持两种类型：" +
+        "将图表代码渲染为图片，通过 QQ 发送。支持两种类型：" +
         "（1）mermaid：流程图/时序图/类图/状态机/ER图/甘特图/饼图等，传入 mermaid 语法代码；" +
         "（2）python：任意 Python 绘图代码（matplotlib/graphviz 等），代码直接生成图形即可，" +
         "无需手动 savefig（工具会自动保存），或手动调用 plt.savefig(os.environ[\"DIAGRAM_OUTPUT_FILE\"]) 指定路径。" +
@@ -310,6 +400,11 @@ registerTool({
             type: "string",
             description: "输出文件名（不含扩展名），默认自动生成时间戳文件名",
           },
+          theme: {
+            type: "string",
+            enum: ["light", "dark"],
+            description: "mermaid 图表配色主题：light（亮色，默认）或 dark（暗色/技术风格）。python 类型忽略此参数。",
+          },
         },
         required: ["type", "code"],
       },
@@ -319,6 +414,7 @@ registerTool({
     const type = String(args["type"] ?? "").trim() as "mermaid" | "python";
     const code = String(args["code"] ?? "").trim();
     const filename = args["filename"] ? String(args["filename"]).trim() : undefined;
+    const theme = (args["theme"] === "dark" ? "dark" : "light") as "light" | "dark";
 
     if (!code) return fail(type, "code 参数不能为空");
     if (type !== "mermaid" && type !== "python") {
@@ -330,7 +426,7 @@ registerTool({
 
     try {
       if (type === "mermaid") {
-        await renderMermaid(code, outPath);
+        await renderMermaid(code, outPath, theme);
       } else {
         await renderPython(code, outPath);
       }
