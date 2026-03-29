@@ -259,16 +259,18 @@ ${bold("参数：")}
 ${bold("子操作：")}
   show                          查看当前 access.toml（默认）
   set-can-access <agentId...>   覆盖写入 can_access（本 agent 可向哪些 agent 发消息）
+                                  使用 * 可表示允许向所有 agent 发消息（如：set-can-access *）
   set-allow-from <agentId...>   覆盖写入 allow_from（允许哪些 agent 向本 session 发消息）
-  add-can-access <agentId...>   追加到 can_access（不重复）
+  add-can-access <agentId...>   追加到 can_access（不重复；支持 *）
   add-allow-from <agentId...>   追加到 allow_from（不重复）
   clear-can-access              清空 can_access = []
   clear-allow-from              清空 allow_from = []
   clear                         删除整个 access.toml（恢复默认 deny）
 
 ${bold("说明：")}
-  双向 allow-list 权限模型：发送方的 can_access 包含接收方 agentId，
+  双向 allow-list 权限模型：发送方的 can_access 包含接收方 agentId（或 *），
   且接收方的 allow_from 包含发送方 agentId，才允许跨 session 通信。
+  can_access = ["*"] 表示允许向所有 agent 的 session 发消息。
   文件不存在 = 默认拒绝所有跨 session 通信。
 `);
       break;
@@ -525,7 +527,12 @@ function runShow(mgr: AgentManager, id: string | undefined): void {
   } else {
     if (accessCfg.can_access.length > 0) {
       console.log(`  ${cyan("can_access")}  （可向谁的 session 发消息）：`);
-      for (const a of accessCfg.can_access) console.log(`    ${cyan("•")} ${a}`);
+      if (accessCfg.can_access.includes("*")) {
+        console.log(`    ${cyan("•")} ${bold("*")}  ${dim("（通配符：可向所有 agent 发消息）")}`);
+        for (const a of accessCfg.can_access.filter(a => a !== "*")) console.log(`    ${cyan("•")} ${a}`);
+      } else {
+        for (const a of accessCfg.can_access) console.log(`    ${cyan("•")} ${a}`);
+      }
     } else {
       console.log(`  ${dim("can_access  = []（不可主动发出消息）")}`);
     }
@@ -789,6 +796,10 @@ function runAccess(mgr: AgentManager, args: string[]): void {
     console.log();
     if (cfg.can_access.length === 0) {
       console.log(`  ${dim("can_access  = []  (不可主动向其他 agent 的 session 发消息)")}`);
+    } else if (cfg.can_access.includes("*")) {
+      console.log(`  ${cyan("can_access")}（可向以下 agent 的 session 发消息）：`);
+      console.log(`    ${cyan("•")} ${bold("*")}  ${dim("（通配符：可向所有 agent 的 session 发消息）")}`);
+      for (const a of cfg.can_access.filter(a => a !== "*")) console.log(`    ${cyan("•")} ${a}`);
     } else {
       console.log(`  ${cyan("can_access")}（可向以下 agent 的 session 发消息）：`);
       for (const a of cfg.can_access) console.log(`    ${cyan("•")} ${a}`);
@@ -965,35 +976,52 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
   console.log(`  ${currentAccessDesc}`);
   console.log(dim("  双向 allow-list：发送方 can_access + 接收方 allow_from 均满足才允许通信"));
 
-  type AccessMode = "none" | "both" | "can_access" | "allow_from" | "keep";
-  const accessMode = await singleSelect<AccessMode>("选择配置操作", [
-    { label: "不配置（默认拒绝所有跨 session 通信）", value: "none", note: "删除 access.toml" },
-    { label: "配置双向权限（can_access + allow_from）", value: "both" },
-    { label: "只配置 can_access（本 agent 可向谁发消息）", value: "can_access" },
-    { label: "只配置 allow_from（允许谁向本 agent 发消息）", value: "allow_from" },
-    { label: "保持不变", value: "keep" },
-  ]);
+  // 枚举所有其他 agent
+  const allOtherAgents = mgr.loadAll().map(a => a.id).filter(a => a !== id);
 
+  type AccessMode = "none" | "both" | "can_access" | "allow_from" | "keep" | "skip";
+  let accessMode: AccessMode = "keep";
   let finalAccess: import("../../core/agent-manager.js").AccessConfig | null = null;
-  const { prompt } = await import("../ui.js");
 
-  const parseAgentIds = (input: string): string[] =>
-    input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+  if (allOtherAgents.length === 0) {
+    console.log(yellow("  ⚠ 当前只有一个 Agent，请先创建其他 Agent 再配置跨 session 通信权限。"));
+    console.log(dim("  （access 配置保持不变）"));
+    accessMode = "skip";
+  } else {
+    accessMode = await singleSelect<AccessMode>("选择配置操作", [
+      { label: "不配置（默认拒绝所有跨 session 通信）", value: "none", note: "删除 access.toml" },
+      { label: "配置双向权限（can_access + allow_from）", value: "both" },
+      { label: "只配置 can_access（本 agent 可向谁发消息）", value: "can_access" },
+      { label: "只配置 allow_from（允许谁向本 agent 发消息）", value: "allow_from" },
+      { label: "保持不变", value: "keep" },
+    ]);
 
-  if (accessMode === "both" || accessMode === "can_access") {
-    const input = await prompt(
-      `  can_access（可向哪些 agent 发消息，空格或逗号分隔，当前：[${currentAccess.can_access.join(", ")}]）: `
-    );
-    const canAccess = input.trim() ? parseAgentIds(input) : currentAccess.can_access;
-    finalAccess = { ...(finalAccess ?? currentAccess), can_access: canAccess };
-  }
+    if (accessMode !== "none" && accessMode !== "keep") {
+      // can_access multiSelect（含 * 通配符选项）
+      if (accessMode === "both" || accessMode === "can_access") {
+        const canAccessItems = [
+          { value: "*", label: "* （通配符：可向所有 agent 的 session 发消息）" },
+          ...allOtherAgents.map(a => ({ value: a })),
+        ];
+        const canAccessSelected = await multiSelect(
+          "can_access — 勾选可向哪些 agent 的 session 发消息",
+          canAccessItems,
+          currentAccess.can_access,
+        );
+        finalAccess = { ...(finalAccess ?? currentAccess), can_access: canAccessSelected };
+      }
 
-  if (accessMode === "both" || accessMode === "allow_from") {
-    const input = await prompt(
-      `  allow_from（允许哪些 agent 发来消息，空格或逗号分隔，当前：[${currentAccess.allow_from.join(", ")}]）: `
-    );
-    const allowFrom = input.trim() ? parseAgentIds(input) : currentAccess.allow_from;
-    finalAccess = { ...(finalAccess ?? currentAccess), allow_from: allowFrom };
+      // allow_from multiSelect（无通配符）
+      if (accessMode === "both" || accessMode === "allow_from") {
+        const allowFromItems = allOtherAgents.map(a => ({ value: a }));
+        const allowFromSelected = await multiSelect(
+          "allow_from — 勾选允许哪些 agent 向本 session 发消息",
+          allowFromItems,
+          currentAccess.allow_from,
+        );
+        finalAccess = { ...(finalAccess ?? currentAccess), allow_from: allowFromSelected };
+      }
+    }
   }
 
   // ── 写入 ────────────────────────────────────────────────────────────

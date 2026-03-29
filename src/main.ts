@@ -595,8 +595,8 @@ async function main(): Promise<void> {
 
     // 双向权限检查
     const senderAccess = agentManager.readAccessConfig(fromAgentId);
-    if (!senderAccess.can_access.includes(targetAgentId)) {
-      return `权限拒绝：agent "${fromAgentId}" 未配置对 agent "${targetAgentId}" 的访问权限（在 ${agentManager.accessConfigPath(fromAgentId)} 中添加 can_access = ["${targetAgentId}"]）`;
+    if (!senderAccess.can_access.includes("*") && !senderAccess.can_access.includes(targetAgentId)) {
+      return `权限拒绝：agent "${fromAgentId}" 未配置对 agent "${targetAgentId}" 的访问权限（在 ${agentManager.accessConfigPath(fromAgentId)} 中添加 can_access = ["${targetAgentId}"] 或 can_access = ["*"]）`;
     }
     const receiverAccess = agentManager.readAccessConfig(targetAgentId);
     if (!receiverAccess.allow_from.includes(fromAgentId)) {
@@ -624,7 +624,7 @@ async function main(): Promise<void> {
     const result: import("./tools/registry.js").SessionInfo[] = [];
     for (const [sid, session] of sessions) {
       const targetAgentId = session.agentId;
-      if (!senderAccess.can_access.includes(targetAgentId)) continue;
+      if (!senderAccess.can_access.includes("*") && !senderAccess.can_access.includes(targetAgentId)) continue;
       const receiverAccess = agentManager.readAccessConfig(targetAgentId);
       if (!receiverAccess.allow_from.includes(fromAgentId)) continue;
       const loopCfg = agentManager.readSessionLoop(sid);
