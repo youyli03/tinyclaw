@@ -60,7 +60,9 @@ const sessions = new Map<string, Session>();
 function getSession(sessionId: string): Session {
   let s = sessions.get(sessionId);
   if (!s) {
-    const agentId = agentManager.resolveAgent(sessionId);
+    // loop session 优先用 loop config 里的 agentId（比 bindings 更权威）
+    const loopCfg = agentManager.readSessionLoop(sessionId);
+    const agentId = loopCfg?.agentId ?? agentManager.resolveAgent(sessionId);
     s = new Session(sessionId, { agentId });
     sessions.set(sessionId, s);
   }
