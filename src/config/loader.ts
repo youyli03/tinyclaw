@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, type SecretsConfig } from "./schema.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -126,6 +126,30 @@ export function loadMcpConfig(): MCPConfig {
   if (!result.success) {
     console.warn(`[tinyclaw] mcp.toml 验证失败，使用空 MCP 配置：${result.error.message}`);
     return MCPConfigSchema.parse({});
+  }
+  return result.data;
+}
+
+/** 加载 ~/.tinyclaw/secrets.toml，文件不存在时返回空对象（非致命）。
+ *
+ * **有意不缓存**：每次调用都实时读取磁盘，确保主人修改 token 后立即生效，
+ * 无需重启服务。secrets.toml 文件通常很小，IO 开销可忽略。
+ */
+export function loadSecretsConfig(): SecretsConfig {
+  const p = path.join(os.homedir(), ".tinyclaw", "secrets.toml");
+  let raw: unknown;
+  try {
+    raw = parse(fs.readFileSync(p, "utf-8"));
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[tinyclaw] 无法读取 secrets.toml：${err}`);
+    }
+    return {};
+  }
+  const result = SecretsConfigSchema.safeParse(raw);
+  if (!result.success) {
+    console.warn(`[tinyclaw] secrets.toml 验证失败，使用空配置：${result.error.message}`);
+    return {};
   }
   return result.data;
 }

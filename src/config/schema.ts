@@ -433,3 +433,23 @@ export const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 export type QQBotConfig = z.infer<typeof QQBotSchema>;
 export type MFAConfig = z.infer<typeof MFASchema>;
+
+// ── Secrets（~/.tinyclaw/secrets.toml） ───────────────────────────────────────
+
+/**
+ * 单个 secret 条目。
+ * - `value`         — 真实凭证值，仅在 http_request 工具内部使用，不暴露给 LLM
+ * - `allowed_hosts` — 该凭证允许发往的域名列表（空数组 = 不限制）
+ */
+const SecretEntrySchema = z.object({
+  value: z.string(),
+  allowed_hosts: z.array(z.string()).default([]),
+});
+export type SecretEntry = z.infer<typeof SecretEntrySchema>;
+
+/**
+ * secrets.toml 整体结构：`{ [KEY]: { value, allowed_hosts } }`
+ * KEY 建议全大写+下划线，与 http_request headers 中的 `$KEY` 占位符对应。
+ */
+export const SecretsConfigSchema = z.record(z.string(), SecretEntrySchema);
+export type SecretsConfig = z.infer<typeof SecretsConfigSchema>;
