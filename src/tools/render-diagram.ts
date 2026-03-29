@@ -99,25 +99,20 @@ function tryMmdc(mmdFile: string, outFile: string): Promise<string | null> {
   });
 }
 
-/** 本地 chromium headless 渲染 mermaid（完全离线）
- *  返回 null（未找到 chromium）、""（成功）、或错误信息字符串
+/** 本地 chromium headless 渲染 mermaid（完全离线，使用 Playwright）
+ *  返回 null（playwright-core 不可用）、""（成功）、或错误信息字符串
  */
 async function tryChromium(code: string, outFile: string): Promise<string | null> {
-  // 查找 chromium 可执行文件
-  const candidates = ["chromium-browser", "chromium", "google-chrome"];
-  let chromiumBin: string | null = null;
-  for (const bin of candidates) {
-    const found = await new Promise<boolean>((resolve) => {
-      const child = spawn("which", [bin], { stdio: "ignore" });
-      child.on("close", (c) => resolve(c === 0));
-      child.on("error", () => resolve(false));
-    });
-    if (found) { chromiumBin = bin; break; }
+  // 确认 playwright-core 可用
+  let chromium: import("playwright-core").BrowserType;
+  try {
+    const pw = await import("playwright-core");
+    chromium = pw.chromium;
+  } catch {
+    return null;
   }
-  if (!chromiumBin) return null;
 
   // 读取本地 mermaid.min.js（离线，从 node_modules 获取）
-  // tinyclaw 进程 cwd 就是项目根目录，直接从 cwd 定位
   const mermaidJsCandidates = [
     join(process.cwd(), "node_modules/mermaid/dist/mermaid.min.js"),
     join(homedir(), "tinyclaw/node_modules/mermaid/dist/mermaid.min.js"),
@@ -127,12 +122,8 @@ async function tryChromium(code: string, outFile: string): Promise<string | null
   if (!resolvedMermaidPath) {
     return "未找到 node_modules/mermaid/dist/mermaid.min.js，请在 tinyclaw 目录运行 bun install";
   }
-  // 不再内联 mermaid.min.js，改用 file:// 外链
 
   // 生成 HTML 文件，通过 file:// 外链 mermaid.min.js
-  // 不内联，避免 mermaid.min.js 内部的 </body></html> 字符串破坏 HTML 文档结构
-  // 使用 mermaid.render() async API + startOnLoad:false，
-  // 配合 --virtual-time-budget 确保截图时 SVG 已挂载完成
   const escapedCodeJson = JSON.stringify(code);
   const mermaidSrc = `file://${resolvedMermaidPath}`;
   const html = `<!DOCTYPE html>
@@ -166,80 +157,31 @@ body { background: white; padding: 24px; font-family: sans-serif; }
   const htmlFile = outFile.replace(/\.png$/, "_chromium.html");
   writeFileSync(htmlFile, html, "utf-8");
 
-  // chromium headless 截图（全页面）
-  const rawScreenshot = outFile.replace(/\.png$/, "_raw.png");
-  const chromiumErr = await new Promise<string>((resolve) => {
-    const child = spawn(chromiumBin!, [
-      "--headless",
-      "--no-sandbox",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--window-size=1400,1000",
-      "--virtual-time-budget=5000",
-      `--screenshot=${rawScreenshot}`,
-      `file://${htmlFile}`,
-    ], { stdio: ["ignore", "pipe", "pipe"] });
-
-    const errChunks: Buffer[] = [];
-    child.stderr.on("data", (d: Buffer) => errChunks.push(d));
-    child.on("close", (c) => {
-      if (c === 0 && existsSync(rawScreenshot)) {
-        resolve("");
-      } else {
-        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
-        resolve(`chromium 退出码 ${c}\n${stderr}`);
-      }
+  // 使用 Playwright 启动 Chromium，waitForSelector 确保 SVG 渲染完成后截图
+  try {
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-gpu", "--disable-software-rasterizer"],
     });
-    child.on("error", (err) => resolve(`chromium 启动失败：${err.message}`));
-  });
-
-  if (chromiumErr) return chromiumErr;
-
-  // 用 Python PIL 裁剪白边
-  const cropScript = `
-from PIL import Image
-import numpy as np, sys
-
-img = Image.open(${JSON.stringify(rawScreenshot)}).convert("RGB")
-arr = np.array(img)
-non_white = (arr < 248).any(axis=2)
-rows = np.where(non_white.any(axis=1))[0]
-cols = np.where(non_white.any(axis=0))[0]
-if len(rows) == 0 or len(cols) == 0:
-    sys.exit(1)
-pad = 20
-top    = max(0, rows[0] - pad)
-bottom = min(arr.shape[0], rows[-1] + pad + 1)
-left   = max(0, cols[0] - pad)
-right  = min(arr.shape[1], cols[-1] + pad + 1)
-img.crop((left, top, right, bottom)).save(${JSON.stringify(outFile)})
-`;
-  const cropErr = await new Promise<string>((resolve) => {
-    const child = spawn("python3", ["-c", cropScript], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const errChunks: Buffer[] = [];
-    child.stderr.on("data", (d: Buffer) => errChunks.push(d));
-    child.on("close", (c) => {
-      if (c === 0 && existsSync(outFile)) {
-        resolve("");
-      } else {
-        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
-        resolve(`PIL 裁剪失败（退出码 ${c}）：${stderr || "图片可能全白，渲染未生效"}`);
-      }
-    });
-    child.on("error", (err) => resolve(`python3 启动失败：${err.message}`));
-  });
-
-  if (cropErr) {
-    // 裁剪失败时降级：直接使用未裁剪的原始截图
     try {
-      const { copyFileSync } = await import("node:fs");
-      copyFileSync(rawScreenshot, outFile);
-      return ""; // 仍然算成功，只是没裁剪
-    } catch {
-      return cropErr;
+      const page = await browser.newPage();
+      page.setDefaultTimeout(15000);
+      await page.goto(`file://${htmlFile}`);
+      // 等待 mermaid async render 完成：#diagram 内出现 svg 元素
+      await page.waitForSelector("#diagram svg", { timeout: 10000 });
+      // 截取 #diagram 元素（自动裁到内容边界，含 24px body padding）
+      const el = await page.$("#diagram");
+      if (!el) {
+        await browser.close();
+        return "Playwright：未找到 #diagram 元素";
+      }
+      await el.screenshot({ path: outFile, type: "png" });
+    } finally {
+      await browser.close();
     }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Playwright 渲染失败：${msg}`;
   }
 
   return "";
