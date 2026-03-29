@@ -271,3 +271,48 @@ export async function abortSession(idOrSuffix: string): Promise<{ found: boolean
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
+
+/**
+ * 立即触发指定 loop session 的一次 tick（不影响定时计划）。
+ * 返回 found=true 表示该 session 有有效 loop 配置并已触发。
+ */
+export async function triggerLoop(sessionId: string): Promise<{ found: boolean }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "loop_trigger", sessionId };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "loop_triggered") {
+          settle(() => resolve({ found: resp.found }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}

@@ -32,9 +32,16 @@ export interface AgentDef {
   bindings: AgentBinding[];
 }
 
-export interface LoopConfig {
+/**
+ * Session 维度的 Loop 配置（存储在 sessions/<sanitized-sessionId>.toml 的 [loop] 块）。
+ * sessionId 体现在文件名中，不包含在此接口里。
+ */
+export interface LoopSessionConfig {
   enabled: boolean;
+  /** 走哪个 agent 的 MEM.md / 记忆（默认 "default"） */
+  agentId: string;
   tickSeconds: number;
+  /** 绝对路径，或相对于 agentDir 的相对路径 */
   taskFile: string;
   notify: "always" | "on_change" | "on_error" | "never";
   peerId?: string;
@@ -43,6 +50,7 @@ export interface LoopConfig {
 }
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
+const SESSIONS_DIR = path.join(os.homedir(), ".tinyclaw", "sessions");
 export const DEFAULT_AGENT_ID = "default";
 
 export class AgentManager {
@@ -147,12 +155,21 @@ export class AgentManager {
   }
 
   /**
-   * 读取 agent 的 Loop 配置（来自 agent.toml 中的 [loop] 表）。
-   * - [loop] 不存在或 enabled = false → 返回 null
-   * - 否则返回补全默认值后的 LoopConfig
+   * 返回指定 sessionId 对应的 session 配置文件路径。
+   * 格式：~/.tinyclaw/sessions/<sanitized-sessionId>.toml
+   * sanitized 规则与 JSONL 一致：: / \ 替换为 _
    */
-  readLoopConfig(id: string): LoopConfig | null {
-    const p = this.tomlPath(id);
+  getSessionTomlPath(sessionId: string): string {
+    const sanitized = sessionId.replace(/[:/\\]/g, "_");
+    return path.join(SESSIONS_DIR, `${sanitized}.toml`);
+  }
+
+  /**
+   * 读取指定 session 的 loop 配置（来自 sessions/<id>.toml 中的 [loop] 块）。
+   * - [loop] 不存在或 enabled = false → 返回 null
+   */
+  readSessionLoop(sessionId: string): LoopSessionConfig | null {
+    const p = this.getSessionTomlPath(sessionId);
     if (!fs.existsSync(p)) return null;
     try {
       const content = fs.readFileSync(p, "utf-8");
@@ -163,11 +180,12 @@ export class AgentManager {
       if (l["enabled"] === false) return null;
       return {
         enabled: true,
+        agentId: typeof l["agentId"] === "string" && l["agentId"] ? l["agentId"] : DEFAULT_AGENT_ID,
         tickSeconds: typeof l["tickSeconds"] === "number" ? l["tickSeconds"] : 60,
         taskFile: typeof l["taskFile"] === "string" ? l["taskFile"] : "TASK.md",
         notify: (["always", "on_change", "on_error", "never"].includes(l["notify"] as string)
           ? l["notify"]
-          : "never") as LoopConfig["notify"],
+          : "never") as LoopSessionConfig["notify"],
         ...(typeof l["peerId"] === "string" ? { peerId: l["peerId"] } : {}),
         ...(typeof l["msgType"] === "string" ? { msgType: l["msgType"] } : {}),
         ...(typeof l["model"] === "string" && l["model"] ? { model: l["model"] } : {}),
@@ -175,6 +193,66 @@ export class AgentManager {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 写入/更新指定 session 的 loop 配置到 sessions/<id>.toml 的 [loop] 块。
+   * 若文件已有其他配置（非 [loop]），保留原有内容，仅更新 [loop] 部分。
+   */
+  writeSessionLoop(sessionId: string, cfg: LoopSessionConfig): void {
+    const p = this.getSessionTomlPath(sessionId);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+
+    // 读取现有内容（若有），保留非 [loop] 部分
+    let existing: Record<string, unknown> = {};
+    if (fs.existsSync(p)) {
+      try {
+        existing = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
+      } catch { /* ignore parse error, overwrite */ }
+    }
+
+    // 构建 [loop] 表内容
+    const loopBlock: Record<string, unknown> = {
+      enabled: cfg.enabled,
+      agentId: cfg.agentId,
+      tickSeconds: cfg.tickSeconds,
+      taskFile: cfg.taskFile,
+      notify: cfg.notify,
+    };
+    if (cfg.peerId) loopBlock["peerId"] = cfg.peerId;
+    if (cfg.msgType) loopBlock["msgType"] = cfg.msgType;
+    if (cfg.model) loopBlock["model"] = cfg.model;
+
+    existing["loop"] = loopBlock;
+
+    // 序列化为 TOML（手动构建，不依赖 toml 序列化库）
+    fs.writeFileSync(p, formatSessionToml(existing), "utf-8");
+  }
+
+  /**
+   * 扫描 sessions/*.toml，返回所有有 [loop] 且 enabled=true 的 session。
+   */
+  listSessionLoops(): { sessionId: string; cfg: LoopSessionConfig }[] {
+    if (!fs.existsSync(SESSIONS_DIR)) return [];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(SESSIONS_DIR, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const result: { sessionId: string; cfg: LoopSessionConfig }[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".toml")) continue;
+      // 从文件名还原 sessionId（_ → : 不准确，保留 sanitized 形式即可；用文件名作为标识）
+      // 注意：sanitized 是单向的，不能完整还原（: 和 / 都变成了 _）
+      // 但实际上 loop runner 用 sanitized 形式作为 key，能正确找到对应 jsonl
+      const sanitized = entry.name.slice(0, -5); // 去掉 .toml 后缀
+      // 尝试还原 sessionId：约定格式为 qqbot_c2c_xxx → qqbot:c2c:xxx（仅前两个 _ 还原）
+      const sessionId = sanitizedToSessionId(sanitized);
+      const cfg = this.readSessionLoop(sessionId);
+      if (cfg) result.push({ sessionId, cfg });
+    }
+    return result;
   }
 
   /** Code 模式持久化工作目录文件路径 */
@@ -345,6 +423,60 @@ function formatAgentToml(def: AgentDef): string {
     lines.push(`source = "${b.source}"`);
   }
   return lines.join("\n") + "\n";
+}
+
+/**
+ * 将 session.toml 的内容序列化为 TOML 字符串。
+ * 支持顶层 key-value 和 [section] 块。
+ */
+function formatSessionToml(data: Record<string, unknown>): string {
+  const lines: string[] = [];
+  // 先写非对象字段
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v === "object" && v !== null && !Array.isArray(v)) continue;
+    lines.push(`${k} = ${tomlValue(v)}`);
+  }
+  // 再写 [section] 块
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v !== "object" || v === null || Array.isArray(v)) continue;
+    lines.push(`\n[${k}]`);
+    for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
+      lines.push(`${sk} = ${tomlValue(sv)}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+function tomlValue(v: unknown): string {
+  if (typeof v === "string") return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return `[${v.map(tomlValue).join(", ")}]`;
+  return `"${String(v)}"`;
+}
+
+/**
+ * 尝试将 sanitized 文件名还原为 sessionId。
+ * 约定：前缀 qqbot_c2c_ / qqbot_group_ / qqbot_guild_ / qqbot_dm_ → qqbot:xxx:xxx
+ *        前缀 cli_ → cli:xxx
+ *        loop_ / cron_ / 其他 → 直接当作 sessionId（用 _ 替换处不还原）
+ * 对于 qqbot 前缀，第一个和第二个 _ 还原为 :，其余保留。
+ */
+function sanitizedToSessionId(sanitized: string): string {
+  const qqbotPrefixes = ["qqbot_c2c_", "qqbot_group_", "qqbot_guild_", "qqbot_dm_"];
+  for (const prefix of qqbotPrefixes) {
+    if (sanitized.startsWith(prefix)) {
+      // qqbot_c2c_OPENID → qqbot:c2c:OPENID
+      const parts = sanitized.split("_");
+      // parts[0]=qqbot, parts[1]=c2c|group|guild|dm, parts[2..]=openid（可能含_）
+      const openid = parts.slice(2).join("_");
+      return `${parts[0]}:${parts[1]}:${openid}`;
+    }
+  }
+  if (sanitized.startsWith("cli_")) {
+    return `cli:${sanitized.slice(4)}`;
+  }
+  // loop_xxx / cron_xxx / 其他：原样返回（sanitized 形式）
+  return sanitized;
 }
 
 export const agentManager = new AgentManager();

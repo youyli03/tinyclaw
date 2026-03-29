@@ -1,20 +1,19 @@
 /**
- * LoopRunner — Loop Agent 持续轮询执行引擎
+ * LoopRunner — Loop Session 持续轮询执行引擎
  *
- * 读取 agent.toml 中的 [loop] 配置块，为每个启用的 loop agent 启动 setInterval，
- * 每次 tick 从 TASK.md（或配置的 taskFile）读取任务指令，注入 agent session 执行。
+ * 读取 sessions/<sanitized-sessionId>.toml 中的 [loop] 配置块，
+ * 为每个启用的 loop session 启动 setInterval，每次 tick 从 taskFile 读取任务指令，
+ * 注入对应 session 执行。
  *
- * Session 策略：进程内常驻复用（与 main.ts 的 getSession 机制完全一致），
- * 记忆/摘要/MEM.md/searchMemory 全走 runAgent 内部原有路径，无任何特殊处理。
+ * Session 策略：进程内常驻复用，记忆/摘要/MEM.md 全走 runAgent 内部原有路径。
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { Session } from "./session.js";
 import { runAgent } from "./agent.js";
 import { agentManager } from "./agent-manager.js";
-import type { LoopConfig } from "./agent-manager.js";
+import type { LoopSessionConfig } from "./agent-manager.js";
 import type { Connector } from "../connectors/base.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { appendLog } from "../cron/store.js";
@@ -23,9 +22,9 @@ import { buildCopilotClient } from "../llm/copilot.js";
 import { LLMClient } from "../llm/client.js";
 import { loadConfig } from "../config/loader.js";
 
-// ── Loop Agent 专用 system prompt ────────────────────────────────────────────
+// ── Loop Session 专用 system prompt ──────────────────────────────────────────
 
-const LOOP_AGENT_SYSTEM = `## ⚠️ 你正在以【Loop Agent】身份自主运行
+const LOOP_AGENT_SYSTEM = `## ⚠️ 你正在以【Loop Session】身份自主运行
 
 以下规则必须严格遵守：
 
@@ -44,25 +43,25 @@ const LOOP_AGENT_SYSTEM = `## ⚠️ 你正在以【Loop Agent】身份自主运
 
 // ── 构建 LLM override client ──────────────────────────────────────────────────
 
-async function buildOverrideClient(model: string, agentId: string): Promise<LLMClient | undefined> {
+async function buildOverrideClient(model: string, sessionId: string): Promise<LLMClient | undefined> {
   try {
     const { provider, modelId } = parseModelSymbol(model);
     if (provider === "copilot") {
       const cfg = loadConfig();
       const copilotCfg = cfg.providers.copilot;
-      if (!copilotCfg) throw new Error("loop agent model 使用 copilot provider，但 [providers.copilot] 未配置");
+      if (!copilotCfg) throw new Error("loop session model 使用 copilot provider，但 [providers.copilot] 未配置");
       const { client } = await buildCopilotClient({
         githubToken: copilotCfg.githubToken,
         model: modelId,
         timeoutMs: copilotCfg.timeoutMs,
       });
-      console.log(`[loop] agent=${agentId} 使用指定模型: ${model}`);
+      console.log(`[loop] session=${sessionId} 使用指定模型: ${model}`);
       return client;
     } else if (provider === "openai") {
       const cfg = loadConfig();
       const openaiCfg = cfg.providers.openai;
-      if (!openaiCfg) throw new Error("loop agent model 使用 openai provider，但 [providers.openai] 未配置");
-      console.log(`[loop] agent=${agentId} 使用指定模型: ${model}`);
+      if (!openaiCfg) throw new Error("loop session model 使用 openai provider，但 [providers.openai] 未配置");
+      console.log(`[loop] session=${sessionId} 使用指定模型: ${model}`);
       return new LLMClient({
         baseUrl: openaiCfg.baseUrl,
         apiKey: openaiCfg.apiKey,
@@ -71,10 +70,10 @@ async function buildOverrideClient(model: string, agentId: string): Promise<LLMC
         timeoutMs: openaiCfg.timeoutMs,
       });
     } else {
-      throw new Error(`loop agent model 使用未知 provider "${provider}"`);
+      throw new Error(`loop session model 使用未知 provider "${provider}"`);
     }
   } catch (err) {
-    console.error(`[loop] agent=${agentId} 模型初始化失败，回退到默认：`, err);
+    console.error(`[loop] session=${sessionId} 模型初始化失败，回退到默认：`, err);
     return undefined;
   }
 }
@@ -83,25 +82,22 @@ async function buildOverrideClient(model: string, agentId: string): Promise<LLMC
 
 class LoopRunner {
   private connector: Connector | null = null;
-  /** agentId → timer handle */
+  /** sessionId → timer handle */
   private timers = new Map<string, ReturnType<typeof setInterval>>();
-  /** agentId → 常驻 Session（与 main.ts 的 sessions Map 一致） */
+  /** sessionId → 常驻 Session */
   private sessions = new Map<string, Session>();
-  /** 正在执行的 agentId 集合（并发保护：同一 agent 不允许多个 tick 同时运行） */
+  /** 正在执行的 sessionId 集合（并发保护：同一 session 不允许多个 tick 同时运行） */
   private running = new Set<string>();
 
   async start(connector: Connector | null): Promise<void> {
     this.connector = connector;
-    const agents = agentManager.loadAll();
+    const loops = agentManager.listSessionLoops();
     let count = 0;
-    for (const agent of agents) {
-      const cfg = agentManager.readLoopConfig(agent.id);
-      if (cfg) {
-        this.scheduleAgent(agent.id, cfg);
-        count++;
-      }
+    for (const { sessionId, cfg } of loops) {
+      this.scheduleSession(sessionId, cfg);
+      count++;
     }
-    console.log(`[loop] LoopRunner started (${count} active loop agents)`);
+    console.log(`[loop] LoopRunner started (${count} active loop sessions)`);
   }
 
   stop(): void {
@@ -113,77 +109,80 @@ class LoopRunner {
     console.log("[loop] LoopRunner stopped");
   }
 
-  /** 重新调度单个 agent 的 loop（改配置后调用） */
-  restartAgent(agentId: string): void {
-    const old = this.timers.get(agentId);
+  /** 重新调度单个 session 的 loop（改配置后调用） */
+  restartSession(sessionId: string): void {
+    const old = this.timers.get(sessionId);
     if (old !== undefined) clearInterval(old);
-    this.timers.delete(agentId);
-    this.sessions.delete(agentId); // 清空旧 session，下次 tick 重建
+    this.timers.delete(sessionId);
+    this.sessions.delete(sessionId); // 清空旧 session，下次 tick 重建
 
-    const cfg = agentManager.readLoopConfig(agentId);
+    const cfg = agentManager.readSessionLoop(sessionId);
     if (cfg) {
-      this.scheduleAgent(agentId, cfg);
-      console.log(`[loop] agent=${agentId} 已重新调度（tickSeconds=${cfg.tickSeconds}）`);
+      this.scheduleSession(sessionId, cfg);
+      console.log(`[loop] session=${sessionId} 已重新调度（tickSeconds=${cfg.tickSeconds}）`);
     } else {
-      console.log(`[loop] agent=${agentId} loop 已停用或配置不存在`);
+      console.log(`[loop] session=${sessionId} loop 已停用或配置不存在`);
     }
   }
 
   /** 立即触发一次 tick（不影响定时计划） */
-  triggerNow(agentId: string): boolean {
-    const cfg = agentManager.readLoopConfig(agentId);
+  triggerNow(sessionId: string): boolean {
+    const cfg = agentManager.readSessionLoop(sessionId);
     if (!cfg) return false;
-    void this.tick(agentId, cfg);
+    void this.tick(sessionId, cfg);
     return true;
   }
 
-  private scheduleAgent(agentId: string, cfg: LoopConfig): void {
+  private scheduleSession(sessionId: string, cfg: LoopSessionConfig): void {
     const intervalMs = cfg.tickSeconds * 1000;
     const handle = setInterval(() => {
-      void this.tick(agentId, cfg);
+      void this.tick(sessionId, cfg);
     }, intervalMs);
-    this.timers.set(agentId, handle);
-    console.log(`[loop] agent=${agentId} 已启动（每 ${cfg.tickSeconds}s tick）`);
+    this.timers.set(sessionId, handle);
+    console.log(`[loop] session=${sessionId} 已启动（每 ${cfg.tickSeconds}s tick）`);
   }
 
-  private async tick(agentId: string, cfg: LoopConfig): Promise<void> {
-    if (this.running.has(agentId)) {
-      console.log(`[loop] agent=${agentId} tick 跳过（上次仍在执行）`);
+  private async tick(sessionId: string, cfg: LoopSessionConfig): Promise<void> {
+    if (this.running.has(sessionId)) {
+      console.log(`[loop] session=${sessionId} tick 跳过（上次仍在执行）`);
       return;
     }
-    this.running.add(agentId);
+    this.running.add(sessionId);
     const now = new Date().toISOString();
 
-    // 读取任务文件
-    const taskFilePath = path.join(agentManager.agentDir(agentId), cfg.taskFile);
+    // 读取任务文件（绝对路径，或相对于 agentDir 的路径）
+    const taskFilePath = path.isAbsolute(cfg.taskFile)
+      ? cfg.taskFile
+      : path.join(agentManager.agentDir(cfg.agentId), cfg.taskFile);
+
     if (!fs.existsSync(taskFilePath)) {
-      console.warn(`[loop] agent=${agentId} 任务文件不存在：${taskFilePath}，跳过本次 tick`);
-      this.running.delete(agentId);
+      console.warn(`[loop] session=${sessionId} 任务文件不存在：${taskFilePath}，跳过本次 tick`);
+      this.running.delete(sessionId);
       return;
     }
     let taskContent: string;
     try {
       taskContent = fs.readFileSync(taskFilePath, "utf-8").trim();
     } catch (err) {
-      console.error(`[loop] agent=${agentId} 读取任务文件失败：`, err);
-      this.running.delete(agentId);
+      console.error(`[loop] session=${sessionId} 读取任务文件失败：`, err);
+      this.running.delete(sessionId);
       return;
     }
     if (!taskContent) {
-      console.warn(`[loop] agent=${agentId} 任务文件为空，跳过本次 tick`);
-      this.running.delete(agentId);
+      console.warn(`[loop] session=${sessionId} 任务文件为空，跳过本次 tick`);
+      this.running.delete(sessionId);
       return;
     }
 
-    // 复用或首次创建 Session（与 main.ts getSession 完全一致）
-    let session = this.sessions.get(agentId);
+    // 复用或首次创建 Session
+    let session = this.sessions.get(sessionId);
     if (!session) {
-      session = new Session(`loop:${agentId}`, { agentId });
-      this.sessions.set(agentId, session);
+      session = new Session(sessionId, { agentId: cfg.agentId });
+      this.sessions.set(sessionId, session);
     }
 
     // 构建可选 override client
-    const overrideClient = cfg.model ? await buildOverrideClient(cfg.model, agentId) : undefined;
+    const overrideClient = cfg.model ? await buildOverrideClient(cfg.model, sessionId) : undefined;
 
     let status: "success" | "error" = "success";
     let resultText = "";
@@ -197,14 +196,14 @@ class LoopRunner {
     } catch (err) {
       status = "error";
       resultText = `执行失败：${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[loop] agent=${agentId} tick 执行失败：`, err);
+      console.error(`[loop] session=${sessionId} tick 执行失败：`, err);
     }
 
     // 写日志（复用 cron 日志系统）
-    appendLog({ ts: now, status, result: resultText, jobId: `loop:${agentId}` });
+    appendLog({ ts: now, status, result: resultText, jobId: `loop:${sessionId}` });
 
     // 推送策略
-    const lastResult = this._lastResults.get(agentId);
+    const lastResult = this._lastResults.get(sessionId);
     const shouldNotify = ((): boolean => {
       switch (cfg.notify) {
         case "always":    return true;
@@ -213,7 +212,7 @@ class LoopRunner {
         case "never":     return false;
       }
     })();
-    this._lastResults.set(agentId, resultText);
+    this._lastResults.set(sessionId, resultText);
 
     if (shouldNotify && this.connector && cfg.peerId) {
       const validMsgTypes: InboundMessage["type"][] = ["c2c", "group", "guild", "dm"];
@@ -223,14 +222,14 @@ class LoopRunner {
       try {
         await this.connector.send(cfg.peerId, msgType, resultText);
       } catch (err) {
-        console.error(`[loop] agent=${agentId} 推送结果失败：`, err);
+        console.error(`[loop] session=${sessionId} 推送结果失败：`, err);
       }
     }
 
-    this.running.delete(agentId);
+    this.running.delete(sessionId);
   }
 
-  /** agentId → 上次结果文本（用于 on_change 通知策略） */
+  /** sessionId → 上次结果文本（用于 on_change 通知策略） */
   private _lastResults = new Map<string, string>();
 }
 

@@ -114,6 +114,15 @@ async function handleRequest(
     return;
   }
 
+  // ── loop_trigger 请求：立即触发指定 loop session 的一次 tick ──────────────
+  if (req.type === "loop_trigger") {
+    const { sessionId: loopSid } = req as { type: "loop_trigger"; sessionId: string };
+    const { loopRunner } = await import("../core/loop-runner.js");
+    const found = loopRunner.triggerNow(loopSid);
+    send({ type: "loop_triggered", sessionId: loopSid, found });
+    return;
+  }
+
   // ── memorize 请求：手动触发 session 摘要 → 持久化 → QMD 向量化 ───────────
   if (req.type === "memorize") {
     const { sessionId: memSid } = req as { type: "memorize"; sessionId: string };

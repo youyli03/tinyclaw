@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { bold, dim, green, red, cyan, yellow, printTable, singleSelect, multiSelect } from "../ui.js";
 import { AgentManager } from "../../core/agent-manager.js";
-import type { LoopConfig } from "../../core/agent-manager.js";
+import type { LoopSessionConfig as _LoopSessionConfig } from "../../core/agent-manager.js";
 import { stringify } from "smol-toml";
 
 export const description = "管理 Agent 工作区（独立人格与记忆命名空间）";
@@ -480,23 +480,10 @@ function runShow(mgr: AgentManager, id: string | undefined): void {
     console.log(dim(`  路径：${mgr.agentMcpPath(id)}`));
   }
 
-  // Loop 配置
-  const loopCfg = mgr.readLoopConfig(id);
+  // Loop 配置（已迁移到 Session 维度）
   console.log(`\n${bold("Loop 配置：")}`);
-  if (!loopCfg) {
-    console.log(dim("  未启用（agent.toml 中无 [loop] 块或 enabled = false）"));
-    console.log(dim("  配置：在 agent.toml 中添加 [loop] 块"));
-  } else {
-    console.log(`  ${green("✓ 已启用")}`);
-    console.log(`  间隔：${loopCfg.tickSeconds}s`);
-    const taskFilePath = join(mgr.agentDir(id), loopCfg.taskFile);
-    const taskExists = existsSync(taskFilePath);
-    console.log(`  任务文件：${loopCfg.taskFile} ${taskExists ? dim("（存在）") : red("（文件不存在！）")}`);
-    console.log(`  推送策略：${loopCfg.notify}${loopCfg.peerId ? ` → ${loopCfg.peerId}` : dim("（不推送）")}`);
-    if (loopCfg.model) console.log(`  模型：${loopCfg.model}`);
-    console.log(dim(`  触发：tinyclaw agent loop ${id} trigger`));
-  }
-  console.log();
+  console.log(dim("  Loop 已迁移到 Session 维度"));
+  console.log(dim("  请用 tinyclaw chat loop 查看/管理 loop 配置"));
 }
 
 // ── edit ─────────────────────────────────────────────────────────────────────
@@ -826,78 +813,24 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
   console.log();
 }
 
-// ── loop ─────────────────────────────────────────────────────────────────────
+// ── loop（已废弃，提示迁移到 chat loop）─────────────────────────────────────
 
-async function runLoopCmd(mgr: AgentManager, args: string[]): Promise<void> {
-  const id = args[0];
-  const subcmd = args[1];
-
-  if (!id) {
-    console.error(dim("用法：agent loop <id> [trigger]"));
-    process.exit(1);
-  }
-
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
-  }
-
-  const cfg = mgr.readLoopConfig(id);
-
-  if (subcmd === "trigger") {
-    if (!cfg) {
-      console.error(red(`Agent "${id}" 未配置 [loop]（或 enabled = false）`));
-      process.exit(1);
-    }
-    // 动态导入 loopRunner 以避免在 CLI 场景加载整个进程
-    const { loopRunner } = await import("../../core/loop-runner.js");
-    const ok = loopRunner.triggerNow(id);
-    if (ok) {
-      console.log(green(`✓ Agent "${id}" loop tick 已触发（后台执行中）`));
-    } else {
-      console.error(red(`触发失败：Agent "${id}" 未配置有效 [loop]`));
-      process.exit(1);
-    }
-    return;
-  }
-
-  // 默认：显示 loop 配置
-  console.log(`\n${bold(`Agent "${id}" Loop 配置`)}`);
-  console.log(dim("─".repeat(44)));
-  if (!cfg) {
-    console.log(dim("  未启用"));
-    console.log(dim("  在 agent.toml 中添加 [loop] 块以启用："));
-    console.log(dim(`  路径：${mgr.agentDir(id)}/agent.toml`));
-    console.log(dim(`
-  示例配置：
-    [loop]
-    enabled     = true
-    tickSeconds = 60
-    taskFile    = "TASK.md"
-    notify      = "never"
-`));
-  } else {
-    console.log(`  ${green("✓ 已启用")}`);
-    console.log(`  tickSeconds : ${cfg.tickSeconds}`);
-    console.log(`  taskFile    : ${cfg.taskFile}`);
-    console.log(`  notify      : ${cfg.notify}`);
-    if (cfg.peerId) console.log(`  peerId      : ${cfg.peerId}`);
-    if (cfg.msgType) console.log(`  msgType     : ${cfg.msgType}`);
-    if (cfg.model) console.log(`  model       : ${cfg.model}`);
-
-    const taskFilePath = join(mgr.agentDir(id), cfg.taskFile);
-    if (existsSync(taskFilePath)) {
-      const { readFileSync } = await import("node:fs");
-      const content = readFileSync(taskFilePath, "utf-8");
-      const lines = content.split("\n");
-      console.log(dim(`\n  任务文件内容（${lines.length} 行）：`));
-      for (const line of lines.slice(0, 8)) console.log(dim(`    ${line}`));
-      if (lines.length > 8) console.log(dim(`    ...（共 ${lines.length} 行）`));
-    } else {
-      console.log(red(`\n  ⚠ 任务文件不存在：${taskFilePath}`));
-      console.log(dim(`  请创建该文件并写入任务指令`));
-    }
-
-    console.log(dim(`\n  立即触发：tinyclaw agent loop ${id} trigger`));
-  }
+async function runLoopCmd(_mgr: AgentManager, args: string[]): Promise<void> {
+  console.log(yellow("⚠  agent loop 命令已废弃"));
+  console.log(dim("  Loop 配置已从 Agent 维度迁移到 Session 维度。"));
+  console.log(dim("  请使用 tinyclaw chat loop 系列命令管理 loop session。"));
   console.log();
+  console.log(`${bold("chat loop 子命令：")}
+  ${cyan("tinyclaw chat loop list")}                          列出所有 loop session
+  ${cyan("tinyclaw chat loop show")} <sessionId>             查看配置
+  ${cyan("tinyclaw chat loop enable")} <sessionId>           启用/新建 loop
+  ${cyan("tinyclaw chat loop disable")} <sessionId>          禁用 loop
+  ${cyan("tinyclaw chat loop trigger")} <sessionId>          立即触发一次 tick
+  ${cyan("tinyclaw chat loop set")} <sessionId> <key=value>  修改配置字段
+`);
+  // 如果用户传了 trigger 作为参数，给出更具体提示
+  if (args.includes("trigger") && args[0] && args[0] !== "trigger") {
+    console.log(dim(`  原命令对应的新用法：tinyclaw chat loop trigger <sessionId>`));
+    console.log(dim(`  （Loop 配置现存于 ~/.tinyclaw/sessions/<sessionId>.toml）`));
+  }
 }

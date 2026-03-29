@@ -42,6 +42,8 @@ export type IpcRequest =
   | { type: "new"; agentId?: string }
   | { type: "cron_trigger"; jobId: string }
   | { type: "memorize"; sessionId: string }
+  /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
+  | { type: "loop_trigger"; sessionId: string }
   /**
    * 软中断指定 session 的 runAgent() 循环。
    * idOrSuffix 可为完整 sessionId，或 sessionId 的末尾子串（如日志中显示的 12 位后缀）。
@@ -58,6 +60,8 @@ export type IpcResponse =
   /** MFA 确认请求：服务端向客户端发送，等待用户回复 */
   | { type: "mfa_request"; warningMessage: string }
   | { type: "cron_triggered"; jobId: string }
+  /** loop_trigger 请求的响应 */
+  | { type: "loop_triggered"; sessionId: string; found: boolean }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */
