@@ -60,6 +60,7 @@ export const BUILTIN_TOOLS = [
   "memory_append",
   "session_get",
   "session_send",
+  "http_request",
 ] as const;
 
 /** memory-only 模板的工具白名单（最小安全 Agent，仅允许记忆读写/搜索/追加） */

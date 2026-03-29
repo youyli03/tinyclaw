@@ -33,6 +33,7 @@ import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
 import "../tools/memory.js";
 import "../tools/session-bridge.js";
+import "../tools/http-request.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 // 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
