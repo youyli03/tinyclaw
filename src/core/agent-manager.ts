@@ -40,13 +40,10 @@ export interface LoopSessionConfig {
   enabled: boolean;
   /** 走哪个 agent 的 MEM.md / 记忆（默认 "default"） */
   agentId: string;
+  /** 上次执行结束后等待多少秒再执行下一次 */
   tickSeconds: number;
   /** 绝对路径，或相对于 agentDir 的相对路径 */
   taskFile: string;
-  notify: "always" | "on_change" | "on_error" | "never";
-  peerId?: string;
-  msgType?: string;
-  model?: string;
 }
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
@@ -183,12 +180,6 @@ export class AgentManager {
         agentId: typeof l["agentId"] === "string" && l["agentId"] ? l["agentId"] : DEFAULT_AGENT_ID,
         tickSeconds: typeof l["tickSeconds"] === "number" ? l["tickSeconds"] : 60,
         taskFile: typeof l["taskFile"] === "string" ? l["taskFile"] : "TASK.md",
-        notify: (["always", "on_change", "on_error", "never"].includes(l["notify"] as string)
-          ? l["notify"]
-          : "never") as LoopSessionConfig["notify"],
-        ...(typeof l["peerId"] === "string" ? { peerId: l["peerId"] } : {}),
-        ...(typeof l["msgType"] === "string" ? { msgType: l["msgType"] } : {}),
-        ...(typeof l["model"] === "string" && l["model"] ? { model: l["model"] } : {}),
       };
     } catch {
       return null;
@@ -217,11 +208,7 @@ export class AgentManager {
       agentId: cfg.agentId,
       tickSeconds: cfg.tickSeconds,
       taskFile: cfg.taskFile,
-      notify: cfg.notify,
     };
-    if (cfg.peerId) loopBlock["peerId"] = cfg.peerId;
-    if (cfg.msgType) loopBlock["msgType"] = cfg.msgType;
-    if (cfg.model) loopBlock["model"] = cfg.model;
 
     existing["loop"] = loopBlock;
 

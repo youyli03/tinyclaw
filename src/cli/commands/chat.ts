@@ -109,12 +109,9 @@ ${bold("子命令：")}
 
 ${bold("配置字段（set 可用）：")}
   agentId        走哪个 agent 记忆（默认 default）
-  tickSeconds    执行间隔秒数（默认 60）
+  tickSeconds    上次执行结束后等待的秒数（默认 60）
   taskFile       任务文件路径（绝对路径或相对 agentDir）
-  notify         推送策略：always | on_change | on_error | never
-  peerId         推送目标（QQ openId 或群号）
-  msgType        消息类型：c2c | group | guild | dm
-  model          覆盖模型（如 copilot/gpt-4o）
+  enabled        是否启用（true / false）
 
 ${bold("配置文件位置：")}
   ~/.tinyclaw/sessions/<sessionId>.toml  中的 [loop] 块
@@ -352,7 +349,6 @@ async function runNew(agentId?: string, loopOpts?: { interval: number }): Promis
         agentId: agentId ?? "default",
         tickSeconds: loopOpts.interval,
         taskFile: "TASK.md",
-        notify: "never",
       });
       console.log(green(`✓ loop 已启用（tickSeconds=${loopOpts.interval}）`));
       console.log(dim(`  配置文件：${agentManager.getSessionTomlPath(sessionId)}`));
@@ -473,8 +469,8 @@ function runLoopList(): void {
   console.log(`\n${bold("Loop Session 列表")}\n`);
   for (const { sessionId, cfg } of loops) {
     console.log(`  ${cyan(sessionId)}`);
-    console.log(`    Agent: ${cfg.agentId}  间隔: ${cfg.tickSeconds}s  通知: ${cfg.notify}${cfg.peerId ? ` → ${cfg.peerId}` : ""}`);
-    console.log(`    任务文件: ${cfg.taskFile}${cfg.model ? `  模型: ${cfg.model}` : ""}`);
+    console.log(`    Agent: ${cfg.agentId}  间隔: ${cfg.tickSeconds}s`);
+    console.log(`    任务文件: ${cfg.taskFile}`);
   }
   console.log();
 }
@@ -499,10 +495,6 @@ function runLoopShow(sessionId: string | undefined): void {
     console.log(`  agentId     : ${cfg.agentId}`);
     console.log(`  tickSeconds : ${cfg.tickSeconds}`);
     console.log(`  taskFile    : ${cfg.taskFile}`);
-    console.log(`  notify      : ${cfg.notify}`);
-    if (cfg.peerId)  console.log(`  peerId      : ${cfg.peerId}`);
-    if (cfg.msgType) console.log(`  msgType     : ${cfg.msgType}`);
-    if (cfg.model)   console.log(`  model       : ${cfg.model}`);
   }
   console.log();
 }
@@ -521,7 +513,6 @@ function runLoopEnable(sessionId: string | undefined): void {
     agentId: "default",
     tickSeconds: 60,
     taskFile: "TASK.md",
-    notify: "never",
   };
   cfg.enabled = true;
   agentManager.writeSessionLoop(sessionId, cfg);
@@ -547,7 +538,6 @@ function runLoopDisable(sessionId: string | undefined): void {
       agentId: "default",
       tickSeconds: 60,
       taskFile: "TASK.md",
-      notify: "never",
     });
   } else {
     cfg.enabled = false;
@@ -605,10 +595,9 @@ function runLoopSet(sessionId: string | undefined, kvPair: string | undefined): 
     agentId: "default",
     tickSeconds: 60,
     taskFile: "TASK.md",
-    notify: "never",
   };
 
-  const validKeys = ["agentId", "tickSeconds", "taskFile", "notify", "peerId", "msgType", "model", "enabled"];
+  const validKeys = ["agentId", "tickSeconds", "taskFile", "enabled"];
   if (!validKeys.includes(key)) {
     console.error(red(`未知配置字段 "${key}"`));
     console.error(dim(`  可用字段：${validKeys.join(", ")}`));
@@ -627,30 +616,11 @@ function runLoopSet(sessionId: string | undefined, kvPair: string | undefined): 
     case "enabled":
       cfg.enabled = value === "true" || value === "1";
       break;
-    case "notify":
-      if (!["always", "on_change", "on_error", "never"].includes(value)) {
-        console.error(red(`notify 的值必须是 always | on_change | on_error | never，当前："${value}"`));
-        process.exit(1);
-      }
-      cfg.notify = value as LoopSessionConfig["notify"];
-      break;
     case "agentId":
       cfg.agentId = value;
       break;
     case "taskFile":
       cfg.taskFile = value;
-      break;
-    case "peerId":
-      if (value) cfg.peerId = value;
-      else delete cfg.peerId;
-      break;
-    case "msgType":
-      if (value) cfg.msgType = value;
-      else delete cfg.msgType;
-      break;
-    case "model":
-      if (value) cfg.model = value;
-      else delete cfg.model;
       break;
   }
 

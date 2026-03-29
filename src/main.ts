@@ -570,8 +570,15 @@ async function main(): Promise<void> {
   // 5. 启动 Cron 调度器
   await cronScheduler.start(connector);
 
-  // 6. 启动 Loop Agent 轮询引擎
-  await loopRunner.start(connector);
+  // 6. 启动 Loop Session 引擎
+  // loopTick：将 TASK.md 内容作为用户消息，直接调 runAgent，走完整 agent 路径。
+  // Loop session 本身无 QQ 回调，Agent 若需推送结果通过 notify_user / send_report 工具自行完成。
+  const loopTick = async (sessionId: string, content: string): Promise<void> => {
+    const session = getSession(sessionId);
+    const nowStr = new Date().toLocaleString();
+    await runAgent(session, `[${nowStr}] ${content}`, {});
+  };
+  await loopRunner.start(loopTick);
 
   // 7. 启动内置每日记忆维护调度器
   memoryMaintenance.start();

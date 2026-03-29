@@ -1,8 +1,8 @@
 # Loop Session
 
-> Loop Session 是一种**自主持续运行**的 Agent 模式：将一个普通会话标记为 loop，
-> 服务按固定间隔读取 `TASK.md` 任务文件，调用 LLM 执行，结果按策略推送到 QQ。
-> 无需用户手动触发，适合监控、定期汇报、自动化巡检等场景。
+> Loop Session 是一种**自主持续运行**的 Agent 模式：将一个普通 session 标记为 loop，
+> 服务按固定间隔读取 `TASK.md` 任务文件，将其内容作为一条"用户消息"注入该 session，
+> 走完整的 `runAgent` 路径执行。无需用户手动触发，适合监控、定期巡检、自动化任务等场景。
 
 ---
 
@@ -10,11 +10,29 @@
 
 | | Cron Job | Loop Session |
 |---|---|---|
-| 驱动方式 | 外部调度（once / every / daily）| 服务内 setInterval |
-| 上下文 | 每次独立 session（stateful 可选）| 常驻 session，记忆累积 |
+| 驱动方式 | 外部调度（once / every / daily）| 服务内串行循环（上次结束后等待 N 秒）|
+| 上下文 | 每次独立 session（stateful 可选）| 常驻 session，对话历史与记忆持续积累 |
 | 任务来源 | job JSON 中的 `message` 字段 | `TASK.md` 文件（可随时修改）|
+| System Prompt | 无，或 job 指定 | 使用绑定 Agent 自己的 `SYSTEM.md` |
+| 推送结果 | notify 策略（always/on_change 等）| Agent 自行调用 `notify_user` / `send_report` 工具 |
 | 配置位置 | `~/.tinyclaw/cron/jobs/<id>.json` | `~/.tinyclaw/sessions/<id>.toml` |
-| 适合场景 | 一次性任务、定时推送 | 需要记忆积累的持续智能体 |
+| 适合场景 | 一次性任务、定时推送 | 需要记忆积累的持续自主 Agent |
+
+---
+
+## 间隔语义
+
+间隔是**串行 delay**，而非固定 `setInterval`：
+
+```
+tick 执行中（runAgent）
+     ↓ 结束
+等待 tickSeconds 秒
+     ↓
+下一次 tick 开始
+```
+
+这意味着若任务执行耗时超过 `tickSeconds`，不会叠加触发；实际执行频率 = 执行时长 + 等待时长。
 
 ---
 
@@ -32,20 +50,15 @@ Loop 配置存储在与 session JSONL 同目录的 TOML 文件中：
 |---|---|
 | `cli:abc-123` | `sessions/cli_abc-123.toml` |
 | `qqbot:c2c:OPENID` | `sessions/qqbot_c2c_OPENID.toml` |
-| `qqbot:group:GROUPID` | `sessions/qqbot_group_GROUPID.toml` |
 
 **配置文件格式（`[loop]` 块）：**
 
 ```toml
 [loop]
 enabled     = true
-agentId     = "default"       # 走哪个 Agent 的记忆（SYSTEM.md / MEM.md）
-tickSeconds = 300             # 每 5 分钟 tick 一次
+agentId     = "default"       # 走哪个 Agent 的 SYSTEM.md / MEM.md
+tickSeconds = 300             # 上次执行结束后等待 5 分钟再触发
 taskFile    = "TASK.md"       # 任务指令文件路径
-notify      = "on_change"     # 推送策略（见下方说明）
-peerId      = "你的QQ号"       # 推送目标
-msgType     = "c2c"           # c2c / group / guild / dm
-# model     = "copilot/gpt-4o"  # 可选，覆盖默认模型
 ```
 
 ### 字段说明
@@ -54,18 +67,14 @@ msgType     = "c2c"           # c2c / group / guild / dm
 |---|---|---|---|
 | `enabled` | bool | — | `false` 则此 loop 不启动 |
 | `agentId` | string | `default` | 使用哪个 Agent 的系统提示与记忆 |
-| `tickSeconds` | int | `60` | tick 间隔（秒），建议 ≥ 60 |
+| `tickSeconds` | int | `60` | 上次执行结束后等待的秒数，建议 ≥ 60 |
 | `taskFile` | string | `TASK.md` | 任务指令文件（绝对路径，或相对 agentDir）|
-| `notify` | string | `never` | 推送策略，见下方 |
-| `peerId` | string | — | QQ 推送目标 ID（不填则不推送）|
-| `msgType` | string | `c2c` | 消息类型：c2c / group / guild / dm |
-| `model` | string | 同 daily | 覆盖模型，格式 `provider/model-id` |
 
 ---
 
 ## TASK.md 写法
 
-`taskFile` 是每次 tick 注入 Agent 的任务指令，可随时修改，下次 tick 时生效。
+`taskFile` 的内容在每次 tick 时作为一条"用户消息"注入 session，可随时修改，下次 tick 时生效。
 
 **默认路径**：`~/.tinyclaw/agents/<agentId>/TASK.md`（相对 agentDir）
 
@@ -73,7 +82,7 @@ msgType     = "c2c"           # c2c / group / guild / dm
 
 ```markdown
 检查 /home/lyy/app/logs/error.log，统计最近 1 小时的错误数量和类型。
-若错误数 > 10 则在输出中包含 [ALERT] 标记。
+若错误数 > 10，调用 notify_user 工具发送告警。
 输出格式：错误总数 / 主要错误类型 / 简要说明
 ```
 
@@ -83,25 +92,16 @@ msgType     = "c2c"           # c2c / group / guild / dm
 查询 BTC 当前价格（用 exec_shell curl 工具获取实时数据，不得使用记忆中的旧值）。
 与上次 MEM.md 中记录的价格对比，计算涨跌幅。
 更新 MEM.md 中的价格记录。
+若涨跌幅超过 5%，调用 notify_user 推送提醒。
 输出：价格 / 涨跌幅 / 简要趋势分析（一句话）
 ```
 
----
-
-## 推送策略
-
-| 策略 | 说明 |
-|---|---|
-| `always` | 每次 tick 都推送结果 |
-| `on_change` | 仅当结果与上次不同时推送（适合监控场景）|
-| `on_error` | 仅当 Agent 执行出错时推送 |
-| `never` | 不推送（结果仅写日志） |
+> **推送结果**：Loop session 不内置推送机制。若需通知到 QQ，在 TASK.md 中指示 Agent
+> 调用 `notify_user` 工具（即时通知）或 `send_report` 工具（渲染为图片）。
 
 ---
 
 ## CLI 管理
-
-所有操作通过 `tinyclaw chat loop` 子命令完成，**无需手动编辑 TOML 文件**。
 
 ```bash
 # 查看所有启用的 loop session
@@ -109,7 +109,6 @@ tinyclaw chat loop list
 
 # 查看指定 session 的 loop 配置（含配置文件路径）
 tinyclaw chat loop show cli:abc-123
-tinyclaw chat loop show qqbot:c2c:OPENID
 
 # 启用（或新建）一个 session 的 loop，使用默认配置
 tinyclaw chat loop enable cli:abc-123
@@ -119,72 +118,39 @@ tinyclaw chat loop disable cli:abc-123
 
 # 修改单个配置字段
 tinyclaw chat loop set cli:abc-123 tickSeconds=300
-tinyclaw chat loop set cli:abc-123 notify=on_change
-tinyclaw chat loop set cli:abc-123 peerId=你的QQ号
-tinyclaw chat loop set cli:abc-123 msgType=c2c
-tinyclaw chat loop set cli:abc-123 model=copilot/gpt-4o
+tinyclaw chat loop set cli:abc-123 agentId=mybot
 tinyclaw chat loop set cli:abc-123 taskFile=/home/lyy/my-task.md
 
 # 立即触发一次 tick（不影响定时计划，需服务运行）
 tinyclaw chat loop trigger cli:abc-123
+
+# 创建新 session 时直接启用 loop（默认 60s 间隔）
+tinyclaw chat new --loop
+tinyclaw chat new --agent mybot --loop --interval 300
 ```
 
-**可用的 `set` 字段**：`agentId` / `tickSeconds` / `taskFile` / `notify` / `peerId` / `msgType` / `model` / `enabled`
+**可用的 `set` 字段**：`agentId` / `tickSeconds` / `taskFile` / `enabled`
 
 ---
 
 ## 快速上手
 
-### 场景：为 QQ 私聊会话设置每日总结
-
 ```bash
-# 1. 查看当前会话 ID（或让 QQ 用户向机器人发一条消息后查看）
-tinyclaw chat list
+# 1. 创建一个 loop session
+tinyclaw chat new --loop --interval 300
 
-# 2. 为该会话启用 loop（使用默认配置）
-tinyclaw chat loop enable qqbot:c2c:你的OPENID
-
-# 3. 配置间隔和推送策略
-tinyclaw chat loop set qqbot:c2c:你的OPENID tickSeconds=3600
-tinyclaw chat loop set qqbot:c2c:你的OPENID notify=always
-tinyclaw chat loop set qqbot:c2c:你的OPENID peerId=你的OPENID
-
-# 4. 创建任务文件
+# 2. 创建任务文件（默认路径 ~/.tinyclaw/agents/default/TASK.md）
 cat > ~/.tinyclaw/agents/default/TASK.md << 'EOF'
-总结今天 MEM.md 中记录的工作内容，生成一份简短的每日汇报。
-若无记录则输出"今日暂无记录"。
-EOF
-
-# 5. 重启服务使配置生效
-tinyclaw restart
-
-# 6. 验证（立即触发一次测试）
-tinyclaw chat loop trigger qqbot:c2c:你的OPENID
-```
-
-### 场景：自定义 Agent 运行独立任务
-
-```bash
-# 1. 创建专用 Agent
-tinyclaw agent new monitor
-
-# 2. 为 Agent 创建任务文件
-cat > ~/.tinyclaw/agents/monitor/TASK.md << 'EOF'
 检查系统负载：用 exec_shell 执行 uptime 和 free -h。
-若 load > 4.0 或内存使用率 > 90% 则在输出中包含 [WARN]。
-输出：负载 / 内存使用率 / 状态
+若 load > 4.0 或内存使用率 > 90%，调用 notify_user 工具发送告警。
+输出：负载 / 内存 / 状态
 EOF
 
-# 3. 创建一个 loop session（可以是虚拟会话名）
-# 先确认有一个 session ID，或直接手动创建 toml 文件
-tinyclaw chat loop enable cli:monitor-task
-tinyclaw chat loop set cli:monitor-task agentId=monitor
-tinyclaw chat loop set cli:monitor-task tickSeconds=300
-tinyclaw chat loop set cli:monitor-task notify=on_error
-tinyclaw chat loop set cli:monitor-task peerId=你的QQ号
-
-# 4. 重启
+# 3. 重启服务使配置生效
 tinyclaw restart
+
+# 4. 验证（立即触发一次测试）
+tinyclaw chat loop trigger <sessionId>
 ```
 
 ---
@@ -194,47 +160,26 @@ tinyclaw restart
 ### 启动
 
 服务启动时，`LoopRunner.start()` 扫描所有 `sessions/*.toml`，
-找出 `[loop] enabled = true` 的文件，为每个启用的 session 启动 `setInterval`。
+找出 `[loop] enabled = true` 的文件，为每个 session 启动一个串行循环（首次 tick 在等待 `tickSeconds` 后触发）。
 
-### tick 执行
+### tick 执行流程
 
 ```
-tick 触发
-│
-├─ 并发保护：同一 session 上次 tick 未完成 → 跳过本次
-├─ 读取 taskFile 内容（为空则跳过）
-├─ 复用或创建常驻 Session 实例（复用 messages 历史）
-├─ 调用 runAgent(session, taskContent)
-│    └─ 注入 Loop Agent 专用 system prompt（无人值守规则）
-├─ 写 cron 日志（~/.tinyclaw/cron/logs/loop:<sessionId>.jsonl）
-└─ 按 notify 策略决定是否通过 Connector 推送结果
+等待 tickSeconds 秒
+  │
+  ├─ 重新读取 loop 配置（支持动态修改，下次 tick 生效）
+  ├─ 若配置已移除（enabled=false）→ 退出循环
+  ├─ 读取 taskFile 内容（为空则跳过）
+  ├─ 调用 runAgent(session, taskContent)
+  │    └─ 完全使用绑定 Agent 的 SYSTEM.md 和 MEM.md
+  │    └─ Agent 可调用所有工具（含 notify_user / send_report）
+  └─ 等待 tickSeconds 秒 → 下一次 tick
 ```
 
 ### 注意事项
 
-- **并发保护**：同一 session 上次 tick 还未完成时，新 tick 自动跳过，不会叠加执行
+- **串行执行**：同一 session 不会并发触发，上次 tick 未结束时新 tick 自动跳过
 - **任务文件为空**：跳过本次 tick，不调用 LLM
 - **任务文件不存在**：跳过并打印警告，不报错
-- **常驻 Session**：loop session 复用同一个 Session 实例，记忆会持续累积，MEM.md 可被 Agent 主动更新
-- **配置变更生效**：修改 `.toml` 后需重启服务（`tinyclaw restart`）才生效
-- **日志位置**：`~/.tinyclaw/cron/logs/loop:<sanitized-sessionId>.jsonl`
-
----
-
-## 配置文件结构速查
-
-```toml
-# ~/.tinyclaw/sessions/qqbot_c2c_OPENID.toml
-
-[loop]
-enabled     = true
-agentId     = "default"
-tickSeconds = 300
-taskFile    = "TASK.md"
-notify      = "on_change"
-peerId      = "OPENID"
-msgType     = "c2c"
-```
-
-> Loop 配置文件与 session JSONL 位于同一目录（`~/.tinyclaw/sessions/`），
-> 文件名以 `.toml` 结尾，而 JSONL 持久化文件以 `.jsonl` 结尾。
+- **常驻 Session**：loop session 复用同一个 Session 实例，记忆持续积累，Agent 可主动更新 MEM.md
+- **配置变更生效**：修改 `.toml` 后需重启服务（`tinyclaw restart`）才生效；`taskFile` 内容可实时修改，下次 tick 时读取最新内容
