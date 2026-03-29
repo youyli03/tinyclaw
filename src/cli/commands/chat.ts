@@ -59,10 +59,12 @@ ${bold("会话 ID 格式：")}
       break;
     case "new":
       console.log(`
-${bold("tinyclaw chat new")} [qqbot | --agent <id>]
+${bold("tinyclaw chat new")} [qqbot | --agent <id>] [--loop [--interval <秒>]]
 
 ${bold("选项：")}
   --agent, -a <id>                        绑定到指定 Agent（默认 default）
+  --loop                                  创建后立即启用 loop（定时自主执行）
+  --interval <秒>                         loop 触发间隔，秒数（默认 60，需与 --loop 同用）
 
 ${bold("QQBot 子模式：")}
   chat new qqbot --app-id <id> --secret <secret>
@@ -153,12 +155,27 @@ export async function run(args: string[]): Promise<void> {
       return;
     }
     let agentId: string | undefined;
+    let enableLoop = false;
+    let loopInterval: number | undefined;
     for (let i = 0; i < rest.length; i++) {
       if ((rest[i] === "--agent" || rest[i] === "-a") && rest[i + 1]) {
         agentId = rest[++i];
+      } else if (rest[i] === "--loop") {
+        enableLoop = true;
+      } else if (rest[i] === "--interval" && rest[i + 1]) {
+        loopInterval = parseInt(rest[++i]!, 10);
       }
     }
-    await runNew(agentId);
+    if (loopInterval !== undefined && !enableLoop) {
+      console.error(red("错误：--interval 必须与 --loop 一起使用"));
+      console.error(dim("  示例：tinyclaw chat new --loop --interval 300"));
+      process.exit(1);
+    }
+    if (loopInterval !== undefined && (isNaN(loopInterval) || loopInterval < 1)) {
+      console.error(red("错误：--interval 必须为正整数（秒）"));
+      process.exit(1);
+    }
+    await runNew(agentId, enableLoop ? { interval: loopInterval ?? 60 } : undefined);
     return;
   }
 
@@ -320,7 +337,7 @@ async function runList(): Promise<void> {
 
 // ── chat new ──────────────────────────────────────────────────────────────────
 
-async function runNew(agentId?: string): Promise<void> {
+async function runNew(agentId?: string, loopOpts?: { interval: number }): Promise<void> {
   if (!existsSync(IPC_SOCKET_PATH)) {
     console.error(red("错误：tinyclaw 主服务未运行，请先执行 tinyclaw start"));
     process.exit(1);
@@ -329,6 +346,18 @@ async function runNew(agentId?: string): Promise<void> {
     const sessionId = await createSession(agentId);
     console.log(green(`✓ 新会话已创建：${sessionId}`));
     if (agentId) console.log(dim(`  Agent：${agentId}`));
+    if (loopOpts) {
+      agentManager.writeSessionLoop(sessionId, {
+        enabled: true,
+        agentId: agentId ?? "default",
+        tickSeconds: loopOpts.interval,
+        taskFile: "TASK.md",
+        notify: "never",
+      });
+      console.log(green(`✓ loop 已启用（tickSeconds=${loopOpts.interval}）`));
+      console.log(dim(`  配置文件：${agentManager.getSessionTomlPath(sessionId)}`));
+      console.log(dim("  修改配置：tinyclaw chat loop set <sessionId> <key=value>"));
+    }
     console.log(dim(`  发送消息：tinyclaw chat -s ${sessionId} <消息>`));
   } catch (err) {
     console.error(red(`创建失败：${err instanceof Error ? err.message : String(err)}`));
