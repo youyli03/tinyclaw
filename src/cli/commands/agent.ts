@@ -442,11 +442,18 @@ function runNew(mgr: AgentManager, args: string[]): void {
     writeMcpToml(mgr, id, []);
     // 写入 SYSTEM.md：memory-only 专属提示词
     writeFileSync(mgr.systemPromptPath(id), SAMPLE_SYSTEM_MEMORY_ONLY(id), "utf-8");
+    // 写入 MEM.md：memory 工具依赖此文件，必须初始化
+    writeFileSync(mgr.memPath(id), SAMPLE_MEM, "utf-8");
     console.log(green(`  ✓ 已应用模板 memory-only`));
     console.log(dim(`     工具限制：allowlist [${MEMORY_ONLY_TOOLS.join(", ")}]`));
     console.log(dim(`     MCP 限制：全部禁用（servers = []）`));
     console.log(dim(`     SYSTEM.md：已写入 memory-only 提示词`));
+    console.log(dim(`     MEM.md：已写入初始记忆文件`));
   } else {
+    // 写入初始文件：MEM.md / SKILLS.md / SYSTEM.md（避免需要手动 agent repair）
+    writeFileSync(mgr.systemPromptPath(id), SAMPLE_SYSTEM(id), "utf-8");
+    writeFileSync(mgr.memPath(id), SAMPLE_MEM, "utf-8");
+    writeFileSync(mgr.skillsPath(id), SAMPLE_SKILLS, "utf-8");
     console.log(dim(`  设置提示：tinyclaw agent edit ${id}`));
     console.log(dim(`  配置权限：tinyclaw agent perm ${id}`));
   }
