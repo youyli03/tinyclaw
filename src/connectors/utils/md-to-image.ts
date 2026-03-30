@@ -93,8 +93,8 @@ function buildHtml(mdHtml: string): string {
   li { margin: 0.15em 0; }
   code {
     font-family: "Consolas", "Source Code Pro", "Liberation Mono", monospace;
-    background: #073642;
-    color: #93a1a1;
+    background: #ddd8c4;
+    color: #586e75;
     padding: 1px 5px;
     border-radius: 3px;
     font-size: 0.85em;
