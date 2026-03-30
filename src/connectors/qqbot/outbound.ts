@@ -6,6 +6,9 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { spawn } from "node:child_process";
 import {
   getAccessToken,
   clearTokenCache,
@@ -244,6 +247,33 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
   }
 }
 
+/**
+ * 将本地 PNG 文件转换为临时 JPEG 文件，返回 JPEG 路径。
+ * 转换失败时 throw Error，调用方应 catch 并回退使用原始文件。
+ */
+function convertPngToJpeg(pngPath: string, quality = 85): Promise<string> {
+  const jpgPath = path.join(
+    os.tmpdir(),
+    `qqbot_${Date.now()}_${path.basename(pngPath, ".png")}.jpg`
+  );
+  return new Promise((resolve, reject) => {
+    const py = spawn("python3", ["-c", `
+import sys
+from PIL import Image
+img = Image.open(sys.argv[1]).convert("RGB")
+img.save(sys.argv[2], "JPEG", quality=int(sys.argv[3]), optimize=True)
+`, pngPath, jpgPath, String(quality)], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let err = "";
+    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.on("close", (code) => {
+      if (code === 0 && fs.existsSync(jpgPath)) resolve(jpgPath);
+      else reject(new Error(`PNG→JPEG 转换失败 (code=${code}): ${err.trim()}`));
+    });
+    py.on("error", (e) => reject(new Error(`python3 启动失败: ${e.message}`)));
+  });
+}
+
 async function doSendMedia(
   token: string,
   type: "c2c" | "dm" | "group",
@@ -260,12 +290,32 @@ async function doSendMedia(
     if (!fs.existsSync(pathOrUrl)) {
       throw new Error(`媒体文件不存在: ${pathOrUrl}`);
     }
-    const stat = fs.statSync(pathOrUrl);
-    if (stat.size > MAX_BASE64_FILE_SIZE) {
-      throw new Error(`文件过大 (${stat.size} bytes): ${pathOrUrl}`);
+
+    // PNG 图片自动转 JPEG，大幅减小体积，避免 QQ 上传超限（code=850031）
+    let uploadPath = pathOrUrl;
+    let tempJpg: string | null = null;
+    if (mediaType === "img" && pathOrUrl.toLowerCase().endsWith(".png")) {
+      try {
+        tempJpg = await convertPngToJpeg(pathOrUrl);
+        uploadPath = tempJpg;
+      } catch (e) {
+        console.warn("[qqbot] PNG→JPEG 转换失败，回退使用原始 PNG:", e);
+      }
     }
-    const data = fs.readFileSync(pathOrUrl);
-    source = { fileData: data.toString("base64") };
+
+    try {
+      const stat = fs.statSync(uploadPath);
+      if (stat.size > MAX_BASE64_FILE_SIZE) {
+        throw new Error(`文件过大 (${stat.size} bytes): ${uploadPath}`);
+      }
+      const data = fs.readFileSync(uploadPath);
+      source = { fileData: data.toString("base64") };
+    } finally {
+      // 清理临时 JPEG 文件
+      if (tempJpg) {
+        try { fs.unlinkSync(tempJpg); } catch { /* ignore */ }
+      }
+    }
   }
 
   if (type === "c2c" || type === "dm") {
