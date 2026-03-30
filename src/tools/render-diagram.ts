@@ -83,6 +83,9 @@ async function tryBeautifulMermaid(
   outFile: string,
   theme: "light" | "dark"
 ): Promise<string | null> {
+  // 预处理：剥掉 %%{...}%% 指令行（beautiful-mermaid 不支持 init 指令，会抛 Invalid mermaid header）
+  const cleanCode = code.replace(/^%%\{[^\n]*\}%%[ \t]*\n?/gm, "").trim();
+
   // 动态 import，避免启动时报错
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let renderMermaidSVG: (code: string, opts: any) => string;
@@ -103,7 +106,7 @@ async function tryBeautifulMermaid(
   // 渲染 SVG（同步）
   let svg: string;
   try {
-    svg = renderMermaidSVG(code, themeOpts);
+    svg = renderMermaidSVG(cleanCode, themeOpts);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     // "Invalid mermaid header" = 不支持的图表类型，返回 null 触发 fallback
