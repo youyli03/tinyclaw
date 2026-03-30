@@ -65,11 +65,15 @@ function buildHtml(mdHtml: string): string {
 <meta charset="utf-8"/>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
+  html {
     width: ${RENDER_WIDTH}px;
     overflow-x: hidden;
+    /* 白色背景确保内容区域以下的空白行为纯白，PIL 裁剪算法才能正确检测内容边界 */
+    background: white;
   }
   body {
+    width: ${RENDER_WIDTH}px;
+    overflow-x: hidden;
     font-family: "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Noto Sans", sans-serif;
     font-size: 14px;
     line-height: 1.7;
