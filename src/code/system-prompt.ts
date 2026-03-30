@@ -117,7 +117,8 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - render_diagram 支持两种类型：
   - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
-- 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次${visionSection}`;
+- 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
+- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报${visionSection}`;
 }
 
 function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan }: PromptParts): string {
@@ -194,5 +195,6 @@ Plan 模式分为两个严格隔离的阶段：
   - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
+- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报
 - 用中文回复，简洁明了${visionSection}${existingPlanSection}`;
 }
