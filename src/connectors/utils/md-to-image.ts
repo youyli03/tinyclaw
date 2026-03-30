@@ -14,7 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -247,12 +247,34 @@ cropped.save(sys.argv[2])
   });
 }
 
+// ── PIL PNG → JPEG 转换（大幅减小文件体积）────────────────────────────────────
+
+function pngToJpeg(inPng: string, outJpg: string, quality = 85): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const py = spawn("python3", ["-c", `
+import sys
+from PIL import Image
+
+img = Image.open(sys.argv[1]).convert("RGB")
+img.save(sys.argv[2], "JPEG", quality=int(sys.argv[3]), optimize=True)
+`, inPng, outJpg, String(quality)], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let err = "";
+    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.on("close", (code) => {
+      if (code === 0 && existsSync(outJpg)) resolve();
+      else reject(new Error(`PIL JPEG 转换失败 (code=${code}): ${err.trim()}`));
+    });
+    py.on("error", (e) => reject(new Error(`python3 (PIL) 启动失败: ${e.message}`)));
+  });
+}
+
 // ── 主函数 ────────────────────────────────────────────────────────────────────
 
 let _counter = 0;
 
 /**
- * 将 Markdown 文本渲染为 PNG 图片，返回图片绝对路径。
+ * 将 Markdown 文本渲染为 JPEG 图片，返回图片绝对路径。
  * 失败时 throw Error，调用方应 catch 并降级。
  *
  * @param mdText    Markdown 原文
@@ -269,6 +291,7 @@ export async function mdToImage(
   const htmlPath = join(dir, `${id}.html`);
   const rawPng   = join(dir, `${id}_raw.png`);
   const finalPng = join(dir, `${id}.png`);
+  const finalJpg = join(dir, `${id}.jpg`);
 
   // Step 1: Markdown → HTML（含 GFM 表格）
   const mdHtml = await markdownToHtml(mdText);
@@ -281,11 +304,24 @@ export async function mdToImage(
   await chromiumScreenshot(htmlPath, rawPng);
 
   // Step 4: 裁剪底部多余白边
+  let croppedPath = rawPng;
   try {
     await cropImage(rawPng, finalPng);
-    return finalPng;
+    croppedPath = finalPng;
   } catch {
-    // 裁剪失败则直接用原始截图
-    return rawPng;
+    // 裁剪失败则用原始截图继续
+  }
+
+  // Step 5: PNG → JPEG（JPEG 对文字截图体积比 PNG 小 5-8 倍，避免 QQ 上传超限）
+  try {
+    await pngToJpeg(croppedPath, finalJpg);
+    // 删除中间 PNG 临时文件
+    for (const f of [rawPng, finalPng]) {
+      try { unlinkSync(f); } catch { /* ignore */ }
+    }
+    return finalJpg;
+  } catch {
+    // JPEG 转换失败则回退返回裁剪后的 PNG
+    return croppedPath;
   }
 }

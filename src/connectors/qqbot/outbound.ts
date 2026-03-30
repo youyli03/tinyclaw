@@ -226,6 +226,15 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
             backoffMs *= 2;
           } else {
             console.error("[qqbot] 媒体发送失败:", err);
+            // 降级：提取纯文本内容发送给用户，确保用户至少能收到信息
+            const fallbackText = extractTextContent(text);
+            if (fallbackText) {
+              try {
+                await doSend(token, type, peerId, fallbackText, replyToId);
+              } catch (fallbackErr) {
+                console.error("[qqbot] 媒体降级发文本也失败:", fallbackErr);
+              }
+            }
             break;
           }
         }
