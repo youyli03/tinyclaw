@@ -110,11 +110,13 @@ const MFASchema = z.object({
   clientId: z.string().min(1).optional(),
   /**
    * write_file / edit_file / delete_file 写入路径超出 workspace 白名单时的确认方式：
-   * - `"mfa"`  — 复用现有 MFA 流程（onMFARequest），走 interface 对应的 simple/totp/msal（默认）
-   * - `"ask"`  — 通过 onAskUser 弹"允许/拒绝"选择框，不需要验证码
-   * - `"deny"` — 直接拒绝，不询问用户
+   * - `"simple"` — 发文字警告，等待用户回复确认/取消（默认，与 interface = "simple" 配套）
+   * - `"totp"`   — 用户用 Authenticator App 生成 TOTP 码确认（与 interface = "totp" 配套）
+   * - `"msal"`   — Microsoft Authenticator 推送确认（与 interface = "msal" 配套）
+   * - `"ask"`    — 通过 onAskUser 弹"允许/拒绝"选择框，不需要验证码
+   * - `"deny"`   — 直接拒绝，不询问用户
    */
-  path_guard_mode: z.enum(["mfa", "ask", "deny"]).default("mfa"),
+  path_guard_mode: z.enum(["simple", "totp", "msal", "ask", "deny"]).default("simple"),
 });
 
 const AuthSchema = z.object({

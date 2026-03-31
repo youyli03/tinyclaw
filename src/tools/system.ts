@@ -107,7 +107,7 @@ async function handleOutOfBoundPath(
     if (answer !== "允许") {
       return `已拒绝：不允许写入 "${resolvedPath}"`;
     }
-  } else if (ctx?.onMFARequest) {
+  } else if ((mode === "simple" || mode === "totp" || mode === "msal") && ctx?.onMFARequest) {
     const ok = await ctx.onMFARequest(
       `⚠️ AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`,
     );
