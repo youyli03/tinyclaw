@@ -73,8 +73,8 @@ function formatMsgForSummary(m: ChatMessage): string {
   return "";
 }
 
-/** Code 模式压缩后保留的最近消息数（除 system 以外）*/
-const CODE_KEEP_RECENT_MESSAGES = 4;
+/** Code 模式压缩后保留的最近完整轮次数（以 user 消息为轮次边界，与 chat 模式策略对齐） */
+const CODE_KEEP_TURNS = 4;
 
 /**
  * 检查当前 messages 的 token 使用率是否超过阈值。
@@ -149,8 +149,8 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
 /**
  * Code 模式滑动窗口压缩：
  * 1. 用 summarizer LLM 对较旧的消息生成代码专属摘要
- * 2. 返回 [system messages..., summary_assistant, 最近 N 条非 system 消息]
- * 与 chat 模式不同：保留最近 CODE_KEEP_RECENT_MESSAGES 条消息保持详细上下文，
+ * 2. 返回 [system messages..., summary_assistant, 最近 CODE_KEEP_TURNS 轮完整对话]
+ * 以 user 消息为轮次边界，保留最近 4 个完整轮次（含每轮内的所有 tool_calls / tool 结果），
  * 只压缩更早的内容，实现滑动窗口效果。
  */
 export async function summarizeAndCompressCode(
@@ -162,10 +162,17 @@ export async function summarizeAndCompressCode(
   const systemMessages = messages.filter((m) => m.role === "system");
   const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
-  // 保留最新的 N 条消息，对更早的部分做摘要
-  const keepCount = Math.min(CODE_KEEP_RECENT_MESSAGES, nonSystemMessages.length);
-  const toSummarize = nonSystemMessages.slice(0, nonSystemMessages.length - keepCount);
-  let toKeep = nonSystemMessages.slice(nonSystemMessages.length - keepCount);
+  // 找出最后 CODE_KEEP_TURNS 个 user 消息的起始位置，保留该位置起的全部消息
+  const userIndices = nonSystemMessages
+    .map((m, i) => (m.role === "user" ? i : -1))
+    .filter((i) => i >= 0);
+  const keepFromIdx =
+    userIndices.length > CODE_KEEP_TURNS
+      ? userIndices[userIndices.length - CODE_KEEP_TURNS]!
+      : 0;
+
+  const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
+  let toKeep = nonSystemMessages.slice(keepFromIdx);
 
   // 如果没有足够旧的内容可压缩，直接返回原始消息
   if (toSummarize.length === 0) {
