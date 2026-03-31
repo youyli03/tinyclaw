@@ -77,6 +77,67 @@ function formatMsgForSummary(m: ChatMessage): string {
 const CODE_KEEP_TURNS = 4;
 
 /**
+ * 对保留的消息做工具链剥离：
+ * - 已完成轮次（存在无 tool_calls 的最终 assistant 回复）→ 只保留 user + final_assistant
+ * - 未完成轮次（仍在工具调用链中，如当前正在执行的轮次）→ 原样保留所有消息
+ *
+ * 目的：避免 toKeep 因大量 tool 结果（exec_shell/read_file 输出）撑大上下文，
+ * 压缩后仍超阈值导致每轮都重复触发压缩。
+ *
+ * 注意：此函数应在孤立 tool 消息清理后调用，且不改变 toSummarize 内容
+ * （摘要 LLM 仍需完整工具调用才能生成高质量技术摘要）。
+ */
+function stripCompletedToolCalls(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length === 0) return messages;
+
+  const result: ChatMessage[] = [];
+  let i = 0;
+
+  // 处理开头的非 user 消息（如上一轮 assistant 最终回复移位残留）
+  while (i < messages.length && messages[i]!.role !== "user") {
+    result.push(messages[i]!);
+    i++;
+  }
+
+  // 按 user 消息为边界逐轮处理
+  while (i < messages.length) {
+    // 找本轮结束位置（下一个 user 消息前，或末尾）
+    let turnEnd = i + 1;
+    while (turnEnd < messages.length && messages[turnEnd]!.role !== "user") {
+      turnEnd++;
+    }
+
+    const turn = messages.slice(i, turnEnd);
+
+    // 找本轮最后一条无 tool_calls 的 assistant 消息（最终回复）
+    let finalAssistantIdx = -1;
+    for (let k = turn.length - 1; k >= 0; k--) {
+      const m = turn[k]!;
+      if (m.role === "assistant") {
+        const calls = (m as { role: "assistant"; tool_calls?: unknown[] }).tool_calls;
+        if (!calls || calls.length === 0) {
+          finalAssistantIdx = k;
+          break;
+        }
+      }
+    }
+
+    if (finalAssistantIdx >= 0) {
+      // 已完成轮次：只保留 user + 最终 assistant 回复
+      result.push(turn[0]!);
+      result.push(turn[finalAssistantIdx]!);
+    } else {
+      // 未完成轮次（当前轮仍在工具调用链中）：保留全部
+      result.push(...turn);
+    }
+
+    i = turnEnd;
+  }
+
+  return result;
+}
+
+/**
  * 检查当前 messages 的 token 使用率是否超过阈值。
  * 优先使用 actualTokens（LLM 返回的真实 prompt token 数），
  * 无实际值时 fallback 到字符数估算（1 token ≈ 3.5 字符）。
@@ -201,6 +262,12 @@ export async function summarizeAndCompressCode(
     }
     toKeep = toKeep.slice(keepStart);
   }
+
+  // 已完成轮次工具链剥离：
+  // 对 toKeep 中每个已完成的用户轮次（存在最终 assistant 无 tool_calls），
+  // 只保留 user + final_assistant，丢弃中间所有 tool_calls/tool 结果消息。
+  // 未完成轮次（当前仍在工具调用链中）原样保留，保证 API tool_call_id 引用完整。
+  toKeep = stripCompletedToolCalls(toKeep as ChatMessage[]) as typeof toKeep;
 
   // 构建待摘要的历史文本，使用 formatMsgForSummary 展开 tool_calls 字段，
   // 确保摘要 LLM 能看到工具调用的名称和参数，而非只看到空白 assistant 消息
