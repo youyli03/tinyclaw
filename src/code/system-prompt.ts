@@ -14,16 +14,21 @@
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { agentManager } from "../core/agent-manager.js";
+import { readFeedback } from "../core/feedback-writer.js";
 
 export function buildCodeSystemPrompt(
   agentId = "default",
   supportsVision = false,
   subMode: "auto" | "plan" = "auto",
   workdir?: string,
+  sessionId?: string,
 ): string {
   const workspacePath = workdir ?? agentManager.workspaceDir(agentId);
   const agentDir = join(workspacePath, "..");
-  const planPath = agentManager.planPath(agentId);
+  // PLAN.md 按 session 隔离（有 sessionId 时用新路径，否则退回旧路径兼容）
+  const planPath = sessionId
+    ? agentManager.codePlanPath(agentId, sessionId)
+    : agentManager.planPath(agentId);
   const workdirNote = workdir
     ? `\n- 默认 workspace（文件输出备用）：${agentManager.workspaceDir(agentId)}`
     : "";
@@ -33,6 +38,9 @@ export function buildCodeSystemPrompt(
 ## 视觉能力
 
 当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。` : "";
+
+  // 读取 code/feedback.md（跨 session 永久有效的行为约束）
+  const feedbackContent = readFeedback(agentId, "code");
 
   // 读取已有 PLAN.md（plan 模式下注入，让 AI 感知上次遗留计划）
   let existingPlan: string | undefined;
@@ -46,9 +54,9 @@ export function buildCodeSystemPrompt(
   }
 
   if (subMode === "plan") {
-    return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan });
+    return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId });
   }
-  return buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection });
+  return buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId });
 }
 
 interface PromptParts {
@@ -59,9 +67,21 @@ interface PromptParts {
   planPath?: string;
   /** 已有 PLAN.md 内容（非空时注入到 prompt 末尾，供会话恢复后 AI 感知上次计划） */
   existingPlan?: string | undefined;
+  /** code/feedback.md 内容（跨 session 行为约束，非空时注入 prompt） */
+  feedbackContent?: string | null;
+  /** 当前 session ID（用于 PLAN.md 路径标注） */
+  sessionId?: string | undefined;
 }
 
-function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection }: PromptParts): string {
+function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
+  const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
+  const planNote = planPath
+    ? `\n- PLAN.md（本 session 计划与执行日志）：\`${planPath}\`，用 \`edit_file\` 追加执行进度`
+    : "";
+  const feedbackNote = planPath
+    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+    : "";
+
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Auto）**，本次会话不保留长期历史。
 
 ## 工作原则
@@ -86,7 +106,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 ## 工作区
 
 - 当前工作目录：${workspacePath}
-- Agent 目录：${agentDir}${workdirNote}
+- Agent 目录：${agentDir}${workdirNote}${planNote}${feedbackNote}
 - 子目录约定：
   - tmp/    临时文件（可随时清理）
   - output/ 输出产物（交付用文件、运行结果等）
@@ -118,12 +138,16 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
   - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
-- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报${visionSection}`;
+- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报${visionSection}${feedbackSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan }: PromptParts): string {
+function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId }: PromptParts): string {
   const existingPlanSection = existingPlan
     ? `\n\n## 已有计划（上次会话遗留）\n\n> 会话中断前已完成以下计划，可在此基础上继续执行或根据新需求修改。新任务规划时直接用 write_file 覆盖 PLAN.md 即可。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
+    : "";
+  const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
+  const feedbackNote = planPath
+    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
     : "";
 
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Plan）**，本次会话不保留长期历史。
@@ -176,6 +200,7 @@ Plan 模式分为两个严格隔离的阶段：
 
 - 当前工作目录：${workspacePath}
 - Agent 目录：${agentDir}${workdirNote}
+- PLAN.md（本 session 计划文件）：\`${planPath}\`，用 \`write_file\` 首次创建，后续用 \`edit_file\` 局部更新${feedbackNote}
 - 子目录约定：
   - tmp/    临时文件（可随时清理）
   - output/ 输出产物（交付用文件、运行结果等）
@@ -196,5 +221,5 @@ Plan 模式分为两个严格隔离的阶段：
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
 - send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报
-- 用中文回复，简洁明了${visionSection}${existingPlanSection}`;
+- 用中文回复，简洁明了${visionSection}${feedbackSection}${existingPlanSection}`;
 }

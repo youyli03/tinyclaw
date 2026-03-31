@@ -304,6 +304,35 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "codesubmode");
   }
 
+  /**
+   * Code session 独立目录路径（按 sessionId 隔离）。
+   * 格式：~/.tinyclaw/agents/<id>/code/<sanitized-sessionId>/
+   */
+  codeSessionDir(agentId: string, sessionId: string): string {
+    const sanitized = sessionId.replace(/[:/\\]/g, "_");
+    return path.join(AGENTS_ROOT, agentId, "code", sanitized);
+  }
+
+  /**
+   * Code session 的 PLAN.md 路径（替代原 planPath，按 session 隔离）。
+   * 格式：~/.tinyclaw/agents/<id>/code/<sanitized-sessionId>/PLAN.md
+   */
+  codePlanPath(agentId: string, sessionId: string): string {
+    return path.join(this.codeSessionDir(agentId, sessionId), "PLAN.md");
+  }
+
+  /**
+   * feedback.md 路径（chat/code 分开，跨 session 永久有效）。
+   * - chat：~/.tinyclaw/agents/<id>/feedback.md
+   * - code：~/.tinyclaw/agents/<id>/code/feedback.md
+   */
+  feedbackPath(agentId: string, mode: "chat" | "code"): string {
+    if (mode === "code") {
+      return path.join(AGENTS_ROOT, agentId, "code", "feedback.md");
+    }
+    return path.join(AGENTS_ROOT, agentId, "feedback.md");
+  }
+
   private tomlPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "agent.toml");
   }

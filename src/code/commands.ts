@@ -199,13 +199,7 @@ registerCommand({
     session.clearMessages();
     // 重新激活标记（clearMessages 会删除 .code.active，这里需要重建）
     session.activateCodeMode();
-    // 清除上一个任务遗留的 PLAN.md，新会话干净起步
-    try {
-      const planFile = agentManager.planPath(session.agentId);
-      if (fs.existsSync(planFile)) fs.unlinkSync(planFile);
-    } catch (err) {
-      console.error("[/new] failed to remove PLAN.md:", err);
-    }
+    // 各 session 有独立目录（agents/<id>/code/<sessionId>/PLAN.md），无需清理旧 PLAN.md
     return [
       "🆕 **已开始全新编码会话**",
       "",

@@ -16,6 +16,7 @@ import { join } from "path";
 import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
+import { readFeedback } from "./feedback-writer.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -81,6 +82,10 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
   const agentDir = join(workspacePath, '..');
   const memFilePath = join(agentDir, 'MEM.md');
   const skillsFilePath = join(agentDir, 'SKILLS.md');
+  const chatFeedbackPath = agentManager.feedbackPath(agentId, "chat");
+
+  // ── chat feedback.md（跨 session 用户行为纠正，若存在则注入） ───────────────
+  const chatFeedbackContent = readFeedback(agentId, "chat");
 
   // ── MEM.md 操作说明（动态，根据 agent tools.toml 决定使用哪种工具描述） ──────
   const hasWriteFile     = isToolAvailable("write_file",      agentId);
@@ -208,7 +213,17 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 ## 视觉能力
 - 你当前使用的模型支持直接读取图片，不需要 OCR 工具
 - 用户发送的图片会被自动附加到消息中，你可以直接描述和分析图片内容
-- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}`;}
+- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}${chatFeedbackContent ? `
+
+## 行为约束（来自历史反馈）
+以下是用户过去纠正过的行为，请严格遵守：
+
+${chatFeedbackContent}
+
+> 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\`` : `
+
+## 行为反馈记录
+当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``}`;}
 
 /**
  * 为不支持 function calling 的模型生成文字版工具描述和调用格式说明（追加到 system prompt）。
@@ -544,7 +559,7 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode, session.codeWorkdir ?? undefined);
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode, session.codeWorkdir ?? undefined, session.sessionId);
       } else {
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
       }
@@ -1091,6 +1106,25 @@ export async function runAgent(
 
   // flush 剩余工具调用通知，清理定时器
   toolThrottler?.stop();
+
+  // ── Code 模式：执行日志追加到 PLAN.md ────────────────────────────────────
+  // 仅在 code 模式、有工具调用、非 slave 时触发，异步追加不阻塞返回
+  if (isCodeMode && toolsUsed.length > 0 && !isSlave) {
+    try {
+      const planPath = agentManager.codePlanPath(session.agentId, session.sessionId);
+      const { mkdirSync, appendFileSync, existsSync } = await import("node:fs");
+      const { dirname } = await import("node:path");
+      if (existsSync(planPath)) {
+        mkdirSync(dirname(planPath), { recursive: true });
+        const now = new Date();
+        const hms = now.toTimeString().slice(0, 8);
+        const uniqueTools = [...new Set(toolsUsed)].join(", ");
+        appendFileSync(planPath, `- [${hms}] 本轮工具：${uniqueTools}\n`, "utf-8");
+      }
+    } catch (err) {
+      console.warn("[agent] PLAN.md 执行日志追加失败:", err instanceof Error ? err.message : err);
+    }
+  }
 
   return { content: finalContent, toolsUsed };
 }
