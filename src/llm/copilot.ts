@@ -652,16 +652,19 @@ export async function buildCopilotClient(
     copilotFetch
   );
 
-  // 有效 context window 取以下三者的最小值：
+  // 有效 context window 起始值：
   // 1. max_context_window_tokens（总窗口）
   // 2. max_prompt_tokens（API 实际接受的 prompt 上限，防止如 oswe-vscode-prime 溢出）
-  // 3. maxContextWindowOverride（config.toml 中手动指定的上限，可选）
+  // 取两者的最小值作为自动检测结果。
   let effectiveContextWindow = Math.min(
     resolvedModel.maxContextWindow,
     resolvedModel.maxPromptTokens
   );
+  // 若 config.toml 手动指定了 maxContextWindow，直接覆盖自动检测结果。
+  // 可向下限制（如修正上报过大的模型）或向上扩展（如 API 返回值低于实际支持值时）。
+  // 注意：设置超过模型实际支持的值可能导致 400 错误，由用户自行确保准确性。
   if (config.maxContextWindowOverride != null && config.maxContextWindowOverride > 0) {
-    effectiveContextWindow = Math.min(effectiveContextWindow, config.maxContextWindowOverride);
+    effectiveContextWindow = config.maxContextWindowOverride;
   }
 
   return { client, contextWindow: effectiveContextWindow };
