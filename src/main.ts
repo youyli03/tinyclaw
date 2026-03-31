@@ -685,17 +685,47 @@ async function main(): Promise<void> {
   if (connector) {
     console.log("[tinyclaw] Starting QQBot connector...");
 
-    // 检查重启通知 marker（由 /restart 命令写入，用于重启后发送通知）
+    // 检查重启通知 marker（由 /restart 命令或 restart_tool 写入，用于重启后发送通知）
     const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
     if (fs.existsSync(RESTART_NOTIFY_FILE)) {
       try {
         const marker = JSON.parse(fs.readFileSync(RESTART_NOTIFY_FILE, "utf-8")) as {
           peerId: string;
           msgType: InboundMessage["type"];
+          /** restart_tool 写入的字段：code 模式 sessionId，重启后注入续接消息 */
+          codeSessionId?: string;
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
+          // 1. 发 QQ 通知（原有逻辑）
           void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
+
+          // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后向 code session 注入续接消息
+          if (marker.codeSessionId) {
+            setTimeout(() => {
+              const codeSession = sessions.get(marker.codeSessionId!);
+              if (codeSession) {
+                codeSession.running = true;
+                const resumePromise = runAgent(codeSession, "[系统] 重启完成，请继续之前未完成的任务。");
+                codeSession.currentRunPromise = resumePromise;
+                resumePromise
+                  .then((result) => {
+                    if (result.content) {
+                      void connector!.send(marker.peerId, marker.msgType, result.content).catch(() => {});
+                    }
+                  })
+                  .catch((err: unknown) => {
+                    console.error("[restart_tool] resume runAgent error:", err);
+                  })
+                  .finally(() => {
+                    codeSession.running = false;
+                    codeSession.currentRunPromise = null;
+                  });
+              } else {
+                console.log(`[restart_tool] codeSession "${marker.codeSessionId}" not found after restart, skip resume`);
+              }
+            }, 1000);
+          }
         };
       } catch {
         try { fs.unlinkSync(RESTART_NOTIFY_FILE); } catch { /* ignore */ }

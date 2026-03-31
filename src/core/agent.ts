@@ -34,6 +34,7 @@ import "../tools/run-code-subagent.js";
 import "../tools/memory.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
+import "../tools/restart.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 // 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
@@ -522,9 +523,12 @@ export async function runAgent(
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
   // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
-  const initialTools = getAllToolSpecs(session.agentId).filter(
-    (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
-  );
+  // 非 code 模式过滤 restart_tool（该工具仅 code 模式下有意义）
+  const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
+    if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
+    if (!isCodeMode && t.function.name === "restart_tool") return false;
+    return true;
+  });
   const textMode = !client.supportsToolCalls;
 
   // preRunLength：连接失败时用于回滚本次注入的消息
@@ -606,10 +610,13 @@ export async function runAgent(
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
+    // 非 code 模式不暴露 restart_tool
     const tools = [
-      ...getAllToolSpecs(session.agentId).filter(
-        (t) => !(isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run"))
-      ),
+      ...getAllToolSpecs(session.agentId).filter((t) => {
+        if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
+        if (!isCodeMode && t.function.name === "restart_tool") return false;
+        return true;
+      }),
       ...(opts.customTools ?? []),
     ];
 
@@ -802,6 +809,7 @@ export async function runAgent(
       "exit_plan_mode",
       "create_skill",
       "session_send",
+      "restart_tool",  // 触发 process.exit，必须串行且需提前写 tool result
     ]);
 
     /**
@@ -825,6 +833,7 @@ export async function runAgent(
           sessionId: session.sessionId,
           agentId: session.agentId,
           masterSession: session,
+          ...(!textMode && call.callId ? { currentCallId: call.callId } : {}),  // function calling 模式下注入 callId，供 restart_tool 等在 process.exit 前写 tool result
           ...(currentDepth < MAX_SLAVE_DEPTH
             ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) }) }
             : {}),

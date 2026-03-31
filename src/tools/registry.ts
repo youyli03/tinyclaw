@@ -98,6 +98,12 @@ export interface ToolContext {
    * 过滤出发送方有权访问的 session（双向 access.toml 检查）。
    */
   sessionGetFn?: (fromAgentId: string) => Promise<SessionInfo[]>;
+  /**
+   * 当前正在执行的工具调用 ID（function calling 模式下由 agent.ts 注入）。
+   * 供需要在 process.exit 前提前写入 tool result 的特殊工具（如 restart_tool）使用。
+   * text 模式下不注入（undefined）。
+   */
+  currentCallId?: string;
 }
 
 export interface ToolDef {
