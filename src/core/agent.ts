@@ -715,9 +715,14 @@ export async function runAgent(
       const actualTokens = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
       const usageRatio = actualTokens / codeContextWindow;
       if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
-        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），触发滑动窗口压缩`);
-        await session.compressForCode();
-        void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`);
+        const compressed = await session.compressForCode();
+        if (compressed) {
+          console.log(`${logPrefix} ✅ 压缩完成，消息数：${session.getMessages().length}`);
+          void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+        } else {
+          console.log(`${logPrefix} ⚠️ 压缩无效果（轮次不足或已最小化），上下文可能继续增长`);
+        }
       } else if (usageRatio >= 0.75) {
         console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
         await session.compressForCode();

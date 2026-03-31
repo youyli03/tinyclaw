@@ -235,11 +235,6 @@ export async function summarizeAndCompressCode(
   const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
   let toKeep = nonSystemMessages.slice(keepFromIdx);
 
-  // 如果没有足够旧的内容可压缩，直接返回原始消息
-  if (toSummarize.length === 0) {
-    return messages;
-  }
-
   // 去除 toKeep 开头的孤立 role=tool 消息：
   // 当对应的 assistant+tool_calls 已被移入 toSummarize 时，tool 消息的 tool_call_id 找不到
   // 对应的 assistant，OpenAI API 会拒绝该消息序列（400 Bad Request）。
@@ -267,7 +262,17 @@ export async function summarizeAndCompressCode(
   // 对 toKeep 中每个已完成的用户轮次（存在最终 assistant 无 tool_calls），
   // 只保留 user + final_assistant，丢弃中间所有 tool_calls/tool 结果消息。
   // 未完成轮次（当前仍在工具调用链中）原样保留，保证 API tool_call_id 引用完整。
+  // 注意：此操作必须在 toSummarize.length === 0 的判断之前，否则当 session
+  // 用户轮次 ≤ CODE_KEEP_TURNS 时，全部消息落入 toKeep，剥离永远不会执行。
   toKeep = stripCompletedToolCalls(toKeep as ChatMessage[]) as typeof toKeep;
+
+  // 如果没有足够旧的内容可压缩（无需摘要），检查剥离是否有效果：
+  // - 剥离减少了消息数 → 返回剥离后的版本（不加摘要）
+  // - 剥离无效果 → 返回原始消息（调用方 compressForCode 会跳过更新）
+  if (toSummarize.length === 0) {
+    const stripped = [...systemMessages, ...toKeep];
+    return stripped.length < messages.length ? stripped : messages;
+  }
 
   // 构建待摘要的历史文本，使用 formatMsgForSummary 展开 tool_calls 字段，
   // 确保摘要 LLM 能看到工具调用的名称和参数，而非只看到空白 assistant 消息
