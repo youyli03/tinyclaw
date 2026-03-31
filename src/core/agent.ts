@@ -141,6 +141,8 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
   - output/ 输出产物（交付用文件、运行结果等）
 - 所有无关联的中间文件放入 tmp/，输出成果放入 output/，保持目录整洁
 - 可用绝对路径或 \`cd /other/path && command\` 切换工作目录
+- **write_file / edit_file / delete_file 只允许操作 workspace 和 agent 配置目录**；超出范围将触发用户授权确认，授权仅当前轮对话有效，未确认则写入失败
+- exec_shell 可切换任意目录，但严禁写入 \$HOME 根目录、系统目录（/etc /usr /bin 等）及敏感配置文件（.gitconfig / .bashrc / .ssh 等）
 
 ## MEM.md（持久记忆）
 - MEM.md 是跨 session 的持久笔记，已在本 session 初始化时一次性加载
@@ -514,6 +516,7 @@ export async function runAgent(
   // ── 前置：重置并发控制状态，创建新 AbortController ───────────────────────
   session.abortRequested = false;
   session.mfaApprovedForThisRun = false;
+  session.approvedOutOfBoundPaths = new Set();
   const llmAc = new AbortController();
   session.llmAbortController = llmAc;
 

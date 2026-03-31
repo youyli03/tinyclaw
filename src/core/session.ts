@@ -81,6 +81,11 @@ export class Session {
   mfaPreApproved = false;
   /** Interface A：等待用户回复 确认/取消 的控制柄 */
   pendingApproval: PendingApproval | null = null;
+  /**
+   * 本轮对话（runAgent 调用）中用户已授权的越界写路径集合。
+   * runAgent 开头与 mfaApprovedForThisRun 一起重置，授权仅单轮有效。
+   */
+  approvedOutOfBoundPaths: Set<string> = new Set();
 
   // ── 会话摘要 ──────────────────────────────────────────────────────────────
   /** 最近一次 compress() 生成的摘要文本（由 fork() 注入给 slave 作为历史背景） */

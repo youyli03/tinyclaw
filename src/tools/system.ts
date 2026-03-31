@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
+import { checkWritePath } from "./path-guard.js";
+import { loadConfig } from "../config/loader.js";
 
 function expandHome(p: string): string {
   if (p === "~" || p.startsWith("~/")) {
@@ -81,12 +83,63 @@ registerTool({
 
 // ── write_file ────────────────────────────────────────────────────────────────
 
-async function writeFileImpl(args: Record<string, unknown>): Promise<string> {
+/**
+ * 处理越界写路径的用户确认流程（被 write/edit/delete 三个工具共用）。
+ * @returns null 表示用户确认（可继续写入），字符串表示拒绝原因（应直接 return 该字符串）
+ */
+async function handleOutOfBoundPath(
+  resolvedPath: string,
+  ctx?: ToolContext,
+): Promise<string | null> {
+  const mode = (() => {
+    try { return loadConfig().auth?.mfa?.path_guard_mode ?? "mfa"; } catch { return "mfa"; }
+  })();
+
+  if (mode === "deny") {
+    return `错误：写入路径 "${resolvedPath}" 超出允许的工作目录范围`;
+  }
+
+  if (mode === "ask" && ctx?.onAskUser) {
+    const { answer } = await ctx.onAskUser(
+      `AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`,
+      [{ label: "允许" }, { label: "拒绝", recommended: true }],
+    );
+    if (answer !== "允许") {
+      return `已拒绝：不允许写入 "${resolvedPath}"`;
+    }
+  } else if (ctx?.onMFARequest) {
+    const ok = await ctx.onMFARequest(
+      `⚠️ AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`,
+    );
+    if (!ok) {
+      return `已拒绝：不允许写入 "${resolvedPath}"`;
+    }
+  } else {
+    // 无交互回调（CLI/cron 无人值守）→ 直接拒绝
+    return `错误：写入路径 "${resolvedPath}" 超出允许的工作目录范围（无交互回调，已自动拒绝）`;
+  }
+
+  // 用户确认，记录本轮已授权
+  ctx?.masterSession?.approvedOutOfBoundPaths.add(resolvedPath);
+  return null;
+}
+
+async function writeFileImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const filePath = String(args["path"] ?? "");
   const content = String(args["content"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
   const resolved = path.resolve(expandHome(filePath));
+
+  const check = checkWritePath(resolved, ctx);
+  if (!check.allow) {
+    if (check.isDangerous) {
+      return `错误：禁止写入 "${resolved}"（${check.reason}）`;
+    }
+    const denied = await handleOutOfBoundPath(resolved, ctx);
+    if (denied !== null) return denied;
+  }
+
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, content, "utf-8");
   return `已写入：${resolved}（${content.length} 字节）`;
@@ -109,16 +162,26 @@ registerTool({
       },
     },
   },
-  execute: writeFileImpl,
+  execute: (args, ctx) => writeFileImpl(args, ctx),
 });
 
 // ── delete_file ───────────────────────────────────────────────────────────────
 
-async function deleteFileImpl(args: Record<string, unknown>): Promise<string> {
+async function deleteFileImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const filePath = String(args["path"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
   const resolved = path.resolve(expandHome(filePath));
+
+  const check = checkWritePath(resolved, ctx);
+  if (!check.allow) {
+    if (check.isDangerous) {
+      return `错误：禁止删除 "${resolved}"（${check.reason}）`;
+    }
+    const denied = await handleOutOfBoundPath(resolved, ctx);
+    if (denied !== null) return denied;
+  }
+
   if (!fs.existsSync(resolved)) {
     return `文件不存在：${resolved}`;
   }
@@ -142,12 +205,12 @@ registerTool({
       },
     },
   },
-  execute: deleteFileImpl,
+  execute: (args, ctx) => deleteFileImpl(args, ctx),
 });
 
 // ── edit_file ─────────────────────────────────────────────────────────────────
 
-async function editFileImpl(args: Record<string, unknown>): Promise<string> {
+async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const filePath = String(args["path"] ?? "");
   const oldStr = String(args["old_str"] ?? "");
   const newStr = String(args["new_str"] ?? "");
@@ -155,6 +218,16 @@ async function editFileImpl(args: Record<string, unknown>): Promise<string> {
   if (!oldStr) return "错误：缺少 old_str 参数";
 
   const resolved = path.resolve(expandHome(filePath));
+
+  const check = checkWritePath(resolved, ctx);
+  if (!check.allow) {
+    if (check.isDangerous) {
+      return `错误：禁止编辑 "${resolved}"（${check.reason}）`;
+    }
+    const denied = await handleOutOfBoundPath(resolved, ctx);
+    if (denied !== null) return denied;
+  }
+
   if (!fs.existsSync(resolved)) return `文件不存在：${resolved}`;
 
   const content = fs.readFileSync(resolved, "utf-8");
@@ -185,7 +258,7 @@ registerTool({
       },
     },
   },
-  execute: editFileImpl,
+  execute: (args, ctx) => editFileImpl(args, ctx),
 });
 
 // ── read_file ─────────────────────────────────────────────────────────────────

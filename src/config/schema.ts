@@ -108,6 +108,13 @@ const MFASchema = z.object({
   tenantId: z.string().min(1).optional(),
   /** MSAL Interface B 专用：Azure AD 应用客户端 ID */
   clientId: z.string().min(1).optional(),
+  /**
+   * write_file / edit_file / delete_file 写入路径超出 workspace 白名单时的确认方式：
+   * - `"mfa"`  — 复用现有 MFA 流程（onMFARequest），走 interface 对应的 simple/totp/msal（默认）
+   * - `"ask"`  — 通过 onAskUser 弹"允许/拒绝"选择框，不需要验证码
+   * - `"deny"` — 直接拒绝，不询问用户
+   */
+  path_guard_mode: z.enum(["mfa", "ask", "deny"]).default("mfa"),
 });
 
 const AuthSchema = z.object({
