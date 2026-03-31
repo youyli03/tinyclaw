@@ -1,6 +1,7 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { Session } from "../core/session.js";
 import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
+import { sanitizeToolResult } from "./sanitize.js";
 
 /** 跨 session 通信：单个 session 的信息（由 sessionGetFn 返回） */
 export interface SessionInfo {
@@ -208,5 +209,6 @@ export async function executeTool(
 ): Promise<string> {
   const tool = tools.get(name);
   if (!tool) return `错误：未知工具 "${name}"`;
-  return tool.execute(args, ctx);
+  const result = await tool.execute(args, ctx);
+  return sanitizeToolResult(result);
 }

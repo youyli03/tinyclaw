@@ -17,6 +17,7 @@ import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 import { readFeedback } from "./feedback-writer.js";
+import { sanitizeUserInput } from "../tools/sanitize.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -605,7 +606,8 @@ export async function runAgent(
 
     // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
     if (!opts.skipAddUserMessage) {
-      const msgContent = client.supportsVision ? buildVisionContent(userContent) : userContent;
+      const sanitizedContent = sanitizeUserInput(userContent);
+      const msgContent = client.supportsVision ? buildVisionContent(sanitizedContent) : sanitizedContent;
       session.addUserMessage(msgContent);
     }
   }
