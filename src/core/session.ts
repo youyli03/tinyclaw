@@ -99,6 +99,12 @@ export class Session {
    */
   mode: "chat" | "code" = "chat";
 
+  /**
+   * Chat 模式轮次计数，每次 addUserMessage 时递增。
+   * 仅用于轻量 diary 触发的频率控制（每 N 轮触发一次），不持久化。
+   */
+  chatTurnCount: number = 0;
+
   /** Code 子模式：auto（默认，直接执行）/ plan（先规划后执行） */
   codeSubMode: "auto" | "plan" = "auto";
 
@@ -216,6 +222,7 @@ export class Session {
   addUserMessage(content: string | ContentPart[]): void {
     this.messages.push({ role: "user", content });
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
+    this.chatTurnCount++;
   }
 
   addAssistantMessage(content: string): void {

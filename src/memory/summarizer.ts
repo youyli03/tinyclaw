@@ -306,6 +306,42 @@ export async function summarizeAndCompressCode(
 /** Chat 模式压缩后保留的最近完整轮次数（以 user 消息为轮次边界） */
 const CHAT_KEEP_TURNS = 4;
 
+/** 轻量 diary 提炼：单轮 user+assistant 交互提炼提示词 */
+const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
+用 1-3 句中文提炼本轮对话的核心内容：用户的意图、AI 的主要行动或结论。
+要求：简洁、精准，不要加前缀（如"本轮"、"摘要："等），直接输出内容。`;
+
+/**
+ * 将单轮 user+assistant 交互提炼为 diary 片段并持久化。
+ * fire-and-forget 使用，调用方不 await，失败时只打 warn 日志。
+ *
+ * @param userMsg   本轮 user 消息
+ * @param assistantMsg 本轮 assistant 回复（最后一条无 tool_calls 的）
+ * @param agentId   agent ID，用于写入 diary 目录
+ */
+export async function distillTurnToDiary(
+  userMsg: ChatMessage,
+  assistantMsg: ChatMessage,
+  agentId: string
+): Promise<void> {
+  const client = llmRegistry.get("summarizer");
+
+  const userText = formatMsgForSummary(userMsg);
+  const assistantText = formatMsgForSummary(assistantMsg);
+  if (!userText && !assistantText) return;
+
+  const turnText = [userText, assistantText].filter(Boolean).join("\n\n");
+
+  const result = await client.chat([
+    { role: "system", content: DISTILL_TURN_SYSTEM },
+    { role: "user", content: turnText.slice(0, 4000) },
+  ], { isUserInitiated: false });
+
+  if (result.content.trim()) {
+    await persistSummary(result.content.trim(), agentId);
+  }
+}
+
 /**
  * 将对话历史压缩：
  * 1. 存档到 QMD

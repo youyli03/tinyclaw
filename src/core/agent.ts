@@ -5,7 +5,7 @@ import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { searchMemory } from "../memory/qmd.js";
-import { shouldSummarize, shouldSummarizeCode } from "../memory/summarizer.js";
+import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
@@ -1108,6 +1108,32 @@ export async function runAgent(
 
   // flush 剩余工具调用通知，清理定时器
   toolThrottler?.stop();
+
+  // ── Chat 模式轻量 diary 更新（每 3 轮触发一次，fire-and-forget） ──────────
+  // 仿 CC postSamplingHook：对话进行中持续维护 diary，无需等 context 满才压缩
+  const CHAT_DIARY_EVERY_N = 3;
+  if (!isCodeMode && !isSlave && (opts.slaveDepth ?? 0) === 0) {
+    if (session.chatTurnCount > 0 && session.chatTurnCount % CHAT_DIARY_EVERY_N === 0) {
+      const msgs = session.getMessages();
+      // 找最后一条 user 消息和最后一条无 tool_calls 的 assistant 消息
+      let lastUser: (typeof msgs)[number] | undefined;
+      let lastAssistant: (typeof msgs)[number] | undefined;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i]!;
+        if (!lastAssistant && m.role === "assistant") {
+          const calls = (m as { role: "assistant"; tool_calls?: unknown[] }).tool_calls;
+          if (!calls || calls.length === 0) lastAssistant = m;
+        }
+        if (!lastUser && m.role === "user") lastUser = m;
+        if (lastUser && lastAssistant) break;
+      }
+      if (lastUser && lastAssistant) {
+        distillTurnToDiary(lastUser, lastAssistant, session.agentId).catch((err) =>
+          console.warn("[agent] chat diary distill failed:", err instanceof Error ? err.message : err)
+        );
+      }
+    }
+  }
 
   // ── Code 模式：执行日志追加到 PLAN.md ────────────────────────────────────
   // 仅在 code 模式、有工具调用、非 slave 时触发，异步追加不阻塞返回
