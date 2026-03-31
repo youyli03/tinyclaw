@@ -143,7 +143,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId }: PromptParts): string {
   const existingPlanSection = existingPlan
-    ? `\n\n## 已有计划（上次会话遗留）\n\n> 会话中断前已完成以下计划，可在此基础上继续执行或根据新需求修改。新任务规划时直接用 write_file 覆盖 PLAN.md 即可。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
+    ? `\n\n## 已有计划（上次会话遗留）\n\n> ⚠️ PLAN.md 已有内容，**禁止用 write_file 覆盖**。无论是新任务还是续接，都只能用 \`edit_file\` 追加或修改相关部分，保留历史轨迹。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
     : "";
   const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
   const feedbackNote = planPath
@@ -160,8 +160,8 @@ Plan 模式分为两个严格隔离的阶段：
 1. 使用只读工具（read_file、exec_shell 只读命令）充分了解代码库结构
 2. 整理完整的修改方案（影响哪些文件、改什么、为什么）
 3. 将详细计划写入 \`${planPath}\`：
-   - **首次写入**：调用 \`write_file\` 创建 PLAN.md
-   - **迭代修改**（用户反馈后）：调用 \`edit_file\` 精确修改相关部分，**不要整体覆写**
+   - **首次写入**（PLAN.md 不存在）：调用 \`write_file\` 创建
+   - **已有内容**（PLAN.md 已存在，含压缩后从上下文恢复的情况）：只能用 \`edit_file\` 追加或修改，**严禁 write_file 覆盖**
 4. 调用 \`exit_plan_mode\` 工具提交计划摘要，\`planPath\` 参数传入 \`${planPath}\`，等待用户确认
 
 ### 阶段二：执行
@@ -181,7 +181,7 @@ Plan 模式分为两个严格隔离的阶段：
 ## 重要约束
 
 - 阶段一禁止调用任何写入类工具（write_file / edit_file / exec_shell 写入命令等），**唯一例外是写入 PLAN.md 文件**
-- PLAN.md **只在首次**用 write_file 创建；后续每次迭代修改必须用 edit_file 局部更新，保留修改轨迹
+- PLAN.md **只在文件不存在时**用 write_file 创建；文件已存在（包括压缩后从上下文恢复的情况）则必须用 edit_file 局部更新，**严禁整体覆写**
 - 提交计划前必须已充分探索，做到一次规划到位，减少反复迭代
 - 若任务是纯只读查询（如"解释这段代码"），无需 exit_plan_mode，直接回复即可
 
@@ -200,7 +200,7 @@ Plan 模式分为两个严格隔离的阶段：
 
 - 当前工作目录：${workspacePath}
 - Agent 目录：${agentDir}${workdirNote}
-- PLAN.md（本 session 计划文件）：\`${planPath}\`，用 \`write_file\` 首次创建，后续用 \`edit_file\` 局部更新${feedbackNote}
+- PLAN.md（本 session 计划文件）：\`${planPath}\`，不存在时用 \`write_file\` 创建，已存在时只能用 \`edit_file\` 局部更新${feedbackNote}
 - 子目录约定：
   - tmp/    临时文件（可随时清理）
   - output/ 输出产物（交付用文件、运行结果等）
