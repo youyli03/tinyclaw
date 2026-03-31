@@ -28,7 +28,7 @@ async function safetyCheckContent(text: string): Promise<{ safe: boolean; reason
     const result = await client.chat([
       { role: "system", content: SAFETY_CHECK_SYSTEM },
       { role: "user", content: text.slice(0, 4000) }, // 截断避免过长
-    ]);
+    ], { isUserInitiated: false });
     const raw = result.content.trim();
     // 提取 JSON（可能被 markdown 包裹）
     const jsonMatch = raw.match(/\{[\s\S]*\}/);

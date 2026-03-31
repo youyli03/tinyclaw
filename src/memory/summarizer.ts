@@ -288,7 +288,7 @@ export async function summarizeAndCompressCode(
   const result = await client.chat([
     { role: "system", content: CODE_SUMMARIZE_SYSTEM },
     { role: "user", content: historyText },
-  ]);
+  ], { isUserInitiated: false });
 
   // 组装压缩后的消息：system + 摘要 + 最近 N 条原始消息
   const compressed: ChatMessage[] = [
@@ -376,7 +376,7 @@ export async function summarizeAndCompress(
   const result = await client.chat([
     { role: "system", content: SUMMARIZE_SYSTEM },
     { role: "user", content: historyText },
-  ]);
+  ], { isUserInitiated: false });
 
   // 将摘要持久化到 QMD
   await persistSummary(result.content, agentId);
