@@ -455,7 +455,7 @@ function toolCallSummary(name: string, args: Record<string, unknown>): string {
     const cmd = String(args["command"] ?? "").replace(/\n/g, " ");
     return `${name}: ${cmd.slice(0, 80)}${cmd.length > 80 ? "…" : ""}`;
   }
-  if (name === "write_file" || name === "read_file" || name === "delete_file") {
+  if (name === "write_file" || name === "read_file" || name === "delete_file" || name === "edit_file") {
     return `${name}: ${args["path"] ?? ""}`;
   }
   if (name === "cron_add") return `${name}: ${args["name"] ?? ""} (${args["schedule"] ?? ""})`;
