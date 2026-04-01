@@ -1,6 +1,6 @@
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, RateLimitError, APIError } from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname } from "node:path";
 import { getRetryPolicy } from "../config/loader.js";
 import type { RetryConfig } from "../config/schema.js";
@@ -240,10 +240,16 @@ export interface ChatResult {
 /** 与 OpenAI SDK 兼容的最小 fetch 函数类型 */
 export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 
-/** 将本地图片路径转为 base64 data URL；文件不存在或读取失败返回 null */
+/** 将本地图片路径转为 base64 data URL；文件不存在、读取失败或超过大小限制返回 null */
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 超过此值 base64 后请求体过大会导致 socket 关闭
 function pathToDataUrl(imgPath: string): string | null {
   if (!existsSync(imgPath)) return null;
   try {
+    const size = statSync(imgPath).size;
+    if (size > IMAGE_MAX_BYTES) {
+      console.warn(`[llm] 图片 ${imgPath} 过大（${(size / 1024 / 1024).toFixed(1)} MB > 4 MB 限制），跳过视觉编码`);
+      return null;
+    }
     const buf = readFileSync(imgPath);
     const ext = extname(imgPath).toLowerCase().slice(1);
     const mime =

@@ -619,7 +619,9 @@ export async function buildCopilotClient(
     for (const [k, v] of Object.entries(COPILOT_HEADERS)) {
       headers.set(k, v);
     }
-    const response = await globalThis.fetch(input, withCA({ ...init, headers }));
+    const fetchOpts = withCA({ ...init, headers });
+    // verbose: true 是 Bun 特有选项，可在 socket 意外关闭时输出详细诊断信息
+    const response = await globalThis.fetch(input, { ...fetchOpts, verbose: true } as RequestInit);
 
     // 捕获 rate-limit 响应头，更新内存 + 持久化（仅补全接口有此头）
     const remaining = response.headers.get("x-ratelimit-remaining-requests");
