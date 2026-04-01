@@ -86,11 +86,14 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   const MAX_DURATION = policy?.maxRetryDurationMs ?? 0;
   const MAX_5XX = policy?.max5xxAttempts ?? 5;
+  const MAX_TRANSPORT = policy?.maxTransportAttempts ?? 3;
   const infinite = MAX_RETRIES === -1;
   const infinite5xx = MAX_5XX === -1;
+  const infiniteTransport = MAX_TRANSPORT === -1;
   const startedAt = MAX_DURATION > 0 ? Date.now() : 0;
   let lastErr: unknown;
   let consecutive5xx = 0;
+  let consecutiveTransport = 0;
   for (let attempt = 0; infinite || attempt <= MAX_RETRIES; attempt++) {
     try {
       return await fn();
@@ -109,8 +112,10 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       }
       // 5xx 单独计数：连续 5xx 超限时抛出专用错误（避免请求内容有问题时无限循环）
       const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499 || err.status === 408);
+      const isTransport = !is5xx && isRetryableError(err, { ...policy, retry5xx: false, retry429: false } as RetryConfig);
       if (is5xx) {
         consecutive5xx++;
+        consecutiveTransport = 0;
         if (!infinite5xx && consecutive5xx > MAX_5XX) {
           const statusCode = (err as APIError).status;
           const statusHint = statusCode === 408
@@ -118,8 +123,17 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
             : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），可能是请求内容导致的问题（如工具参数过长），而非临时故障。建议发送 /new 清空上下文后重试`;
           throw new LLMConnectionError(err, `⚠️ ${statusHint}`);
         }
+      } else if (isTransport) {
+        consecutiveTransport++;
+        consecutive5xx = 0;
+        if (!infiniteTransport && consecutiveTransport > MAX_TRANSPORT) {
+          throw new LLMConnectionError(err,
+            `⚠️ 连接持续中断（已重试 ${consecutiveTransport - 1} 次）：${err instanceof Error ? err.message : String(err)}\n请求可能过于复杂，建议发送 /new 清空上下文后重试`
+          );
+        }
       } else {
-        consecutive5xx = 0; // 非 5xx 成功或其他错误重置计数
+        consecutive5xx = 0;
+        consecutiveTransport = 0;
       }
       // 429：优先使用 Retry-After，否则固定 baseDelayMs；其他错误使用指数退避
       const delay = err instanceof RateLimitError
