@@ -471,18 +471,6 @@ export class LLMClient {
       : undefined;
 
     return withRetry(async () => {
-      // Phase-1 timeout: abort if the server doesn't even start responding.
-      // Once create() resolves (HTTP 200 + headers), this timer is cleared.
-      // After that we rely solely on withStreamIdleTimeout (phase-2).
-      const connectCtrl = new AbortController();
-      const connectTimer = setTimeout(
-        () => connectCtrl.abort(new Error(`connection timeout: no response in ${idleTimeoutMs}ms`)),
-        idleTimeoutMs
-      );
-
-      const signals = [connectCtrl.signal, opts.signal].filter(Boolean) as AbortSignal[];
-      const combinedSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
-
       const stream = await this.client.chat.completions.create(
         {
           model: this.backend.model,
@@ -501,14 +489,14 @@ export class LLMClient {
           stream_options: { include_usage: true },
         },
         {
-          // Disable SDK-level total timeout for streaming; we handle timeouts ourselves.
-          timeout: 0,
-          ...(combinedSignal ? { signal: combinedSignal } : {}),
+          // NOTE: SDK timeout (backend.timeoutMs) applies only to the connection phase
+          // (time until HTTP 200 headers arrive). The timer is cleared once create()
+          // resolves. After that, withStreamIdleTimeout below handles per-chunk idle
+          // detection, so long streaming responses are never cut short.
+          ...(opts.signal ? { signal: opts.signal } : {}),
           ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
         }
       );
-
-      // Connection established; cancel connection-phase timeout.
       clearTimeout(connectTimer);
 
       let fullContent = "";
