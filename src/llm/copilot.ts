@@ -33,6 +33,11 @@ async function getH2Agent(): Promise<import("undici").Agent> {
   return _h2Agent;
 }
 
+/** 丢弃当前 HTTP/2 连接池，下次请求将建立新连接。在流中断后由 streamChat 调用。 */
+export function resetH2Agent(): void {
+  _h2Agent = undefined;
+}
+
 const COPILOT_HEADERS = {
   "Copilot-Integration-Id": "vscode-chat",
   "Editor-Version": "tinyclaw/1.0",
@@ -713,7 +718,9 @@ export async function buildCopilotClient(
       // Copilot 主流模型均支持视觉，默认开启；可在 config.toml 显式设 supportsVision = false 关闭
       supportsVision: config.supportsVision ?? resolvedModel.supportsVision ?? true,
     },
-    copilotFetch
+    copilotFetch,
+    // 流中断时重置 HTTP/2 agent，下次重试建立新连接池
+    resetH2Agent
   );
 
   // 有效 context window 起始值：

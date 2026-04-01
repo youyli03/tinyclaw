@@ -358,9 +358,11 @@ async function* withStreamIdleTimeout<T>(
 export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: ResolvedBackend;
+  private readonly onStreamSocketError?: () => void;
 
-  constructor(backend: ResolvedBackend, fetchFn?: FetchFn) {
+  constructor(backend: ResolvedBackend, fetchFn?: FetchFn, onStreamSocketError?: () => void) {
     this.backend = backend;
+    this.onStreamSocketError = onStreamSocketError ?? undefined;
     this.client = new OpenAI({
       baseURL: backend.baseUrl,
       apiKey: backend.apiKey,
@@ -503,7 +505,8 @@ export class LLMClient {
       // 聚合流式 tool_calls delta（各 index 独立累积）
       const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
 
-      for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal)) {
+      try {
+        for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal)) {
         if (opts.signal?.aborted) break;
         const delta = chunk.choices[0]?.delta;
 
@@ -537,6 +540,15 @@ export class LLMClient {
             totalTokens: chunk.usage.total_tokens,
           };
         }
+        }
+      } catch (streamErr) {
+        // Socket closure during streaming: reset the HTTP/2 agent so the next
+        // retry builds a fresh connection pool instead of reusing the broken one.
+        const msg = streamErr instanceof Error ? streamErr.message.toLowerCase() : "";
+        if (/socket|closed|econnreset|abort/.test(msg)) {
+          this.onStreamSocketError?.();
+        }
+        throw streamErr;
       }
 
       const toolCalls: ToolCallResult[] | undefined =
