@@ -14,11 +14,25 @@ import * as path from "path";
 import { LLMClient } from "./client.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 import { getRetryPolicy } from "../config/loader.js";
-import { withCA } from "../utils/tls.js";
+import { withCA, getSystemCA } from "../utils/tls.js";
 
 const COPILOT_API = "https://api.githubcopilot.com";
 const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
 const USER_URL = "https://api.github.com/copilot_internal/user";
+
+/**
+ * 使用 undici Agent 发送 HTTP/2 请求（api.githubcopilot.com 支持 h2 ALPN）。
+ * HTTP/2 多路复用消除了 HTTP/1.1 代理约 100s SSE 流超时，减少重试。
+ */
+let _h2Agent: import("undici").Agent | undefined;
+async function getH2Agent(): Promise<import("undici").Agent> {
+  if (_h2Agent) return _h2Agent;
+  const { Agent } = await import("undici");
+  const ca = getSystemCA();
+  _h2Agent = new Agent({ allowH2: true, ...(ca ? { connect: { ca } } : {}) });
+  return _h2Agent;
+}
+
 const COPILOT_HEADERS = {
   "Copilot-Integration-Id": "vscode-chat",
   "Editor-Version": "tinyclaw/1.0",
@@ -619,10 +633,25 @@ export async function buildCopilotClient(
     for (const [k, v] of Object.entries(COPILOT_HEADERS)) {
       headers.set(k, v);
     }
-    const fetchOpts = withCA({ ...init, headers });
-    // verbose: true 是 Bun 特有选项，打印完整请求/响应 headers；仅在 DEBUG_FETCH=1 时启用
-    const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
-    const response = await globalThis.fetch(input, { ...fetchOpts, ...verboseOpts } as RequestInit);
+
+    // 使用 undici HTTP/2 Agent：api.githubcopilot.com 支持 h2 ALPN，
+    // HTTP/2 多路复用消除了 HTTP/1.1 代理 ~100s SSE 超时导致的频繁重试。
+    // 降级：若 undici 不可用则回落到 Bun globalThis.fetch（HTTP/1.1）。
+    let response: Response;
+    try {
+      const agent = await getH2Agent();
+      const { fetch: undiciFetch } = await import("undici");
+      response = await undiciFetch(input as string, {
+        ...init, headers,
+        dispatcher: agent,
+      } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+    } catch (undiciErr) {
+      // undici 失败时 fallback 到 Bun 原生 fetch（HTTP/1.1）
+      console.warn("[copilot] undici fetch failed, falling back to globalThis.fetch:", undiciErr instanceof Error ? undiciErr.message : undiciErr);
+      const fetchOpts = withCA({ ...init, headers });
+      const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
+      response = await globalThis.fetch(input, { ...fetchOpts, ...verboseOpts } as RequestInit);
+    }
 
     // 非 2xx 时 clone 并 log 原始 body，帮助诊断 API 拒绝的具体原因（如 400 text/plain）
     if (!response.ok) {

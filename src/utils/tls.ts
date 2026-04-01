@@ -30,6 +30,11 @@ function systemCA(): string | undefined {
   return undefined;
 }
 
+/** 返回系统根 CA 证书内容（供 undici Agent 等使用）*/
+export function getSystemCA(): string | undefined {
+  return systemCA();
+}
+
 /** 将系统 CA 注入 Bun fetch options（仅 Bun 支持 tls 扩展字段） */
 export function withCA(init?: RequestInit): RequestInit {
   const ca = systemCA();
