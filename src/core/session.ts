@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { ChatMessage, ContentPart, ToolCallResult, OpenAIToolCall } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
-import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode } from "../memory/summarizer.js";
+import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode, microCompactMessages } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 
@@ -376,6 +376,28 @@ export class Session {
       this.messages.length = 0;
       for (const m of sanitized) this.messages.push(m);
     }
+  }
+
+  /**
+   * 工具输出截断（MicroCompact）：
+   * 把「几轮前」过长的 tool 结果原地替换为占位符，不走 LLM，同步执行。
+   * chat 和 code 模式均支持。截断后立即持久化到 JSONL。
+   *
+   * @param contextWindow  模型 context window 大小（tokens）
+   * @param actualTokens   LLM 上次返回的真实 prompt token 数（0 = fallback 估算）
+   * @returns true 表示已执行截断，false 表示未触发（token 不够高或无可截断内容）
+   */
+  microCompact(contextWindow: number, actualTokens: number): boolean {
+    const result = microCompactMessages(this.messages, contextWindow, actualTokens);
+    if (!result) return false;
+    this.messages = result;
+    // 持久化：chat → rewriteJsonl，code → rewriteCodeJsonl
+    if (this.mode === "code") {
+      this.rewriteCodeJsonl();
+    } else {
+      this.rewriteJsonl();
+    }
+    return true;
   }
 
   /**

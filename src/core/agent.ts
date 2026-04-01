@@ -581,6 +581,15 @@ export async function runAgent(
       }
     }
 
+    // 2.5 MicroCompact：截断几轮前过长的 tool 结果（chat + code 均触发，不走 LLM）
+    // 在 pre-flight 压缩之前执行，降低 token 水位，减少触发全量压缩的频率
+    {
+      const mcCtx = isCodeMode
+        ? llmRegistry.getContextWindow("code")
+        : llmRegistry.getContextWindow("daily");
+      session.microCompact(mcCtx, session.lastPromptTokens);
+    }
+
     // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
     // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
     // 优先使用上一轮实际 promptTokens（session.lastPromptTokens），0 时 fallback 字符估算

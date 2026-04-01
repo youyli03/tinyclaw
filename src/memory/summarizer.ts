@@ -429,4 +429,128 @@ export async function summarizeAndCompress(
   return compressed;
 }
 
+// ── MicroCompact ──────────────────────────────────────────────────────────────
+
+/**
+ * 工具输出截断（MicroCompact）触发阈值：context 使用率超过此比例时触发。
+ * 比全量压缩的 75% 更早介入，让 context 长期保持低水位。
+ */
+const MICRO_COMPACT_THRESHOLD = 0.4;
+
+/** 保留最近 N 条可截断工具结果不动（更早的才截断） */
+const MICRO_COMPACT_KEEP_RECENT = 5;
+
+/** 工具结果 content 超过此字符数才截断（太短的截断意义不大） */
+const MICRO_COMPACT_MIN_LENGTH = 500;
+
+/** 截断占位符（与 CC 保持一致） */
+export const MICRO_COMPACT_CLEARED = "[Old tool result content cleared]";
+
+/**
+ * 需要截断输出的工具名集合。
+ * 这些工具产生的 role:"tool" 消息往往是上下文膨胀的主要来源。
+ */
+const COMPACTABLE_TOOLS = new Set([
+  "exec_shell",
+  "read_file",
+  "write_file",
+  "edit_file",
+  "http_request",
+  "search_store",
+  "mcp_enable_server",
+]);
+
+/**
+ * 对 messages 做工具输出截断（MicroCompact）：
+ * - 找到所有属于 COMPACTABLE_TOOLS 的 role:"tool" 消息
+ * - 保留最近 MICRO_COMPACT_KEEP_RECENT 条不动
+ * - 更早且 content 超过 MICRO_COMPACT_MIN_LENGTH 字符的替换为占位符
+ * - token 未超阈值时直接返回 null（未触发）
+ *
+ * @param messages       当前 session 全量消息
+ * @param contextWindow  模型 context window 大小（tokens）
+ * @param actualTokens   LLM 上次返回的真实 prompt token 数（0 = fallback 估算）
+ * @returns 修改后的新 messages 数组，或 null（未触发/无效果）
+ */
+export function microCompactMessages(
+  messages: ChatMessage[],
+  contextWindow: number,
+  actualTokens: number,
+): ChatMessage[] | null {
+  if (contextWindow <= 0) return null;
+
+  const threshold = Math.floor(contextWindow * MICRO_COMPACT_THRESHOLD);
+
+  // token 检查：优先实测值，fallback 字符估算
+  let tokens = actualTokens;
+  if (!tokens || tokens <= 0) {
+    const totalChars = messages.reduce((sum, m) => {
+      if (typeof m.content === "string") return sum + m.content.length;
+      if (Array.isArray(m.content)) {
+        return sum + (m.content as Array<{ type?: string; text?: string }>).reduce((cs, p) => {
+          return cs + (p.type === "text" ? (p.text?.length ?? 0) : 200);
+        }, 0);
+      }
+      return sum;
+    }, 0);
+    tokens = Math.ceil(totalChars / 3.5);
+  }
+
+  if (tokens < threshold) return null;
+
+  // 收集所有属于 COMPACTABLE_TOOLS 的 tool 消息索引，按先后顺序
+  // 需要找到对应 assistant.tool_calls 里的工具名
+  // 先建立 tool_call_id → tool_name 映射
+  const callIdToName = new Map<string, string>();
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string; function: { name: string } }> }).tool_calls;
+      if (calls) {
+        for (const c of calls) {
+          callIdToName.set(c.id, c.function.name);
+        }
+      }
+    }
+  }
+
+  // 收集可截断的 tool 消息索引（按出现顺序）
+  const compactableIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    if (m.role === "tool") {
+      const toolMsg = m as { role: "tool"; tool_call_id: string; content: string };
+      const toolName = callIdToName.get(toolMsg.tool_call_id);
+      if (toolName && COMPACTABLE_TOOLS.has(toolName)) {
+        compactableIndices.push(i);
+      }
+    }
+  }
+
+  // 保留最近 MICRO_COMPACT_KEEP_RECENT 条，对更早的执行截断
+  const toKeepSet = new Set(compactableIndices.slice(-MICRO_COMPACT_KEEP_RECENT));
+  const toClearIndices = new Set(
+    compactableIndices
+      .filter((idx) => !toKeepSet.has(idx))
+      .filter((idx) => {
+        const content = (messages[idx] as { content: string }).content;
+        return typeof content === "string" && content.length > MICRO_COMPACT_MIN_LENGTH;
+      })
+  );
+
+  if (toClearIndices.size === 0) return null;
+
+  // 复制 messages 并替换内容
+  const result = messages.map((m, i) => {
+    if (!toClearIndices.has(i)) return m;
+    return { ...m, content: MICRO_COMPACT_CLEARED } as ChatMessage;
+  });
+
+  console.log(
+    `[microcompact] 截断 ${toClearIndices.size} 条工具结果` +
+    `（tokens: ${tokens}/${contextWindow}，阈值: ${threshold}）`
+  );
+
+  return result;
+}
+
 
