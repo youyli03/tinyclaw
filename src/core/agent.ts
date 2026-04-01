@@ -18,12 +18,14 @@ import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 import { readFeedback } from "./feedback-writer.js";
 import { sanitizeUserInput } from "../tools/sanitize.js";
+import { parseSkillsIndex } from "../tools/skill-run.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
 import "../tools/system.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
+import "../tools/skill-run.js";
 import "../tools/mcp-manager.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
@@ -305,6 +307,16 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
   return content.length > 0 ? content : undefined;
 }
 
+// ── Skill Reminder 辅助函数 ──────────────────────────────────────────────────
+
+/** 构建 skill reminder 文本（name + 一行描述列表），无 skill 时返回 null */
+function buildSkillReminder(agentId: string): string | null {
+  const entries = parseSkillsIndex(agentId);
+  if (entries.length === 0) return null;
+  const lines = entries.map((e) => `- ${e.name}: ${e.description}`).join("\n");
+  return `[可用技能]\n${lines}\n\n匹配用户需求时，使用 skill_run 工具执行对应技能，而不是自行尝试。`;
+}
+
 /**
  * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）+ suffix（可选）
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
@@ -546,6 +558,7 @@ export async function runAgent(
   const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
     if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
     if (!isCodeMode && t.function.name === "restart_tool") return false;
+    if (isCodeMode && t.function.name === "skill_run") return false;
     return true;
   });
   const textMode = !client.supportsToolCalls;
@@ -578,6 +591,14 @@ export async function runAgent(
       const memoryContext = await searchMemory(userContent, session.agentId);
       if (memoryContext) {
         session.addSystemMessage(memoryContext);
+      }
+    }
+
+    // 2.3 Skill Reminder:每轮注入可用技能列表（chat 模式 + 非 slave）
+    if (!isCodeMode && !isSlave) {
+      const reminder = buildSkillReminder(session.agentId);
+      if (reminder) {
+        session.replaceOrAddSkillReminder(reminder);
       }
     }
 
@@ -644,6 +665,7 @@ export async function runAgent(
       ...getAllToolSpecs(session.agentId).filter((t) => {
         if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
         if (!isCodeMode && t.function.name === "restart_tool") return false;
+        if (isCodeMode && t.function.name === "skill_run") return false;
         return true;
       }),
       ...(opts.customTools ?? []),

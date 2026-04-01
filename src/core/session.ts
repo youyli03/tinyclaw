@@ -288,6 +288,24 @@ export class Session {
   }
 
   /**
+   * 替换或新增 skill reminder system 消息。
+   * 用特殊前缀标记识别上轮注入的 reminder，找到则原地替换，否则追加。
+   * 这样每轮只有一条 skill reminder，不会堆积。
+   */
+  replaceOrAddSkillReminder(content: string): void {
+    const MARKER = "<!-- skill-reminder -->";
+    const idx = this.messages.findIndex(
+      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith(MARKER)
+    );
+    const marked = MARKER + "\n" + content;
+    if (idx !== -1) {
+      this.messages[idx] = { role: "system", content: marked };
+    } else {
+      this.messages.push({ role: "system", content: marked });
+    }
+  }
+
+  /**
    * 批量导入消息（深拷贝），用于 auto-fork continuation slave 克隆 Master 全量上下文。
    * 保留原始结构（含 tool_call / tool_result），不做任何内容提取或角色过滤。
    */
