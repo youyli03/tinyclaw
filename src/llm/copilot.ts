@@ -623,6 +623,13 @@ export async function buildCopilotClient(
     // verbose: true 是 Bun 特有选项，可在 socket 意外关闭时输出详细诊断信息
     const response = await globalThis.fetch(input, { ...fetchOpts, verbose: true } as RequestInit);
 
+    // 非 2xx 时 clone 并 log 原始 body，帮助诊断 API 拒绝的具体原因（如 400 text/plain）
+    if (!response.ok) {
+      response.clone().text().then((body) => {
+        console.error(`[copilot] HTTP ${response.status} body: ${body.slice(0, 500)}`);
+      }).catch(() => {});
+    }
+
     // 捕获 rate-limit 响应头，更新内存 + 持久化（仅补全接口有此头）
     const remaining = response.headers.get("x-ratelimit-remaining-requests");
     const limit = response.headers.get("x-ratelimit-limit-requests");
