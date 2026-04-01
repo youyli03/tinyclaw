@@ -2,6 +2,7 @@ import OpenAI, { APIConnectionError, APIConnectionTimeoutError, RateLimitError, 
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname } from "node:path";
+import { spawnSync } from "node:child_process";
 import { getRetryPolicy } from "../config/loader.js";
 import type { RetryConfig } from "../config/schema.js";
 
@@ -241,24 +242,57 @@ export interface ChatResult {
 export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 
 /** 将本地图片路径转为 base64 data URL；文件不存在、读取失败或超过大小限制返回 null */
-const IMAGE_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 超过此值 base64 后请求体过大会导致 socket 关闭
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 超过时先尝试压缩
+const IMAGE_COMPRESSED_MAX_BYTES = 8 * 1024 * 1024; // 8 MB — 压缩后仍超则放弃
+
+/**
+ * 使用 ImageMagick convert 将图片压缩为 JPEG（resize ≤2048px, quality 85, strip metadata）。
+ * 输出直接管道到 stdout，无临时文件。返回压缩后 Buffer，失败返回 null。
+ */
+function tryCompressImage(imgPath: string): Buffer | null {
+  try {
+    const result = spawnSync(
+      "convert",
+      [imgPath, "-resize", "2048x2048>", "-quality", "85", "-strip", "jpeg:-"],
+      { maxBuffer: IMAGE_COMPRESSED_MAX_BYTES + 1024 * 1024 },
+    );
+    if (result.status === 0 && result.stdout && result.stdout.length > 0) {
+      return result.stdout as Buffer;
+    }
+    const errMsg = result.stderr?.toString().slice(0, 200) ?? "unknown error";
+    console.warn(`[llm] 图片压缩失败: ${errMsg}`);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function pathToDataUrl(imgPath: string): string | null {
   if (!existsSync(imgPath)) return null;
   try {
     const size = statSync(imgPath).size;
-    if (size > IMAGE_MAX_BYTES) {
-      console.warn(`[llm] 图片 ${imgPath} 过大（${(size / 1024 / 1024).toFixed(1)} MB > 4 MB 限制），跳过视觉编码`);
+    if (size <= IMAGE_MAX_BYTES) {
+      const buf = readFileSync(imgPath);
+      const ext = extname(imgPath).toLowerCase().slice(1);
+      const mime =
+        ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+        ext === "png" ? "image/png" :
+        ext === "gif" ? "image/gif" :
+        ext === "webp" ? "image/webp" :
+        "image/png";
+      return `data:${mime};base64,${buf.toString("base64")}`;
+    }
+
+    // 超限：尝试压缩
+    console.warn(`[llm] 图片 ${imgPath} 过大（${(size / 1024 / 1024).toFixed(1)} MB），尝试压缩...`);
+    const compressed = tryCompressImage(imgPath);
+    if (!compressed) return null;
+    if (compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
+      console.warn(`[llm] 图片压缩后仍过大（${(compressed.length / 1024 / 1024).toFixed(1)} MB），跳过`);
       return null;
     }
-    const buf = readFileSync(imgPath);
-    const ext = extname(imgPath).toLowerCase().slice(1);
-    const mime =
-      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
-      ext === "png" ? "image/png" :
-      ext === "gif" ? "image/gif" :
-      ext === "webp" ? "image/webp" :
-      "image/png";
-    return `data:${mime};base64,${buf.toString("base64")}`;
+    console.log(`[llm] 图片压缩: ${(size / 1024 / 1024).toFixed(1)} MB → ${(compressed.length / 1024 / 1024).toFixed(1)} MB`);
+    return `data:image/jpeg;base64,${compressed.toString("base64")}`;
   } catch {
     return null;
   }
