@@ -719,10 +719,16 @@ export async function runAgent(
         break;
       }
 
+      let streamBytes = 0;
       try {
         response = await client.streamChat(
           session.getMessagesForLLM(),
-          (delta) => opts.onChunk?.(delta),
+          (delta) => {
+            opts.onChunk?.(delta);
+            streamBytes += Buffer.byteLength(delta, "utf8");
+            const kb = (streamBytes / 1024).toFixed(1);
+            process.stdout.write(`\r${logPrefix} ▶ ${kb} KB`);
+          },
           {
             ...(tools.length > 0 && client.supportsToolCalls
               ? { tools, tool_choice: "auto" }
@@ -742,7 +748,11 @@ export async function runAgent(
             },
           }
         );
+        // 清除流式进度行，后续日志正常换行输出
+        if (streamBytes > 0) process.stdout.write(`\r\x1b[K`);
       } catch (err) {
+        // 确保进度行被清除
+        if (streamBytes > 0) process.stdout.write(`\r\x1b[K`);
         // AbortError = 被软中断打断，干净退出循环
         if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
           break;
