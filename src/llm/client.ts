@@ -497,7 +497,6 @@ export class LLMClient {
           ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
         }
       );
-      clearTimeout(connectTimer);
 
       let fullContent = "";
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
