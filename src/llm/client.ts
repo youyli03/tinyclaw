@@ -455,13 +455,15 @@ export class LLMClient {
       try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
     })();
 
+    // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
+    const resolvedForStream = resolveMessagesForApi(messages);
+    const canUseTools =
+      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+    const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
+      ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
+      : undefined;
+
     return withRetry(async () => {
-      const canUseTools =
-        this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
-      const resolvedForStream = resolveMessagesForApi(messages);
-      const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
-        ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
-        : undefined;
       const stream = await this.client.chat.completions.create(
         {
           model: this.backend.model,
