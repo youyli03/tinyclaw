@@ -358,7 +358,7 @@ async function* withStreamIdleTimeout<T>(
 export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: ResolvedBackend;
-  private readonly onStreamSocketError?: () => void;
+  private readonly onStreamSocketError: (() => void) | undefined;
 
   constructor(backend: ResolvedBackend, fetchFn?: FetchFn, onStreamSocketError?: () => void) {
     this.backend = backend;
