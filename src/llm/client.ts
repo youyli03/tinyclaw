@@ -259,10 +259,19 @@ export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof f
 
 /** 将本地图片路径转为 base64 data URL；文件不存在或读取失败返回 null */
 // 超过此阈值时先压缩，避免 base64 请求体过大导致 Copilot API 返回 400
-const IMAGE_COMPRESS_THRESHOLD = 8 * 1024 * 1024; // 8 MB — 仅对超大图片压缩
+const IMAGE_COMPRESS_THRESHOLD = 8 * 1024 * 1024; // 8 MB — 单图强制压缩阈值
 const IMAGE_COMPRESSED_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 压缩后仍超则放弃
+/**
+ * 所有图片 base64 合计超过此值时自动压缩大图，防止请求体超过 API 限制（~500 KB）。
+ * 保留约 300 KB 留给 JSON 骨架 + 消息文本，图片总 base64 不超过 200 KB。
+ */
+const IMAGE_TOTAL_BASE64_BUDGET = 200 * 1024;
+/** 总 budget 超限时，压缩此阈值以上的图片（file size） */
+const IMAGE_BUDGET_COMPRESS_THRESHOLD = 50 * 1024; // 50 KB
 // 缓存：同一图片在一次会话中只压缩一次（key = path, value = data URL or null）
 const dataUrlCache = new Map<string, string | null>();
+// budget 模式压缩缓存（独立于 raw 缓存）
+const compressedDataUrlCache = new Map<string, string | null>();
 
 /**
  * 使用 ImageMagick convert 将图片压缩为 JPEG（resize ≤1024px, quality 75, strip metadata）。
@@ -322,15 +331,69 @@ function pathToDataUrl(imgPath: string): string | null {
   }
 }
 
-/** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL） */
+/** budget 模式：强制压缩（用于总大小超限时），结果独立缓存 */
+function pathToDataUrlCompressed(imgPath: string): string | null {
+  if (compressedDataUrlCache.has(imgPath)) return compressedDataUrlCache.get(imgPath)!;
+  if (!existsSync(imgPath)) { compressedDataUrlCache.set(imgPath, null); return null; }
+  try {
+    const size = statSync(imgPath).size;
+    let result: string | null;
+    if (size <= IMAGE_BUDGET_COMPRESS_THRESHOLD) {
+      // 小图直接走原始路径（不压缩）
+      result = pathToDataUrl(imgPath);
+    } else {
+      const compressed = tryCompressImage(imgPath);
+      if (!compressed || compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
+        result = null;
+      } else {
+        console.log(`[llm] 图片压缩(budget): ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`);
+        result = `data:image/jpeg;base64,${compressed.toString("base64")}`;
+      }
+    }
+    compressedDataUrlCache.set(imgPath, result);
+    return result;
+  } catch {
+    compressedDataUrlCache.set(imgPath, null);
+    return null;
+  }
+}
+
+/** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
+ *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
 function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
+  // 第一步：收集所有图片路径并获取原始 dataUrl
+  const imagePaths: string[] = [];
+  for (const m of messages) {
+    if (m.role === "tool" || typeof m.content === "string") continue;
+    for (const p of m.content) {
+      if (p.type === "image_path") imagePaths.push(p.path);
+    }
+  }
+
+  // 检查总 base64 大小，决定是否启用 budget 压缩模式
+  let totalBase64 = 0;
+  const rawUrls = new Map<string, string | null>();
+  for (const path of imagePaths) {
+    const url = pathToDataUrl(path);
+    rawUrls.set(path, url);
+    if (url) totalBase64 += url.length;
+  }
+  const useBudget = totalBase64 > IMAGE_TOTAL_BASE64_BUDGET;
+  if (useBudget) {
+    console.log(`[llm] 图片总 base64 ${(totalBase64 / 1024).toFixed(0)} KB > budget ${(IMAGE_TOTAL_BASE64_BUDGET / 1024).toFixed(0)} KB，启用压缩模式`);
+  }
+
+  // 第二步：按选定模式转换消息
+  const getUrl = useBudget
+    ? (path: string) => pathToDataUrlCompressed(path)
+    : (path: string) => rawUrls.get(path) ?? null;
+
   return messages.map((m) => {
-    // tool 消息 content 只有 string，不含 ContentPart，直接透传
     if (m.role === "tool") return m;
     if (typeof m.content === "string") return m;
     const resolved = m.content.map((p) => {
       if (p.type === "image_path") {
-        const url = pathToDataUrl(p.path);
+        const url = getUrl(p.path);
         if (url) return { type: "image_url" as const, image_url: { url, detail: "auto" as const } };
         return { type: "text" as const, text: `[图片已不可用: ${p.path}]` };
       }
