@@ -43,7 +43,9 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
     if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket")) {
       return policy.retryTransport;
     }
-    if (msg.includes("idle timeout")) return policy.retryTransport;
+    if (msg.includes("idle timeout") || msg.includes("connection timeout")) return policy.retryTransport;
+    // undici AbortError（连接超时 abort）也当作可重试的传输错误
+    if (err.name === "AbortError" || msg.includes("operation was aborted")) return policy.retryTransport;
   }
   return false;
 }

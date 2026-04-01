@@ -653,13 +653,15 @@ export async function buildCopilotClient(
         } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
       } catch (undiciErr) {
         const msg = undiciErr instanceof Error ? undiciErr.message : String(undiciErr);
-        const isNetworkErr = /socket|closed|connect|network|econnreset/i.test(msg);
+        // AbortError（含连接超时触发的 abort）和网络错误都应重新抛出，让 withRetry 用新 HTTP/2 连接重试
+        const isNetworkErr = /socket|closed|connect|network|econnreset|abort/i.test(msg)
+          || (undiciErr instanceof Error && undiciErr.name === "AbortError");
         if (isNetworkErr) {
-          // 网络/socket 错误：重置 agent（清除过期连接），重新抛出让 withRetry 用新 HTTP/2 重试
+          // 重置 agent（清除过期连接），重新抛出让 withRetry 重试
           _h2Agent = undefined;
           throw undiciErr;
         }
-        // 非网络错误（undici API 异常等）→ fallback HTTP/1.1
+        // 确认是 undici 内部 API 异常（非网络）→ fallback HTTP/1.1
         console.warn("[copilot] undici non-network error, falling back:", msg);
         const fetchOpts = withCA({ ...init, headers });
         const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
