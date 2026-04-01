@@ -555,10 +555,14 @@ export async function runAgent(
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
   // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
   // 非 code 模式过滤 restart_tool（该工具仅 code 模式下有意义）
+  // code 模式过滤 agent fork 系列（code 模式本身是子 agent，不应再向下 fork）
+  const CODE_MODE_EXCLUDED = new Set([
+    "code_assist", "code_assist_run", "skill_run",
+    "agent_fork", "agent_status", "agent_wait", "agent_abort",
+  ]);
   const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
-    if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
+    if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
     if (!isCodeMode && t.function.name === "restart_tool") return false;
-    if (isCodeMode && t.function.name === "skill_run") return false;
     return true;
   });
   const textMode = !client.supportsToolCalls;
@@ -660,12 +664,11 @@ export async function runAgent(
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
-    // 非 code 模式不暴露 restart_tool
+    // 非 code 模式不暴露 restart_tool；code 模式排除 agent fork 系列
     const tools = [
       ...getAllToolSpecs(session.agentId).filter((t) => {
-        if (isCodeMode && (t.function.name === "code_assist" || t.function.name === "code_assist_run")) return false;
+        if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
         if (!isCodeMode && t.function.name === "restart_tool") return false;
-        if (isCodeMode && t.function.name === "skill_run") return false;
         return true;
       }),
       ...(opts.customTools ?? []),

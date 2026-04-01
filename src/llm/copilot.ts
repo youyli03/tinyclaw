@@ -459,6 +459,8 @@ export interface CopilotModelInfo {
   supportsToolCalls: boolean;
   /** 是否支持并行工具调用（parallel_tool_calls） */
   supportsParallelToolCalls: boolean;
+  /** 是否支持视觉输入（图片）。来自 capabilities.supports.vision，默认 false。 */
+  supportsVision: boolean;
   /** 是否出现在 Copilot 模型选择器中 */
   isPickerEnabled: boolean;
   /** 是否为 Copilot 标记的默认聊天模型（个人账户通常不返回此字段） */
@@ -534,6 +536,7 @@ export async function getCopilotModels(
         ?? 128_000,
       supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
       supportsParallelToolCalls: m.capabilities.supports.parallel_tool_calls ?? false,
+      supportsVision: m.capabilities.supports.vision ?? false,
       isPickerEnabled: m.model_picker_enabled,
       isDefault: m.is_chat_default ?? false,
       isPremium: m.billing?.is_premium ?? (multiplier != null && multiplier > 0),
@@ -647,7 +650,9 @@ export async function buildCopilotClient(
       supportsToolCalls: resolvedModel.supportsToolCalls,
       supportsParallelToolCalls: resolvedModel.supportsParallelToolCalls,
       isCopilotProvider: true,
-      ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
+      // vision 优先级：config 显式值 > API capabilities.supports.vision > 默认 true
+      // Copilot 主流模型均支持视觉，默认开启；可在 config.toml 显式设 supportsVision = false 关闭
+      supportsVision: config.supportsVision ?? resolvedModel.supportsVision ?? true,
     },
     copilotFetch
   );
