@@ -259,7 +259,7 @@ export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof f
 
 /** 将本地图片路径转为 base64 data URL；文件不存在或读取失败返回 null */
 // 超过此阈值时先压缩，避免 base64 请求体过大导致 Copilot API 返回 400
-const IMAGE_COMPRESS_THRESHOLD = 100 * 1024; // 100 KB — 绝大多数截图/照片都会压缩
+const IMAGE_COMPRESS_THRESHOLD = 8 * 1024 * 1024; // 8 MB — 仅对超大图片压缩
 const IMAGE_COMPRESSED_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 压缩后仍超则放弃
 // 缓存：同一图片在一次会话中只压缩一次（key = path, value = data URL or null）
 const dataUrlCache = new Map<string, string | null>();
