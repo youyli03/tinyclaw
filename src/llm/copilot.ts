@@ -620,8 +620,9 @@ export async function buildCopilotClient(
       headers.set(k, v);
     }
     const fetchOpts = withCA({ ...init, headers });
-    // verbose: true 是 Bun 特有选项，可在 socket 意外关闭时输出详细诊断信息
-    const response = await globalThis.fetch(input, { ...fetchOpts, verbose: true } as RequestInit);
+    // verbose: true 是 Bun 特有选项，打印完整请求/响应 headers；仅在 DEBUG_FETCH=1 时启用
+    const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
+    const response = await globalThis.fetch(input, { ...fetchOpts, ...verboseOpts } as RequestInit);
 
     // 非 2xx 时 clone 并 log 原始 body，帮助诊断 API 拒绝的具体原因（如 400 text/plain）
     if (!response.ok) {
