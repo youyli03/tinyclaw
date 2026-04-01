@@ -245,6 +245,8 @@ export type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof f
 // 超过此阈值时先压缩，避免 base64 请求体过大导致 Copilot API 返回 400
 const IMAGE_COMPRESS_THRESHOLD = 100 * 1024; // 100 KB — 绝大多数截图/照片都会压缩
 const IMAGE_COMPRESSED_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 压缩后仍超则放弃
+// 缓存：同一图片在一次会话中只压缩一次（key = path, value = data URL or null）
+const dataUrlCache = new Map<string, string | null>();
 
 /**
  * 使用 ImageMagick convert 将图片压缩为 JPEG（resize ≤1024px, quality 75, strip metadata）。
@@ -269,9 +271,11 @@ function tryCompressImage(imgPath: string): Buffer | null {
 }
 
 function pathToDataUrl(imgPath: string): string | null {
-  if (!existsSync(imgPath)) return null;
+  if (dataUrlCache.has(imgPath)) return dataUrlCache.get(imgPath)!;
+  if (!existsSync(imgPath)) { dataUrlCache.set(imgPath, null); return null; }
   try {
     const size = statSync(imgPath).size;
+    let result: string | null;
     if (size <= IMAGE_COMPRESS_THRESHOLD) {
       // 小图直接编码
       const buf = readFileSync(imgPath);
@@ -282,21 +286,22 @@ function pathToDataUrl(imgPath: string): string | null {
         ext === "gif" ? "image/gif" :
         ext === "webp" ? "image/webp" :
         "image/png";
-      return `data:${mime};base64,${buf.toString("base64")}`;
+      result = `data:${mime};base64,${buf.toString("base64")}`;
+    } else {
+      // 超阈值：压缩为 JPEG 再编码
+      const compressed = tryCompressImage(imgPath);
+      if (!compressed || compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
+        if (compressed) console.warn(`[llm] 图片压缩后仍过大（${(compressed.length / 1024 / 1024).toFixed(1)} MB），跳过`);
+        result = null;
+      } else {
+        console.log(`[llm] 图片压缩: ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`);
+        result = `data:image/jpeg;base64,${compressed.toString("base64")}`;
+      }
     }
-
-    // 超阈值：压缩为 JPEG 再编码
-    const compressed = tryCompressImage(imgPath);
-    if (!compressed) return null;
-    if (compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
-      console.warn(`[llm] 图片压缩后仍过大（${(compressed.length / 1024 / 1024).toFixed(1)} MB），跳过`);
-      return null;
-    }
-    const origKB = (size / 1024).toFixed(0);
-    const compKB = (compressed.length / 1024).toFixed(0);
-    console.log(`[llm] 图片压缩: ${origKB} KB → ${compKB} KB`);
-    return `data:image/jpeg;base64,${compressed.toString("base64")}`;
+    dataUrlCache.set(imgPath, result);
+    return result;
   } catch {
+    dataUrlCache.set(imgPath, null);
     return null;
   }
 }

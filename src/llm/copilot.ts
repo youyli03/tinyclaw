@@ -636,18 +636,36 @@ export async function buildCopilotClient(
 
     // 使用 undici HTTP/2 Agent：api.githubcopilot.com 支持 h2 ALPN，
     // HTTP/2 多路复用消除了 HTTP/1.1 代理 ~100s SSE 超时导致的频繁重试。
-    // 降级：若 undici 不可用则回落到 Bun globalThis.fetch（HTTP/1.1）。
     let response: Response;
+    let undiciFetch: typeof import("undici").fetch | undefined;
     try {
-      const agent = await getH2Agent();
-      const { fetch: undiciFetch } = await import("undici");
-      response = await undiciFetch(input as string, {
-        ...init, headers,
-        dispatcher: agent,
-      } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
-    } catch (undiciErr) {
-      // undici 失败时 fallback 到 Bun 原生 fetch（HTTP/1.1）
-      console.warn("[copilot] undici fetch failed, falling back to globalThis.fetch:", undiciErr instanceof Error ? undiciErr.message : undiciErr);
+      undiciFetch = (await import("undici")).fetch;
+    } catch {
+      // undici 模块不可用（极少情况）→ fallback HTTP/1.1
+    }
+
+    if (undiciFetch) {
+      try {
+        const agent = await getH2Agent();
+        response = await undiciFetch(input as string, {
+          ...init, headers,
+          dispatcher: agent,
+        } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+      } catch (undiciErr) {
+        const msg = undiciErr instanceof Error ? undiciErr.message : String(undiciErr);
+        const isNetworkErr = /socket|closed|connect|network|econnreset/i.test(msg);
+        if (isNetworkErr) {
+          // 网络/socket 错误：重置 agent（清除过期连接），重新抛出让 withRetry 用新 HTTP/2 重试
+          _h2Agent = undefined;
+          throw undiciErr;
+        }
+        // 非网络错误（undici API 异常等）→ fallback HTTP/1.1
+        console.warn("[copilot] undici non-network error, falling back:", msg);
+        const fetchOpts = withCA({ ...init, headers });
+        const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
+        response = await globalThis.fetch(input, { ...fetchOpts, ...verboseOpts } as RequestInit);
+      }
+    } else {
       const fetchOpts = withCA({ ...init, headers });
       const verboseOpts = process.env.DEBUG_FETCH === "1" ? { verbose: true } : {};
       response = await globalThis.fetch(input, { ...fetchOpts, ...verboseOpts } as RequestInit);
