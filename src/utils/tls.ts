@@ -1,10 +1,10 @@
 /**
- * Bun/Linux TLS 工具
+ * Linux TLS 工具
  *
  * Bun 使用自己的 TLS 栈（BoringSSL），在 Linux 上不会自动扫描系统 CA 证书目录，
  * 需调用方通过 `fetch(url, { tls: { ca } })` 显式传入。
- * 本模块提供 `withCA()` 辅助函数，将系统 CA 注入任意 fetch RequestInit，
- * 修复 UNKNOWN_CERTIFICATE_VERIFICATION_ERROR。
+ * Node.js 的 undici fetch 会自动使用系统 CA，无需额外注入。
+ * 本模块提供 `withCA()` 辅助函数，在 Bun 下将系统 CA 注入任意 fetch RequestInit。
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -35,8 +35,10 @@ export function getSystemCA(): string | undefined {
   return systemCA();
 }
 
-/** 将系统 CA 注入 Bun fetch options（仅 Bun 支持 tls 扩展字段） */
+/** 将系统 CA 注入 fetch options（仅 Bun 需要，Node.js undici 自动使用系统 CA） */
 export function withCA(init?: RequestInit): RequestInit {
+  // Node.js 的 undici fetch 自动使用系统 CA，无需注入
+  if (!process.versions.bun) return init ?? {};
   const ca = systemCA();
   if (!ca) return init ?? {};
   return { ...init, tls: { ca } } as RequestInit;

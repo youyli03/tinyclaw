@@ -7,9 +7,9 @@
     "tinyclaw": "bin/tinyclaw.ts"
   },
   "scripts": {
-    "start": "bun src/main.ts",
-    "dev": "bun --watch src/main.ts",
-    "cli": "bun src/cli/index.ts",
+    "start": "node --import tsx/esm src/main.ts",
+    "dev": "node --watch --import tsx/esm src/main.ts",
+    "cli": "node --import tsx/esm src/cli/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,9 +28,10 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.5.14",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2"
   }
 }

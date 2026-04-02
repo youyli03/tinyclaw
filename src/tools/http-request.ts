@@ -119,12 +119,13 @@ registerTool({
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const resp = await fetch(url, {
+      const fetchInit: RequestInit = {
         method,
         headers: resolvedHeaders,
-        body: method === "POST" ? body : undefined,
         signal: controller.signal,
-      });
+      };
+      if (method === "POST") fetchInit.body = body ?? "";
+      const resp = await fetch(url, fetchInit);
 
       let text: string;
       try {
