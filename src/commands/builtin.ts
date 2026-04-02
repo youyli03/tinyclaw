@@ -395,8 +395,12 @@ registerCommand({
       return "⚠️ 当前有请求正在进行，请等待完成后再重试。";
     }
     // 设置 pendingRetry 信号，main.ts 在命令返回后检测并重新触发 runAgent
-    session.pendingRetry = { requestId: session.lastFailedRequestId };
+    const retryPayload: { requestId?: string; userContent?: string } = {};
+    if (session.lastFailedRequestId !== undefined) retryPayload.requestId = session.lastFailedRequestId;
+    if (session.lastFailedUserContent !== undefined) retryPayload.userContent = session.lastFailedUserContent;
+    session.pendingRetry = retryPayload;
     delete session.lastFailedRequestId;
+    delete session.lastFailedUserContent;
     return "↩️ 正在重试（复用上次请求 ID，不额外计费）...";
   },
 });

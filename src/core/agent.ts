@@ -768,8 +768,10 @@ export async function runAgent(
         }
         // LLM 调用失败（连接错误、400/500、限流等）：回滚本次注入的消息，保持 session 状态干净
         if (err instanceof LLMConnectionError && err.requestId) {
-          // 保存失败请求的 X-Request-Id，供 /retry 命令复用以避免服务端重复计费
+          // 保存失败请求的 X-Request-Id 和原始用户消息内容，供 /retry 命令复用
+          // trimToLength 会回滚用户消息，userContent 需另行保存以便 /retry 重新添加
           session.lastFailedRequestId = err.requestId;
+          session.lastFailedUserContent = userContent;
         }
         session.trimToLength(preRunLength);
         toolThrottler?.stop();

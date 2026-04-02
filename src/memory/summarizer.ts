@@ -451,9 +451,9 @@ export async function summarizeAndCompress(
 
 /**
  * 工具输出截断（MicroCompact）触发阈值：context 使用率超过此比例时触发。
- * 比全量压缩的 75% 更早介入，让 context 长期保持低水位。
+ * 比全量压缩的 75% 更早介入，在上下文明显偏高时清理旧工具结果。
  */
-const MICRO_COMPACT_THRESHOLD = 0.4;
+const MICRO_COMPACT_THRESHOLD = 0.65;
 
 /** 保留最近 N 条可截断工具结果不动（更早的才截断） */
 const MICRO_COMPACT_KEEP_RECENT = 5;

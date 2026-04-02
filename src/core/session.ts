@@ -130,10 +130,16 @@ export class Session {
   lastFailedRequestId?: string;
 
   /**
-   * /retry 命令设置此字段以请求 main.ts 重新触发 runAgent。
-   * main.ts 在命令执行后检查并清除此字段；若非 null 则以 skipAddUserMessage=true 重新运行。
+   * 最近一次传输失败时的用户消息内容（原始字符串，含时间戳前缀）。
+   * trimToLength 会回滚用户消息，/retry 需要将其重新传给 runAgent 以正确构建请求。
    */
-  pendingRetry: { requestId?: string } | null = null;
+  lastFailedUserContent?: string;
+
+  /**
+   * /retry 命令设置此字段以请求 main.ts 重新触发 runAgent。
+   * main.ts 在命令执行后检查并清除此字段；若非 null 则以原始用户消息内容重新运行。
+   */
+  pendingRetry: { requestId?: string; userContent?: string } | null = null;
 
   /** 构造函数完成加载后置为 true；为 false 时不写 JSONL（避免加载历史时重复追加） */
   private _persistReady = false;

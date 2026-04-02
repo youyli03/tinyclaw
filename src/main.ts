@@ -499,16 +499,22 @@ async function main(): Promise<void> {
     }
 
     // 附件已在 handleMessage 顶部完成下载和转录（earlyDownloaded），直接构建消息内容
-    let messageContent = buildEnrichedContent(msg.content, earlyDownloaded);
-
-    // 在用户发出的消息前加上当前时间，方便 Agent 识别当前日期
-    const nowStr = new Date().toLocaleString();
-    messageContent = `[${nowStr}] ${messageContent}`;
+    let messageContent: string;
+    if (pendingRetry?.userContent) {
+      // /retry：使用原始用户消息（含原始时间戳），不再添加新时间戳
+      // trimToLength 已回滚了用户消息，需通过 runAgent 重新添加到 session
+      messageContent = pendingRetry.userContent;
+    } else {
+      messageContent = buildEnrichedContent(msg.content, earlyDownloaded);
+      // 在用户发出的消息前加上当前时间，方便 Agent 识别当前日期
+      const nowStr = new Date().toLocaleString();
+      messageContent = `[${nowStr}] ${messageContent}`;
+    }
 
     const finalOpts: AgentRunOptions = pendingRetry
       ? {
           ...opts,
-          skipAddUserMessage: true,
+          // 不设 skipAddUserMessage：原始用户消息已被 trimToLength 回滚，需要重新添加
           ...(pendingRetry.requestId ? { turnRequestIdOverride: pendingRetry.requestId } : {}),
         }
       : opts;
