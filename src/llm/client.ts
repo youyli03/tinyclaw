@@ -500,9 +500,13 @@ export class LLMClient {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
-    const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
-      ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
-      : undefined;
+    // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
+    // to deduplicate retried requests and avoid double-billing premium requests.
+    const turnRequestId = this.backend.isCopilotProvider ? crypto.randomUUID() : undefined;
+    const xTurnHeaders = this.backend.isCopilotProvider ? {
+      ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
+      ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
+    } : undefined;
 
     const resolved = resolveMessagesForApi(messages);
     const response = await withRetry(() => this.client.chat.completions.create(
@@ -522,7 +526,7 @@ export class LLMClient {
       },
       {
         ...(opts.signal ? { signal: opts.signal } : {}),
-        ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
+        ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
       }
     ), opts.signal, opts._retryHooks, opts.noTransportRetry);
 
@@ -578,9 +582,14 @@ export class LLMClient {
     const resolvedForStream = resolveMessagesForApi(messages);
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
-    const xInitiatorHeader = this.backend.isCopilotProvider && opts.isUserInitiated !== undefined
-      ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" }
-      : undefined;
+
+    // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
+    // to deduplicate retried requests and avoid double-billing premium requests.
+    const turnRequestId = this.backend.isCopilotProvider ? crypto.randomUUID() : undefined;
+    const xTurnHeaders = this.backend.isCopilotProvider ? {
+      ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
+      ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
+    } : undefined;
 
     return withRetry(async () => {
       const stream = await this.client.chat.completions.create(
@@ -606,7 +615,7 @@ export class LLMClient {
           // resolves. After that, withStreamIdleTimeout below handles per-chunk idle
           // detection, so long streaming responses are never cut short.
           ...(opts.signal ? { signal: opts.signal } : {}),
-          ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
+          ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
         }
       );
 
