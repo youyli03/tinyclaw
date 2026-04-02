@@ -374,7 +374,7 @@ const RetryConfigSchema = z.object({
    * 超过该时间无 chunk 到达则中断流并触发重试；0 = 禁用。
    * 设为 60s 是因为复杂推理任务（o1/claude 等）首个 chunk 可能延迟较长。
    */
-  streamIdleTimeoutMs: z.number().int().min(0).default(60_000),
+  streamIdleTimeoutMs: z.number().int().min(0).default(90_000),
   /**
    * 整个重试循环的最大总时长（毫秒）；0 = 不限制。
    * 超过后抛出 LLMConnectionError，用于配合 maxAttempts=-1 避免无限等待。

@@ -12,6 +12,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { LLMClient } from "./client.js";
+import { toResponsesWsUrl } from "./responses-ws.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 import { getRetryPolicy } from "../config/loader.js";
 import { withCA, getSystemCA } from "../utils/tls.js";
@@ -717,6 +718,17 @@ export async function buildCopilotClient(
       // vision 优先级：config 显式值 > API capabilities.supports.vision > 默认 true
       // Copilot 主流模型均支持视觉，默认开启；可在 config.toml 显式设 supportsVision = false 关闭
       supportsVision: config.supportsVision ?? resolvedModel.supportsVision ?? true,
+      // WebSocket Responses API endpoint for stable keepalive-based streaming.
+      // Falls back to HTTP Chat Completions if the model/endpoint doesn't support it.
+      wsUrl: toResponsesWsUrl(COPILOT_API),
+      // Provide fresh Copilot token + standard headers for each WS handshake.
+      getWsHeaders: async () => {
+        const freshToken = await getCopilotToken(githubToken);
+        return {
+          Authorization: `Bearer ${freshToken}`,
+          ...COPILOT_HEADERS,
+        };
+      },
     },
     copilotFetch,
     // 流中断时重置 HTTP/2 agent，下次重试建立新连接池

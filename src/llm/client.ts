@@ -5,6 +5,13 @@ import { extname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { getRetryPolicy } from "../config/loader.js";
 import type { RetryConfig } from "../config/schema.js";
+import {
+  ResponsesWsConnection,
+  WebSocketError,
+  chatMessagesToResponsesInput,
+  toolsToResponsesFormat,
+  processResponsesStream,
+} from "./responses-ws.js";
 
 /** 退避延迟（毫秒），带 ±10% 随机 jitter，防止并发请求同时重试造成"惊群" */
 function backoff(baseMs: number, attempt: number): number {
@@ -40,7 +47,11 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
   if (err instanceof APIConnectionError) return policy.retryTransport;
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
-    if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket")) {
+    // undici/HTTP2 specific: GOAWAY frame, UND_ERR_SOCKET, "terminated" TypeError
+    // These are detected by app.js lRe() and should trigger resetH2Agent + retry
+    if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket") ||
+        msg.includes("goaway") || msg.includes("und_err_socket") ||
+        (err instanceof TypeError && msg.includes("terminated"))) {
       return policy.retryTransport;
     }
     if (msg.includes("idle timeout") || msg.includes("connection timeout")) return policy.retryTransport;
@@ -186,6 +197,17 @@ export interface ResolvedBackend {
    * 非 Copilot 后端不设此字段，不发送 X-Initiator。
    */
   isCopilotProvider?: boolean;
+  /**
+   * WebSocket Responses API 端点 URL（wss://...）。
+   * 设置后，streamChat() 优先使用 WebSocket，失败时自动降级为 HTTP Chat Completions。
+   * 仅 Copilot provider 设置此字段。
+   */
+  wsUrl?: string;
+  /**
+   * 获取当前 WebSocket 握手认证头的函数。
+   * 每次建立新连接时调用，确保使用最新 token。
+   */
+  getWsHeaders?: () => Promise<Record<string, string>>;
 }
 
 /** OpenAI vision API 内容块 */
@@ -479,6 +501,8 @@ export class LLMClient {
   private readonly client: OpenAI;
   private readonly backend: ResolvedBackend;
   private readonly onStreamSocketError: (() => void) | undefined;
+  /** Persistent WebSocket connection, reused across turns when the connection stays open. */
+  private wsConn: ResponsesWsConnection | null = null;
 
   constructor(backend: ResolvedBackend, fetchFn?: FetchFn, onStreamSocketError?: () => void) {
     this.backend = backend;
@@ -489,6 +513,100 @@ export class LLMClient {
       timeout: backend.timeoutMs,
       ...(fetchFn ? { fetch: fetchFn } : {}),
     });
+  }
+
+  /** Close and discard the current WebSocket connection (triggers reconnect on next use). */
+  private closeWsConn(): void {
+    try { this.wsConn?.close(); } catch { /* ignore */ }
+    this.wsConn = null;
+  }
+
+  /**
+   * Try to get or establish a WebSocket connection for the Responses API.
+   * Reconnects automatically if the current connection is no longer open.
+   */
+  private async ensureWsConn(): Promise<ResponsesWsConnection> {
+    if (this.wsConn?.isOpen()) return this.wsConn;
+    this.closeWsConn();
+    const wsUrl = this.backend.wsUrl!;
+    const headers = this.backend.getWsHeaders ? await this.backend.getWsHeaders() : {};
+    const conn = new ResponsesWsConnection();
+    await conn.connect(wsUrl, headers);
+    this.wsConn = conn;
+    return conn;
+  }
+
+  /**
+   * Determine if a WebSocket streaming error should fall back to HTTP.
+   * Falls back when the connection failed before any chunks were received
+   * (i.e., the model/endpoint may not support WebSocket).
+   */
+  private shouldFallbackToHttp(err: unknown, chunksReceived: number): boolean {
+    if (chunksReceived > 0) return false;
+    // Abort / user-cancelled: don't fall back
+    if (err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"))) {
+      return false;
+    }
+    // WebSocket connection errors before streaming started → fall back to HTTP
+    if (err instanceof WebSocketError) return true;
+    return false;
+  }
+
+  /**
+   * Stream via WebSocket Responses API.
+   * Throws if streaming fails; caller should check shouldFallbackToHttp().
+   */
+  private async streamChatViaWebSocket(
+    messages: ChatMessage[],
+    onChunk: (delta: string) => void,
+    opts: ChatOptions,
+    turnRequestId?: string
+  ): Promise<{ result: ChatResult; chunksReceived: number }> {
+    const canUseTools = this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+
+    // Resolve images to base64 (same as HTTP path)
+    const resolved = resolveMessagesForApi(messages);
+    const { instructions, input } = chatMessagesToResponsesInput(resolved);
+    const tools = canUseTools ? toolsToResponsesFormat(opts.tools!) : [];
+
+    // Build the response.create request
+    const request: Record<string, unknown> = {
+      type: "response.create",
+      model: this.backend.model,
+      instructions: instructions || undefined,
+      input,
+      tools: tools.length > 0 ? tools : undefined,
+      store: false,
+    };
+
+    if (!this.wsConn?.isOpen()) {
+      this.closeWsConn();
+    }
+    const conn = await this.ensureWsConn();
+
+    // If the server closed the connection since last use, reconnect
+    if (!conn.isOpen()) {
+      console.debug(`[ws] reconnecting: server closed connection (request-id: ${conn.requestId ?? "unknown"})`);
+      this.closeWsConn();
+      const fresh = await this.ensureWsConn();
+      fresh.send(request);
+      const events = fresh.receiveEvents(opts.signal);
+      try {
+        return await processResponsesStream(events, onChunk);
+      } finally {
+        if (!fresh.isOpen()) this.closeWsConn();
+      }
+    }
+
+    conn.send(request);
+    const events = conn.receiveEvents(opts.signal);
+    try {
+      return await processResponsesStream(events, onChunk);
+    } catch (err) {
+      // On any mid-stream error, discard the connection
+      this.closeWsConn();
+      throw err;
+    }
   }
 
   get model(): string {
@@ -624,7 +742,33 @@ export class LLMClient {
     } : undefined;
 
     try {
+    // ── WebSocket path (Copilot provider only) ───────────────────────────────
+    // Try the Responses API WebSocket for stable, keepalive-based streaming.
+    // Falls back silently to HTTP Chat Completions if:
+    //   - WebSocket connection fails before any chunks arrive
+    //   - The model/endpoint doesn't support the Responses API
+    if (this.backend.wsUrl) {
+      let wsChunksReceived = 0;
+      try {
+        const { result, chunksReceived } = await this.streamChatViaWebSocket(
+          messages, onChunk, opts, turnRequestId
+        );
+        wsChunksReceived = chunksReceived;
+        return result;
+      } catch (err) {
+        if (!this.shouldFallbackToHttp(err, wsChunksReceived)) throw err;
+        console.warn(`[ws] WebSocket streaming failed before first chunk, falling back to HTTP: ${err instanceof Error ? err.message : String(err)}`);
+        this.closeWsConn();
+        // fall through to HTTP path below
+      }
+    }
+
+    // ── HTTP path ────────────────────────────────────────────────────────────
+    // chunksReceived tracks if any streaming data was received per attempt.
+    // Used to decide whether to fall back to non-streaming on idle timeout.
+    let chunksReceived = 0;
     return await withRetry(async () => {
+      chunksReceived = 0; // reset on each retry attempt
       const stream = await this.client.chat.completions.create(
         {
           model: this.backend.model,
@@ -667,10 +811,12 @@ export class LLMClient {
         if (textDelta) {
           fullContent += textDelta;
           onChunk(textDelta);
+          chunksReceived++;
         }
 
         // 工具调用 delta（按 index 聚合）
         for (const tcDelta of delta?.tool_calls ?? []) {
+          chunksReceived++;
           const idx = tcDelta.index;
           if (!toolCallAcc[idx]) {
             toolCallAcc[idx] = {
@@ -696,10 +842,29 @@ export class LLMClient {
       } catch (streamErr) {
         // Socket closure during streaming: reset the HTTP/2 agent so the next
         // retry builds a fresh connection pool instead of reusing the broken one.
+        // Matches the error patterns detected by @github/copilot CLI's lRe() function:
+        // GOAWAY frames, UND_ERR_SOCKET, TypeError "terminated", ECONNRESET, etc.
         const msg = streamErr instanceof Error ? streamErr.message.toLowerCase() : "";
-        if (/socket|closed|econnreset|abort/.test(msg)) {
+        const isSocketError = /socket|closed|econnreset|abort|goaway|und_err_socket/.test(msg) ||
+          (streamErr instanceof TypeError && msg.includes("terminated"));
+        if (isSocketError) {
           this.onStreamSocketError?.();
         }
+
+        // Non-streaming fallback: if idle timeout fires with 0 chunks, the streaming
+        // path is unlikely to succeed on retry. Switch to non-streaming (single HTTP
+        // request waiting for full response) which has a much longer timeout and no
+        // chunk-interval constraints. Reuse turnRequestId to avoid double-billing.
+        if (msg.includes("idle timeout") && chunksReceived === 0) {
+          console.warn("[llm] 流式空闲超时（0 chunks），切换为非流式请求...");
+          const fallbackResult = await this.chat(messages, {
+            ...opts,
+            ...(turnRequestId ? { turnRequestIdOverride: turnRequestId } : {}),
+          });
+          if (fallbackResult.content) onChunk(fallbackResult.content);
+          return fallbackResult;
+        }
+
         throw streamErr;
       }
 
