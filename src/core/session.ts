@@ -123,6 +123,18 @@ export class Session {
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
 
+  /**
+   * 最近一次传输失败请求的 X-Request-Id（由 runAgent 在捕获 LLMConnectionError 时设置）。
+   * /retry 命令将此 ID 作为 turnRequestIdOverride 传给下次请求，服务端识别相同 ID 不重复计费。
+   */
+  lastFailedRequestId?: string;
+
+  /**
+   * /retry 命令设置此字段以请求 main.ts 重新触发 runAgent。
+   * main.ts 在命令执行后检查并清除此字段；若非 null 则以 skipAddUserMessage=true 重新运行。
+   */
+  pendingRetry: { requestId?: string } | null = null;
+
   /** 构造函数完成加载后置为 true；为 false 时不写 JSONL（避免加载历史时重复追加） */
   private _persistReady = false;
 

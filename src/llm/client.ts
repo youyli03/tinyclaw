@@ -52,7 +52,9 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
 
 /** 连接失败（含超时）后抛出的错误（调用方可据此回滚 session 并发送用户友好提示） */
 export class LLMConnectionError extends Error {
-  constructor(cause: unknown, message?: string) {
+  /** 失败时的 X-Request-Id（per-turn UUID）。/retry 命令复用此 ID 以避免服务端重复计费。 */
+  readonly requestId?: string;
+  constructor(cause: unknown, message?: string, requestId?: string) {
     const attempts = (() => {
       try { return getRetryPolicy().maxAttempts; } catch { return 3; }
     })();
@@ -62,6 +64,7 @@ export class LLMConnectionError extends Error {
       `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`
     );
     this.name = "LLMConnectionError";
+    if (requestId !== undefined) this.requestId = requestId;
   }
 }
 
@@ -78,7 +81,7 @@ export interface RetryHooks {
 }
 
 /** 按 RetryConfig 策略重试，固定间隔，abort 后不再重试。maxAttempts=-1 为无限重试 */
-async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks, noTransportRetry?: boolean): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks, maxTransportRetryOverride?: number): Promise<T> {
   const policy = (() => {
     try { return getRetryPolicy(); } catch { return undefined; }
   })();
@@ -86,7 +89,8 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   const MAX_DURATION = policy?.maxRetryDurationMs ?? 0;
   const MAX_5XX = policy?.max5xxAttempts ?? 5;
-  const MAX_TRANSPORT = policy?.maxTransportAttempts ?? 3;
+  // 若调用方传入 override（如 code 模式传 1），优先使用；否则读全局配置
+  const MAX_TRANSPORT = maxTransportRetryOverride !== undefined ? maxTransportRetryOverride : (policy?.maxTransportAttempts ?? 3);
   const infinite = MAX_RETRIES === -1;
   const infinite5xx = MAX_5XX === -1;
   const infiniteTransport = MAX_TRANSPORT === -1;
@@ -126,14 +130,12 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       } else if (isTransport) {
         consecutiveTransport++;
         consecutive5xx = 0;
-        if (noTransportRetry) {
-          throw new LLMConnectionError(err,
-            `⚠️ 连接中断:${err instanceof Error ? err.message : String(err)}\nCode 模式不自动重试以节省高级请求，如需重试请直接重新发送消息`
-          );
-        }
         if (!infiniteTransport && consecutiveTransport > MAX_TRANSPORT) {
+          const retryHint = MAX_TRANSPORT === 0
+            ? `发送 /retry 可重试（不消耗额外高级请求）`
+            : `建议发送 /retry 重试或 /new 清空上下文后重试`;
           throw new LLMConnectionError(err,
-            `⚠️ 连接持续中断（已重试 ${consecutiveTransport - 1} 次）：${err instanceof Error ? err.message : String(err)}\n请求可能过于复杂，建议发送 /new 清空上下文后重试`
+            `⚠️ 连接中断（已重试 ${consecutiveTransport - 1} 次）：${err instanceof Error ? err.message : String(err)}\n${retryHint}`
           );
         }
       } else {
@@ -243,11 +245,19 @@ export interface ChatOptions {
    */
   _retryHooks?: RetryHooks;
   /**
-   * 禁用传输错误重试(socket 断开/连接失败等)。
-   * code 模式下设为 true，避免每次重试都消耗高级请求(premium request)。
-   * 设置后传输错误首次发生即立即抛出 LLMConnectionError，不进行重试。
+   * 覆盖传输错误的最大重试次数（socket 断开/连接失败等）。
+   *   undefined → 使用全局 RetryConfig.maxTransportAttempts（默认 3）
+   *   0         → 不重试（首次失败立即抛出 LLMConnectionError）
+   *   1         → 最多重试 1 次（code 模式默认，对齐 VS Code canRetryOnce）
+   * 重试时复用同一 X-Request-Id，服务端识别后不重复计费。
    */
-  noTransportRetry?: boolean;
+  maxTransportRetryOverride?: number;
+  /**
+   * 覆盖本轮的 X-Request-Id（UUID）。
+   * /retry 命令传入上次失败请求的 requestId，服务端识别相同 ID 不重复计费。
+   * 不传时 streamChat/chat 每轮自动生成新 UUID。
+   */
+  turnRequestIdOverride?: string;
 }
 
 export interface ChatResult {
@@ -502,7 +512,10 @@ export class LLMClient {
 
     // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
     // to deduplicate retried requests and avoid double-billing premium requests.
-    const turnRequestId = this.backend.isCopilotProvider ? crypto.randomUUID() : undefined;
+    // If caller provides turnRequestIdOverride (e.g. /retry command), reuse that ID.
+    const turnRequestId = this.backend.isCopilotProvider
+      ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
+      : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
       ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
@@ -528,7 +541,7 @@ export class LLMClient {
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
       }
-    ), opts.signal, opts._retryHooks, opts.noTransportRetry);
+    ), opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");
@@ -573,10 +586,10 @@ export class LLMClient {
     const idleTimeoutMs = (() => {
       try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
     })();
-    // code 模式（noTransportRetry=true）：收到第一个 chunk 后禁用空闲超时。
-    // 原因：code 模式长代码生成 token 间隔可超过 60s；且 noTransportRetry 已禁止重试，
-    // 不用担心超时后浪费高级请求。首个 chunk 前仍保留超时以检测挂起连接。
-    const idleMsAfterFirstChunk = opts.noTransportRetry ? 0 : undefined;
+    // code 模式（maxTransportRetryOverride=1）：收到第一个 chunk 后禁用空闲超时。
+    // 原因：code 模式长代码生成 token 间隔可超过 60s，禁用超时避免误中断。
+    // 首个 chunk 前仍保留超时以检测挂起连接。
+    const idleMsAfterFirstChunk = opts.maxTransportRetryOverride === 1 ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
     const resolvedForStream = resolveMessagesForApi(messages);
@@ -585,13 +598,17 @@ export class LLMClient {
 
     // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
     // to deduplicate retried requests and avoid double-billing premium requests.
-    const turnRequestId = this.backend.isCopilotProvider ? crypto.randomUUID() : undefined;
+    // If caller provides turnRequestIdOverride (e.g. /retry command), reuse that ID.
+    const turnRequestId = this.backend.isCopilotProvider
+      ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
+      : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
       ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
-    return withRetry(async () => {
+    try {
+    return await withRetry(async () => {
       const stream = await this.client.chat.completions.create(
         {
           model: this.backend.model,
@@ -690,6 +707,14 @@ export class LLMClient {
           : undefined;
 
       return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
-    }, opts.signal, opts._retryHooks, opts.noTransportRetry);
+    }, opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
+    } catch (err) {
+      // Propagate the turn's X-Request-Id so callers (e.g. /retry command) can reuse
+      // the same ID for deduplication when retrying manually.
+      if (err instanceof LLMConnectionError && turnRequestId && !err.requestId) {
+        Object.defineProperty(err, "requestId", { value: turnRequestId, configurable: true });
+      }
+      throw err;
+    }
   }
 }

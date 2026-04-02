@@ -380,3 +380,23 @@ registerCommand({
 // ── code 模式命令（/code 和 /chat）────────────────────────────────────────────
 // 命令实现在 src/code/，此处触发注册
 import "../code/index.js";
+
+// ── /retry ────────────────────────────────────────────────────────────────────
+
+registerCommand({
+  name: "retry",
+  description: "重试上次失败的请求（复用相同 X-Request-Id，不消耗额外高级请求）",
+  usage: "/retry",
+  execute({ session }) {
+    if (!session.lastFailedRequestId) {
+      return "⚠️ 没有可重试的失败请求。只有连接中断类失败（非 4xx/5xx 错误）才支持 /retry。";
+    }
+    if (session.running) {
+      return "⚠️ 当前有请求正在进行，请等待完成后再重试。";
+    }
+    // 设置 pendingRetry 信号，main.ts 在命令返回后检测并重新触发 runAgent
+    session.pendingRetry = { requestId: session.lastFailedRequestId };
+    delete session.lastFailedRequestId;
+    return "↩️ 正在重试（复用上次请求 ID，不额外计费）...";
+  },
+});

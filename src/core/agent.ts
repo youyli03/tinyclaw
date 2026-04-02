@@ -450,6 +450,11 @@ export interface AgentRunOptions {
    * 透传到 ToolContext，供 session_get 工具使用。
    */
   sessionGetFn?: import("../tools/registry.js").ToolContext["sessionGetFn"];
+  /**
+   * 覆盖本轮 X-Request-Id（/retry 命令传入上次失败的 requestId，避免服务端重复计费）。
+   * 传入 streamChat 的 turnRequestIdOverride。
+   */
+  turnRequestIdOverride?: string;
 }
 
 export interface AgentRunResult {
@@ -746,6 +751,10 @@ export async function runAgent(
                 slotHeld = true;
               },
             },
+            // code 模式：最多重试 1 次（对齐 VS Code canRetryOnce），X-Request-Id 复用确保不重复计费
+            ...(isCodeMode ? { maxTransportRetryOverride: 1 } : {}),
+            // /retry 命令传入的 requestId override（首轮才有意义）
+            ...(round === 0 && opts.turnRequestIdOverride ? { turnRequestIdOverride: opts.turnRequestIdOverride } : {}),
           }
         );
         // 清除流式进度行，后续日志正常换行输出
@@ -758,6 +767,10 @@ export async function runAgent(
           break;
         }
         // LLM 调用失败（连接错误、400/500、限流等）：回滚本次注入的消息，保持 session 状态干净
+        if (err instanceof LLMConnectionError && err.requestId) {
+          // 保存失败请求的 X-Request-Id，供 /retry 命令复用以避免服务端重复计费
+          session.lastFailedRequestId = err.requestId;
+        }
         session.trimToLength(preRunLength);
         toolThrottler?.stop();
         throw err;

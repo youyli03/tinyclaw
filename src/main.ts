@@ -216,8 +216,13 @@ async function main(): Promise<void> {
     const parsedCmd = parseCommand(msg.content);
     if (parsedCmd) {
       const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
-      await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
-      return "";
+      if (result) {
+        await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+      }
+      // /retry 命令设置了 pendingRetry：fall-through，继续构建 opts 并重新调用 runAgent
+      if (!session.pendingRetry) {
+        return "";
+      }
     }
 
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
@@ -486,6 +491,13 @@ async function main(): Promise<void> {
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
     session.running = true;
+
+    // /retry 命令触发：复用上次失败的 X-Request-Id，跳过添加新用户消息（已在 session 历史中）
+    const pendingRetry = session.pendingRetry;
+    if (pendingRetry) {
+      session.pendingRetry = null;
+    }
+
     // 附件已在 handleMessage 顶部完成下载和转录（earlyDownloaded），直接构建消息内容
     let messageContent = buildEnrichedContent(msg.content, earlyDownloaded);
 
@@ -493,7 +505,15 @@ async function main(): Promise<void> {
     const nowStr = new Date().toLocaleString();
     messageContent = `[${nowStr}] ${messageContent}`;
 
-    const runPromise = runAgent(session, messageContent, opts);
+    const finalOpts: AgentRunOptions = pendingRetry
+      ? {
+          ...opts,
+          skipAddUserMessage: true,
+          ...(pendingRetry.requestId ? { turnRequestIdOverride: pendingRetry.requestId } : {}),
+        }
+      : opts;
+
+    const runPromise = runAgent(session, messageContent, finalOpts);
     session.currentRunPromise = runPromise;
 
     void runPromise
