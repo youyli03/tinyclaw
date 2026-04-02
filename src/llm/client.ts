@@ -522,7 +522,7 @@ export class LLMClient {
     } : undefined;
 
     const resolved = resolveMessagesForApi(messages);
-    const response = await withRetry(() => this.client.chat.completions.create(
+    const resolvedCall = withRetry(() => this.client.chat.completions.create(
       {
         model: this.backend.model,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -542,6 +542,18 @@ export class LLMClient {
         ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
       }
     ), opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
+
+    let response: Awaited<typeof resolvedCall>;
+    try {
+      response = await resolvedCall;
+    } catch (err) {
+      // Propagate the turn's X-Request-Id so callers (e.g. /retry command) can reuse
+      // the same ID for deduplication when retrying manually. Mirrors streamChat() behavior.
+      if (err instanceof LLMConnectionError && turnRequestId && !err.requestId) {
+        Object.defineProperty(err, "requestId", { value: turnRequestId, configurable: true });
+      }
+      throw err;
+    }
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");
