@@ -446,6 +446,12 @@ interface RawCopilotModel {
       min_thinking_budget?: number;
     };
   };
+  /**
+   * 模型支持的 API 端点列表（来自 Copilot 模型 API 响应）。
+   * 例如：["/chat/completions", "/responses", "ws:/responses"]
+   * 用于判断是否可以使用 Responses API 或 WebSocket Responses API。
+   */
+  supported_endpoints?: string[];
 }
 
 /** tinyclaw 内部使用的模型能力摘要 */
@@ -481,6 +487,10 @@ export interface CopilotModelInfo {
   supportsParallelToolCalls: boolean;
   /** 是否支持视觉输入（图片）。来自 capabilities.supports.vision，默认 false。 */
   supportsVision: boolean;
+  /** 是否支持 Responses API（/responses 端点）。来自 supported_endpoints，默认 false。 */
+  supportsResponsesApi: boolean;
+  /** 是否支持 WebSocket Responses API（ws:/responses 端点）。来自 supported_endpoints，默认 false。 */
+  supportsWsResponsesApi: boolean;
   /** 是否出现在 Copilot 模型选择器中 */
   isPickerEnabled: boolean;
   /** 是否为 Copilot 标记的默认聊天模型（个人账户通常不返回此字段） */
@@ -557,6 +567,8 @@ export async function getCopilotModels(
       supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
       supportsParallelToolCalls: m.capabilities.supports.parallel_tool_calls ?? false,
       supportsVision: m.capabilities.supports.vision ?? false,
+      supportsResponsesApi: m.supported_endpoints?.includes("/responses") ?? false,
+      supportsWsResponsesApi: m.supported_endpoints?.includes("ws:/responses") ?? false,
       isPickerEnabled: m.model_picker_enabled,
       isDefault: m.is_chat_default ?? false,
       isPremium: m.billing?.is_premium ?? (multiplier != null && multiplier > 0),
@@ -718,17 +730,21 @@ export async function buildCopilotClient(
       // vision 优先级：config 显式值 > API capabilities.supports.vision > 默认 true
       // Copilot 主流模型均支持视觉，默认开启；可在 config.toml 显式设 supportsVision = false 关闭
       supportsVision: config.supportsVision ?? resolvedModel.supportsVision ?? true,
-      // WebSocket Responses API endpoint for stable keepalive-based streaming.
-      // Falls back to HTTP Chat Completions if the model/endpoint doesn't support it.
-      wsUrl: toResponsesWsUrl(COPILOT_API),
-      // Provide fresh Copilot token + standard headers for each WS handshake.
-      getWsHeaders: async () => {
-        const freshToken = await getCopilotToken(githubToken);
-        return {
-          Authorization: `Bearer ${freshToken}`,
-          ...COPILOT_HEADERS,
-        };
-      },
+      // WebSocket Responses API endpoint — only available for models that support it
+      // (supported_endpoints includes "ws:/responses"). claude-sonnet-4.6 and similar
+      // models use HTTP Chat Completions; oswe-vscode-prime and SWE-capable models
+      // support Responses API. Falls back to HTTP Chat Completions if not supported.
+      ...(resolvedModel.supportsWsResponsesApi ? {
+        wsUrl: toResponsesWsUrl(COPILOT_API),
+        // Provide fresh Copilot token + standard headers for each WS handshake.
+        getWsHeaders: async () => {
+          const freshToken = await getCopilotToken(githubToken);
+          return {
+            Authorization: `Bearer ${freshToken}`,
+            ...COPILOT_HEADERS,
+          };
+        },
+      } : {}),
     },
     copilotFetch,
     // 流中断时重置 HTTP/2 agent，下次重试建立新连接池
