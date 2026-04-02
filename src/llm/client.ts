@@ -246,12 +246,16 @@ export interface ChatOptions {
   _retryHooks?: RetryHooks;
   /**
    * 覆盖传输错误的最大重试次数（socket 断开/连接失败等）。
-   *   undefined → 使用全局 RetryConfig.maxTransportAttempts（默认 3）
+   *   undefined → 使用全局 RetryConfig.maxTransportAttempts（默认 -1 = 无限，由 maxRetryDurationMs 封顶）
    *   0         → 不重试（首次失败立即抛出 LLMConnectionError）
-   *   1         → 最多重试 1 次（code 模式默认，对齐 VS Code canRetryOnce）
    * 重试时复用同一 X-Request-Id，服务端识别后不重复计费。
    */
   maxTransportRetryOverride?: number;
+  /**
+   * code 模式专用：收到第一个 chunk 后禁用流式空闲超时。
+   * 代码生成 token 间隔可能超过 60s，禁用超时避免误中断；首 chunk 前仍保留超时。
+   */
+  disableIdleAfterFirstChunk?: boolean;
   /**
    * 覆盖本轮的 X-Request-Id（UUID）。
    * /retry 命令传入上次失败请求的 requestId，服务端识别相同 ID 不重复计费。
@@ -598,10 +602,10 @@ export class LLMClient {
     const idleTimeoutMs = (() => {
       try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
     })();
-    // code 模式（maxTransportRetryOverride=1）：收到第一个 chunk 后禁用空闲超时。
+    // code 模式：收到第一个 chunk 后禁用空闲超时。
     // 原因：code 模式长代码生成 token 间隔可超过 60s，禁用超时避免误中断。
     // 首个 chunk 前仍保留超时以检测挂起连接。
-    const idleMsAfterFirstChunk = opts.maxTransportRetryOverride === 1 ? 0 : undefined;
+    const idleMsAfterFirstChunk = opts.disableIdleAfterFirstChunk ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
     const resolvedForStream = resolveMessagesForApi(messages);

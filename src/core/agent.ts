@@ -751,8 +751,8 @@ export async function runAgent(
                 slotHeld = true;
               },
             },
-            // code 模式：最多重试 1 次（对齐 VS Code canRetryOnce），X-Request-Id 复用确保不重复计费
-            ...(isCodeMode ? { maxTransportRetryOverride: 1 } : {}),
+            // code 模式：首 chunk 后禁用 idle timeout（长代码生成 token 间隔可 >60s）
+            ...(isCodeMode ? { disableIdleAfterFirstChunk: true } : {}),
             // /retry 命令传入的 requestId override（首轮才有意义）
             ...(round === 0 && opts.turnRequestIdOverride ? { turnRequestIdOverride: opts.turnRequestIdOverride } : {}),
           }
