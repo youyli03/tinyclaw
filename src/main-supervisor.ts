@@ -72,7 +72,7 @@ try {
 function startChild(): void {
   if (shuttingDown) return;
 
-  child = spawn("bun", [MAIN_SCRIPT], {
+  child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     stdio: "inherit",
     env: process.env,
   });

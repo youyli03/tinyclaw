@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import tsx/esm
 /**
  * tinyclaw CLI 全局配置入口
  *

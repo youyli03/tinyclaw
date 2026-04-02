@@ -1,2 +1,2 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import tsx/esm
 import "../src/cli/index.ts";

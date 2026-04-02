@@ -46,7 +46,7 @@ export async function run(_args: string[]): Promise<void> {
   // 以追加模式打开日志文件，将 stdout/stderr 重定向进去
   const logFd = fs.openSync(SERVICE_LOG_FILE, "a");
 
-  const child = spawn("bun", [MAIN_SCRIPT], {
+  const child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: process.env,
