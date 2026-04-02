@@ -78,7 +78,7 @@ export interface RetryHooks {
 }
 
 /** 按 RetryConfig 策略重试，固定间隔，abort 后不再重试。maxAttempts=-1 为无限重试 */
-async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks, noTransportRetry?: boolean): Promise<T> {
   const policy = (() => {
     try { return getRetryPolicy(); } catch { return undefined; }
   })();
@@ -126,6 +126,11 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       } else if (isTransport) {
         consecutiveTransport++;
         consecutive5xx = 0;
+        if (noTransportRetry) {
+          throw new LLMConnectionError(err,
+            `⚠️ 连接中断:${err instanceof Error ? err.message : String(err)}\nCode 模式不自动重试以节省高级请求，如需重试请直接重新发送消息`
+          );
+        }
         if (!infiniteTransport && consecutiveTransport > MAX_TRANSPORT) {
           throw new LLMConnectionError(err,
             `⚠️ 连接持续中断（已重试 ${consecutiveTransport - 1} 次）：${err instanceof Error ? err.message : String(err)}\n请求可能过于复杂，建议发送 /new 清空上下文后重试`
@@ -237,6 +242,12 @@ export interface ChatOptions {
    * 防止 429 无限重试时 slot 被永久占用导致其他请求卡死。
    */
   _retryHooks?: RetryHooks;
+  /**
+   * 禁用传输错误重试(socket 断开/连接失败等)。
+   * code 模式下设为 true，避免每次重试都消耗高级请求(premium request)。
+   * 设置后传输错误首次发生即立即抛出 LLMConnectionError，不进行重试。
+   */
+  noTransportRetry?: boolean;
 }
 
 export interface ChatResult {
@@ -407,28 +418,46 @@ function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
  * 为 async iterable 的每次 next() 添加空闲超时检测。
  * 若在 idleMs 毫秒内无新 chunk 到达，抛出 idle timeout 错误（可触发 withRetry 重试）。
  * idleMs <= 0 时直接透传，不添加超时。
+ * idleMsAfterFirstChunk: 收到第一个 chunk 后切换的超时值；0 = 禁用（code 模式用）。
  */
 async function* withStreamIdleTimeout<T>(
   iter: AsyncIterable<T>,
   idleMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  idleMsAfterFirstChunk?: number
 ): AsyncGenerator<T> {
-  if (idleMs <= 0) {
+  let currentIdleMs = idleMs;
+  // Fast path: both phases have no timeout
+  if (currentIdleMs <= 0 && (idleMsAfterFirstChunk === undefined || idleMsAfterFirstChunk <= 0)) {
     yield* iter;
     return;
   }
+  let firstChunk = true;
   const it = iter[Symbol.asyncIterator]();
   while (true) {
-    const result = await new Promise<IteratorResult<T>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`stream idle timeout: no chunk received in ${idleMs}ms`));
-      }, idleMs);
-      const cleanup = () => clearTimeout(timer);
-      signal?.addEventListener("abort", () => { cleanup(); reject(new Error("abort")); }, { once: true });
-      it.next().then((r) => { cleanup(); resolve(r); }, (e) => { cleanup(); reject(e as unknown); });
-    });
+    const ms = currentIdleMs;
+    let result: IteratorResult<T>;
+    if (ms <= 0) {
+      // No timeout phase: await directly
+      if (signal?.aborted) throw new Error("abort");
+      result = await it.next();
+    } else {
+      result = await new Promise<IteratorResult<T>>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`stream idle timeout: no chunk received in ${ms}ms`));
+        }, ms);
+        const cleanup = () => clearTimeout(timer);
+        signal?.addEventListener("abort", () => { cleanup(); reject(new Error("abort")); }, { once: true });
+        it.next().then((r) => { cleanup(); resolve(r); }, (e) => { cleanup(); reject(e as unknown); });
+      });
+    }
     if (result.done) return;
     yield result.value;
+    // After first chunk, optionally switch to a different timeout
+    if (firstChunk && idleMsAfterFirstChunk !== undefined) {
+      firstChunk = false;
+      currentIdleMs = idleMsAfterFirstChunk;
+    }
   }
 }
 
@@ -495,7 +524,7 @@ export class LLMClient {
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(xInitiatorHeader ? { headers: xInitiatorHeader } : {}),
       }
-    ), opts.signal, opts._retryHooks);
+    ), opts.signal, opts._retryHooks, opts.noTransportRetry);
 
     const choice = response.choices[0];
     if (!choice) throw new Error("LLM returned no choices");
@@ -540,6 +569,10 @@ export class LLMClient {
     const idleTimeoutMs = (() => {
       try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
     })();
+    // code 模式（noTransportRetry=true）：收到第一个 chunk 后禁用空闲超时。
+    // 原因：code 模式长代码生成 token 间隔可超过 60s；且 noTransportRetry 已禁止重试，
+    // 不用担心超时后浪费高级请求。首个 chunk 前仍保留超时以检测挂起连接。
+    const idleMsAfterFirstChunk = opts.noTransportRetry ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
     const resolvedForStream = resolveMessagesForApi(messages);
@@ -583,7 +616,7 @@ export class LLMClient {
       const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
 
       try {
-        for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal)) {
+        for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal, idleMsAfterFirstChunk)) {
         if (opts.signal?.aborted) break;
         const delta = chunk.choices[0]?.delta;
 
@@ -648,6 +681,6 @@ export class LLMClient {
           : undefined;
 
       return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
-    }, opts.signal, opts._retryHooks);
+    }, opts.signal, opts._retryHooks, opts.noTransportRetry);
   }
 }
