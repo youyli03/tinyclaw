@@ -22,21 +22,24 @@ const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
 const USER_URL = "https://api.github.com/copilot_internal/user";
 
 /**
- * 使用 undici Agent 发送 HTTP/2 请求（api.githubcopilot.com 支持 h2 ALPN）。
- * HTTP/2 多路复用消除了 HTTP/1.1 代理约 100s SSE 流超时，减少重试。
+ * 使用 undici Agent 发送请求（HTTP/1.1）。
+ * 不启用 HTTP/2（allowH2 保持默认 false），与 @github/copilot CLI 行为一致：
+ * HTTP/2 GOAWAY 帧（服务端负载均衡周期性连接重置）会导致 "terminated" TypeError；
+ * HTTP/1.1 不受 GOAWAY 影响，LLM 生成期间连接持续有数据，代理 idle timeout 不触发。
+ * 该 agent 的唯一作用是注入自定义 CA 证书（getSystemCA）。
  */
-let _h2Agent: import("undici").Agent | undefined;
-async function getH2Agent(): Promise<import("undici").Agent> {
-  if (_h2Agent) return _h2Agent;
+let _undiciAgent: import("undici").Agent | undefined;
+async function getUndiciAgent(): Promise<import("undici").Agent> {
+  if (_undiciAgent) return _undiciAgent;
   const { Agent } = await import("undici");
   const ca = getSystemCA();
-  _h2Agent = new Agent({ allowH2: true, ...(ca ? { connect: { ca } } : {}) });
-  return _h2Agent;
+  _undiciAgent = new Agent({ ...(ca ? { connect: { ca } } : {}) });
+  return _undiciAgent;
 }
 
-/** 丢弃当前 HTTP/2 连接池，下次请求将建立新连接。在流中断后由 streamChat 调用。 */
-export function resetH2Agent(): void {
-  _h2Agent = undefined;
+/** 丢弃当前 undici 连接池，下次请求将建立新连接。在流中断后由 streamChat 调用。 */
+export function resetUndiciAgent(): void {
+  _undiciAgent = undefined;
 }
 
 const COPILOT_HEADERS = {
@@ -652,8 +655,9 @@ export async function buildCopilotClient(
       headers.set(k, v);
     }
 
-    // 使用 undici HTTP/2 Agent：api.githubcopilot.com 支持 h2 ALPN，
-    // HTTP/2 多路复用消除了 HTTP/1.1 代理 ~100s SSE 超时导致的频繁重试。
+    // 使用 undici Agent（HTTP/1.1）发送请求。不启用 HTTP/2（allowH2 默认 false），
+    // 与 @github/copilot CLI 一致：HTTP/2 GOAWAY 帧导致频繁 "terminated"，HTTP/1.1 无此问题。
+    // 该 agent 仅用于注入自定义 CA 证书，若 undici 不可用则 fallback globalThis.fetch。
     let response: Response;
     let undiciFetch: typeof import("undici").fetch | undefined;
     try {
@@ -664,19 +668,19 @@ export async function buildCopilotClient(
 
     if (undiciFetch) {
       try {
-        const agent = await getH2Agent();
+        const agent = await getUndiciAgent();
         response = await undiciFetch(input as string, {
           ...init, headers,
           dispatcher: agent,
         } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
       } catch (undiciErr) {
         const msg = undiciErr instanceof Error ? undiciErr.message : String(undiciErr);
-        // AbortError（含连接超时触发的 abort）和网络错误都应重新抛出，让 withRetry 用新 HTTP/2 连接重试
+        // AbortError（含连接超时触发的 abort）和网络错误都应重新抛出，让 withRetry 用新连接重试
         const isNetworkErr = /socket|closed|connect|network|econnreset|abort/i.test(msg)
           || (undiciErr instanceof Error && undiciErr.name === "AbortError");
         if (isNetworkErr) {
           // 重置 agent（清除过期连接），重新抛出让 withRetry 重试
-          _h2Agent = undefined;
+          _undiciAgent = undefined;
           throw undiciErr;
         }
         // 确认是 undici 内部 API 异常（非网络）→ fallback HTTP/1.1
@@ -747,8 +751,8 @@ export async function buildCopilotClient(
       } : {}),
     },
     copilotFetch,
-    // 流中断时重置 HTTP/2 agent，下次重试建立新连接池
-    resetH2Agent
+    // 流中断时重置 undici 连接池，下次重试建立新连接
+    resetUndiciAgent
   );
 
   // 有效 context window 起始值：

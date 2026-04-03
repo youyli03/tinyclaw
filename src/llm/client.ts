@@ -47,8 +47,9 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
   if (err instanceof APIConnectionError) return policy.retryTransport;
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
-    // undici/HTTP2 specific: GOAWAY frame, UND_ERR_SOCKET, "terminated" TypeError
-    // These are detected by app.js lRe() and should trigger resetH2Agent + retry
+    // undici/HTTP1.1 specific: socket errors, ECONNRESET, UND_ERR_SOCKET, etc.
+    // With HTTP/1.1 (no allowH2), GOAWAY frames no longer occur; only plain socket errors remain.
+    // Matches the same error patterns as @github/copilot CLI's retry handling:
     if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket") ||
         msg.includes("goaway") || msg.includes("und_err_socket") ||
         (err instanceof TypeError && msg.includes("terminated"))) {
@@ -844,10 +845,10 @@ export class LLMClient {
         }
         }
       } catch (streamErr) {
-        // Socket closure during streaming: reset the HTTP/2 agent so the next
+        // Socket closure during streaming: reset the undici connection pool so the next
         // retry builds a fresh connection pool instead of reusing the broken one.
-        // Matches the error patterns detected by @github/copilot CLI's lRe() function:
-        // GOAWAY frames, UND_ERR_SOCKET, TypeError "terminated", ECONNRESET, etc.
+        // Matches the error patterns in @github/copilot CLI's streaming error handling:
+        // UND_ERR_SOCKET, TypeError "terminated" (no longer expected with HTTP/1.1), ECONNRESET, etc.
         const msg = streamErr instanceof Error ? streamErr.message.toLowerCase() : "";
         const isSocketError = /socket|closed|econnreset|abort|goaway|und_err_socket/.test(msg) ||
           (streamErr instanceof TypeError && msg.includes("terminated"));
