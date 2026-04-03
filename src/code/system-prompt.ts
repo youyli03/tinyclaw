@@ -138,7 +138,19 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
   - mermaid：传入 mermaid 语法（graph LR、sequenceDiagram、classDiagram、erDiagram、gantt、pie 等）
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
-- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报${visionSection}${feedbackSection}`;
+- send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报
+- **render_diagram 调用成功后**：工具结果中已包含 \`<img src="..."/>\` 路径，必须在回复文本里嵌入该标签，图片才会实际发送给用户
+
+## 富媒体发送规范
+
+- 若需发送图片/音频/视频/文件给用户，在回复文本中嵌入对应标签，系统会自动识别并发送：
+  - 图片：\`<img src="/绝对路径或https://URL"/>\`
+  - 音频：\`<audio src="..."/>\`
+  - 视频：\`<video src="..."/>\`
+  - 文件：\`<file src="..." name="文件名"/>\`
+- 本地文件使用绝对路径（如 \`${workspacePath}/output/cat.png\`），确保文件确实存在后再发送
+- 远程资源使用公网可访问的 https:// URL
+- 禁止把图片内容转成 base64 文本输出——必须用上述标签格式${visionSection}${feedbackSection}`;
 }
 
 function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId }: PromptParts): string {
@@ -221,5 +233,17 @@ Plan 模式分为两个严格隔离的阶段：
   - python：传入 matplotlib/graphviz 等绘图代码，直接调用绘图 API 即可，无需手动 savefig
 - 若渲染失败，根据错误信息修正代码后重新调用，最多重试 2 次
 - send_report 同样支持 mermaid/python 类型（通过 \`type\` 参数指定，\`code\` 传入图表代码），渲染后**立即推送**给用户，适合定时任务和进度汇报
+- **render_diagram 调用成功后**：工具结果中已包含 \`<img src="..."/>\` 路径，必须在回复文本里嵌入该标签，图片才会实际发送给用户
+
+## 富媒体发送规范
+
+- 若需发送图片/音频/视频/文件给用户，在回复文本中嵌入对应标签，系统会自动识别并发送：
+  - 图片：\`<img src="/绝对路径或https://URL"/>\`
+  - 音频：\`<audio src="..."/>\`
+  - 视频：\`<video src="..."/>\`
+  - 文件：\`<file src="..." name="文件名"/>\`
+- 本地文件使用绝对路径（如 \`${workspacePath}/output/cat.png\`），确保文件确实存在后再发送
+- 远程资源使用公网可访问的 https:// URL
+- 禁止把图片内容转成 base64 文本输出——必须用上述标签格式
 - 用中文回复，简洁明了${visionSection}${feedbackSection}${existingPlanSection}`;
 }

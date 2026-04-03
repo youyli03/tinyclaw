@@ -120,10 +120,14 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       }
       if (!policy || !isRetryableError(err, policy) || signal?.aborted) throw err;
       if (!infinite && attempt === MAX_RETRIES) break;
-      // 超出最大重试时长：停止重试
+      // 超出最大重试时长：停止重试，抛出含操作提示的友好错误
       if (MAX_DURATION > 0 && Date.now() - startedAt >= MAX_DURATION) {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
         console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试`);
-        break;
+        throw new LLMConnectionError(err,
+          `⚠️ 连接持续中断（已重试约 ${elapsed}s）：${err instanceof Error ? err.message : String(err)}\n` +
+          `发送 /retry 可重试（不额外消耗高级请求）；若多次重试仍失败，发送 /new 清空上下文后重试`
+        );
       }
       // 5xx 单独计数：连续 5xx 超限时抛出专用错误（避免请求内容有问题时无限循环）
       const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499 || err.status === 408);
