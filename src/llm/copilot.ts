@@ -46,6 +46,11 @@ const COPILOT_HEADERS = {
   "Copilot-Integration-Id": "vscode-chat",
   "Editor-Version": "tinyclaw/1.0",
   "Editor-Plugin-Version": "tinyclaw/1.0",
+  // Headers present in @github/copilot CLI's every request (qj.baseHeaders).
+  // Missing these may cause the Copilot proxy to route requests to a slower backend
+  // or apply stricter timeouts compared to known first-party clients.
+  "Openai-Intent": "conversation-agent",
+  "X-GitHub-Api-Version": "2025-05-01",
 } as const;
 
 // ── GitHub token 解析 ─────────────────────────────────────────────────────────
