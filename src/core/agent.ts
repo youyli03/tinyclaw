@@ -64,8 +64,10 @@ const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
  * GitHub Copilot claude-sonnet-4.6 端点对大上下文有约 60s 硬超时；
  * 当估算 tokens 超过此值时，pre-flight 提前压缩，防止服务端超时。
  * (75% × 200k = 150k 的正常压缩阈值远高于此值，无法提前保护)
+ * 注意：estimatedTokens() 修正前只计算 content 字符，现已含 tool_calls.arguments，
+ * 实测该 session 估算值约为 36k，设 25k 确保压缩能在阈值前触发。
  */
-const CODE_SERVER_TIMEOUT_SAFE_TOKENS = 40_000;
+const CODE_SERVER_TIMEOUT_SAFE_TOKENS = 25_000;
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。

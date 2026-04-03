@@ -1056,11 +1056,26 @@ export class Session {
 
   estimatedTokens(): number {
     const total = this.messages.reduce((s, m) => {
-      if (typeof m.content === "string") return s + m.content.length;
-      return s + m.content.reduce((cs, p) => {
-        if (p.type === "text") return cs + p.text.length;
-        return cs + 500; // 图片以 500 字符估算
-      }, 0);
+      // Count content characters
+      let chars = 0;
+      if (typeof m.content === "string") {
+        chars = m.content.length;
+      } else if (Array.isArray(m.content)) {
+        chars = (m.content as Array<{ type: string; text?: string }>).reduce((cs, p) => {
+          if (p.type === "text") return cs + (p.text?.length ?? 0);
+          return cs + 500; // 图片以 500 字符估算
+        }, 0);
+      }
+      // Count tool_call argument characters (critical: tool_calls typically account for
+      // 50-70% of total payload but were omitted from the original estimate, causing the
+      // threshold check to massively undercount tokens and skip compression when needed).
+      const toolCalls = (m as { role: string; tool_calls?: Array<{ function?: { arguments?: string } }> }).tool_calls;
+      if (m.role === "assistant" && toolCalls) {
+        for (const tc of toolCalls) {
+          chars += tc.function?.arguments?.length ?? 0;
+        }
+      }
+      return s + chars;
     }, 0);
     return Math.ceil(total / 3.5);
   }
