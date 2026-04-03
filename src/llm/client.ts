@@ -49,15 +49,27 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
     const msg = err.message.toLowerCase();
     // undici/HTTP1.1 specific: socket errors, ECONNRESET, UND_ERR_SOCKET, etc.
     // With HTTP/1.1 (no allowH2), GOAWAY frames no longer occur; only plain socket errors remain.
-    // Matches the same error patterns as @github/copilot CLI's retry handling:
+    // Matches the same error patterns as @github/copilot CLI's f_s() function (cause-chain traversal).
+    // "fetch failed" is Node.js undici's wrapper for any underlying network error; the real error is in
+    // err.cause (e.g. TypeError: terminated, ECONNREFUSED, etc.). Always retryable.
     if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket") ||
-        msg.includes("goaway") || msg.includes("und_err_socket") ||
+        msg.includes("goaway") || msg.includes("und_err_socket") || msg.includes("fetch failed") ||
         (err instanceof TypeError && msg.includes("terminated"))) {
       return policy.retryTransport;
     }
     if (msg.includes("idle timeout") || msg.includes("connection timeout")) return policy.retryTransport;
     // undici AbortError（连接超时 abort）也当作可重试的传输错误
     if (err.name === "AbortError" || msg.includes("operation was aborted")) return policy.retryTransport;
+    // 遍历 cause 链（模仿 Copilot CLI f_s()），捕获 "fetch failed" 包装的底层网络错误
+    if (err.cause instanceof Error) {
+      const causeMsg = err.cause.message.toLowerCase();
+      if (causeMsg.includes("terminated") || causeMsg.includes("econnreset") ||
+          causeMsg.includes("socket") || causeMsg.includes("goaway") ||
+          causeMsg.includes("und_err_socket") || causeMsg.includes("econnrefused") ||
+          causeMsg.includes("etimedout") || causeMsg.includes("enotfound")) {
+        return policy.retryTransport;
+      }
+    }
   }
   return false;
 }

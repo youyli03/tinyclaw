@@ -680,9 +680,16 @@ export async function buildCopilotClient(
         } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
       } catch (undiciErr) {
         const msg = undiciErr instanceof Error ? undiciErr.message : String(undiciErr);
-        // AbortError（含连接超时触发的 abort）和网络错误都应重新抛出，让 withRetry 用新连接重试
-        const isNetworkErr = /socket|closed|connect|network|econnreset|abort/i.test(msg)
-          || (undiciErr instanceof Error && undiciErr.name === "AbortError");
+        // 遍历 cause 链检测网络错误（模仿 Copilot CLI f_s()）
+        // Node.js undici 的 "fetch failed" 是底层网络错误的包装，真实错误在 err.cause 中
+        const isNetworkMsgErr = (m: string) =>
+          /socket|closed|connect|network|econnreset|abort|terminated|goaway|und_err_socket|fetch failed|etimedout|enotfound|econnrefused/i.test(m);
+        let cause: unknown = undiciErr;
+        let isNetworkErr = undiciErr instanceof Error && undiciErr.name === "AbortError";
+        while (!isNetworkErr && cause instanceof Error) {
+          isNetworkErr = isNetworkMsgErr(cause.message);
+          cause = (cause as NodeJS.ErrnoException).cause;
+        }
         if (isNetworkErr) {
           // 重置 agent（清除过期连接），重新抛出让 withRetry 重试
           _undiciAgent = undefined;
