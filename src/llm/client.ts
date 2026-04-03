@@ -645,6 +645,9 @@ export class LLMClient {
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
       ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
+      // X-Interaction-Type mirrors @github/copilot CLI's PremiumRequestProcessor:
+      // user-initiated turns → "conversation-user"; agent turns → omit (CLI does same).
+      ...(opts.isUserInitiated === true ? { "X-Interaction-Type": "conversation-user" } : {}),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
@@ -743,6 +746,9 @@ export class LLMClient {
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
       ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
+      // X-Interaction-Type mirrors @github/copilot CLI's PremiumRequestProcessor:
+      // user-initiated turns → "conversation-user"; agent turns → omit (CLI does same).
+      ...(opts.isUserInitiated === true ? { "X-Interaction-Type": "conversation-user" } : {}),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
