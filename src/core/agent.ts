@@ -59,15 +59,6 @@ const MAX_SLAVE_DEPTH = 1;
 const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
-/**
- * Code 模式：服务器首 token 超时安全阈值（tokens）。
- * GitHub Copilot claude-sonnet-4.6 端点对大上下文有约 60s 硬超时；
- * 当估算 tokens 超过此值时，pre-flight 提前压缩，防止服务端超时。
- * (75% × 200k = 150k 的正常压缩阈值远高于此值，无法提前保护)
- * 注意：estimatedTokens() 修正前只计算 content 字符，现已含 tool_calls.arguments，
- * 实测该 session 估算值约为 36k，设 25k 确保压缩能在阈值前触发。
- */
-const CODE_SERVER_TIMEOUT_SAFE_TOKENS = 25_000;
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
@@ -642,24 +633,11 @@ export async function runAgent(
         preRunLength = session.getMessages().length;
       } else if (isCodeMode) {
         // code 模式：pre-flight 检测 session 是否已超限（如上次 run 400 后 session 未清理）
-        // 用 lastPromptTokens（上次记录值）或字符估算进行判断；若超限则先压缩再执行
-        // 同时检测绝对 token 数：GitHub Copilot claude-sonnet-4.6 端点对大上下文有
-        // 约 60s 硬超时，需在到达 40k tokens 前提前压缩，不能等到 75%×200k=150k
+        // 用 lastPromptTokens（API 实测值）或字符估算进行判断；若超限则先压缩再执行
         const codeCtx = llmRegistry.getContextWindow("code");
-        // 同时参考 lastPromptTokens（API 实测值）和 estimatedTokens（当前 session 估算）
-        // lastPromptTokens 只在 LLM 调用成功后更新；若 session 在连续失败期间持续增长，
-        // 该值会低估实际大小。取两者最大值以确保阈值检测不遗漏。
-        const estimated = Math.max(
-          session.lastPromptTokens,
-          session.estimatedTokens(),
-        );
         const exceedsWindowThreshold = codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
-        const exceedsServerSafe = estimated >= CODE_SERVER_TIMEOUT_SAFE_TOKENS;
-        if (exceedsWindowThreshold || exceedsServerSafe) {
-          const reason = exceedsServerSafe
-            ? `上下文 ${estimated} tokens 超过服务器超时安全阈值（${CODE_SERVER_TIMEOUT_SAFE_TOKENS} tokens），预防首 token 超时`
-            : "上下文超限，执行滑动窗口压缩";
-          console.log(`${logPrefix} ℹ️ Code session pre-flight：${reason}`);
+        if (exceedsWindowThreshold) {
+          console.log(`${logPrefix} ℹ️ Code session pre-flight：上下文超限，执行滑动窗口压缩`);
           await session.compressForCode();
           preRunLength = session.getMessages().length;
         }
@@ -831,12 +809,7 @@ export async function runAgent(
           await session.compressForCode();
         }
       }
-      // 绝对 token 数超过服务器安全阈值时也触发压缩（不依赖 context window 百分比）
-      // 防止 GitHub Copilot claude-sonnet-4.6 端点 60s 首 token 超时
-      if (actualTokens >= CODE_SERVER_TIMEOUT_SAFE_TOKENS) {
-        console.log(`${logPrefix} ℹ️ Code context 超过服务器安全阈值（${actualTokens} tokens），静默压缩`);
-        await session.compressForCode();
-      }
+      // (post-call 绝对 token 数阈值压缩已移除：headers 修复后无 60s 超时，由正常滑动窗口处理)
     }
 
     const { content, toolCalls } = parseResponse(response, textMode);
