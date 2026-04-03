@@ -22,18 +22,22 @@ const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
 const USER_URL = "https://api.github.com/copilot_internal/user";
 
 /**
- * 使用 undici Agent 发送请求（HTTP/1.1）。
- * 不启用 HTTP/2（allowH2 保持默认 false），与 @github/copilot CLI 行为一致：
- * HTTP/2 GOAWAY 帧（服务端负载均衡周期性连接重置）会导致 "terminated" TypeError；
- * HTTP/1.1 不受 GOAWAY 影响，LLM 生成期间连接持续有数据，代理 idle timeout 不触发。
- * 该 agent 的唯一作用是注入自定义 CA 证书（getSystemCA）。
+ * 使用 undici Agent 发送请求（HTTP/2 优先，与 @github/copilot CLI 一致）。
+ * Copilot CLI 始终通过 EnvHttpProxyAgent({allowH2: true}) 使用 HTTP/2。
+ * HTTP/2 多路复用 + keepalive 使代理不对流式请求应用严格的 TTFB timeout；
+ * HTTP/1.1 每次请求独立 TCP，代理约 60s 无响应即终止（"terminated"）。
+ * GOAWAY 错误（HTTP/2 连接重置）由 isRetryableError / copilotFetch 处理：
+ * 检测到 GOAWAY 时重置 agent（_undiciAgent = undefined），withRetry 用新连接重试。
  */
 let _undiciAgent: import("undici").Agent | undefined;
 async function getUndiciAgent(): Promise<import("undici").Agent> {
   if (_undiciAgent) return _undiciAgent;
   const { Agent } = await import("undici");
   const ca = getSystemCA();
-  _undiciAgent = new Agent({ ...(ca ? { connect: { ca } } : {}) });
+  _undiciAgent = new Agent({
+    allowH2: true,  // HTTP/2，匹配 Copilot CLI EnvHttpProxyAgent({allowH2: true})
+    ...(ca ? { connect: { ca } } : {}),
+  });
   return _undiciAgent;
 }
 
@@ -647,9 +651,13 @@ export async function buildCopilotClient(
   const resolvedModel = model!;
   const { githubToken } = config;
 
+  // X-Interaction-Id：per-session UUID，匹配 Copilot CLI qj.defaultHeaders() 行为。
+  // Copilot CLI 在创建客户端实例时固定注入，整个 session 内不变。
+  const interactionId = crypto.randomUUID();
+
   /**
    * 自定义 fetch：每次 API 调用前动态获取最新 Copilot token，
-   * 并注入 Copilot 所需的 Editor-Version / Copilot-Integration-Id 请求头。
+   * 并注入 Copilot 所需的 Editor-Version / Copilot-Integration-Id / X-Interaction-Id 请求头。
    * 即使 OpenAI SDK 实例长时间存活，token 到期后自动刷新。
    */
   const copilotFetch: import("./client.js").FetchFn = async (input, init) => {
@@ -659,10 +667,12 @@ export async function buildCopilotClient(
     for (const [k, v] of Object.entries(COPILOT_HEADERS)) {
       headers.set(k, v);
     }
+    headers.set("X-Interaction-Id", interactionId);
 
-    // 使用 undici Agent（HTTP/1.1）发送请求。不启用 HTTP/2（allowH2 默认 false），
-    // 与 @github/copilot CLI 一致：HTTP/2 GOAWAY 帧导致频繁 "terminated"，HTTP/1.1 无此问题。
-    // 该 agent 仅用于注入自定义 CA 证书，若 undici 不可用则 fallback globalThis.fetch。
+    // 使用 undici Agent（HTTP/2）发送请求，匹配 Copilot CLI EnvHttpProxyAgent 行为。
+    // allowH2: true 可避免代理对 HTTP/1.1 连接施加的 ~60s TTFB timeout（"terminated"）。
+    // GOAWAY（HTTP/2 连接重置）时 isNetworkErr 检测并重置 agent，让 withRetry 用新连接重试。
+    // 若 undici 不可用则 fallback globalThis.fetch。
     let response: Response;
     let undiciFetch: typeof import("undici").fetch | undefined;
     try {

@@ -656,10 +656,14 @@ export class LLMClient {
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
-      ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
-      // X-Interaction-Type mirrors @github/copilot CLI's PremiumRequestProcessor:
-      // user-initiated turns → "conversation-user"; agent turns → omit (CLI does same).
-      ...(opts.isUserInitiated === true ? { "X-Interaction-Type": "conversation-user" } : {}),
+      // X-Initiator: Copilot CLI hardcodes "user" in baseHeaders for ALL requests.
+      // We follow the same convention: always "user" regardless of who triggered the turn.
+      "X-Initiator": "user",
+      // X-Interaction-Type: Copilot CLI sets "conversation-agent" (requestContext.interactionType)
+      // for the main agent. Using this value routes requests to the appropriate backend tier.
+      "X-Interaction-Type": "conversation-agent",
+      // X-Agent-Task-Id: per-turn UUID, mirrors Copilot CLI requestContext.agentTaskId.
+      "X-Agent-Task-Id": crypto.randomUUID(),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
@@ -680,6 +684,7 @@ export class LLMClient {
           : {}),
       },
       {
+        maxRetries: 5,  // mirrors Copilot CLI makeRequest({maxRetries: X=5})
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
       }
@@ -757,10 +762,12 @@ export class LLMClient {
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
-      ...(opts.isUserInitiated !== undefined ? { "X-Initiator": opts.isUserInitiated ? "user" : "agent" } : {}),
-      // X-Interaction-Type mirrors @github/copilot CLI's PremiumRequestProcessor:
-      // user-initiated turns → "conversation-user"; agent turns → omit (CLI does same).
-      ...(opts.isUserInitiated === true ? { "X-Interaction-Type": "conversation-user" } : {}),
+      // X-Initiator: Copilot CLI hardcodes "user" in baseHeaders for ALL requests.
+      "X-Initiator": "user",
+      // X-Interaction-Type: Copilot CLI main agent uses "conversation-agent".
+      "X-Interaction-Type": "conversation-agent",
+      // X-Agent-Task-Id: per-turn UUID, mirrors Copilot CLI requestContext.agentTaskId.
+      "X-Agent-Task-Id": crypto.randomUUID(),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
@@ -814,6 +821,7 @@ export class LLMClient {
           // (time until HTTP 200 headers arrive). The timer is cleared once create()
           // resolves. After that, withStreamIdleTimeout below handles per-chunk idle
           // detection, so long streaming responses are never cut short.
+          maxRetries: 5,  // mirrors Copilot CLI makeRequestStreaming({maxRetries: X=5})
           ...(opts.signal ? { signal: opts.signal } : {}),
           ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
         }
