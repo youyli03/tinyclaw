@@ -644,7 +644,13 @@ export async function runAgent(
         // 同时检测绝对 token 数：GitHub Copilot claude-sonnet-4.6 端点对大上下文有
         // 约 60s 硬超时，需在到达 40k tokens 前提前压缩，不能等到 75%×200k=150k
         const codeCtx = llmRegistry.getContextWindow("code");
-        const estimated = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
+        // 同时参考 lastPromptTokens（API 实测值）和 estimatedTokens（当前 session 估算）
+        // lastPromptTokens 只在 LLM 调用成功后更新；若 session 在连续失败期间持续增长，
+        // 该值会低估实际大小。取两者最大值以确保阈值检测不遗漏。
+        const estimated = Math.max(
+          session.lastPromptTokens,
+          session.estimatedTokens(),
+        );
         const exceedsWindowThreshold = codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
         const exceedsServerSafe = estimated >= CODE_SERVER_TIMEOUT_SAFE_TOKENS;
         if (exceedsWindowThreshold || exceedsServerSafe) {
