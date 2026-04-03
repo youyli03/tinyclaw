@@ -59,6 +59,13 @@ const MAX_SLAVE_DEPTH = 1;
 const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
+/**
+ * Code 模式：服务器首 token 超时安全阈值（tokens）。
+ * GitHub Copilot claude-sonnet-4.6 端点对大上下文有约 60s 硬超时；
+ * 当估算 tokens 超过此值时，pre-flight 提前压缩，防止服务端超时。
+ * (75% × 200k = 150k 的正常压缩阈值远高于此值，无法提前保护)
+ */
+const CODE_SERVER_TIMEOUT_SAFE_TOKENS = 40_000;
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
@@ -634,9 +641,17 @@ export async function runAgent(
       } else if (isCodeMode) {
         // code 模式：pre-flight 检测 session 是否已超限（如上次 run 400 后 session 未清理）
         // 用 lastPromptTokens（上次记录值）或字符估算进行判断；若超限则先压缩再执行
+        // 同时检测绝对 token 数：GitHub Copilot claude-sonnet-4.6 端点对大上下文有
+        // 约 60s 硬超时，需在到达 40k tokens 前提前压缩，不能等到 75%×200k=150k
         const codeCtx = llmRegistry.getContextWindow("code");
-        if (codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens)) {
-          console.log(`${logPrefix} ℹ️ Code session pre-flight 检测到上下文超限，执行滑动窗口压缩`);
+        const estimated = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
+        const exceedsWindowThreshold = codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
+        const exceedsServerSafe = estimated >= CODE_SERVER_TIMEOUT_SAFE_TOKENS;
+        if (exceedsWindowThreshold || exceedsServerSafe) {
+          const reason = exceedsServerSafe
+            ? `上下文 ${estimated} tokens 超过服务器超时安全阈值（${CODE_SERVER_TIMEOUT_SAFE_TOKENS} tokens），预防首 token 超时`
+            : "上下文超限，执行滑动窗口压缩";
+          console.log(`${logPrefix} ℹ️ Code session pre-flight：${reason}`);
           await session.compressForCode();
           preRunLength = session.getMessages().length;
         }
@@ -789,21 +804,29 @@ export async function runAgent(
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值
-    if (isCodeMode && codeContextWindow > 0 && !session.abortRequested) {
+    if (isCodeMode && !session.abortRequested) {
       // 实际值为 0（极少见）时 fallback 到字符估算
       const actualTokens = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
-      const usageRatio = actualTokens / codeContextWindow;
-      if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
-        console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`);
-        const compressed = await session.compressForCode();
-        if (compressed) {
-          console.log(`${logPrefix} ✅ 压缩完成，消息数：${session.getMessages().length}`);
-          void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
-        } else {
-          console.log(`${logPrefix} ⚠️ 压缩无效果（轮次不足或已最小化），上下文可能继续增长`);
+      if (codeContextWindow > 0) {
+        const usageRatio = actualTokens / codeContextWindow;
+        if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
+          console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`);
+          const compressed = await session.compressForCode();
+          if (compressed) {
+            console.log(`${logPrefix} ✅ 压缩完成，消息数：${session.getMessages().length}`);
+            void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+          } else {
+            console.log(`${logPrefix} ⚠️ 压缩无效果（轮次不足或已最小化），上下文可能继续增长`);
+          }
+        } else if (usageRatio >= 0.75) {
+          console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
+          await session.compressForCode();
         }
-      } else if (usageRatio >= 0.75) {
-        console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
+      }
+      // 绝对 token 数超过服务器安全阈值时也触发压缩（不依赖 context window 百分比）
+      // 防止 GitHub Copilot claude-sonnet-4.6 端点 60s 首 token 超时
+      if (actualTokens >= CODE_SERVER_TIMEOUT_SAFE_TOKENS) {
+        console.log(`${logPrefix} ℹ️ Code context 超过服务器安全阈值（${actualTokens} tokens），静默压缩`);
         await session.compressForCode();
       }
     }
