@@ -532,10 +532,7 @@ const app = createApp({
       } catch (e) { console.warn('loadMetricChart failed', e); }
     }
 
-    // ── 日报页 ───────────────────────────────────────────────────────────────
-    const reportJobs = computed(() =>
-      cronJobs.value.filter(j => j.recentLogs && j.recentLogs.length > 0)
-    );
+    // ── Cron 展开日志 ────────────────────────────────────────────────────────
     const expandedReports = ref(new Set());
     function toggleReport(id) {
       const s = new Set(expandedReports.value);
@@ -595,8 +592,7 @@ const app = createApp({
       page, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, mCategory, mKey, mDays, filteredKeys,
-      reportJobs, expandedReports,
-      // 函数
+      expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
       onMetricKeyChange, navigateToMetric, loadMetricChart, toggleReport,
     };

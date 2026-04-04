@@ -77,19 +77,19 @@
 
       <!-- 电费 + 请求 -->
       <div class="chart-row chart-row-2" style="margin-bottom:16px">
-        <div class="card">
+        <div class="card stat-card-clickable" @click="navigateToMetric('electric/balance')">
           <div class="card-header">
             <span class="card-title">电费余额趋势</span>
-            <span class="card-sub">今日 / 元</span>
+            <span class="card-sub">今日 / 元 &nbsp;↗</span>
           </div>
           <div class="chart-canvas-wrap" style="height:220px">
             <canvas id="chart-electric" style="width:100%;height:200px"></canvas>
           </div>
         </div>
-        <div class="card">
+        <div class="card stat-card-clickable" @click="navigateToMetric('copilot/remaining')">
           <div class="card-header">
             <span class="card-title">高级请求剩余</span>
-            <span class="card-sub">今日趋势</span>
+            <span class="card-sub">今日趋势 &nbsp;↗</span>
           </div>
           <div class="chart-canvas-wrap" style="height:220px">
             <canvas id="chart-copilot" style="width:100%;height:200px"></canvas>
@@ -180,23 +180,12 @@
     <!-- 日报页 -->
     <div v-if="page==='reports'">
       <div class="page-header">
-        <div class="page-title">日报 <span class="page-title-sub">/ 运行记录</span></div>
+        <div class="page-title">日报 <span class="page-title-sub">/ 归档</span></div>
       </div>
-      <div v-if="reportJobs.length === 0" class="empty-state">暂无日报记录</div>
-      <div class="report-list">
-        <div class="report-item" v-for="job in reportJobs" :key="job.id">
-          <div class="report-item-header" @click="toggleReport(job.id)">
-            <span class="report-item-title">{{ shortName(job.message) }}</span>
-            <span class="badge badge-blue">{{ job.recentLogs.length }} 条记录</span>
-          </div>
-          <div class="report-item-body" v-if="expandedReports.has(job.id)">
-            <div v-for="(log, i) in job.recentLogs" :key="i" style="margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:12px">
-              <div style="font-size:11px;color:var(--t3);margin-bottom:4px">{{ log.ts }} &nbsp; <span :class="log.status==='success'?'status-badge status-success':'status-badge status-error'">{{ log.status }}</span></div>
-              <div>{{ log.result }}</div>
-            </div>
-            <div v-if="!job.recentLogs.length" class="empty-state">暂无运行记录</div>
-          </div>
-        </div>
+      <div class="empty-state" style="margin-top:60px">
+        <div style="font-size:32px;margin-bottom:12px">📋</div>
+        <div style="color:var(--t2);font-size:14px">日报功能正在建设中</div>
+        <div style="color:var(--t3);font-size:12px;margin-top:6px">Cron 任务运行记录请前往「Cron 任务」页查看</div>
       </div>
     </div>
 
@@ -205,36 +194,31 @@
       <div class="page-header">
         <div class="page-title">Cron 任务 <span class="page-title-sub">/ 全部</span></div>
       </div>
-      <div class="card">
-        <div class="card-body" style="padding:0">
-          <table class="cron-table">
-            <thead>
-              <tr>
-                <th>任务名</th>
-                <th>Agent</th>
-                <th>调度</th>
-                <th>状态</th>
-                <th>上次运行</th>
-                <th>上次结果</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="job in allCronJobs" :key="job.id">
-                <td class="task-name" :title="job.message">{{ shortName(job.message) }}</td>
-                <td>{{ job.agentId }}</td>
-                <td>{{ scheduleStr(job) }}</td>
-                <td><span :class="statusClass(job)">{{ statusText(job) }}</span></td>
-                <td>{{ relativeTime(job.lastRunAt) }}</td>
-                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--t3)">
-                  {{ job.lastRunStatus === 'error' ? '运行出错' : (job.recentLogs[0]?.result || '-') }}
-                </td>
-              </tr>
-              <tr v-if="!allCronJobs.length">
-                <td colspan="6" class="empty-state">暂无 Cron 任务</td>
-              </tr>
-            </tbody>
-          </table>
+      <div class="cron-list">
+        <div class="cron-item card" v-for="job in cronJobs" :key="job.id">
+          <div class="cron-item-header" @click="toggleReport(job.id)">
+            <div class="cron-item-left">
+              <span :class="statusClass(job)">{{ statusText(job) }}</span>
+              <span class="cron-item-name" :title="job.message">{{ shortName(job.message) }}</span>
+            </div>
+            <div class="cron-item-right">
+              <span class="cron-item-schedule">{{ scheduleStr(job) }}</span>
+              <span class="cron-item-time">{{ relativeTime(job.lastRunAt) }}</span>
+              <span class="cron-expand-icon">{{ expandedReports.has(job.id) ? '▲' : '▼' }}</span>
+            </div>
+          </div>
+          <div class="cron-item-logs" v-if="expandedReports.has(job.id)">
+            <div v-if="!job.recentLogs || !job.recentLogs.length" class="empty-state" style="padding:12px">暂无运行记录</div>
+            <div class="cron-log-row" v-for="(log, i) in job.recentLogs" :key="i">
+              <div class="cron-log-meta">
+                <span class="cron-log-ts">{{ fmtTime(log.ts) }}</span>
+                <span :class="log.status==='success'?'status-badge status-success':'status-badge status-error'">{{ log.status }}</span>
+              </div>
+              <div class="cron-log-result">{{ log.result }}</div>
+            </div>
+          </div>
         </div>
+        <div v-if="!cronJobs.length" class="empty-state">暂无 Cron 任务</div>
       </div>
     </div>
 
