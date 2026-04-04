@@ -13,6 +13,7 @@ import * as os from "os";
 import * as path from "path";
 import { LLMClient } from "./client.js";
 import { toResponsesWsUrl } from "./responses-ws.js";
+import { insertMetric } from "../web/backend/db.js";
 import { runCopilotSetup, loadSavedGitHubToken } from "./copilotSetup.js";
 import { getRetryPolicy } from "../config/loader.js";
 import { withCA, getSystemCA } from "../utils/tls.js";
@@ -166,7 +167,20 @@ function saveRateLimitToDisk(): void {
     for (const [k, v] of rateLimitCache) obj[k] = v;
     writeFileSync(RATELIMIT_FILE, JSON.stringify(obj, null, 2), "utf-8");
   } catch {
-    // 写入失败，忽略
+    // 写入失败,忽略
+  }
+
+  // 同步写入 dashboard DB（取 rateLimitCache 中 capturedAt 最新的一条）
+  let latest: CopilotRateLimit | undefined;
+  for (const v of rateLimitCache.values()) {
+    if (!latest || v.capturedAt > latest.capturedAt) latest = v;
+  }
+  if (latest) {
+    try {
+      insertMetric({ category: "copilot", key: "remaining", value: latest.remaining });
+    } catch {
+      // dashboard DB 未初始化时忽略（web 功能未启用）
+    }
   }
 }
 
