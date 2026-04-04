@@ -28,6 +28,11 @@ function baseChartOpts(extra = {}) {
   return {
     responsive: true,
     maintainAspectRatio: false,
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false,
+    },
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -37,6 +42,20 @@ function baseChartOpts(extra = {}) {
         titleColor: '#1C1C2E',
         bodyColor: '#636380',
         padding: 10,
+        callbacks: {
+          title(items) {
+            if (!items.length) return '';
+            const raw = items[0].parsed.x;
+            if (!raw) return '';
+            const d = new Date(raw);
+            return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ` +
+                   `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          },
+          label(item) {
+            const val = item.parsed.y;
+            return `  ${item.dataset.label || '值'}：${val}`;
+          },
+        },
       },
     },
     scales: {
@@ -319,6 +338,7 @@ const app = createApp({
             type: 'line',
             data: {
               datasets: [{
+                label: '电费余额(元)',
                 data: points,
                 borderColor: C.accent,
                 borderWidth: 2,
@@ -326,7 +346,7 @@ const app = createApp({
                 fill: true,
                 tension: 0.4,
                 pointRadius: 0,
-                pointHoverRadius: 4,
+                pointHoverRadius: 5,
               }],
             },
             options: {
@@ -355,13 +375,14 @@ const app = createApp({
             type: 'line',
             data: {
               datasets: [{
+                label: '高级请求剩余',
                 data: points,
                 borderColor: C.accent2,
                 borderWidth: 2,
                 backgroundColor: grad2,
                 fill: true,
                 tension: 0.3,
-                pointRadius: 2,
+                pointRadius: 0,
                 pointHoverRadius: 5,
               }],
             },
@@ -405,6 +426,7 @@ const app = createApp({
                   fill: true,
                   tension: 0.4,
                   pointRadius: 0,
+                  pointHoverRadius: 5,
                 },
                 {
                   label: '内存 %',
@@ -415,6 +437,7 @@ const app = createApp({
                   fill: true,
                   tension: 0.4,
                   pointRadius: 0,
+                  pointHoverRadius: 5,
                 },
               ],
             },
@@ -486,20 +509,25 @@ const app = createApp({
         createOrUpdateChart('chart-metrics', {
           type: 'line',
           data: {
-            labels: rows.map(r => fmtTime(r.ts)),
             datasets: [{
               label: `${mCategory.value}/${mKey.value}`,
-              data: rows.map(r => r.value),
+              data: rows.map(r => ({ x: r.ts * 1000, y: r.value })),
               borderColor: C.accent,
               borderWidth: 2,
               backgroundColor: grad,
               fill: true,
               tension: 0.4,
-              pointRadius: 3,
-              pointHoverRadius: 6,
+              pointRadius: 0,
+              pointHoverRadius: 5,
             }],
           },
-          options: baseChartOpts(),
+          options: {
+            ...baseChartOpts(),
+            scales: {
+              x: timeXAxis(8),
+              y: { ...baseChartOpts().scales.y },
+            },
+          },
         });
       } catch (e) { console.warn('loadMetricChart failed', e); }
     }
