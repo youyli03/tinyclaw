@@ -30,6 +30,8 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
   ".png":  "image/png",
   ".ico":  "image/x-icon",
+  ".svg":  "image/svg+xml",
+  ".webp": "image/webp",
 };
 
 // ── cookie 解析 ───────────────────────────────────────────────────────────────

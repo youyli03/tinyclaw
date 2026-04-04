@@ -5,6 +5,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { execSync } from "node:child_process";
 import { insertSnapshot } from "./db.js";
 
 // ── CPU 采样（两次读取差值）────────────────────────────────────────────────────
@@ -81,7 +82,6 @@ interface DiskInfo {
 
 function getDiskInfo(): DiskInfo {
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     const out = execSync("df -k /", { encoding: "utf-8", timeout: 3000 });
     // Filesystem  1K-blocks  Used  Available  Use%  Mounted
     const line = out.split("\n")[1] ?? "";
