@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { sampleStats } from "./collector.js";
 import { queryMetrics, querySnapshots, listMetricKeys } from "./db.js";
 import { loadJobs, readLogs } from "../../cron/store.js";
+import { listReportTypes, listReportDates, readReport } from "./reports.js";
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
   const body = JSON.stringify(data);
@@ -113,6 +114,44 @@ export async function handleApi(
       return true;
     }
 
+
+    // GET /api/reports          — 列出所有类型及各类型最新日期
+    // GET /api/reports?type=    — 列出某类型所有日期
+    // GET /api/reports?type=&date= — 读取具体一篇日报内容
+    if (pathname === "/api/reports") {
+      const type = url.searchParams.get("type") ?? "";
+      const date = url.searchParams.get("date") ?? "";
+
+      if (!type) {
+        // 列出所有类型 + 每个类型最新日期
+        const types = listReportTypes();
+        const result = types.map(t => {
+          const dates = listReportDates(t);
+          return { type: t, count: dates.length, latest: dates[0] ?? null };
+        });
+        json(res, { types: result });
+        return true;
+      }
+
+      if (type && !date) {
+        // 列出某类型所有日期
+        const dates = listReportDates(type);
+        json(res, { type, dates });
+        return true;
+      }
+
+      if (type && date) {
+        // 读取具体日报内容
+        const content = readReport(type, date);
+        if (content === null) {
+          err(res, `日报不存在: ${type}/${date}`, 404);
+        } else {
+          json(res, { type, date, content });
+        }
+        return true;
+      }
+    }
+
     err(res, "未知 API 路径", 404);
     return true;
   } catch (e) {
@@ -121,3 +160,4 @@ export async function handleApi(
     return true;
   }
 }
+

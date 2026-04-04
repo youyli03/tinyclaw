@@ -144,37 +144,34 @@
       </div>
     </div>
 
-    <!-- 指标页 -->
+        <!-- 指标页 -->
     <div v-if="page==='metrics'">
       <div class="page-header">
         <div class="page-title">指标 <span class="page-title-sub">/ 历史数据</span></div>
       </div>
       <div class="metrics-controls">
-        <select v-model="mCategory" @change="onMetricKeyChange">
-          <option value="">-- 选择分类 --</option>
-          <option v-for="k in metricKeys" :value="k.category" :key="k.category+k.key">{{ k.category }}</option>
-        </select>
-        <select v-model="mKey">
-          <option value="">-- 选择指标 --</option>
-          <option v-for="k in filteredKeys" :value="k.key" :key="k.key">{{ k.key }}</option>
-        </select>
-        <select v-model="mDays">
+        <span style="font-size:13px;color:var(--t2)">时间范围</span>
+        <select v-model="mDays" @change="loadAllMetricCharts">
+          <option value="1">今天</option>
           <option value="7">近 7 天</option>
           <option value="14">近 14 天</option>
           <option value="30">近 30 天</option>
           <option value="90">近 90 天</option>
         </select>
+        <span style="font-size:12px;color:var(--t3);margin-left:4px">共 {{ metricKeys.length }} 个指标</span>
       </div>
-      <div class="card" v-if="mCategory && mKey">
-        <div class="card-header">
-          <span class="card-title">{{ mCategory }} / {{ mKey }}</span>
-          <span class="card-sub">近 {{ mDays }} 天</span>
-        </div>
-        <div class="chart-canvas-wrap" style="height:320px;padding-top:16px">
-          <canvas id="chart-metrics" style="width:100%;height:300px"></canvas>
+      <div class="metrics-grid" v-if="metricKeys.length">
+        <div class="card metrics-card" v-for="k in metricKeys" :key="k.category+'/'+k.key">
+          <div class="card-header">
+            <span class="card-title">{{ k.category }} / {{ k.key }}</span>
+            <span class="card-sub">近 {{ mDays }} 天</span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:200px;padding-top:8px">
+            <canvas :id="'chart-m-'+k.category+'-'+k.key" style="width:100%;height:180px"></canvas>
+          </div>
         </div>
       </div>
-      <div class="empty-state" v-else>请选择分类和指标，将自动查询</div>
+      <div class="empty-state" v-else>暂无已注册指标，使用 tinyclaw db add 添加</div>
     </div>
 
     <!-- 日报页 -->
@@ -182,14 +179,46 @@
       <div class="page-header">
         <div class="page-title">日报 <span class="page-title-sub">/ 归档</span></div>
       </div>
-      <div class="empty-state" style="margin-top:60px">
+      <div class="report-tabs" v-if="reportTypes.length">
+        <div
+          class="report-tab"
+          v-for="t in reportTypes"
+          :key="t.type"
+          :class="{active: rType===t.type}"
+          @click="selectReportType(t.type)">
+          {{ t.type }}
+          <span class="report-tab-count">{{ t.count }}</span>
+        </div>
+      </div>
+      <div class="report-body" v-if="rType">
+        <div class="report-date-list">
+          <div
+            class="report-date-item"
+            v-for="d in reportDates"
+            :key="d"
+            :class="{active: rDate===d}"
+            @click="selectReportDate(d)">
+            {{ d }}
+          </div>
+          <div v-if="!reportDates.length" class="empty-state" style="padding:24px 0">暂无记录</div>
+        </div>
+        <div class="report-content card" v-if="rDate">
+          <div class="card-header" style="margin-bottom:16px">
+            <span class="card-title">{{ rType }} · {{ rDate }}</span>
+          </div>
+          <div class="report-md" v-html="reportHtml"></div>
+          <div class="empty-state" v-if="!reportHtml && rDate" style="padding:40px 0">加载中…</div>
+        </div>
+        <div class="report-content empty-state" v-else style="padding:60px 0">请选择左侧日期</div>
+      </div>
+      <div class="empty-state" style="margin-top:60px" v-if="!reportTypes.length">
         <div style="font-size:32px;margin-bottom:12px">📋</div>
-        <div style="color:var(--t2);font-size:14px">日报功能正在建设中</div>
-        <div style="color:var(--t3);font-size:12px;margin-top:6px">Cron 任务运行记录请前往「Cron 任务」页查看</div>
+        <div style="color:var(--t2);font-size:14px">暂无日报</div>
+        <div style="color:var(--t3);font-size:12px;margin-top:6px">AI 使用 write_report tool 写入后显示</div>
       </div>
     </div>
 
-    <!-- Cron 任务页 -->
+<!-- Cron 任务页 -->
     <div v-if="page==='cron'">
       <div class="page-header">
         <div class="page-title">Cron 任务 <span class="page-title-sub">/ 全部</span></div>
@@ -248,6 +277,7 @@
 <script src="/vue.global.prod.js"></script>
 <script src="/chart.umd.min.js"></script>
 <script src="/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/marked.min.js"></script>
 <script src="/main.js"></script>
 </body>
 </html>

@@ -465,25 +465,7 @@ const app = createApp({
 
     // ── 指标页 ───────────────────────────────────────────────────────────────
     const metricKeys = ref([]);
-    const mCategory = ref('');
-    const mKey = ref('');
     const mDays = ref('30');
-
-    const filteredKeys = computed(() =>
-      metricKeys.value.filter(k => k.category === mCategory.value)
-    );
-
-    function onMetricKeyChange() { mKey.value = ''; }
-
-    // 从概览卡片跳转到指标页，自动设置分类/key 并查询
-    async function navigateToMetric(categoryKey) {
-      const [cat, key] = categoryKey.split('/');
-      await fetchMetricKeys();
-      mCategory.value = cat;
-      mKey.value = key;
-      mDays.value = '30';
-      page.value = 'metrics';
-    }
 
     async function fetchMetricKeys() {
       try {
@@ -492,25 +474,42 @@ const app = createApp({
       } catch (e) { console.warn('fetchMetricKeys failed', e); }
     }
 
-    async function loadMetricChart() {
-      if (!mCategory.value || !mKey.value) return;
+    // 从概览卡片跳转到指标页
+    async function navigateToMetric(categoryKey) {
+      await fetchMetricKeys();
+      mDays.value = '30';
+      page.value = 'metrics';
+      await nextTick();
+      await loadAllMetricCharts();
+    }
+
+    // 加载所有指标图（每个指标独立一张图）
+    async function loadAllMetricCharts() {
+      if (!metricKeys.value.length) return;
+      for (const k of metricKeys.value) {
+        await loadOneMetricChart(k.category, k.key);
+      }
+    }
+
+    async function loadOneMetricChart(category, key) {
       try {
         const data = await fetch(
-          `/api/metrics?category=${mCategory.value}&key=${mKey.value}&days=${mDays.value}`
+          `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`
         ).then(r => r.json());
         const rows = data.rows || [];
         await nextTick();
-        const canvas = document.getElementById('chart-metrics');
+        const chartId = `chart-m-${category}-${key}`;
+        const canvas = document.getElementById(chartId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const grad = ctx.createLinearGradient(0, 0, 0, 300);
+        const grad = ctx.createLinearGradient(0, 0, 0, 180);
         grad.addColorStop(0, C.accent + '30');
         grad.addColorStop(1, C.accent + '00');
-        createOrUpdateChart('chart-metrics', {
+        createOrUpdateChart(chartId, {
           type: 'line',
           data: {
             datasets: [{
-              label: `${mCategory.value}/${mKey.value}`,
+              label: `${category}/${key}`,
               data: rows.map(r => ({ x: r.ts * 1000, y: r.value })),
               borderColor: C.accent,
               borderWidth: 2,
@@ -524,12 +523,54 @@ const app = createApp({
           options: {
             ...baseChartOpts(),
             scales: {
-              x: timeXAxis(8),
+              x: timeXAxis(6),
               y: { ...baseChartOpts().scales.y },
             },
           },
         });
-      } catch (e) { console.warn('loadMetricChart failed', e); }
+      } catch (e) { console.warn(`loadOneMetricChart ${category}/${key} failed`, e); }
+    }
+
+    // ── 日报页 ───────────────────────────────────────────────────────────────
+    const reportTypes = ref([]);
+    const reportDates = ref([]);
+    const rType = ref('');
+    const rDate = ref('');
+    const reportHtml = ref('');
+
+    async function fetchReportTypes() {
+      try {
+        const data = await fetch('/api/reports').then(r => r.json());
+        reportTypes.value = data.types || [];
+        if (reportTypes.value.length && !rType.value) {
+          await selectReportType(reportTypes.value[0].type);
+        }
+      } catch (e) { console.warn('fetchReportTypes failed', e); }
+    }
+
+    async function selectReportType(type) {
+      rType.value = type;
+      rDate.value = '';
+      reportHtml.value = '';
+      try {
+        const data = await fetch(`/api/reports?type=${encodeURIComponent(type)}`).then(r => r.json());
+        reportDates.value = data.dates || [];
+        if (reportDates.value.length) {
+          await selectReportDate(reportDates.value[0]);
+        }
+      } catch (e) { console.warn('fetchReportDates failed', e); }
+    }
+
+    async function selectReportDate(date) {
+      rDate.value = date;
+      reportHtml.value = '';
+      try {
+        const data = await fetch(
+          `/api/reports?type=${encodeURIComponent(rType.value)}&date=${encodeURIComponent(date)}`
+        ).then(r => r.json());
+        const md = data.content || '';
+        reportHtml.value = window.marked ? window.marked.parse(md) : `<pre>${md}</pre>`;
+      } catch (e) { console.warn('selectReportDate failed', e); }
     }
 
     // ── Cron 展开日志 ────────────────────────────────────────────────────────
@@ -549,19 +590,19 @@ const app = createApp({
       }
       if (newPage === 'metrics') {
         await fetchMetricKeys();
-        // 如果已有选中的 category/key，直接触发查询
-        if (mCategory.value && mKey.value) {
-          await nextTick();
-          await loadMetricChart();
-        }
+        await nextTick();
+        await loadAllMetricCharts();
+      }
+      if (newPage === 'reports') {
+        await fetchReportTypes();
       }
     });
 
-    // 指标页：mKey 或 mDays 变化时自动查询，无需手动点按钮
-    watch([mKey, mDays], async ([newKey]) => {
-      if (newKey && page.value === 'metrics') {
+    // mDays 变化时重新加载所有图
+    watch(mDays, async () => {
+      if (page.value === 'metrics') {
         await nextTick();
-        await loadMetricChart();
+        await loadAllMetricCharts();
       }
     });
 
@@ -591,10 +632,12 @@ const app = createApp({
     return {
       page, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
-      metricKeys, mCategory, mKey, mDays, filteredKeys,
+      metricKeys, mDays,
+      reportTypes, reportDates, rType, rDate, reportHtml,
       expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
-      onMetricKeyChange, navigateToMetric, loadMetricChart, toggleReport,
+      navigateToMetric, loadAllMetricCharts, toggleReport,
+      selectReportType, selectReportDate,
     };
   },
 });
