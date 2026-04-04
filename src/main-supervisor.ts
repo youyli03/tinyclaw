@@ -75,6 +75,7 @@ function startChild(): void {
   child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     stdio: "inherit",
     env: process.env,
+    cwd: path.dirname(path.dirname(MAIN_SCRIPT)), // src/ → project root
   });
 
   child.on("exit", (code, signal) => {

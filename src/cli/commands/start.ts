@@ -50,6 +50,7 @@ export async function run(_args: string[]): Promise<void> {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: process.env,
+    cwd: path.dirname(path.dirname(MAIN_SCRIPT)), // src/ → project root
   });
 
   // 父进程不等待子进程
