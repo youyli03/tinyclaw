@@ -427,6 +427,16 @@ const VoiceSchema = z.object({
 }).default({});
 export type VoiceConfig = z.infer<typeof VoiceSchema>;
 
+// ── Web Dashboard ─────────────────────────────────────────────────────────────
+
+const WebSchema = z.object({
+  /** 是否启用 Dashboard HTTP 服务，默认 false */
+  enabled: z.boolean().default(false),
+  /** 监听端口，默认 4096 */
+  port: z.number().int().positive().default(4096),
+});
+export type WebConfig = z.infer<typeof WebSchema>;
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -440,6 +450,7 @@ export const ConfigSchema = z.object({
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,
+  web: WebSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

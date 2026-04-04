@@ -43,6 +43,9 @@ import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
 import { parseCommand, executeCommand } from "./commands/registry.js";
 import "./commands/builtin.js";
+import "./tools/db-write.js";
+import { startDashboard, stopDashboard } from "./web/backend/server.js";
+import { startCollector, stopCollector } from "./web/backend/collector.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -690,6 +693,12 @@ async function main(): Promise<void> {
   // 7. 启动内置每日记忆维护调度器
   memoryMaintenance.start();
 
+  // 8. 启动 Web Dashboard（若配置启用）
+  if (cfg.web.enabled) {
+    startDashboard(cfg.web.port);
+    startCollector();
+  }
+
   // 7. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
   const gcInterval = setInterval(() => { slaveManager.gc(); }, 60 * 60 * 1000);
 
@@ -701,6 +710,8 @@ async function main(): Promise<void> {
     cronScheduler.stop();
     loopRunner.stop();
     memoryMaintenance.stop();
+    stopCollector();
+    stopDashboard();
     if (connector) await connector.stop();
     process.exit(0);
   };

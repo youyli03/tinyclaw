@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tinyclaw dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- 左侧导航 -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-name">tinyclaw</div>
+      <div class="logo-sub">dashboard</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-label">主要</div>
+        <div class="nav-item" :class="{active: page==='overview'}" @click="page='overview'">概览</div>
+        <div class="nav-item" :class="{active: page==='metrics'}"  @click="page='metrics'">指标</div>
+        <div class="nav-item" :class="{active: page==='reports'}"  @click="page='reports'">日报</div>
+      </div>
+      <div class="nav-section" style="margin-top:16px">
+        <div class="nav-section-label">系统</div>
+        <div class="nav-item" :class="{active: page==='cron'}"     @click="page='cron'">Cron 任务</div>
+        <div class="nav-item" :class="{active: page==='settings'}" @click="page='settings'">设置</div>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="footer-status">
+        <div class="status-dot"></div>
+        <div class="footer-status-text">系统在线</div>
+      </div>
+      <div class="footer-meta">{{ currentTime }}</div>
+      <div class="footer-meta">端口 4096</div>
+    </div>
+  </aside>
+
+  <!-- 主内容区 -->
+  <main id="main">
+
+    <!-- 概览页 -->
+    <div v-if="page==='overview'">
+      <div class="page-header">
+        <div class="page-title">
+          概览
+          <span class="page-title-sub">/ 今日快照</span>
+        </div>
+        <div class="page-meta">
+          {{ dateStr }}
+          <span class="badge badge-green">
+            <span class="badge-dot"></span>运行正常
+          </span>
+          <span style="margin-left:auto;font-size:12px;color:var(--t3)">自动刷新 30s</span>
+        </div>
+      </div>
+
+      <!-- StatCards -->
+      <div class="stat-grid">
+        <div class="stat-card" v-for="c in statCards" :key="c.key">
+          <div class="stat-card-top-bar" :style="{background: c.color}"></div>
+          <div class="stat-card-body">
+            <div class="stat-label">{{ c.label }}</div>
+            <div class="stat-value">{{ c.value }}</div>
+            <div class="stat-sub1">{{ c.sub1 }}</div>
+            <div class="stat-sub2">{{ c.sub2 }}</div>
+            <div class="stat-sparkline">
+              <canvas :id="'spark-'+c.key" height="36"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 电费 + 请求 -->
+      <div class="chart-row chart-row-2" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">电费余额趋势</span>
+            <span class="card-sub">近 30 天 / 元</span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:220px">
+            <canvas id="chart-electric" style="width:100%;height:200px"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">高级请求</span>
+            <span class="card-sub">近 14 天 &nbsp;<span style="color:var(--red)">红=超均线</span></span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:220px">
+            <canvas id="chart-copilot" style="width:100%;height:200px"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- CPU/内存 + Cron表 -->
+      <div class="chart-row chart-row-2b">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">CPU / 内存</span>
+            <span class="card-sub">
+              24小时趋势 &nbsp;
+              <span style="color:var(--accent)">— CPU</span> &nbsp;
+              <span style="color:var(--green)">— 内存</span>
+            </span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:260px">
+            <canvas id="chart-system" style="width:100%;height:240px"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Cron 任务</span>
+            <span class="badge badge-green" style="font-size:12px">{{ cronActive }} / {{ cronTotal }} 活跃</span>
+          </div>
+          <div class="card-body" style="padding-top:4px">
+            <table class="cron-table">
+              <thead>
+                <tr>
+                  <th>任务名</th>
+                  <th>调度</th>
+                  <th>状态</th>
+                  <th>上次运行</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="job in cronJobs" :key="job.id">
+                  <td class="task-name">{{ shortName(job.message) }}</td>
+                  <td>{{ scheduleStr(job) }}</td>
+                  <td><span :class="statusClass(job)">{{ statusText(job) }}</span></td>
+                  <td>{{ relativeTime(job.lastRunAt) }}</td>
+                </tr>
+                <tr v-if="!cronJobs.length">
+                  <td colspan="4" class="empty-state">暂无 Cron 任务</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 指标页 -->
+    <div v-if="page==='metrics'">
+      <div class="page-header">
+        <div class="page-title">指标 <span class="page-title-sub">/ 历史数据</span></div>
+      </div>
+      <div class="metrics-controls">
+        <select v-model="mCategory" @change="onMetricKeyChange">
+          <option value="">-- 选择分类 --</option>
+          <option v-for="k in metricKeys" :value="k.category" :key="k.category+k.key">{{ k.category }}</option>
+        </select>
+        <select v-model="mKey">
+          <option value="">-- 选择指标 --</option>
+          <option v-for="k in filteredKeys" :value="k.key" :key="k.key">{{ k.key }}</option>
+        </select>
+        <select v-model="mDays">
+          <option value="7">近 7 天</option>
+          <option value="14">近 14 天</option>
+          <option value="30">近 30 天</option>
+          <option value="90">近 90 天</option>
+        </select>
+        <button class="btn btn-primary" @click="loadMetricChart">查询</button>
+      </div>
+      <div class="card" v-if="mCategory && mKey">
+        <div class="card-header">
+          <span class="card-title">{{ mCategory }} / {{ mKey }}</span>
+          <span class="card-sub">近 {{ mDays }} 天</span>
+        </div>
+        <div class="chart-canvas-wrap" style="height:320px;padding-top:16px">
+          <canvas id="chart-metrics" style="width:100%;height:300px"></canvas>
+        </div>
+      </div>
+      <div class="empty-state" v-else>请选择分类和指标后点击查询</div>
+    </div>
+
+    <!-- 日报页 -->
+    <div v-if="page==='reports'">
+      <div class="page-header">
+        <div class="page-title">日报 <span class="page-title-sub">/ 运行记录</span></div>
+      </div>
+      <div v-if="reportJobs.length === 0" class="empty-state">暂无日报记录</div>
+      <div class="report-list">
+        <div class="report-item" v-for="job in reportJobs" :key="job.id">
+          <div class="report-item-header" @click="toggleReport(job.id)">
+            <span class="report-item-title">{{ shortName(job.message) }}</span>
+            <span class="badge badge-blue">{{ job.recentLogs.length }} 条记录</span>
+          </div>
+          <div class="report-item-body" v-if="expandedReports.has(job.id)">
+            <div v-for="(log, i) in job.recentLogs" :key="i" style="margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:12px">
+              <div style="font-size:11px;color:var(--t3);margin-bottom:4px">{{ log.ts }} &nbsp; <span :class="log.status==='success'?'status-badge status-success':'status-badge status-error'">{{ log.status }}</span></div>
+              <div>{{ log.result }}</div>
+            </div>
+            <div v-if="!job.recentLogs.length" class="empty-state">暂无运行记录</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cron 任务页 -->
+    <div v-if="page==='cron'">
+      <div class="page-header">
+        <div class="page-title">Cron 任务 <span class="page-title-sub">/ 全部</span></div>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding:0">
+          <table class="cron-table">
+            <thead>
+              <tr>
+                <th>任务名</th>
+                <th>Agent</th>
+                <th>调度</th>
+                <th>状态</th>
+                <th>上次运行</th>
+                <th>上次结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="job in allCronJobs" :key="job.id">
+                <td class="task-name" :title="job.message">{{ shortName(job.message) }}</td>
+                <td>{{ job.agentId }}</td>
+                <td>{{ scheduleStr(job) }}</td>
+                <td><span :class="statusClass(job)">{{ statusText(job) }}</span></td>
+                <td>{{ relativeTime(job.lastRunAt) }}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--t3)">
+                  {{ job.lastRunStatus === 'error' ? '运行出错' : (job.recentLogs[0]?.result || '-') }}
+                </td>
+              </tr>
+              <tr v-if="!allCronJobs.length">
+                <td colspan="6" class="empty-state">暂无 Cron 任务</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 设置页 -->
+    <div v-if="page==='settings'">
+      <div class="page-header">
+        <div class="page-title">设置</div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <p style="color:var(--t2);font-size:14px;line-height:1.8">
+            Dashboard 配置通过 <code style="background:var(--card2);padding:2px 6px;border-radius:4px;font-size:13px">~/.tinyclaw/config.toml</code> 管理：
+          </p>
+          <pre style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:12px;font-size:13px;color:var(--t1);overflow-x:auto">[web]
+enabled = true
+port    = 4096</pre>
+          <p style="color:var(--t3);font-size:12px;margin-top:12px">修改配置后需重启 tinyclaw 进程生效。</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="/main.js"></script>
+</body>
+</html>
