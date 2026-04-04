@@ -69,9 +69,12 @@ function fmtHHMM(ts) {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-// 生成稀疏横轴配置（点多时省略标签）
-function sparseXAxis(maxTicks = 8) {
+// 时间轴配置（按真实时间均匀分布）
+function timeXAxis(maxTicks = 8) {
   return {
+    type: 'time',
+    time: { unit: 'minute', displayFormats: { minute: 'HH:mm', hour: 'HH:mm' } },
+    adapters: { date: {} },
     grid: { display: false },
     border: { color: C.border },
     ticks: { color: C.t3, maxTicksLimit: maxTicks, maxRotation: 0 },
@@ -305,8 +308,7 @@ const app = createApp({
       try {
         const data = await fetch('/api/metrics?category=electric&key=balance&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => fmtHHMM(r.ts));
-        const values = rows.map(r => r.value);
+        const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
         const canvas = document.getElementById('chart-electric');
         if (canvas) {
           const ctx = canvas.getContext('2d');
@@ -316,9 +318,8 @@ const app = createApp({
           createOrUpdateChart('chart-electric', {
             type: 'line',
             data: {
-              labels,
               datasets: [{
-                data: values,
+                data: points,
                 borderColor: C.accent,
                 borderWidth: 2,
                 backgroundColor: grad,
@@ -331,7 +332,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: sparseXAxis(8),
+                x: timeXAxis(8),
                 y: { ...baseChartOpts().scales.y },
               },
             },
@@ -343,8 +344,7 @@ const app = createApp({
       try {
         const data = await fetch('/api/metrics?category=copilot&key=remaining&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => fmtHHMM(r.ts));
-        const values = rows.map(r => r.value);
+        const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
         const canvas2 = document.getElementById('chart-copilot');
         if (canvas2) {
           const ctx2 = canvas2.getContext('2d');
@@ -354,9 +354,8 @@ const app = createApp({
           createOrUpdateChart('chart-copilot', {
             type: 'line',
             data: {
-              labels,
               datasets: [{
-                data: values,
+                data: points,
                 borderColor: C.accent2,
                 borderWidth: 2,
                 backgroundColor: grad2,
@@ -369,7 +368,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: sparseXAxis(8),
+                x: timeXAxis(8),
                 y: { ...baseChartOpts().scales.y },
               },
             },
@@ -381,9 +380,8 @@ const app = createApp({
       try {
         const data = await fetch('/api/metrics?category=system&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => fmtHHMM(r.ts));
-        const cpuData = rows.map(r => r.cpu_percent);
-        const memData = rows.map(r => Math.round(r.mem_used_mb / r.mem_total_mb * 100));
+        const cpuPoints = rows.map(r => ({ x: r.ts * 1000, y: r.cpu_percent }));
+        const memPoints = rows.map(r => ({ x: r.ts * 1000, y: Math.round(r.mem_used_mb / r.mem_total_mb * 100) }));
 
         const canvas = document.getElementById('chart-system');
         if (canvas) {
@@ -397,11 +395,10 @@ const app = createApp({
           createOrUpdateChart('chart-system', {
             type: 'line',
             data: {
-              labels,
               datasets: [
                 {
                   label: 'CPU %',
-                  data: cpuData,
+                  data: cpuPoints,
                   borderColor: C.accent,
                   borderWidth: 1.8,
                   backgroundColor: gradCpu,
@@ -411,7 +408,7 @@ const app = createApp({
                 },
                 {
                   label: '内存 %',
-                  data: memData,
+                  data: memPoints,
                   borderColor: C.green,
                   borderWidth: 1.8,
                   backgroundColor: gradMem,
@@ -424,7 +421,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: sparseXAxis(8),
+                x: timeXAxis(8),
                 y: { ...baseChartOpts().scales.y, min: 0, max: 100 },
               },
             },
