@@ -758,6 +758,11 @@ export async function buildCopilotClient(
       const resetAt = response.headers.get("x-ratelimit-reset-requests");
       if (resetAt) rl.resetAt = resetAt;
       rateLimitCache.set(githubToken, rl);
+    }
+
+    // 每次请求成功后都异步刷新 premium 配额并写入 dashboard DB
+    // chat 接口没有 ratelimit 头，不能依赖头部存在才写入
+    if (response.ok) {
       saveRateLimitToDisk(githubToken);
     }
 

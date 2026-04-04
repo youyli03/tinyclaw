@@ -25,7 +25,6 @@
       <div class="nav-section" style="margin-top:16px">
         <div class="nav-section-label">系统</div>
         <div class="nav-item" :class="{active: page==='cron'}"     @click="page='cron'">Cron 任务</div>
-        <div class="nav-item" :class="{active: page==='settings'}" @click="page='settings'">设置</div>
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -239,25 +238,7 @@
       </div>
     </div>
 
-    <!-- 设置页 -->
-    <div v-if="page==='settings'">
-      <div class="page-header">
-        <div class="page-title">设置</div>
-      </div>
-      <div class="card">
-        <div class="card-body">
-          <p style="color:var(--t2);font-size:14px;line-height:1.8">
-            Dashboard 配置通过 <code style="background:var(--card2);padding:2px 6px;border-radius:4px;font-size:13px">~/.tinyclaw/config.toml</code> 管理：
-          </p>
-          <pre style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:12px;font-size:13px;color:var(--t1);overflow-x:auto">[web]
-enabled = true
-port    = 4096</pre>
-          <p style="color:var(--t3);font-size:12px;margin-top:12px">修改配置后需重启 tinyclaw 进程生效。</p>
-        </div>
-      </div>
-    </div>
-
-  </main>
+      </main>
 </div>
 
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
