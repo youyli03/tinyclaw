@@ -430,10 +430,16 @@ export type VoiceConfig = z.infer<typeof VoiceSchema>;
 // ── Web Dashboard ─────────────────────────────────────────────────────────────
 
 const WebSchema = z.object({
-  /** 是否启用 Dashboard HTTP 服务，默认 false */
+  /** 是否启用 Dashboard HTTP 服务,默认 false */
   enabled: z.boolean().default(false),
-  /** 监听端口，默认 4096 */
+  /** 监听端口,默认 4096 */
   port: z.number().int().positive().default(4096),
+  /**
+   * 访问令牌（可选）。设置后访问 dashboard 需携带 ?token=xxx 或有效 cookie。
+   * 不设置则不鉴权（仅内网使用时可不设）。
+   * 推荐用 openssl rand -hex 24 生成。
+   */
+  token: z.string().optional(),
 });
 export type WebConfig = z.infer<typeof WebSchema>;
 

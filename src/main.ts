@@ -695,7 +695,7 @@ async function main(): Promise<void> {
 
   // 8. 启动 Web Dashboard（若配置启用）
   if (cfg.web.enabled) {
-    startDashboard(cfg.web.port);
+    startDashboard(cfg.web.port, cfg.web.token);
     startCollector();
   }
 
