@@ -33,6 +33,7 @@ import { run as cronRun, description as cronDesc, usage as cronUsage } from "./c
 import { run as memoryRun, description as memoryDesc, usage as memoryUsage } from "./commands/memory.js";
 import { run as sessionRun, description as sessionDesc, usage as sessionUsage } from "./commands/session.js";
 import { run as dbRun, description as dbDesc, usage as dbUsage } from "./commands/db.js";
+import { run as webRun, description as webDesc, usage as webUsage } from "./commands/web.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
@@ -64,6 +65,7 @@ const COMMANDS: Record<string, CommandModule> = {
   session:     { description: sessionDesc,     usage: sessionUsage,     run: sessionRun },
   logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun },
   db:          { description: dbDesc,          usage: dbUsage,          run: dbRun },
+  web:         { description: webDesc,         usage: webUsage,         run: webRun },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
 
@@ -84,6 +86,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   session:     ["list", "abort", "memory", "help"],
   logs:        ["-f", "--follow", "-n", "help"],
   db:          ["list", "add", "remove", "help"],
+  web:         ["info", "token", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
 
