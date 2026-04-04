@@ -159,7 +159,7 @@ function loadRateLimitFromDisk(): void {
   }
 }
 
-function saveRateLimitToDisk(): void {
+function saveRateLimitToDisk(githubTokenSource?: string): void {
   try {
     const dir = path.dirname(RATELIMIT_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -170,17 +170,12 @@ function saveRateLimitToDisk(): void {
     // 写入失败,忽略
   }
 
-  // 同步写入 dashboard DB（频率限制剩余次数，取最新一条）
-  let latest: CopilotRateLimit | undefined;
-  for (const v of rateLimitCache.values()) {
-    if (!latest || v.capturedAt > latest.capturedAt) latest = v;
-  }
-  if (latest) {
-    try {
-      insertMetric({ category: "copilot", key: "rate_limit_remaining", value: latest.remaining });
-    } catch {
-      // dashboard DB 未初始化时忽略（web 功能未启用）
-    }
+  // 异步刷新 premium 配额并写入 dashboard DB
+  // 无论 oswe-vscode-prime 是否消耗配额，每次请求后都更新一次真实余量
+  if (githubTokenSource) {
+    getCopilotUserQuota(githubTokenSource).catch(() => {
+      // 配额查询失败不影响主流程
+    });
   }
 }
 
@@ -366,9 +361,13 @@ export async function getCopilotUserQuota(
     }
     userQuotaCache.set(githubTokenSource, { data: result, ts: Date.now() });
     // 同步写入 dashboard DB（premium_interactions 剩余次数）
-    if (result.premium_interactions && !result.premium_interactions.unlimited) {
+    // 写入 dashboard DB（无论 unlimited 与否，每次请求后都记录）
+    if (result.premium_interactions) {
       try {
-        insertMetric({ category: "copilot", key: "remaining", value: result.premium_interactions.remaining });
+        const val = result.premium_interactions.unlimited
+          ? -1  // -1 表示无限制
+          : result.premium_interactions.remaining;
+        insertMetric({ category: "copilot", key: "remaining", value: val });
       } catch {
         // dashboard DB 未初始化时忽略
       }
@@ -758,7 +757,7 @@ export async function buildCopilotClient(
       const resetAt = response.headers.get("x-ratelimit-reset-requests");
       if (resetAt) rl.resetAt = resetAt;
       rateLimitCache.set(githubToken, rl);
-      saveRateLimitToDisk();
+      saveRateLimitToDisk(githubToken);
     }
 
     return response;
