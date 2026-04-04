@@ -278,6 +278,12 @@ export interface ChatOptions {
    */
   isUserInitiated?: boolean;
   /**
+   * 每次用户消息对应的 agent task ID，用于 X-Agent-Task-Id 请求头。
+   * 同一次用户消息的所有 ReAct round 共享同一 ID，让 Copilot 服务端将
+   * 整次 agent 运行视为一次任务，仅对首轮（X-Initiator: user）计费。
+   */
+  taskId?: string;
+  /**
    * 并发控制 hooks（框架内部使用，外部调用方无需设置）。
    * 用于在 withRetry 重试等待期间 release/reacquire LLM slot，
    * 防止 429 无限重试时 slot 被永久占用导致其他请求卡死。
@@ -656,14 +662,15 @@ export class LLMClient {
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
-      // X-Initiator: Copilot CLI hardcodes "user" in baseHeaders for ALL requests.
-      // We follow the same convention: always "user" regardless of who triggered the turn.
-      "X-Initiator": "user",
-      // X-Interaction-Type: Copilot CLI sets "conversation-agent" (requestContext.interactionType)
-      // for the main agent. Using this value routes requests to the appropriate backend tier.
+      // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
+      // "agent" for tool-continuation rounds (free, not billed again).
+      // This matches VS Code Copilot chat behavior: 1 premium per user message.
+      "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
+      // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
       "X-Interaction-Type": "conversation-agent",
-      // X-Agent-Task-Id: per-turn UUID, mirrors Copilot CLI requestContext.agentTaskId.
-      "X-Agent-Task-Id": crypto.randomUUID(),
+      // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
+      // can group them as a single task. Falls back to per-call UUID if not provided.
+      "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
@@ -762,12 +769,15 @@ export class LLMClient {
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
     const xTurnHeaders = this.backend.isCopilotProvider ? {
-      // X-Initiator: Copilot CLI hardcodes "user" in baseHeaders for ALL requests.
-      "X-Initiator": "user",
-      // X-Interaction-Type: Copilot CLI main agent uses "conversation-agent".
+      // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
+      // "agent" for tool-continuation rounds (free, not billed again).
+      // This matches VS Code Copilot chat behavior: 1 premium per user message.
+      "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
+      // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
       "X-Interaction-Type": "conversation-agent",
-      // X-Agent-Task-Id: per-turn UUID, mirrors Copilot CLI requestContext.agentTaskId.
-      "X-Agent-Task-Id": crypto.randomUUID(),
+      // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
+      // can group them as a single task. Falls back to per-call UUID if not provided.
+      "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 

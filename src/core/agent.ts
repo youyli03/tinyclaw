@@ -667,6 +667,9 @@ export async function runAgent(
   const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code") : 0;
 
   // 5. ReAct 循环
+  // 每次用户消息生成一个固定 taskId，供所有 round 共享 X-Agent-Task-Id。
+  // Copilot 服务端据此将整次 agent 运行识别为同一任务，只对首轮（X-Initiator: user）计费。
+  const agentTaskId = crypto.randomUUID();
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
@@ -741,6 +744,7 @@ export async function runAgent(
               : {}),
             signal: llmAc.signal,
             isUserInitiated: round === 0 && !opts.skipPreamble,
+            taskId: agentTaskId,
             _retryHooks: {
               onRetryWait: () => {
                 // 进入重试等待：归还 slot，其他请求可趁机推进
