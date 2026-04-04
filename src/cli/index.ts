@@ -32,6 +32,7 @@ import { run as agentRun, description as agentDesc, usage as agentUsage } from "
 import { run as cronRun, description as cronDesc, usage as cronUsage } from "./commands/cron.js";
 import { run as memoryRun, description as memoryDesc, usage as memoryUsage } from "./commands/memory.js";
 import { run as sessionRun, description as sessionDesc, usage as sessionUsage } from "./commands/session.js";
+import { run as dbRun, description as dbDesc, usage as dbUsage } from "./commands/db.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
@@ -62,6 +63,7 @@ const COMMANDS: Record<string, CommandModule> = {
   memory:      { description: memoryDesc,      usage: memoryUsage,      run: memoryRun },
   session:     { description: sessionDesc,     usage: sessionUsage,     run: sessionRun },
   logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun },
+  db:          { description: dbDesc,          usage: dbUsage,          run: dbRun },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
 };
 
@@ -81,6 +83,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   memory:      ["save", "list", "search", "index", "maintain", "help"],
   session:     ["list", "abort", "memory", "help"],
   logs:        ["-f", "--follow", "-n", "help"],
+  db:          ["list", "add", "remove", "help"],
   completions: ["bash", "zsh", "fish", "install", "help"],
 };
 

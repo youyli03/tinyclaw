@@ -11,7 +11,6 @@ import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { getCachedCopilotInfo, getCopilotRateLimit, getCopilotUserQuota, lookupMultiplier } from "../llm/copilot.js";
-import { addMetricKey, removeMetricKey, listRegisteredKeys } from "../web/backend/db.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -406,53 +405,3 @@ registerCommand({
   },
 });
 
-// ── /metric ───────────────────────────────────────────────────────────────────
-
-registerCommand({
-  name: "metric",
-  description: "管理 Dashboard 指标白名单（add / remove / list）",
-  usage: "/metric add <category>/<key> [描述]  |  /metric remove <category>/<key>  |  /metric list",
-  execute({ args }) {
-    const sub = args[0]?.toLowerCase();
-
-    // /metric list
-    if (!sub || sub === "list") {
-      const keys = listRegisteredKeys();
-      if (!keys.length) return "📊 暂无已注册指标，用 `/metric add <category>/<key>` 添加。";
-      const lines = ["**已注册指标**\n"];
-      for (const k of keys) {
-        lines.push(`• \`${k.category}/${k.key}\`${k.description ? `  — ${k.description}` : ""}`);
-      }
-      return lines.join("\n");
-    }
-
-    // /metric add electric/balance 电费余额
-    if (sub === "add") {
-      const slug = args[1];
-      if (!slug?.includes("/")) return "❌ 格式错误，用法：`/metric add <category>/<key> [描述]`";
-      const [category, key] = slug.split("/") as [string, string];
-      const description = args.slice(2).join(" ") || undefined;
-      try {
-        addMetricKey(category, key, description);
-        return `✅ 已注册指标 \`${category}/${key}\`${description ? `（${description}）` : ""}`;
-      } catch (e) {
-        return `❌ 注册失败：${String(e)}`;
-      }
-    }
-
-    // /metric remove electric/balance
-    if (sub === "remove" || sub === "rm") {
-      const slug = args[1];
-      if (!slug?.includes("/")) return "❌ 格式错误，用法：`/metric remove <category>/<key>`";
-      const [category, key] = slug.split("/") as [string, string];
-      try {
-        const { deleted } = removeMetricKey(category, key);
-        return `🗑️ 已删除指标 \`${category}/${key}\`，同时清除历史数据 ${deleted} 条。`;
-      } catch (e) {
-        return `❌ 删除失败：${String(e)}`;
-      }
-    }
-
-    return "❌ 未知子命令，用法：`/metric list | add <category>/<key> | remove <category>/<key>`";
-  },
-});
