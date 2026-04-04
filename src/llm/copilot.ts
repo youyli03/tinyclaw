@@ -170,14 +170,14 @@ function saveRateLimitToDisk(): void {
     // 写入失败,忽略
   }
 
-  // 同步写入 dashboard DB（取 rateLimitCache 中 capturedAt 最新的一条）
+  // 同步写入 dashboard DB（频率限制剩余次数，取最新一条）
   let latest: CopilotRateLimit | undefined;
   for (const v of rateLimitCache.values()) {
     if (!latest || v.capturedAt > latest.capturedAt) latest = v;
   }
   if (latest) {
     try {
-      insertMetric({ category: "copilot", key: "remaining", value: latest.remaining });
+      insertMetric({ category: "copilot", key: "rate_limit_remaining", value: latest.remaining });
     } catch {
       // dashboard DB 未初始化时忽略（web 功能未启用）
     }
@@ -365,6 +365,14 @@ export async function getCopilotUserQuota(
       }
     }
     userQuotaCache.set(githubTokenSource, { data: result, ts: Date.now() });
+    // 同步写入 dashboard DB（premium_interactions 剩余次数）
+    if (result.premium_interactions && !result.premium_interactions.unlimited) {
+      try {
+        insertMetric({ category: "copilot", key: "remaining", value: result.premium_interactions.remaining });
+      } catch {
+        // dashboard DB 未初始化时忽略
+      }
+    }
     return result;
   } catch {
     return {};
