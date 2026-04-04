@@ -371,11 +371,82 @@ body {
   .stat-grid { grid-template-columns: repeat(3, 1fr); }
   .chart-row-2, .chart-row-2b { grid-template-columns: 1fr; }
 }
+
+/* ── 移动端（≤768px）── */
 @media (max-width: 768px) {
   :root { --sidebar-w: 0px; }
+
+  body { flex-direction: column; }
+
+  /* 隐藏左侧 sidebar，底部 tab bar 替代 */
   #sidebar { display: none; }
-  #main { margin-left: 0; padding: 16px; }
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* 主内容区撑满，底部留出 tab bar 高度 */
+  #main {
+    margin-left: 0;
+    padding: 14px 14px 80px;
+    width: 100%;
+  }
+
+  /* 页头缩小 */
+  .page-title { font-size: 18px; }
+  .page-title-sub { font-size: 13px; }
+  .page-meta { font-size: 12px; flex-wrap: wrap; }
+
+  /* stat-grid 2列 */
+  .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .stat-value { font-size: 18px; }
+
+  /* 图表全部单列 */
+  .chart-row-2, .chart-row-2b { grid-template-columns: 1fr; }
+
+  /* 指标控件换行 */
+  .metrics-controls { gap: 8px; }
+  .metrics-controls select { flex: 1; min-width: 0; }
+
+  /* cron 名称截断宽度收窄 */
+  .cron-item-name { max-width: 180px; }
+  .cron-item-right { gap: 8px; }
+  .cron-item-time { display: none; }  /* 小屏隐藏"上次运行"，保留状态和调度 */
+
+  /* card padding 缩小 */
+  .card-header { padding: 12px 14px 0; }
+  .card-body { padding: 10px 14px 14px; }
+  .chart-canvas-wrap { padding: 4px 14px 14px; }
+}
+
+/* ── 底部 Tab Bar（移动端） ── */
+.bottom-tabbar {
+  display: none;
+}
+@media (max-width: 768px) {
+  .bottom-tabbar {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 60px;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    z-index: 200;
+    box-shadow: 0 -2px 12px rgba(79,126,248,0.08);
+  }
+  .tab-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+    color: var(--t3);
+    font-size: 10px;
+    font-weight: 500;
+    transition: color 0.15s;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab-item.active { color: var(--accent); }
+  .tab-item svg { width: 20px; height: 20px; stroke-width: 1.8; }
 }
 
 /* ── Cron 任务列表（可展开） ── */
