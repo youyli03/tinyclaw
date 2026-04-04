@@ -61,14 +61,17 @@ function openDB(): Database {
 
   // 写入内置指标白名单（幂等）
   const builtins: Array<[string, string, string]> = [
-    ["electric", "balance",       "电费余额（元）"],
-    ["copilot",  "remaining",     "高级请求剩余次数"],
-    ["copilot",  "rate_limit_remaining", "接口频率限制剩余次数"],
+    ["electric", "balance",   "电费余额(元)"],
+    ["copilot",  "remaining", "高级请求剩余次数"],
   ];
   const upsert = db.prepare(
     "INSERT OR IGNORE INTO metric_keys (category, key, description) VALUES (?, ?, ?)"
   );
   for (const [cat, k, desc] of builtins) upsert.run(cat, k, desc);
+
+  // 清理已废弃的 rate_limit_remaining（历史遗留，前端不展示）
+  db.prepare("DELETE FROM metric_keys WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
+  db.prepare("DELETE FROM metrics WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
 
   _db = db;
   return db;

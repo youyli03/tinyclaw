@@ -193,7 +193,7 @@ const app = createApp({
 
       // 从 metrics 里取最新电费/请求（如果有）
       const elecVal = latestMetricVal.value['electric/balance'] ?? '—';
-      const copilotVal = latestMetricVal.value['copilot/daily_count'] ?? '—';
+      const copilotVal = latestMetricVal.value['copilot/remaining'] ?? '—';
 
       return [
         {
@@ -205,8 +205,8 @@ const app = createApp({
         {
           key: 'copilot', label: '高级请求',
           value: copilotVal !== '—' ? String(Math.round(Number(copilotVal))) : '—',
-          sub1: '今日用量', sub2: '点击指标页查看趋势',
-          color: C.accent2, spark: latestSpark.value['copilot/daily_count'] || [],
+          sub1: '剩余次数', sub2: '点击指标页查看趋势',
+          color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
         },
         {
           key: 'cpu', label: 'CPU',
@@ -315,31 +315,36 @@ const app = createApp({
         }
       } catch (e) { console.warn('electric chart failed', e); }
 
-      // 请求柱图
+      // 高级请求剩余趋势折线图
       try {
-        const data = await fetch('/api/metrics?category=copilot&key=daily_count&days=14').then(r => r.json());
+        const data = await fetch('/api/metrics?category=copilot&key=remaining&days=14').then(r => r.json());
         const rows = data.rows || [];
         const labels = rows.map(r => fmtTime(r.ts));
         const values = rows.map(r => r.value);
-        const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-        createOrUpdateChart('chart-copilot', {
-          type: 'bar',
-          data: {
-            labels,
-            datasets: [{
-              data: values,
-              backgroundColor: values.map(v => v > avg * 1.2 ? C.red + 'CC' : C.accent + 'CC'),
-              borderRadius: 4,
-            }],
-          },
-          options: {
-            ...baseChartOpts(),
-            plugins: {
-              ...baseChartOpts().plugins,
-              annotation: undefined,
+        const canvas2 = document.getElementById('chart-copilot');
+        if (canvas2) {
+          const ctx2 = canvas2.getContext('2d');
+          const grad2 = ctx2.createLinearGradient(0, 0, 0, 200);
+          grad2.addColorStop(0, C.accent2 + '30');
+          grad2.addColorStop(1, C.accent2 + '00');
+          createOrUpdateChart('chart-copilot', {
+            type: 'line',
+            data: {
+              labels,
+              datasets: [{
+                data: values,
+                borderColor: C.accent2,
+                borderWidth: 2,
+                backgroundColor: grad2,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+              }],
             },
-          },
-        });
+            options: baseChartOpts(),
+          });
+        }
       } catch (e) { console.warn('copilot chart failed', e); }
 
       // 系统折线

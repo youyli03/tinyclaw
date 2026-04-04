@@ -171,8 +171,9 @@ function saveRateLimitToDisk(githubTokenSource?: string): void {
   }
 
   // 异步刷新 premium 配额并写入 dashboard DB
-  // 无论 oswe-vscode-prime 是否消耗配额，每次请求后都更新一次真实余量
+  // 强制清除缓存，确保每次请求后都写入最新余量到 DB
   if (githubTokenSource) {
+    userQuotaCache.delete(githubTokenSource);
     getCopilotUserQuota(githubTokenSource).catch(() => {
       // 配额查询失败不影响主流程
     });
