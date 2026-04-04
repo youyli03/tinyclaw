@@ -59,13 +59,16 @@
 
       <!-- StatCards -->
       <div class="stat-grid">
-        <div class="stat-card" v-for="c in statCards" :key="c.key">
+        <div class="stat-card"
+             v-for="c in statCards" :key="c.key"
+             :class="{ 'stat-card-clickable': c.metricKey }"
+             @click="c.metricKey && navigateToMetric(c.metricKey)">
           <div class="stat-card-top-bar" :style="{background: c.color}"></div>
           <div class="stat-card-body">
             <div class="stat-label">{{ c.label }}</div>
             <div class="stat-value">{{ c.value }}</div>
             <div class="stat-sub1">{{ c.sub1 }}</div>
-            <div class="stat-sub2">{{ c.sub2 }}</div>
+            <div class="stat-sub2" :style="c.metricKey ? 'color:var(--accent);font-size:11px' : ''">{{ c.sub2 }}</div>
             <div class="stat-sparkline">
               <canvas :id="'spark-'+c.key" height="36"></canvas>
             </div>
@@ -162,7 +165,6 @@
           <option value="30">近 30 天</option>
           <option value="90">近 90 天</option>
         </select>
-        <button class="btn btn-primary" @click="loadMetricChart">查询</button>
       </div>
       <div class="card" v-if="mCategory && mKey">
         <div class="card-header">
@@ -173,7 +175,7 @@
           <canvas id="chart-metrics" style="width:100%;height:300px"></canvas>
         </div>
       </div>
-      <div class="empty-state" v-else>请选择分类和指标后点击查询</div>
+      <div class="empty-state" v-else>请选择分类和指标，将自动查询</div>
     </div>
 
     <!-- 日报页 -->

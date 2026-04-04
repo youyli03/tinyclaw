@@ -199,40 +199,42 @@ const app = createApp({
         {
           key: 'electric', label: '电费余额',
           value: elecVal !== '—' ? `¥ ${Number(elecVal).toFixed(2)}` : '¥ —',
-          sub1: '单位：人民币元', sub2: '点击指标页查看趋势',
+          sub1: '单位：人民币元', sub2: '点击查看趋势 →',
           color: C.accent, spark: latestSpark.value['electric/balance'] || [],
+          metricKey: 'electric/balance',
         },
         {
           key: 'copilot', label: '高级请求',
           value: copilotVal !== '—' ? String(Math.round(Number(copilotVal))) : '—',
-          sub1: '剩余次数', sub2: '点击指标页查看趋势',
+          sub1: '剩余次数', sub2: '点击查看趋势 →',
           color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
+          metricKey: 'copilot/remaining',
         },
         {
           key: 'cpu', label: 'CPU',
           value: s ? `${s.cpu_percent} %` : '—',
           sub1: `峰值 —`, sub2: '实时采样',
-          color: C.orange, spark: cpuHistory.value,
+          color: C.orange, spark: cpuHistory.value, metricKey: null,
         },
         {
           key: 'mem', label: '内存',
           value: s ? `${(s.mem_used_mb / 1024).toFixed(1)} GB` : '—',
           sub1: s ? `共 ${(s.mem_total_mb / 1024).toFixed(0)} GB` : '—',
           sub2: s ? `可用 ${((s.mem_total_mb - s.mem_used_mb) / 1024).toFixed(1)} GB` : '',
-          color: C.green, spark: memHistory.value,
+          color: C.green, spark: memHistory.value, metricKey: null,
         },
         {
           key: 'disk', label: '磁盘',
           value: s ? `${s.disk_used_gb} GB` : '—',
           sub1: s ? `共 ${s.disk_total_gb} GB` : '—',
           sub2: s ? `占用 ${Math.round(s.disk_used_gb / s.disk_total_gb * 100)}%` : '',
-          color: C.cyan, spark: [],
+          color: C.cyan, spark: [], metricKey: null,
         },
         {
           key: 'cron', label: 'Cron',
           value: `${active} / ${jobs.length}`,
           sub1: `${jobs.length - active} 已停用`, sub2: '活跃任务数',
-          color: C.purple, spark: [],
+          color: C.purple, spark: [], metricKey: null,
         },
       ];
     });
@@ -425,6 +427,16 @@ const app = createApp({
 
     function onMetricKeyChange() { mKey.value = ''; }
 
+    // 从概览卡片跳转到指标页，自动设置分类/key 并查询
+    async function navigateToMetric(categoryKey) {
+      const [cat, key] = categoryKey.split('/');
+      await fetchMetricKeys();
+      mCategory.value = cat;
+      mKey.value = key;
+      mDays.value = '30';
+      page.value = 'metrics';
+    }
+
     async function fetchMetricKeys() {
       try {
         const data = await fetch('/api/metric-keys').then(r => r.json());
@@ -478,7 +490,7 @@ const app = createApp({
       expandedReports.value = s;
     }
 
-    // ── 页面切换时绘图 ───────────────────────────────────────────────────────
+    // 页面切换时绘图
     watch(page, async (newPage) => {
       if (newPage === 'overview') {
         await nextTick();
@@ -487,6 +499,19 @@ const app = createApp({
       }
       if (newPage === 'metrics') {
         await fetchMetricKeys();
+        // 如果已有选中的 category/key，直接触发查询
+        if (mCategory.value && mKey.value) {
+          await nextTick();
+          await loadMetricChart();
+        }
+      }
+    });
+
+    // 指标页：mKey 或 mDays 变化时自动查询，无需手动点按钮
+    watch([mKey, mDays], async ([newKey]) => {
+      if (newKey && page.value === 'metrics') {
+        await nextTick();
+        await loadMetricChart();
       }
     });
 
@@ -520,7 +545,7 @@ const app = createApp({
       reportJobs, expandedReports,
       // 函数
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
-      onMetricKeyChange, loadMetricChart, toggleReport,
+      onMetricKeyChange, navigateToMetric, loadMetricChart, toggleReport,
     };
   },
 });

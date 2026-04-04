@@ -202,6 +202,14 @@ body {
   box-shadow: var(--shadow);
   overflow: hidden;
   position: relative;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.stat-card-clickable {
+  cursor: pointer;
+}
+.stat-card-clickable:hover {
+  box-shadow: 0 4px 20px rgba(79,126,248,0.15);
+  transform: translateY(-2px);
 }
 .stat-card-top-bar {
   height: 4px;
