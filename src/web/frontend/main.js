@@ -62,6 +62,22 @@ function fmtTime(ts) {
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// 只显示 HH:MM（用于当天趋势图横轴）
+function fmtHHMM(ts) {
+  if (!ts) return '';
+  const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// 生成稀疏横轴配置（点多时省略标签）
+function sparseXAxis(maxTicks = 8) {
+  return {
+    grid: { display: false },
+    border: { color: C.border },
+    ticks: { color: C.t3, maxTicksLimit: maxTicks, maxRotation: 0 },
+  };
+}
+
 function relativeTime(isoOrTs) {
   if (!isoOrTs) return '—';
   const d = new Date(typeof isoOrTs === 'number' ? isoOrTs * 1000 : isoOrTs);
@@ -285,11 +301,11 @@ const app = createApp({
 
     // ── 图表绘制 ─────────────────────────────────────────────────────────────
     async function drawOverviewCharts() {
-      // 电费图
+      // 电费图（今日趋势，每5分钟一条，最多288点）
       try {
-        const data = await fetch('/api/metrics?category=electric&key=balance&days=30').then(r => r.json());
+        const data = await fetch('/api/metrics?category=electric&key=balance&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => fmtTime(r.ts));
+        const labels = rows.map(r => fmtHHMM(r.ts));
         const values = rows.map(r => r.value);
         const canvas = document.getElementById('chart-electric');
         if (canvas) {
@@ -308,20 +324,26 @@ const app = createApp({
                 backgroundColor: grad,
                 fill: true,
                 tension: 0.4,
-                pointRadius: 2,
-                pointHoverRadius: 5,
+                pointRadius: 0,
+                pointHoverRadius: 4,
               }],
             },
-            options: baseChartOpts(),
+            options: {
+              ...baseChartOpts(),
+              scales: {
+                x: sparseXAxis(8),
+                y: { ...baseChartOpts().scales.y },
+              },
+            },
           });
         }
       } catch (e) { console.warn('electric chart failed', e); }
 
-      // 高级请求剩余趋势折线图
+      // 高级请求剩余趋势（今日趋势，每次请求写入一条）
       try {
-        const data = await fetch('/api/metrics?category=copilot&key=remaining&days=14').then(r => r.json());
+        const data = await fetch('/api/metrics?category=copilot&key=remaining&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => fmtTime(r.ts));
+        const labels = rows.map(r => fmtHHMM(r.ts));
         const values = rows.map(r => r.value);
         const canvas2 = document.getElementById('chart-copilot');
         if (canvas2) {
@@ -339,24 +361,27 @@ const app = createApp({
                 borderWidth: 2,
                 backgroundColor: grad2,
                 fill: true,
-                tension: 0.4,
+                tension: 0.3,
                 pointRadius: 2,
                 pointHoverRadius: 5,
               }],
             },
-            options: baseChartOpts(),
+            options: {
+              ...baseChartOpts(),
+              scales: {
+                x: sparseXAxis(8),
+                y: { ...baseChartOpts().scales.y },
+              },
+            },
           });
         }
       } catch (e) { console.warn('copilot chart failed', e); }
 
-      // 系统折线
+      // 系统 CPU/内存（今日24小时，每5分钟一条）
       try {
         const data = await fetch('/api/metrics?category=system&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const labels = rows.map(r => {
-          const d = new Date(r.ts * 1000);
-          return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        });
+        const labels = rows.map(r => fmtHHMM(r.ts));
         const cpuData = rows.map(r => r.cpu_percent);
         const memData = rows.map(r => Math.round(r.mem_used_mb / r.mem_total_mb * 100));
 
@@ -396,10 +421,13 @@ const app = createApp({
                 },
               ],
             },
-            options: baseChartOpts({ scales: {
-              ...baseChartOpts().scales,
-              y: { ...baseChartOpts().scales.y, min: 0, max: 100 },
-            }}),
+            options: {
+              ...baseChartOpts(),
+              scales: {
+                x: sparseXAxis(8),
+                y: { ...baseChartOpts().scales.y, min: 0, max: 100 },
+              },
+            },
           });
         }
       } catch (e) { console.warn('system chart failed', e); }
