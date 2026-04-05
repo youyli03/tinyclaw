@@ -152,10 +152,8 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
         if (!infinite5xx && consecutive5xx > MAX_5XX) {
           const statusCode = (err as APIError).status;
           const statusHint = statusCode === 408
-            ? `请求体过大导致服务端读取超时（408），建议发送 /new 清空上下文后重试`
-            : consecutive5xx <= 3
-              ? `AI 服务暂时不可用（${statusCode}，已重试 ${consecutive5xx - 1} 次），可能是服务端短暂故障，稍等后发送 /retry 重试`
-              : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），可能是请求内容问题（如上下文过长），建议发送 /new 清空上下文后重试`;
+            ? `请求体过大导致服务端读取超时（408），建议发送 /compact 压缩上下文后重试，或 /new 清空后重试`
+            : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），服务端持续不可用，请稍后发送 /retry 重试`;
           throw new LLMConnectionError(err, `⚠️ ${statusHint}`);
         }
       } else if (isTransport) {
