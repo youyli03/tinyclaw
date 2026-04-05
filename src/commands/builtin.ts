@@ -208,6 +208,29 @@ registerCommand({
   },
 });
 
+registerCommand({
+  name: "compact",
+  description: "手动压缩会话上下文（code 模式：滑动窗口压缩；chat 模式：摘要压缩）",
+  usage: "/compact",
+  async execute({ session }) {
+    if (session.running) {
+      return "⚠️ 当前有任务正在运行，请等待完成后再压缩。";
+    }
+    try {
+      if (session.mode === "code") {
+        const compressed = await session.compressForCode();
+        if (!compressed) return "ℹ️ 无可压缩内容（上下文已是最短状态）";
+        return `✅ Code 上下文已压缩（当前 ${session.getMessages().length} 条消息）`;
+      } else {
+        const summary = await session.compress();
+        return `✅ 上下文已压缩\n\n${summary}`;
+      }
+    } catch (err) {
+      return `❌ 压缩失败：${err instanceof Error ? err.message : String(err)}`;
+    }
+  },
+});
+
 
 
 registerCommand({
