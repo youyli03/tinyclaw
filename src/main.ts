@@ -741,7 +741,7 @@ async function main(): Promise<void> {
           // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后向 code session 注入续接消息
           if (marker.codeSessionId) {
             setTimeout(() => {
-              const codeSession = sessions.get(marker.codeSessionId!);
+              const codeSession = getSession(marker.codeSessionId!);
               if (codeSession) {
                 codeSession.running = true;
                 const resumePromise = runAgent(codeSession, "[系统] 重启完成，请继续之前未完成的任务。");

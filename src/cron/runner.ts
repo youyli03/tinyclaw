@@ -155,8 +155,9 @@ async function runPipelineJob(
         systemPrompt: CRON_AGENT_SYSTEM,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
-        // slaveDepth: 0 允许 msg step 里的 LLM 调用 agent_fork（fork 出的 subagent 以 depth=1 运行，不允许再次 fork）
-        slaveDepth: 0,
+        // slaveDepth: 1 禁止 msg step 里的 LLM 调用 agent_fork，防止 Cron Pipeline 无限递归
+        // Pipeline 中需要 fork 请改用 type:"tool", name:"agent_fork" 的 tool step 显式触发
+        slaveDepth: 1,
         // cron 场景下 inject 模式的 slave 完成不额外推送用户（wait 模式 slave 本就不触发此回调）
         onSlaveComplete: async (_notif) => { /* no-op for cron pipeline: use result_mode="wait" + agent_wait instead */ },
       });
