@@ -209,17 +209,24 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
     return actualTokens >= threshold;
   }
 
-  // Fallback：字符数粗估
+  // Fallback：字符数粗估（包括 tool_calls JSON，与 shouldSummarize 对齐）
   const totalChars = messages.reduce((sum, m) => {
+    const toolCallsChars =
+      m.role === "assistant" &&
+      (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
+        ? JSON.stringify((m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls).length
+        : 0;
     const content = m.content;
-    if (typeof content === "string") return sum + content.length;
-    if (Array.isArray(content)) {
-      return sum + content.reduce((cs, p) => {
+    let contentChars = 0;
+    if (typeof content === "string") {
+      contentChars = content.length;
+    } else if (Array.isArray(content)) {
+      contentChars = content.reduce((cs, p) => {
         if (typeof p === "object" && p !== null && "text" in p) return cs + String((p as { text: string }).text).length;
         return cs + 200; // 非文本部分（图片等）估算
       }, 0);
     }
-    return sum;
+    return sum + contentChars + toolCallsChars;
   }, 0);
   const estimatedTokens = Math.ceil(totalChars / 3.5);
   return estimatedTokens >= threshold;
