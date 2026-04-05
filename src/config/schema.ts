@@ -354,8 +354,14 @@ export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 const RetryConfigSchema = z.object({
   /** 最多重试次数（不含首次尝试），默认 3；-1 = 无限重试 */
   maxAttempts: z.number().int().min(-1).default(-1),
-  /** 5xx 服务端错误的最大连续重试次数（独立于 maxAttempts），默认 5；-1 = 无限重试 */
-  max5xxAttempts: z.number().int().min(-1).default(5),
+  /** 5xx 服务端错误的最大连续重试次数（独立于 maxAttempts），默认 15；-1 = 无限重试 */
+  max5xxAttempts: z.number().int().min(-1).default(15),
+  /**
+   * 5xx 重试单次等待时长上限（毫秒），默认 30000。
+   * 防止指数退避在重试次数多时产生超长等待（如第 10 次 = 512s）。
+   * 实际等待 = min(exponential_backoff, max5xxDelayMs)。
+   */
+  max5xxDelayMs: z.number().int().positive().default(30_000),
   /** 传输层错误（socket closed / ECONNRESET 等）的最大连续重试次数，默认 -1（无限，由 maxRetryDurationMs 封顶）；
    *  正整数 = 超过此数后提示用户简化请求。 */
   maxTransportAttempts: z.number().int().min(-1).default(-1),

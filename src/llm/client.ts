@@ -112,7 +112,8 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   const MAX_RETRIES = policy?.maxAttempts ?? 0;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   const MAX_DURATION = policy?.maxRetryDurationMs ?? 0;
-  const MAX_5XX = policy?.max5xxAttempts ?? 5;
+  const MAX_5XX = policy?.max5xxAttempts ?? 15;
+  const MAX_5XX_DELAY = policy?.max5xxDelayMs ?? 30_000;
   // 若调用方传入 override（如 code 模式传 1），优先使用；否则读全局配置
   const MAX_TRANSPORT = maxTransportRetryOverride !== undefined ? maxTransportRetryOverride : (policy?.maxTransportAttempts ?? 3);
   const infinite = MAX_RETRIES === -1;
@@ -152,7 +153,9 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
           const statusCode = (err as APIError).status;
           const statusHint = statusCode === 408
             ? `请求体过大导致服务端读取超时（408），建议发送 /new 清空上下文后重试`
-            : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），可能是请求内容导致的问题（如工具参数过长），而非临时故障。建议发送 /new 清空上下文后重试`;
+            : consecutive5xx <= 3
+              ? `AI 服务暂时不可用（${statusCode}，已重试 ${consecutive5xx - 1} 次），可能是服务端短暂故障，稍等后发送 /retry 重试`
+              : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），可能是请求内容问题（如上下文过长），建议发送 /new 清空上下文后重试`;
           throw new LLMConnectionError(err, `⚠️ ${statusHint}`);
         }
       } else if (isTransport) {
@@ -170,10 +173,11 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
         consecutive5xx = 0;
         consecutiveTransport = 0;
       }
-      // 429：优先使用 Retry-After，否则固定 baseDelayMs；其他错误使用指数退避
-      const delay = err instanceof RateLimitError
+      // 429：优先使用 Retry-After，否则固定 baseDelayMs；5xx 加 cap 防止指数增长过长；其他用指数退避
+      const rawDelay = err instanceof RateLimitError
         ? (parseRetryAfterMs(err) ?? BASE_DELAY)
         : backoff(BASE_DELAY, attempt);
+      const delay = is5xx ? Math.min(rawDelay, MAX_5XX_DELAY) : rawDelay;
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
       console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
       // 进入等待前通知外部（release slot），等待期间让其他请求使用 slot
