@@ -140,7 +140,15 @@ function isTokenError(err: unknown): boolean {
 
 function isTimeoutError(err: unknown): boolean {
   if (err instanceof DOMException && (err.code === 23 || err.name === "TimeoutError")) return true;
-  if (err instanceof Error && err.name === "TimeoutError") return true;
+  if (err instanceof Error) {
+    if (err.name === "TimeoutError") return true;
+    // undici ConnectTimeoutError / SocketError（UND_ERR_CONNECT_TIMEOUT、UND_ERR_SOCKET 等）
+    const code = (err as NodeJS.ErrnoException & { code?: string }).code ?? "";
+    if (code.startsWith("UND_ERR_CONNECT") || code === "UND_ERR_SOCKET") return true;
+    // 兜底：消息含 Connect Timeout / fetch failed + timeout 相关
+    const msg = err.message ?? "";
+    if (msg.includes("Connect Timeout Error") || msg.includes("connect ETIMEDOUT")) return true;
+  }
   return false;
 }
 

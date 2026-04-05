@@ -297,3 +297,42 @@ registerTool({
   },
   execute: readFileImpl,
 });
+
+// ── read_image ────────────────────────────────────────────────────────────────
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "read_image",
+      description:
+        "读取本地图片文件，返回 base64 data URL，供视觉模型分析图片内容（上限 8 MB）。" +
+        "当历史消息中的图片被丢弃（显示为 [历史图片: /path...]）时，可调用此 tool 重新加载查看。",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "图片的绝对路径（支持 png/jpg/webp/gif）" },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>) => {
+    const imgPath = path.resolve(String(args["path"] ?? "").replace(/^~/, os.homedir()));
+    if (!fs.existsSync(imgPath)) return `文件不存在: ${imgPath}`;
+    const stat = fs.statSync(imgPath);
+    const MAX = 8 * 1024 * 1024;
+    if (stat.size > MAX) return `文件过大(${(stat.size / 1024 / 1024).toFixed(1)} MB)，超过 8 MB 限制`;
+    const ext = path.extname(imgPath).toLowerCase().slice(1);
+    const mime =
+      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+      ext === "png"  ? "image/png"  :
+      ext === "gif"  ? "image/gif"  :
+      ext === "webp" ? "image/webp" :
+      "image/png";
+    const buf = fs.readFileSync(imgPath);
+    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+    return dataUrl;
+  },
+});

@@ -962,6 +962,13 @@ export async function runAgent(
       for (const { call, result } of pairs) {
         if (!textMode) {
           session.addToolResultMessage(call.callId, result);
+          // read_image tool 返回 data URL 时，额外追加一条 user image_url 消息
+          // 使视觉模型在下一轮能直接看到图片内容
+          if (call.name === "read_image" && result.startsWith("data:image/")) {
+            session.addUserMessage([
+              { type: "image_url", image_url: { url: result, detail: "auto" } },
+            ]);
+          }
         } else {
           session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
         }

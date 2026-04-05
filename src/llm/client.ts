@@ -431,21 +431,34 @@ function pathToDataUrlCompressed(imgPath: string): string | null {
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
  *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
 function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
-  // 第一步：收集所有图片路径并获取原始 dataUrl
-  const imagePaths: string[] = [];
-  for (const m of messages) {
+  // 找出最后一条含 image_path 的消息索引（该轮图片正常传输，历史图片丢弃）
+  let lastImageMsgIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
     if (m.role === "tool" || typeof m.content === "string") continue;
-    for (const p of m.content) {
-      if (p.type === "image_path") imagePaths.push(p.path);
+    if (m.content.some((p) => p.type === "image_path")) {
+      lastImageMsgIdx = i;
+      break;
+    }
+  }
+
+  // 只收集最后一条含图消息的图片路径，历史图片不编码
+  const imagePaths: string[] = [];
+  if (lastImageMsgIdx >= 0) {
+    const m = messages[lastImageMsgIdx]!;
+    if (typeof m.content !== "string") {
+      for (const p of m.content) {
+        if (p.type === "image_path") imagePaths.push(p.path);
+      }
     }
   }
 
   // 检查总 base64 大小，决定是否启用 budget 压缩模式
   let totalBase64 = 0;
   const rawUrls = new Map<string, string | null>();
-  for (const path of imagePaths) {
-    const url = pathToDataUrl(path);
-    rawUrls.set(path, url);
+  for (const imgPath of imagePaths) {
+    const url = pathToDataUrl(imgPath);
+    rawUrls.set(imgPath, url);
     if (url) totalBase64 += url.length;
   }
   const useBudget = totalBase64 > IMAGE_TOTAL_BASE64_BUDGET;
@@ -453,16 +466,19 @@ function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
     console.log(`[llm] 图片总 base64 ${(totalBase64 / 1024).toFixed(0)} KB > budget ${(IMAGE_TOTAL_BASE64_BUDGET / 1024).toFixed(0)} KB，启用压缩模式`);
   }
 
-  // 第二步：按选定模式转换消息
   const getUrl = useBudget
-    ? (path: string) => pathToDataUrlCompressed(path)
-    : (path: string) => rawUrls.get(path) ?? null;
+    ? (imgPath: string) => pathToDataUrlCompressed(imgPath)
+    : (imgPath: string) => rawUrls.get(imgPath) ?? null;
 
-  return messages.map((m) => {
+  return messages.map((m, idx) => {
     if (m.role === "tool") return m;
     if (typeof m.content === "string") return m;
     const resolved = m.content.map((p) => {
       if (p.type === "image_path") {
+        // 历史图片（非最后一条含图消息）直接丢弃，替换为文本提示
+        if (idx !== lastImageMsgIdx) {
+          return { type: "text" as const, text: `[历史图片: ${p.path}（如需查看请用 read_image tool）]` };
+        }
         const url = getUrl(p.path);
         if (url) return { type: "image_url" as const, image_url: { url, detail: "auto" as const } };
         return { type: "text" as const, text: `[图片已不可用: ${p.path}]` };
