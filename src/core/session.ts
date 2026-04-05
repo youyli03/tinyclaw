@@ -287,6 +287,28 @@ export class Session {
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
+  /**
+   * 原地更新已存在的 tool_result 消息内容，并全量覆写 JSONL。
+   * 用于重启后将 "⏳ 正在重启..." 回填为 "✅ 重启完成"，避免注入额外用户消息。
+   */
+  updateToolResult(callId: string, content: string): void {
+    const msg = this.messages.find(
+      (m) => m.role === "tool" && (m as { role: "tool"; tool_call_id: string }).tool_call_id === callId
+    ) as { role: "tool"; tool_call_id: string; content: string } | undefined;
+    if (!msg) return;
+    msg.content = content;
+    // 全量覆写 JSONL，使磁盘与内存一致
+    try {
+      const mode = this.mode === "code" ? "code" : "chat";
+      const filePath = Session.getJsonlPath(this.sessionId, mode);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
+      fs.writeFileSync(filePath, lines, "utf-8");
+    } catch (err) {
+      console.error("[session] updateToolResult JSONL rewrite failed:", err);
+    }
+  }
+
   addSystemMessage(content: string): void {
     this.messages.push({ role: "system", content });
   }

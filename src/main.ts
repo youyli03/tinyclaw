@@ -730,21 +730,28 @@ async function main(): Promise<void> {
         const marker = JSON.parse(fs.readFileSync(RESTART_NOTIFY_FILE, "utf-8")) as {
           peerId: string;
           msgType: InboundMessage["type"];
-          /** restart_tool 写入的字段：code 模式 sessionId，重启后注入续接消息 */
+          /** restart_tool 写入的字段：code 模式 sessionId，重启后续接任务 */
           codeSessionId?: string;
+          /** restart_tool 写入的字段：重启前写入的 tool_result 的 callId，重启后用于回填 */
+          restartCallId?: string;
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
           // 1. 发 QQ 通知（原有逻辑）
           void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
 
-          // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后向 code session 注入续接消息
+          // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后续接 code session
           if (marker.codeSessionId) {
             setTimeout(() => {
               const codeSession = getSession(marker.codeSessionId!);
               if (codeSession) {
+                // 回填 tool_result：将 "⏳ 正在重启..." 更新为 "✅ 重启完成"，避免注入额外用户消息
+                if (marker.restartCallId) {
+                  codeSession.updateToolResult(marker.restartCallId, "✅ 重启完成，继续执行之前的任务。");
+                }
                 codeSession.running = true;
-                const resumePromise = runAgent(codeSession, "[系统] 重启完成，请继续之前未完成的任务。");
+                // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
+                const resumePromise = runAgent(codeSession, "", { skipAddUserMessage: true });
                 codeSession.currentRunPromise = resumePromise;
                 resumePromise
                   .then((result) => {
