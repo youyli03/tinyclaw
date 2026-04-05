@@ -139,15 +139,20 @@ function isTokenError(err: unknown): boolean {
 }
 
 function isTimeoutError(err: unknown): boolean {
-  if (err instanceof DOMException && (err.code === 23 || err.name === "TimeoutError")) return true;
-  if (err instanceof Error) {
-    if (err.name === "TimeoutError") return true;
-    // undici ConnectTimeoutError / SocketError（UND_ERR_CONNECT_TIMEOUT、UND_ERR_SOCKET 等）
-    const code = (err as NodeJS.ErrnoException & { code?: string }).code ?? "";
-    if (code.startsWith("UND_ERR_CONNECT") || code === "UND_ERR_SOCKET") return true;
-    // 兜底：消息含 Connect Timeout / fetch failed + timeout 相关
-    const msg = err.message ?? "";
-    if (msg.includes("Connect Timeout Error") || msg.includes("connect ETIMEDOUT")) return true;
+  // Traverse the full err.cause chain: undici wraps ConnectTimeoutError inside
+  // TypeError("fetch failed"), so we must check err.cause.code, not just err.code.
+  let cur: unknown = err;
+  while (cur != null) {
+    if (cur instanceof DOMException && (cur.code === 23 || cur.name === "TimeoutError")) return true;
+    if (cur instanceof Error) {
+      if (cur.name === "TimeoutError") return true;
+      const code = (cur as NodeJS.ErrnoException & { code?: string }).code ?? "";
+      if (code.startsWith("UND_ERR_CONNECT") || code === "UND_ERR_SOCKET") return true;
+      const msg = cur.message ?? "";
+      if (msg.includes("Connect Timeout Error") || msg.includes("connect ETIMEDOUT")) return true;
+    }
+    // Step into cause (Error or plain object with .cause)
+    cur = (cur as { cause?: unknown }).cause ?? null;
   }
   return false;
 }
