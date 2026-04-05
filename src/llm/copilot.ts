@@ -812,11 +812,11 @@ export async function buildCopilotClient(
     resolvedModel.maxContextWindow,
     resolvedModel.maxPromptTokens
   );
-  // 若 config.toml 手动指定了 maxContextWindow，直接覆盖自动检测结果。
-  // 可向下限制（如修正上报过大的模型）或向上扩展（如 API 返回值低于实际支持值时）。
-  // 注意：设置超过模型实际支持的值可能导致 400 错误，由用户自行确保准确性。
+  // 若 config.toml 手动指定了 maxContextWindow，用 min(override, maxPromptTokens) 作为上限。
+  // 允许向下限制（修正上报过大的模型）或向上扩展（API 报值低于实际时），
+  // 但始终不超过 maxPromptTokens，避免 override > 实际 prompt 上限时压缩不触发。
   if (config.maxContextWindowOverride != null && config.maxContextWindowOverride > 0) {
-    effectiveContextWindow = config.maxContextWindowOverride;
+    effectiveContextWindow = Math.min(config.maxContextWindowOverride, resolvedModel.maxPromptTokens);
   }
 
   return { client, contextWindow: effectiveContextWindow };

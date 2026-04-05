@@ -1,6 +1,7 @@
 import { Session } from "./session.js";
 import { llmRegistry } from "../llm/registry.js";
 import { LLMConnectionError } from "../llm/client.js";
+import { APIError } from "openai";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
@@ -670,6 +671,7 @@ export async function runAgent(
   // 每次用户消息生成一个固定 taskId，供所有 round 共享 X-Agent-Task-Id。
   // Copilot 服务端据此将整次 agent 运行识别为同一任务，只对首轮（X-Initiator: user）计费。
   const agentTaskId = crypto.randomUUID();
+  let promptExceededRetried = false;  // guard: compress+retry at most once per run
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
@@ -770,6 +772,25 @@ export async function runAgent(
         // AbortError = 被软中断打断，干净退出循环
         if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
           break;
+        }
+        // 400 model_max_prompt_tokens_exceeded：压缩上下文后重试本轮（最多1次）
+        if (
+          !promptExceededRetried &&
+          err instanceof APIError &&
+          err.status === 400 &&
+          (err as APIError & { code?: string }).code === "model_max_prompt_tokens_exceeded"
+        ) {
+          promptExceededRetried = true;
+          console.warn(`${logPrefix} ⚠️ Prompt tokens 超限，压缩后重试...`);
+          const compressed = await session.compressForCode();
+          if (!compressed) {
+            // 压缩无效（历史已最短），回滚并抛出
+            session.trimToLength(preRunLength);
+            toolThrottler?.stop();
+            throw err;
+          }
+          round--;  // 重新执行本轮
+          continue;
         }
         // LLM 调用失败（连接错误、400/500、限流等）：回滚本次注入的消息，保持 session 状态干净
         if (err instanceof LLMConnectionError && err.requestId) {
