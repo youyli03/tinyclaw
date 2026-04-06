@@ -27,11 +27,20 @@ Code 模式是独立于 Chat 对话历史的编码会话，灵感来源于 VS Co
 ## 二、切换命令
 
 ```
-/code   进入 Code 模式
-/chat   返回 Chat 模式
-/plan   切换到 Plan 子模式（Code 模式下）
-/auto   切换到 Auto 子模式（Code 模式下，默认）
+/code     进入 Code 模式
+/chat     返回 Chat 模式
+/plan     切换到 Plan 子模式(Code 模式下)
+/auto     切换到 Auto 子模式(Code 模式下,默认)
+/compact  手动触发上下文压缩(任意模式可用)
 ```
+
+### `/compact`
+
+在任意模式(Chat 或 Code)下强制触发一次上下文压缩,不等待 token 自动超限:
+- **Chat 模式**:调用 `summarizeAndCompress()`,历史全量压缩为摘要
+- **Code 模式**:调用 `compressForCode()`,保留最近 8 条,其余压缩为摘要
+
+适用场景:上下文已很长但未触发自动压缩阈值,希望主动清理以提升响应速度/降低 token 消耗。
 
 ### `/code`
 
