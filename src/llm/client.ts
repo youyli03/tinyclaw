@@ -196,6 +196,14 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   throw new LLMConnectionError(lastErr);
 }
 
+function buildMaxTokenParam(model: string, maxTokens: number): { max_completion_tokens: number } | { max_tokens: number } {
+  const normalized = model.toLowerCase();
+  if (normalized.startsWith("gpt-5")) {
+    return { max_completion_tokens: maxTokens };
+  }
+  return { max_tokens: maxTokens };
+}
+
 /** 运行时已解析的后端参数（与 provider 无关的统一结构） */
 export interface ResolvedBackend {
   baseUrl: string;
@@ -698,7 +706,7 @@ export class LLMClient {
         model: this.backend.model,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         messages: resolved as any,
-        max_tokens: opts.maxTokens ?? this.backend.maxTokens,
+        ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(canUseTools
           ? {
@@ -832,7 +840,7 @@ export class LLMClient {
           model: this.backend.model,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           messages: resolvedForStream as any,
-          max_tokens: opts.maxTokens ?? this.backend.maxTokens,
+          ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           ...(canUseTools
             ? {
