@@ -7,6 +7,7 @@
 import { connect } from "net";
 import { createInterface } from "node:readline";
 import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
+import type { InboundMessage } from "../connectors/base.js";
 
 export interface SendOptions {
   sessionId: string;
@@ -410,6 +411,80 @@ function simpleLoopRequest(req: IpcRequest, responseType: "loop_paused" | "loop_
         try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
         if (resp.type === responseType) {
           settle(() => resolve({ found: (resp as { found: boolean }).found }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+export async function sendQQBotMessage(opts: {
+  peerId: string;
+  msgType: InboundMessage["type"];
+  text: string;
+  replyToId?: string;
+}): Promise<void> {
+  const { peerId, msgType, text, replyToId } = opts;
+  return new Promise<void>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "qqbot_send", peerId, msgType, text, ...(replyToId ? { replyToId } : {}) };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === "qqbot_sent") {
+          settle(() => resolve());
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+export async function requestQQBotUserInput(opts: {
+  peerId: string;
+  msgType: InboundMessage["type"];
+  prompt: string;
+  timeoutMs: number;
+}): Promise<string> {
+  const { peerId, msgType, prompt, timeoutMs } = opts;
+  return new Promise<string>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "qqbot_prompt", peerId, msgType, prompt, timeoutMs };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === "qqbot_prompt_result") {
+          settle(() => resolve(resp.answer));
         } else if (resp.type === "error") {
           settle(() => reject(new Error(resp.message)));
         }

@@ -11,9 +11,11 @@
  */
 
 import { loadJobs, removeJob } from "./store.js";
-import { runJob } from "./runner.js";
 import type { CronJob } from "./schema.js";
 import type { Connector } from "../connectors/base.js";
+import { spawn } from "node:child_process";
+
+const CRON_WORKER_SCRIPT = new URL("./worker.ts", import.meta.url).pathname;
 
 // ── 时间工具 ──────────────────────────────────────────────────────────────────
 
@@ -150,12 +152,30 @@ class CronScheduler {
     console.log(`[${ts}] [cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`);
     this.running.add(job.id);
     try {
-      await runJob(job, this.connector);
+      await this.runInWorker(job.id);
     } catch (err) {
       console.error(`[cron] Job ${job.id} failed:`, err);
     } finally {
       this.running.delete(job.id);
     }
+  }
+
+  private async runInWorker(jobId: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("node", ["--import", "tsx/esm", CRON_WORKER_SCRIPT, jobId], {
+        stdio: "inherit",
+        env: process.env,
+        cwd: new URL("../../", import.meta.url).pathname,
+      });
+      child.on("error", reject);
+      child.on("exit", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`cron worker exited abnormally (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+      });
+    });
   }
 }
 

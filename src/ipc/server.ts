@@ -114,6 +114,48 @@ async function handleRequest(
     return;
   }
 
+  if (req.type === "qqbot_send") {
+    if (!connector) {
+      send({ type: "error", message: "QQBot connector 未运行" });
+      return;
+    }
+    const { peerId, msgType, text, replyToId } = req as {
+      type: "qqbot_send";
+      peerId: string;
+      msgType: InboundMessage["type"];
+      text: string;
+      replyToId?: string;
+    };
+    try {
+      await connector.send(peerId, msgType, text, replyToId);
+      send({ type: "qqbot_sent" });
+    } catch (err) {
+      send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (req.type === "qqbot_prompt") {
+    if (!connector) {
+      send({ type: "error", message: "QQBot connector 未运行" });
+      return;
+    }
+    const { peerId, msgType, prompt, timeoutMs } = req as {
+      type: "qqbot_prompt";
+      peerId: string;
+      msgType: InboundMessage["type"];
+      prompt: string;
+      timeoutMs: number;
+    };
+    try {
+      const answer = await connector.requestUserInput(peerId, msgType, prompt, timeoutMs);
+      send({ type: "qqbot_prompt_result", answer });
+    } catch (err) {
+      send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ── loop_trigger 请求：立即触发指定 loop session 的一次 tick ──────────────
   if (req.type === "loop_trigger") {
     const { sessionId: loopSid } = req as { type: "loop_trigger"; sessionId: string };

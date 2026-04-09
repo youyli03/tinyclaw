@@ -19,8 +19,16 @@ interface PendingMFA {
   verifyCode?: ((code: string) => boolean) | undefined;
 }
 
+interface PendingInput {
+  resolve: (input: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 /** peerId → 待确认的 MFA 请求 */
 const pendingMFAMap = new Map<string, PendingMFA>();
+/** peerId → 等待用户原始输入（由后台 runtime 经 IPC 请求） */
+const pendingInputMap = new Map<string, PendingInput>();
 
 export class QQBotConnector implements Connector {
   private handler: ((msg: InboundMessage) => Promise<string>) | null = null;
@@ -88,6 +96,16 @@ export class QQBotConnector implements Connector {
           }
         }
 
+        const pendingInput = pendingInputMap.get(msg.peerId);
+        if (pendingInput) {
+          const text = msg.content.trim();
+          pendingInputMap.delete(msg.peerId);
+          clearTimeout(pendingInput.timer ?? undefined);
+          pendingInput.resolve(text);
+          void this.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
+          return "已收到，处理中...";
+        }
+
         try {
           const reply = await this.handler(msg);
           if (reply) {
@@ -112,6 +130,25 @@ export class QQBotConnector implements Connector {
 
     // 把 onMFARequest 挂载到 handler，下母过语上不够，通过 startGateway 回调的 onMessage 已处理
     void mfaTimeoutMs; // used in closure above
+  }
+
+  requestUserInput(
+    peerId: string,
+    type: InboundMessage["type"],
+    prompt: string,
+    timeoutMs: number,
+  ): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+            pendingInputMap.delete(peerId);
+            reject(new MFAError("等待用户输入超时，操作已取消"));
+            void this.send(peerId, type, "⏰ 等待输入超时，操作已自动取消").catch((e: unknown) => console.error("[qqbot] send error:", e));
+          }, timeoutMs)
+        : null;
+      pendingInputMap.set(peerId, { resolve, reject, timer });
+      void this.send(peerId, type, prompt).catch((e: unknown) => console.error("[qqbot] send error:", e));
+    });
   }
 
   /** 对指定 peerId 设置 MFA 请求，等待用户回复 */

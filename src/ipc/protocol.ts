@@ -41,6 +41,8 @@ export type IpcRequest =
   | { type: "list" }
   | { type: "new"; agentId?: string }
   | { type: "cron_trigger"; jobId: string }
+  | { type: "qqbot_send"; peerId: string; msgType: "c2c" | "group" | "guild" | "dm"; text: string; replyToId?: string }
+  | { type: "qqbot_prompt"; peerId: string; msgType: "c2c" | "group" | "guild" | "dm"; prompt: string; timeoutMs: number }
   | { type: "memorize"; sessionId: string }
   /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
   | { type: "loop_trigger"; sessionId: string }
@@ -65,6 +67,8 @@ export type IpcResponse =
   | { type: "error"; message: string }
   | { type: "sessions"; sessions: SessionInfo[] }
   | { type: "created"; sessionId: string }
+  | { type: "qqbot_sent" }
+  | { type: "qqbot_prompt_result"; answer: string }
   /** MFA 确认请求：服务端向客户端发送，等待用户回复 */
   | { type: "mfa_request"; warningMessage: string }
   | { type: "cron_triggered"; jobId: string }

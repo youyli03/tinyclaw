@@ -16,6 +16,11 @@ import { registerCommand } from "../commands/registry.js";
 import { agentManager } from "../core/agent-manager.js";
 import { Session } from "../core/session.js";
 
+function denyWhileRunning(session: Session): string | null {
+  if (!session.running && !session.currentRunPromise) return null;
+  return "⚠️ 当前有任务正在运行，不能在运行中切换模式或子模式，请等待完成后再试。";
+}
+
 // ── /code ─────────────────────────────────────────────────────────────────────
 
 registerCommand({
@@ -24,6 +29,8 @@ registerCommand({
   usage: "/code",
   modes: ["chat"],
   execute({ session }) {
+    const denied = denyWhileRunning(session);
+    if (denied) return denied;
     if (session.mode === "code") {
       return "ℹ️ 已处于 Code 模式。发送 `/chat` 可返回聊天模式。";
     }
@@ -78,6 +85,8 @@ registerCommand({
   usage: "/chat",
   modes: ["code"],
   execute({ session }) {
+    const denied = denyWhileRunning(session);
+    if (denied) return denied;
     if (session.mode === "chat") {
       return "ℹ️ 已处于聊天模式。发送 `/code` 可切换到 Code 模式。";
     }
@@ -110,6 +119,8 @@ registerCommand({
   usage: "/plan",
   modes: ["code"],
   execute({ session }) {
+    const denied = denyWhileRunning(session);
+    if (denied) return denied;
     if (session.codeSubMode === "plan") {
       return "ℹ️ 已处于 Plan 子模式。发送 `/auto` 可切换回直接执行模式。";
     }
@@ -133,6 +144,8 @@ registerCommand({
   usage: "/auto",
   modes: ["code"],
   execute({ session }) {
+    const denied = denyWhileRunning(session);
+    if (denied) return denied;
     if (session.codeSubMode === "auto") {
       return "ℹ️ 已处于 Auto 子模式（默认）。发送 `/plan` 可切换到规划子模式。";
     }
@@ -208,4 +221,3 @@ registerCommand({
     ].join("\n");
   },
 });
-

@@ -13,7 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
-import type { Connector } from "../connectors/base.js";
+import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
 import { parseModelSymbol } from "../llm/registry.js";
@@ -42,6 +42,21 @@ const CRON_AGENT_SYSTEM = `## ⚠️ 你正在以【自动化 cron 任务】身�
 
 ### 输出规范（关键）
 8. **输出实际内容，禁止摘要**：你的最终文字回复将直接推送给用户，必须包含从工具中获取到的实际数据（如天气数值、查询结果、执行输出等），**严禁只输出"已执行"、"任务完成"、"操作成功"等摘要语句替代真实内容**`;
+
+export interface CronRuntimeBridge {
+  send(
+    peerId: string,
+    msgType: InboundMessage["type"],
+    message: string,
+    replyToId?: string
+  ): Promise<void>;
+  requestUserInput?(
+    peerId: string,
+    msgType: InboundMessage["type"],
+    prompt: string,
+    timeoutMs: number
+  ): Promise<string>;
+}
 
 // ── 构建 LLM override client（cron job 指定 model 时使用）──────────────────────
 
@@ -171,7 +186,7 @@ async function runPipelineJob(
 
 // ── 执行单个 Job ──────────────────────────────────────────────────────────────
 
-export async function runJob(job: CronJob, connector: Connector | null): Promise<void> {
+export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Promise<void> {
   const now = new Date().toISOString();
 
   // Pipeline 模式强制使用 stateful session（步骤间需共享上下文）
@@ -194,16 +209,19 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
   // MFA 处理：exempt = 自动通过，否则透传给 connector（如无 connector 则自动通过）
   const onMFARequest = job.mfaExempt
     ? async () => true
-    : connector && job.output.peerId
+    : bridge && job.output.peerId && bridge.requestUserInput
       ? async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
-          return (connector as import("../connectors/qqbot/index.js").QQBotConnector)
-            .buildMFARequest(
-              job.output.peerId!,
-              job.output.msgType,
-              warningMsg,
-              60_000,
-              verifyCode,
-            );
+          const answer = await bridge.requestUserInput!(
+            job.output.peerId!,
+            job.output.msgType,
+            warningMsg,
+            60_000,
+          );
+          if (verifyCode) {
+            const digits = answer.replace(/\s/g, "");
+            return /^\d{6}$/.test(digits) && verifyCode(digits);
+          }
+          return /^确认$|^y$|^yes$/i.test(answer.trim());
         }
       : async () => true;
 
@@ -212,9 +230,9 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
 
   const overrideClient = await buildOverrideClient(job);
 
-  const notifyFn = connector && job.output.peerId
+  const notifyFn = bridge && job.output.peerId
     ? async (message: string) => {
-        await connector.send(job.output.peerId!, job.output.msgType, message);
+        await bridge.send(job.output.peerId!, job.output.msgType, message);
       }
     : undefined;
 
@@ -251,9 +269,9 @@ export async function runJob(job: CronJob, connector: Connector | null): Promise
     }
   })();
 
-  if (shouldNotify && connector && job.output.peerId && job.output.sessionId) {
+  if (shouldNotify && bridge && job.output.peerId && job.output.sessionId) {
     try {
-      await connector.send(job.output.peerId, job.output.msgType, resultText);
+      await bridge.send(job.output.peerId, job.output.msgType, resultText);
     } catch (err) {
       console.error(`[cron] 推送结果失败 job=${job.id}:`, err);
     }

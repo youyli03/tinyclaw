@@ -87,6 +87,15 @@ registerCommand({
       `当前状态：${isRunning ? "⏳ 运行中" : "✅ 空闲"}`,
     ];
 
+    const waitingStates: string[] = [];
+    if (session.pendingPlanApproval) waitingStates.push("📋 等待 Plan 审批");
+    if (session.pendingAskUser) waitingStates.push("🤔 等待 ask_user 回复");
+    if (session.pendingApproval) waitingStates.push("🔐 等待 MFA 确认");
+    if (session.pendingSlaveQuestion) waitingStates.push("🪢 等待子任务提问回复");
+    if (waitingStates.length > 0) {
+      lines.push(`等待态：${waitingStates.join(" / ")}`);
+    }
+
     // ── 后台任务概览 ─────────────────────────────────────────────────────────
     const slaves = slaveManager.listAll();
     if (slaves.length > 0) {
@@ -427,4 +436,3 @@ registerCommand({
     return "↩️ 正在重试（复用上次请求 ID，不额外计费）...";
   },
 });
-
