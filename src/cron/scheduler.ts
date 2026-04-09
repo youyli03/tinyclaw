@@ -13,7 +13,8 @@
 import { loadJobs, removeJob } from "./store.js";
 import type { CronJob } from "./schema.js";
 import type { Connector } from "../connectors/base.js";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import type { CronWorkerResponse } from "./worker-protocol.js";
 
 const CRON_WORKER_SCRIPT = new URL("./worker.ts", import.meta.url).pathname;
 
@@ -45,9 +46,16 @@ class CronScheduler {
   private timers = new Map<string, ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>>();
   /** 正在执行的 jobId 集合（并发保护：同一 job 不允许多个实例同时运行） */
   private running = new Set<string>();
+  /** 长驻 cron runtime 子进程 */
+  private worker: ChildProcess | null = null;
+  /** worker 启动中的 Promise，避免并发重复拉起 */
+  private workerReady: Promise<void> | null = null;
+  private nextRequestId = 0;
+  private pendingRuns = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
 
   async start(connector: Connector | null): Promise<void> {
     this.connector = connector;
+    await this.ensureWorker();
     const jobs = loadJobs();
     for (const job of jobs) {
       if (job.enabled) this.scheduleJob(job);
@@ -61,6 +69,15 @@ class CronScheduler {
       clearInterval(handle as ReturnType<typeof setInterval>);
     }
     this.timers.clear();
+    for (const { reject } of this.pendingRuns.values()) {
+      reject(new Error("cron runtime stopped"));
+    }
+    this.pendingRuns.clear();
+    if (this.worker) {
+      this.worker.kill("SIGTERM");
+      this.worker = null;
+    }
+    this.workerReady = null;
     console.log("[cron] Scheduler stopped");
   }
 
@@ -161,21 +178,84 @@ class CronScheduler {
   }
 
   private async runInWorker(jobId: string): Promise<void> {
+    await this.ensureWorker();
+    const requestId = `req_${++this.nextRequestId}_${Date.now()}`;
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("node", ["--import", "tsx/esm", CRON_WORKER_SCRIPT, jobId], {
-        stdio: "inherit",
+      this.pendingRuns.set(requestId, { resolve, reject });
+      if (!this.worker?.send) {
+        this.pendingRuns.delete(requestId);
+        reject(new Error("cron runtime IPC channel unavailable"));
+        return;
+      }
+      this.worker.send({ type: "run", requestId, jobId }, (err) => {
+        if (!err) return;
+        this.pendingRuns.delete(requestId);
+        reject(err);
+      });
+    });
+  }
+
+  private async ensureWorker(): Promise<void> {
+    if (this.worker && this.worker.connected) return;
+    if (this.workerReady) return this.workerReady;
+
+    this.workerReady = new Promise<void>((resolve, reject) => {
+      const child = spawn("node", ["--import", "tsx/esm", CRON_WORKER_SCRIPT], {
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
         env: process.env,
         cwd: new URL("../../", import.meta.url).pathname,
       });
-      child.on("error", reject);
-      child.on("exit", (code, signal) => {
-        if (code === 0) {
+      this.worker = child;
+      let ready = false;
+
+      const failPending = (message: string) => {
+        for (const [requestId, pending] of this.pendingRuns) {
+          pending.reject(new Error(message));
+          this.pendingRuns.delete(requestId);
+        }
+      };
+
+      child.on("message", (msg: CronWorkerResponse) => {
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "ready") {
+          ready = true;
+          console.log("[cron] Persistent runtime ready");
           resolve();
           return;
         }
-        reject(new Error(`cron worker exited abnormally (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+        if (msg.type === "job_done") {
+          const pending = this.pendingRuns.get(msg.requestId);
+          if (!pending) return;
+          this.pendingRuns.delete(msg.requestId);
+          pending.resolve();
+          return;
+        }
+        if (msg.type === "job_error") {
+          const pending = this.pendingRuns.get(msg.requestId);
+          if (!pending) return;
+          this.pendingRuns.delete(msg.requestId);
+          pending.reject(new Error(msg.message));
+        }
+      });
+
+      child.on("error", (err) => {
+        this.worker = null;
+        this.workerReady = null;
+        failPending(`cron runtime error: ${err.message}`);
+        if (!ready) reject(err);
+      });
+
+      child.on("exit", (code, signal) => {
+        this.worker = null;
+        this.workerReady = null;
+        failPending(`cron runtime exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+        if (!ready) {
+          reject(new Error(`cron runtime exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+        }
       });
     });
+
+    return this.workerReady;
   }
 }
 
