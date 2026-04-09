@@ -95,6 +95,8 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 ## 工具使用
 
 - **内置工具**（exec_shell / write_file / edit_file / read_file / code_assist 等）——直接调用，无需请求许可
+- \`exec_shell\` 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
+- build / test / install / 全仓扫描 / 大型下载等长任务，不要直接使用默认 60 秒
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
 - **并行调用**：多个独立工具操作时，**必须在同一轮并行调用**，减少往返次数
   - ✅ 适合并行：读取不同文件（\`read_file\`）、独立只读命令（\`grep/cat/ls/find\`）、\`mcp_*\` 查询
@@ -120,6 +122,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
 - **需求模糊时**：调用 ask_user 工具向用户提问，提供 2～4 个预设选项，不要盲目假设后执行
 - **语法检查（必须）**：每次写入或修改代码文件后，立即用 exec_shell 执行对应语法/编译检查，通过后再提交变更；若检查失败须修复后重新检查直到通过。常用命令参考：
+- 若语法检查、测试或构建预计超过 60 秒，执行时必须显式设置更长的 \`timeout_sec\`
   - TypeScript：\`tsc --noEmit\`
   - ESLint：\`eslint <files>\`
   - Python：\`python -m py_compile <file>\` 或 \`mypy <file>\`
@@ -200,6 +203,8 @@ Plan 模式分为两个严格隔离的阶段：
 ## 工具使用
 
 - **内置工具**（exec_shell / read_file / code_assist 等）——分析阶段仅用只读操作
+- \`exec_shell\` 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
+- build / test / install / 全仓扫描 / 大型下载等长任务，不要直接使用默认 60 秒
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
 - **并行调用**：多个独立工具操作时，**必须在同一轮并行调用**，减少往返次数
   - ✅ 适合并行：读取不同文件（\`read_file\`）、独立只读命令（\`grep/cat/ls/find\`）、\`mcp_*\` 查询
@@ -221,6 +226,7 @@ Plan 模式分为两个严格隔离的阶段：
 
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
+- 执行测试、构建、安装依赖等长命令时，必须根据任务规模主动设置合适的 \`timeout_sec\`
 - **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**严禁**自行执行任何重启或终止进程的操作（包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等）。tinyclaw 进程的生命周期由用户统一管理，完成修改后告知用户即可，由用户决定何时重启。
 - **规划过程中遇到需求歧义或多个合理方向时**：调用 ask_user 工具向用户提问，提供 2～4 个预设选项，明确后再继续规划；不要把模糊假设写入计划
 

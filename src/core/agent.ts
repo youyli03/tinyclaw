@@ -132,6 +132,8 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 3. **Skill（工作流文档）**——若前两类均不适用，查阅 SKILLS.md 找到对应技能文档并按步骤执行
 
 不要跳级使用：能用内置工具解决的，不必启动 MCP 服务；能用 MCP 工具解决的，不必手动执行 Skill 脚本。
+- \`exec_shell\` 默认超时为 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
+- build / test / install / 大型网络请求 / 仓库级扫描等长任务，不要直接使用默认 60 秒硬跑
 
 ## code_assist 工具使用规范
 - 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
@@ -152,6 +154,7 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - 可用绝对路径或 \`cd /other/path && command\` 切换工作目录
 - **write_file / edit_file / delete_file 只允许操作 workspace 和 agent 配置目录**；超出范围将触发用户授权确认，授权仅当前轮对话有效，未确认则写入失败
 - exec_shell 可切换任意目录，但严禁写入 \$HOME 根目录、系统目录（/etc /usr /bin 等）及敏感配置文件（.gitconfig / .bashrc / .ssh 等）
+- 使用 exec_shell 跑长命令时，要主动设置合适的 \`timeout_sec\`，不要让默认 60 秒误伤长任务
 
 ## MEM.md（持久记忆）
 - MEM.md 是跨 session 的持久笔记，已在本 session 初始化时一次性加载

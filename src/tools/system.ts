@@ -17,19 +17,55 @@ function expandHome(p: string): string {
 
 /** exec_shell 输出最大字符数，超出时截断并附注原始大小，防止超大输出撑爆 session 上下文 */
 const MAX_EXEC_OUTPUT = 8_000;
+const DEFAULT_EXEC_TIMEOUT_SEC = 60;
+const EXEC_TIMEOUT_KILL_GRACE_MS = 1_000;
+
+function parseExecTimeoutSec(raw: unknown): number | string {
+  if (raw == null || raw === "") return DEFAULT_EXEC_TIMEOUT_SEC;
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    return `错误：timeout_sec 必须是正整数，当前值为 ${JSON.stringify(raw)}`;
+  }
+  return value;
+}
+
+function formatExecOutput(stdout: string, stderr: string): string {
+  let output = [stdout, stderr ? `[stderr] ${stderr}` : ""]
+    .filter(Boolean)
+    .join("\n");
+  const originalLength = output.length;
+  if (originalLength > MAX_EXEC_OUTPUT) {
+    output = output.slice(0, MAX_EXEC_OUTPUT) +
+      `\n[…输出已截断：共 ${originalLength} 字符，仅显示前 ${MAX_EXEC_OUTPUT} 字符]`;
+  }
+  return output;
+}
 
 async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
-
-  const timeoutMs = 0; // 不超时，允许长时间运行的命令
+  const parsedTimeoutSec = parseExecTimeoutSec(args["timeout_sec"]);
+  if (typeof parsedTimeoutSec === "string") return parsedTimeoutSec;
+  const timeoutSec = parsedTimeoutSec;
+  const timeoutMs = timeoutSec * 1000;
 
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    let killHandle: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    let settled = false;
+
+    const finish = (message: string) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (killHandle) clearTimeout(killHandle);
+      resolve(message);
+    };
 
     const child = spawn("bash", ["-c", command], {
-      timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
       ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
     });
@@ -43,21 +79,40 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
     child.stdout.on("data", (d: Buffer) => chunks.push(d));
     child.stderr.on("data", (d: Buffer) => errChunks.push(d));
 
-    child.on("close", (code) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      const terminated = child.kill("SIGTERM");
+      if (!terminated) {
+        const stdout = Buffer.concat(chunks).toString("utf-8").trim();
+        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
+        const partial = formatExecOutput(stdout, stderr);
+        const timeoutMsg = `执行超时：命令在 ${timeoutSec} 秒后仍未结束，且未能发送终止信号。`;
+        finish(partial ? `${timeoutMsg}\n\n[部分输出]\n${partial}` : timeoutMsg);
+        return;
+      }
+      killHandle = setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, EXEC_TIMEOUT_KILL_GRACE_MS);
+    }, timeoutMs);
+
+    child.on("close", (code, signal) => {
       const stdout = Buffer.concat(chunks).toString("utf-8").trim();
       const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
-      let output = [stdout, stderr ? `[stderr] ${stderr}` : ""]
-        .filter(Boolean)
-        .join("\n");
-      if (output.length > MAX_EXEC_OUTPUT) {
-        output = output.slice(0, MAX_EXEC_OUTPUT) +
-          `\n[…输出已截断：共 ${output.length} 字符，仅显示前 ${MAX_EXEC_OUTPUT} 字符]`;
+      const output = formatExecOutput(stdout, stderr);
+      if (timedOut) {
+        const timeoutMsg = `执行超时：命令在 ${timeoutSec} 秒后仍未结束，已终止进程。`;
+        finish(output ? `${timeoutMsg}\n\n[部分输出]\n${output}` : timeoutMsg);
+        return;
       }
-      resolve(output || `（退出码 ${code}，无输出）`);
+      if (output) {
+        finish(output);
+        return;
+      }
+      finish(signal ? `（进程被信号 ${signal} 终止，无输出）` : `（退出码 ${code}，无输出）`);
     });
 
     child.on("error", (err) => {
-      resolve(`执行失败：${err.message}`);
+      finish(`执行失败：${err.message}`);
     });
   });
 }
@@ -68,11 +123,19 @@ registerTool({
     type: "function",
     function: {
       name: "exec_shell",
-      description: "在本机执行 shell 命令（需要 MFA 确认）。",
+      description:
+        `在本机执行 shell 命令（需要 MFA 确认）。默认超时 ${DEFAULT_EXEC_TIMEOUT_SEC} 秒；` +
+        "对于 build/test/install/长网络请求等长任务，必须显式传入更大的 timeout_sec。",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "要执行的 bash 命令" },
+          timeout_sec: {
+            type: "integer",
+            description:
+              `命令超时时间（秒，可选，默认 ${DEFAULT_EXEC_TIMEOUT_SEC}）。` +
+              "预计超过 1 分钟的命令必须显式设置更大的值，例如构建、测试、安装依赖。",
+          },
         },
         required: ["command"],
       },
