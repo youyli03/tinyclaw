@@ -982,13 +982,16 @@ export async function runAgent(
     const flushResults = (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
       for (const { call, result } of pairs) {
         if (!textMode) {
-          session.addToolResultMessage(call.callId, result);
-          // read_image tool 返回 data URL 时，额外追加一条 user image_url 消息
-          // 使视觉模型在下一轮能直接看到图片内容
+          // read_image tool 返回 data URL 时，改用路径引用存储，避免 base64 写入 JSONL
+          // 从 call.args 取原始路径，tool result 存路径占位，注入 image_path 供 resolveMessagesForApi 按需编码
           if (call.name === "read_image" && result.startsWith("data:image/")) {
-            session.addUserMessage([
-              { type: "image_url", image_url: { url: result, detail: "auto" } },
-            ]);
+            const origPath = String((call.args as Record<string, unknown>)["path"] ?? "");
+            session.addToolResultMessage(call.callId, origPath ? `[图片已加载: ${origPath}]` : result);
+            if (origPath) {
+              session.addUserMessage([{ type: "image_path", path: origPath }]);
+            }
+          } else {
+            session.addToolResultMessage(call.callId, result);
           }
         } else {
           session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
