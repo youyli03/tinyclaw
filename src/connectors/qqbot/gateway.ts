@@ -38,7 +38,7 @@ const INTENT_LEVELS = [
 
 // ── 重连参数 ─────────────────────────────────────────────────────────────────
 
-const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 30000, 60000];
+const RECONNECT_DELAYS = [1000, 2000, 5000, 10000];
 const RATE_LIMIT_DELAY = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 100;
 const QUICK_DISCONNECT_THRESHOLD = 5000;
