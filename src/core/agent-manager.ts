@@ -106,6 +106,14 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "workspace");
   }
 
+  /** 列出所有已创建的 agent id（agents/ 目录下的所有子目录名） */
+  listAgentIds(): string[] {
+    if (!fs.existsSync(AGENTS_ROOT)) return [];
+    return fs.readdirSync(AGENTS_ROOT, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  }
+
   downloadsDir(id: string): string {
     return path.join(AGENTS_ROOT, id, "workspace", "downloads");
   }

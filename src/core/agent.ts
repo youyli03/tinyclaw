@@ -19,7 +19,7 @@ import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 import { readFeedback } from "./feedback-writer.js";
 import { sanitizeUserInput } from "../tools/sanitize.js";
-import { parseSkillsIndex } from "../tools/skill-run.js";
+import { skillRegistry } from "../skills/registry.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/code-assist.js";
@@ -307,12 +307,13 @@ function loadAgentMem(agentId: string): string | undefined {
   return content.length > 0 ? content : undefined;
 }
 
-/** 读取 Agent 的 SKILLS.md（文件不存在时返回 undefined） */
+/** 读取 Agent 的 SKILLS.md 文本（供 system prompt 使用，走缓存） */
 function loadAgentSkills(agentId: string): string | undefined {
+  // skillRegistry 缓存解析结果；多并发 session 不会重复 I/O
   const p = agentManager.skillsPath(agentId);
   if (!existsSync(p)) return undefined;
-  const content = readFileSync(p, "utf-8").trim();
-  return content.length > 0 ? content : undefined;
+  const text = readFileSync(p, "utf-8").trim();
+  return text.length > 0 ? text : undefined;
 }
 
 /** 读取 Agent 的 SYSTEM.md（文件不存在时返回 undefined） */
@@ -326,11 +327,9 @@ function loadAgentSystemPrompt(agentId: string): string | undefined {
 // ── Skill Reminder 辅助函数 ──────────────────────────────────────────────────
 
 /** 构建 skill reminder 文本（name + 一行描述列表），无 skill 时返回 null */
+/** 构建 skill reminder 文本（走 skillRegistry 缓存，无 skill 时返回 null） */
 function buildSkillReminder(agentId: string): string | null {
-  const entries = parseSkillsIndex(agentId);
-  if (entries.length === 0) return null;
-  const lines = entries.map((e) => `- ${e.name}: ${e.description}`).join("\n");
-  return `[可用技能]\n${lines}\n\n匹配用户需求时，使用 skill_run 工具执行对应技能，而不是自行尝试。`;
+  return skillRegistry.getPromptSnapshot(agentId) ?? null;
 }
 
 /**

@@ -6,6 +6,7 @@ import { agentManager } from "../core/agent-manager.js";
 import { getJob } from "./store.js";
 import { runJob } from "./runner.js";
 import { ChatRuntimeBridge } from "./runtime-bridge.js";
+import { skillRegistry } from "../skills/registry.js";
 import type { CronJob } from "./schema.js";
 import type { CronWorkerRequest, CronWorkerResponse } from "./worker-protocol.js";
 
@@ -58,6 +59,9 @@ async function main(): Promise<void> {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "run") {
       void handleRun(msg.requestId, msg.jobId);
+    } else if (msg.type === "skills_changed") {
+      // 主进程 watcher 通知 skill 文件已变更，刷新本进程缓存
+      skillRegistry.refresh(msg.agentId);
     }
   });
 

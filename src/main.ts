@@ -38,6 +38,7 @@ import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
+import { skillWatcher } from "./skills/watcher.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
@@ -93,6 +94,9 @@ async function main(): Promise<void> {
   // 初始化 Agent 工作区（确保 default agent 存在）
   agentManager.ensureDefault();
   console.log("[tinyclaw] Agent workspace ready");
+
+  // 启动 skill subsystem watcher（主进程；cron worker 通过 IPC 接收失效通知）
+  void skillWatcher.start(agentManager.listAgentIds());
 
   // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
   let connector: QQBotConnector | null = null;

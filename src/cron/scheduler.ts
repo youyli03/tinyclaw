@@ -15,6 +15,8 @@ import type { CronJob } from "./schema.js";
 import type { Connector } from "../connectors/base.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { CronWorkerResponse } from "./worker-protocol.js";
+import { skillWatcher } from "../skills/watcher.js";
+import { agentManager } from "../core/agent-manager.js";
 
 const CRON_WORKER_SCRIPT = new URL("./worker.ts", import.meta.url).pathname;
 
@@ -61,6 +63,14 @@ class CronScheduler {
       if (job.enabled) this.scheduleJob(job);
     }
     console.log(`[cron] Scheduler started (${jobs.filter((j) => j.enabled).length} active jobs)`);
+
+    // 启动 skill watcher，变更时同步通知 cron worker 刷新缓存
+    const agentIds = agentManager.listAgentIds();
+    await skillWatcher.start(agentIds, (agentId) => {
+      if (this.worker?.connected) {
+        this.worker.send({ type: "skills_changed", agentId });
+      }
+    });
   }
 
   stop(): void {

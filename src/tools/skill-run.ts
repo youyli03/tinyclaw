@@ -11,73 +11,21 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { registerTool, type ToolContext } from "./registry.js";
 import { Session } from "../core/session.js";
+import { skillRegistry, type SkillEntry } from "../skills/registry.js";
 
-const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
-
-/** SKILLS.md 中解析出的单条 skill 索引 */
-interface SkillEntry {
-  name: string;
-  description: string;
-  docPath: string;
-}
+// ── 兼容旧调用方的 re-export ─────────────────────────────────────────────
 
 /**
- * 解析 SKILLS.md，提取所有 skill 条目。
- * 支持格式：
- *   ## 标题 (`skill-name`)
- *   - 介绍/文档: skills/xxx/SKILL.md
- *   - 使用场景: ...
+ * @deprecated 请改用 skillRegistry.getEntries(agentId)
+ * 保留此函数仅为向后兼容，内部已走缓存。
  */
 export function parseSkillsIndex(agentId: string): SkillEntry[] {
-  const skillsPath = path.join(AGENTS_ROOT, agentId, "SKILLS.md");
-  if (!fs.existsSync(skillsPath)) return [];
-
-  const content = fs.readFileSync(skillsPath, "utf-8");
-  const agentDir = path.join(AGENTS_ROOT, agentId);
-  const entries: SkillEntry[] = [];
-
-  // 按 ## 分块
-  const blocks = content.split(/^## /m).slice(1);
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    const headerLine = lines[0] ?? "";
-
-    // 提取 skill name：优先从反引号提取，fallback 用标题
-    const nameMatch = headerLine.match(/`([^`]+)`/);
-    const name = nameMatch ? nameMatch[1]! : headerLine.trim().toLowerCase().replace(/\s+/g, "-");
-    if (!name) continue;
-
-    // 提取文档路径（支持相对路径和绝对路径）
-    let docPath = "";
-    for (const line of lines) {
-      const docMatch = line.match(/[-*]\s*(?:介绍\/文档|文档|doc(?:ument)?|path):\s*(.+)/i);
-      if (docMatch) {
-        const raw = docMatch[1]!.trim();
-        docPath = path.isAbsolute(raw) ? raw : path.join(agentDir, raw);
-        break;
-      }
-    }
-    if (!docPath) continue;
-
-    // 提取描述（使用场景 > 描述 > fallback 标题）
-    let description = "";
-    for (const line of lines) {
-      const sceneMatch = line.match(/[-*]\s*(?:使用场景|场景|描述|description|when.to.use):\s*(.+)/i);
-      if (sceneMatch) {
-        description = sceneMatch[1]!.trim();
-        break;
-      }
-    }
-    if (!description) description = headerLine.replace(/`[^`]+`/, "").trim();
-
-    entries.push({ name, description, docPath });
-  }
-  return entries;
+  return skillRegistry.getEntries(agentId);
 }
+
+export type { SkillEntry };
 
 registerTool({
   requiresMFA: false,
