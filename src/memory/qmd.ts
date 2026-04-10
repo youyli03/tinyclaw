@@ -8,7 +8,7 @@
  * searchMemory() 实现四层增强:
  * 1. 混合搜索:BM25(searchLex) × 0.3 + 向量(searchVector) × 0.7,互补精确与语义
  * 2. 时间衰减:指数衰减 e^(-λ×days),半衰期 30 天,旧记忆自然淡出
- * 3. 常青记忆(Evergreen):MEM.md / ACTIVE.md / MEMORY.md 等核心文件豁免衰减,永远保持全权重
+ * 3. 常青记忆(Evergreen):MEM.md / ACTIVE.md / cards 等核心文件豁免衰减,永远保持全权重
  * 4. MMR 多样性重排:Jaccard 集合相似度去冗余,避免同一文档多段占满结果
  */
 
@@ -18,37 +18,24 @@ import * as os from "node:os";
 import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult, SearchResult } from "@tobilu/qmd";
 import { loadConfig, loadMemStoresConfig } from "../config/loader.js";
 import { agentManager } from "../core/agent-manager.js";
+import { CARD_TYPES, type MemoryCardType } from "./cards.js";
 
-// ── 时间衰减常量 ──────────────────────────────────────────────────────────────
-
-/** 半衰期(天),30 天后分数衰减为原来的 50% */
 const DECAY_HALF_LIFE_DAYS = 30;
-/** 衰减系数 λ = ln(2) / T1⁄2 */
 const DECAY_LAMBDA = Math.LN2 / DECAY_HALF_LIFE_DAYS;
-
-/** 混合搜索权重:向量 */
 const WEIGHT_VECTOR = 0.7;
-/** 混合搜索权重:BM25 */
 const WEIGHT_LEX = 0.3;
-
-/** MMR 多样性参数 λ(越大越倾向相关性,越小越倾向多样性) */
 const MMR_LAMBDA = 0.7;
 const ROUTED_FETCH_LIMIT_FACTOR = 2;
 
 const MEMORY_COLLECTION = "memory";
 const ACTIVE_COLLECTION = "active";
+const CARDS_COLLECTION = "cards";
 
-/**
- * 常青记忆路径关键词列表:匹配这些路径的 chunk 豁免时间衰减。
- * 对应 MEM.md(持久偏好)、ACTIVE.md(近期活跃上下文)、MEMORY.md(精华知识)等长期稳定文件。
- */
-const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "mem.md", "active.md", "memory.md"];
+const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "/cards/", "mem.md", "active.md", "memory.md"];
 
 type MemoryQueryKind = "preference_query" | "active_context_query" | "decision_query" | "profile_query" | "general_query";
-type MemorySource = "长期记忆" | "当前活跃上下文" | "近期日记";
+type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记";
 type SearchCandidate = SearchResult & { blendedScore: number; decayedScore: number; memorySource: MemorySource };
-
-// ── 工具函数 ──────────────────────────────────────────────────────────────────
 
 function classifyMemoryQuery(query: string): MemoryQueryKind {
   const q = query.toLowerCase();
@@ -67,11 +54,21 @@ function classifyMemoryQuery(query: string): MemoryQueryKind {
   return "general_query";
 }
 
-/**
- * 从 SearchResult 的 filepath / displayPath 或 modifiedAt 中推断文档日期。
- * 优先使用 modifiedAt(ISO 字符串),fallback 到路径名中的 YYYY-MM-DD 模式。
- * 无法解析时返回 null(调用方应按今天处理,即 daysAgo=0,不衰减)。
- */
+function queryCardTypes(kind: MemoryQueryKind): MemoryCardType[] {
+  switch (kind) {
+    case "preference_query":
+      return ["preference", "constraint", "routine"];
+    case "active_context_query":
+      return ["open_loop", "task_state"];
+    case "decision_query":
+      return ["decision", "pattern", "project_fact"];
+    case "profile_query":
+      return ["profile", "relationship", "routine"];
+    default:
+      return [...CARD_TYPES];
+  }
+}
+
 function extractDateFromResult(r: SearchResult): Date | null {
   const modifiedAt = (r as unknown as { modifiedAt?: string }).modifiedAt;
   if (modifiedAt) {
@@ -104,18 +101,14 @@ function tokenize(text: string): Set<string> {
   const tokens = new Set<string>();
   const words = text.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
   for (const w of words) tokens.add(w);
-  for (let i = 0; i + 3 <= text.length; i++) {
-    tokens.add(text.slice(i, i + 3));
-  }
+  for (let i = 0; i + 3 <= text.length; i++) tokens.add(text.slice(i, i + 3));
   return tokens;
 }
 
 function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let intersection = 0;
-  for (const t of a) {
-    if (b.has(t)) intersection++;
-  }
+  for (const t of a) if (b.has(t)) intersection++;
   return intersection / (a.size + b.size - intersection);
 }
 
@@ -125,15 +118,13 @@ function applyMMR<T extends SearchResult & { decayedScore: number; blendedScore:
   lambda = MMR_LAMBDA
 ): T[] {
   if (candidates.length <= k) return candidates;
-
-  const allTokenSets: Set<string>[] = candidates.map((r) => tokenize(r.body ?? ""));
+  const allTokenSets = candidates.map((r) => tokenize(r.body ?? ""));
   const available = new Array<boolean>(candidates.length).fill(true);
   const selectedOriginalIndices: number[] = [];
 
   while (selectedOriginalIndices.length < k) {
     let bestIdx = -1;
     let bestMMRScore = -Infinity;
-
     for (let i = 0; i < candidates.length; i++) {
       if (!available[i]) continue;
       const relevance = candidates[i]!.decayedScore;
@@ -148,7 +139,6 @@ function applyMMR<T extends SearchResult & { decayedScore: number; blendedScore:
         bestIdx = i;
       }
     }
-
     if (bestIdx === -1) break;
     available[bestIdx] = false;
     selectedOriginalIndices.push(bestIdx);
@@ -161,9 +151,7 @@ const storeMap = new Map<string, QMDStore>();
 const storeInitLock = new Map<string, Promise<QMDStore | null>>();
 
 function expandHome(p: string): string {
-  if (p.startsWith("~/") || p === "~") {
-    return path.join(os.homedir(), p.slice(2));
-  }
+  if (p.startsWith("~/") || p === "~") return path.join(os.homedir(), p.slice(2));
   return p;
 }
 
@@ -173,7 +161,6 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
 
   const existing = storeMap.get(agentId);
   if (existing) return existing;
-
   const inflight = storeInitLock.get(agentId);
   if (inflight) return inflight;
 
@@ -188,16 +175,10 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
     process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
 
     const { createStore } = await import("@tobilu/qmd");
-
     const collections: Record<string, { path: string; pattern: string }> = {
-      [MEMORY_COLLECTION]: {
-        path: agentMemDir,
-        pattern: "**/*.md",
-      },
-      [ACTIVE_COLLECTION]: {
-        path: path.dirname(agentManager.activePath(agentId)),
-        pattern: "ACTIVE.md",
-      },
+      [MEMORY_COLLECTION]: { path: agentMemDir, pattern: "**/*.md" },
+      [ACTIVE_COLLECTION]: { path: path.dirname(agentManager.activePath(agentId)), pattern: "ACTIVE.md" },
+      [CARDS_COLLECTION]: { path: agentManager.cardsDir(agentId), pattern: "**/*.md" },
     };
 
     const memStoresCfg = loadMemStoresConfig();
@@ -205,10 +186,7 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
       if (!store.enabled) continue;
       const storePath = expandHome(store.path);
       fs.mkdirSync(storePath, { recursive: true });
-      collections[store.name] = {
-        path: storePath,
-        pattern: store.pattern,
-      };
+      collections[store.name] = { path: storePath, pattern: store.pattern };
     }
 
     const s = await createStore({
@@ -240,39 +218,37 @@ async function hybridSearchCollection(
     s.searchVector(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
     s.searchLex(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
   ]);
-
   if (vecResults.length === 0 && lexResults.length === 0) return [];
 
   const blendMap = new Map<string, SearchResult & { blendedScore: number }>();
-
   for (const r of vecResults) {
     const key = r.filepath ?? r.displayPath;
     const weighted = r.score * WEIGHT_VECTOR;
     const existing = blendMap.get(key);
-    if (!existing || existing.blendedScore < weighted) {
-      blendMap.set(key, { ...r, blendedScore: weighted });
-    }
+    if (!existing || existing.blendedScore < weighted) blendMap.set(key, { ...r, blendedScore: weighted });
   }
-
   for (const r of lexResults) {
     const key = r.filepath ?? r.displayPath;
     const weighted = r.score * WEIGHT_LEX;
     const existing = blendMap.get(key);
-    if (existing) {
-      existing.blendedScore += weighted;
-    } else {
-      blendMap.set(key, { ...r, blendedScore: weighted });
-    }
+    if (existing) existing.blendedScore += weighted;
+    else blendMap.set(key, { ...r, blendedScore: weighted });
   }
 
   const now = new Date();
-  return Array.from(blendMap.values())
-    .map((r) => ({
-      ...r,
-      decayedScore: r.blendedScore * decayFactor(r, now),
-      memorySource: source,
-    }))
-    .sort((a, b) => b.decayedScore - a.decayedScore);
+  return Array.from(blendMap.values()).map((r) => ({
+    ...r,
+    decayedScore: r.blendedScore * decayFactor(r, now),
+    memorySource: source,
+  })).sort((a, b) => b.decayedScore - a.decayedScore);
+}
+
+async function searchCardsByType(s: QMDStore, query: string, limit: number, types: MemoryCardType[]): Promise<SearchCandidate[]> {
+  const results = await hybridSearchCollection(s, CARDS_COLLECTION, query, Math.max(limit * 2, limit), "相关卡片");
+  return results.filter((r) => {
+    const body = (r.body ?? "").toLowerCase();
+    return types.some((type) => body.includes(`type: ${type}`));
+  });
 }
 
 function formatMemorySections(results: SearchCandidate[]): string {
@@ -284,7 +260,7 @@ function formatMemorySections(results: SearchCandidate[]): string {
     groups.set(r.memorySource, existing);
   }
 
-  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "近期日记"];
+  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记"];
   const sections: string[] = [];
   for (const source of orderedSources) {
     const group = groups.get(source);
@@ -297,7 +273,6 @@ function formatMemorySections(results: SearchCandidate[]): string {
     });
     sections.push(`## ${source}\n\n${lines.join("\n\n---\n\n")}`);
   }
-
   return sections.join("\n\n");
 }
 
@@ -329,12 +304,12 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
     candidates.push(...activeResults);
   }
 
+  const cardResults = await searchCardsByType(s, query, limit, queryCardTypes(kind));
+  candidates.push(...cardResults.slice(0, limit));
+
   const diaryResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
-  if (kind === "active_context_query") {
-    candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
-  } else {
-    candidates.push(...diaryResults.slice(0, limit));
-  }
+  if (kind === "active_context_query") candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
+  else candidates.push(...diaryResults.slice(0, limit));
 
   if (candidates.length === 0) return "";
   const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
@@ -359,12 +334,10 @@ export async function rebuildMemoryIndex(
   const s = await getQMDStore(agentId);
   if (!s) return null;
   const updateResult = await s.update({
-    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION],
+    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
-  const embedResult = await s.embed(
-    onEmbedProgress ? { onProgress: onEmbedProgress } : undefined
-  );
+  const embedResult = await s.embed(onEmbedProgress ? { onProgress: onEmbedProgress } : undefined);
   return { update: updateResult, embed: embedResult };
 }
 
@@ -375,24 +348,16 @@ export async function closeQMDStore(): Promise<void> {
   storeMap.clear();
 }
 
-export async function searchStore(
-  name: string,
-  query: string,
-  agentId = "default",
-  limit = 8
-): Promise<string | null> {
+export async function searchStore(name: string, query: string, agentId = "default", limit = 8): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
-
   const results = await s.searchVector(query, { limit, collection: name });
   if (results.length === 0) return "";
-
   const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
     const preview = (r.body ?? "").trim();
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
   });
-
   return `## Store: ${name} 搜索结果\n\n${lines.join("\n\n---\n\n")}`;
 }
 

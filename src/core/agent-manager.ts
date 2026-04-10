@@ -90,6 +90,10 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, id, "ACTIVE.md");
   }
 
+  cardsDir(id: string): string {
+    return path.join(AGENTS_ROOT, id, "cards");
+  }
+
   skillsPath(id: string): string {
     return path.join(AGENTS_ROOT, id, "SKILLS.md");
   }
