@@ -38,6 +38,7 @@ import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
+import { tinyclawSubmitter } from "./core/tinyclaw-submitter.js";
 import { skillWatcher } from "./skills/watcher.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
@@ -698,6 +699,9 @@ async function main(): Promise<void> {
   // 7. 启动内置每日记忆维护调度器
   memoryMaintenance.start();
 
+  // 8. 启动内置 ~/.tinyclaw 配置仓库自动提交调度器
+  tinyclawSubmitter.start();
+
   // 8. 启动 Web Dashboard（若配置启用）
   if (cfg.web.enabled) {
     startDashboard(cfg.web.port, cfg.web.token);
@@ -715,6 +719,7 @@ async function main(): Promise<void> {
     cronScheduler.stop();
     loopRunner.stop();
     memoryMaintenance.stop();
+    tinyclawSubmitter.stop();
     stopCollector();
     stopDashboard();
     if (connector) await connector.stop();
