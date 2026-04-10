@@ -1,15 +1,15 @@
 /**
  * QMD 向量记忆存储
  *
- * 每个 Agent 拥有独立的 QMDStore，存储在 ~/.tinyclaw/agents/<id>/memory/
+ * 每个 Agent 拥有独立的 QMDStore,存储在 ~/.tinyclaw/agents/<id>/memory/
  * dbPath = agents/<id>/memory/index.sqlite
- * 集合监控 agents/<id>/memory/*.md（压缩摘要文件）
+ * 集合监控 agents/<id>/memory/*.md(压缩摘要文件)
  *
- * searchMemory() 实现四层增强：
- * 1. 混合搜索：BM25(searchLex) × 0.3 + 向量(searchVector) × 0.7，互补精确与语义
- * 2. 时间衰减：指数衰减 e^(-λ×days)，半衰期 30 天，旧记忆自然淡出
- * 3. 常青记忆（Evergreen）：MEM.md / MEMORY.md 等核心文件豁免衰减，永远保持全权重
- * 4. MMR 多样性重排：Jaccard 集合相似度去冗余，避免同一文档多段占满结果
+ * searchMemory() 实现四层增强:
+ * 1. 混合搜索:BM25(searchLex) × 0.3 + 向量(searchVector) × 0.7,互补精确与语义
+ * 2. 时间衰减:指数衰减 e^(-λ×days),半衰期 30 天,旧记忆自然淡出
+ * 3. 常青记忆(Evergreen):MEM.md / ACTIVE.md / MEMORY.md 等核心文件豁免衰减,永远保持全权重
+ * 4. MMR 多样性重排:Jaccard 集合相似度去冗余,避免同一文档多段占满结果
  */
 
 import * as fs from "node:fs";
@@ -17,43 +17,67 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult, SearchResult } from "@tobilu/qmd";
 import { loadConfig, loadMemStoresConfig } from "../config/loader.js";
+import { agentManager } from "../core/agent-manager.js";
 
 // ── 时间衰减常量 ──────────────────────────────────────────────────────────────
 
-/** 半衰期（天），30 天后分数衰减为原来的 50% */
+/** 半衰期(天),30 天后分数衰减为原来的 50% */
 const DECAY_HALF_LIFE_DAYS = 30;
-/** 衰减系数 λ = ln(2) / T½ */
+/** 衰减系数 λ = ln(2) / T1⁄2 */
 const DECAY_LAMBDA = Math.LN2 / DECAY_HALF_LIFE_DAYS;
 
-/** 混合搜索权重：向量 */
+/** 混合搜索权重:向量 */
 const WEIGHT_VECTOR = 0.7;
-/** 混合搜索权重：BM25 */
+/** 混合搜索权重:BM25 */
 const WEIGHT_LEX = 0.3;
 
-/** MMR 多样性参数 λ（越大越倾向相关性，越小越倾向多样性） */
+/** MMR 多样性参数 λ(越大越倾向相关性,越小越倾向多样性) */
 const MMR_LAMBDA = 0.7;
+const ROUTED_FETCH_LIMIT_FACTOR = 2;
+
+const MEMORY_COLLECTION = "memory";
+const ACTIVE_COLLECTION = "active";
 
 /**
- * 常青记忆路径关键词列表：匹配这些路径的 chunk 豁免时间衰减。
- * 对应 MEM.md（持久偏好）、MEMORY.md（精华知识）、patterns.md（模式总结）等长期稳定文件。
+ * 常青记忆路径关键词列表:匹配这些路径的 chunk 豁免时间衰减。
+ * 对应 MEM.md(持久偏好)、ACTIVE.md(近期活跃上下文)、MEMORY.md(精华知识)等长期稳定文件。
  */
-const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "MEMORY.md", "patterns.md", "mem.md", "memory.md"];
+const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "mem.md", "active.md", "memory.md"];
+
+type MemoryQueryKind = "preference_query" | "active_context_query" | "decision_query" | "profile_query" | "general_query";
+type MemorySource = "长期记忆" | "当前活跃上下文" | "近期日记";
+type SearchCandidate = SearchResult & { blendedScore: number; decayedScore: number; memorySource: MemorySource };
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 
+function classifyMemoryQuery(query: string): MemoryQueryKind {
+  const q = query.toLowerCase();
+  if (/(喜欢|偏好|默认|不要|每次都要|习惯|风格|简洁|详细)/.test(query) || /(prefer|default|don't|style|habit)/.test(q)) {
+    return "preference_query";
+  }
+  if (/(最近|当前|现在|做到哪了|还在跟进吗|未完成|正在做|近况)/.test(query)) {
+    return "active_context_query";
+  }
+  if (/(为什么|当时怎么定|原因|决策|为什么这么做)/.test(query)) {
+    return "decision_query";
+  }
+  if (/(我之前提过谁|我一般|我的习惯|关系|家人|朋友|身份)/.test(query)) {
+    return "profile_query";
+  }
+  return "general_query";
+}
+
 /**
  * 从 SearchResult 的 filepath / displayPath 或 modifiedAt 中推断文档日期。
- * 优先使用 modifiedAt（ISO 字符串），fallback 到路径名中的 YYYY-MM-DD 模式。
- * 无法解析时返回 null（调用方应按今天处理，即 daysAgo=0，不衰减）。
+ * 优先使用 modifiedAt(ISO 字符串),fallback 到路径名中的 YYYY-MM-DD 模式。
+ * 无法解析时返回 null(调用方应按今天处理,即 daysAgo=0,不衰减)。
  */
 function extractDateFromResult(r: SearchResult): Date | null {
-  // 优先：modifiedAt 字段
   const modifiedAt = (r as unknown as { modifiedAt?: string }).modifiedAt;
   if (modifiedAt) {
     const d = new Date(modifiedAt);
     if (!isNaN(d.getTime())) return d;
   }
-  // Fallback：从 filepath 或 displayPath 中用正则提取 YYYY-MM-DD
   const pathStr = r.filepath ?? r.displayPath ?? "";
   const m = pathStr.match(/(\d{4}-\d{2}-\d{2})/);
   if (m) {
@@ -63,46 +87,29 @@ function extractDateFromResult(r: SearchResult): Date | null {
   return null;
 }
 
-/**
- * 判断某条搜索结果是否属于常青记忆（豁免时间衰减）。
- * 检查 displayPath 和 filepath 是否包含任意常青关键词。
- */
 function isEvergreen(r: SearchResult): boolean {
   const combined = `${r.filepath ?? ""}|${r.displayPath ?? ""}`;
   return EVERGREEN_PATH_KEYWORDS.some((kw) => combined.includes(kw));
 }
 
-/**
- * 计算时间衰减因子。
- * 常青记忆返回 1.0（无衰减）；其余按指数模型计算。
- */
 function decayFactor(r: SearchResult, now: Date): number {
   if (isEvergreen(r)) return 1.0;
   const date = extractDateFromResult(r);
-  if (!date) return 1.0; // 无法解析日期，不衰减
+  if (!date) return 1.0;
   const daysAgo = Math.max(0, (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
   return Math.exp(-DECAY_LAMBDA * daysAgo);
 }
 
-/**
- * 将文本分词为 token 集合，用于 Jaccard 相似度计算。
- * 使用空格拆分 + 3-gram 字符切片，兼顾英文词语和中文短语。
- */
 function tokenize(text: string): Set<string> {
   const tokens = new Set<string>();
-  // 空格拆分（英文词）
   const words = text.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
   for (const w of words) tokens.add(w);
-  // 3-gram（中文及连续字符）
   for (let i = 0; i + 3 <= text.length; i++) {
     tokens.add(text.slice(i, i + 3));
   }
   return tokens;
 }
 
-/**
- * 计算两个 token 集合的 Jaccard 相似度（0~1）。
- */
 function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let intersection = 0;
@@ -112,23 +119,14 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return intersection / (a.size + b.size - intersection);
 }
 
-/**
- * MMR（Maximal Marginal Relevance）多样性重排。
- * 每轮从候选集中选择 score×λ - maxSimilarity×(1-λ) 最大的结果，直到选出 k 条。
- * @param candidates 已按 decayedScore 降序排列的候选列表
- * @param k 最终选出条数
- * @param lambda 相关性 vs 多样性权衡（0=纯多样，1=纯相关）
- */
-function applyMMR(
-  candidates: Array<SearchResult & { decayedScore: number; blendedScore: number }>,
+function applyMMR<T extends SearchResult & { decayedScore: number; blendedScore: number }>(
+  candidates: T[],
   k: number,
   lambda = MMR_LAMBDA
-): Array<SearchResult & { decayedScore: number; blendedScore: number }> {  if (candidates.length <= k) return candidates;
+): T[] {
+  if (candidates.length <= k) return candidates;
 
-  // 预计算所有候选的 token 集合，按原始下标索引（避免移动元素后丢失映射）
   const allTokenSets: Set<string>[] = candidates.map((r) => tokenize(r.body ?? ""));
-
-  // 用 available 布尔数组标记哪些候选尚未被选中
   const available = new Array<boolean>(candidates.length).fill(true);
   const selectedOriginalIndices: number[] = [];
 
@@ -139,7 +137,6 @@ function applyMMR(
     for (let i = 0; i < candidates.length; i++) {
       if (!available[i]) continue;
       const relevance = candidates[i]!.decayedScore;
-      // 与已选集合的最大 Jaccard 相似度
       let maxSim = 0;
       for (const selIdx of selectedOriginalIndices) {
         const sim = jaccard(allTokenSets[i]!, allTokenSets[selIdx]!);
@@ -152,7 +149,7 @@ function applyMMR(
       }
     }
 
-    if (bestIdx === -1) break; // 所有候选已选完
+    if (bestIdx === -1) break;
     available[bestIdx] = false;
     selectedOriginalIndices.push(bestIdx);
   }
@@ -161,14 +158,8 @@ function applyMMR(
 }
 
 const storeMap = new Map<string, QMDStore>();
-// Per-agentId initialization lock: prevents concurrent createStore calls that
-// trigger a Bun race condition where top-level await in db.js isn't settled yet,
-// leaving _Database undefined when multiple dynamic imports happen simultaneously.
 const storeInitLock = new Map<string, Promise<QMDStore | null>>();
 
-/**
- * 内部：展开 ~ 为用户主目录
- */
 function expandHome(p: string): string {
   if (p.startsWith("~/") || p === "~") {
     return path.join(os.homedir(), p.slice(2));
@@ -183,34 +174,32 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   const existing = storeMap.get(agentId);
   if (existing) return existing;
 
-  // If another concurrent caller is already initializing this agentId, wait for it.
   const inflight = storeInitLock.get(agentId);
   if (inflight) return inflight;
 
   const init = (async (): Promise<QMDStore | null> => {
-    // Re-check after acquiring the lock slot (another call may have finished).
     const already = storeMap.get(agentId);
     if (already) return already;
 
     const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
     fs.mkdirSync(agentMemDir, { recursive: true });
 
-    // 禁用 Vulkan 编译尝试（此机器无 Vulkan，避免每次启动触发 cmake 噪音）
-    // 必须在 @tobilu/qmd 动态 import 之前设置，否则 node-llama-cpp 已经加载
     process.env["NODE_LLAMA_CPP_GPU"] = "false";
     process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
 
     const { createStore } = await import("@tobilu/qmd");
 
-    // 基础 memory collection
     const collections: Record<string, { path: string; pattern: string }> = {
-      memory: {
+      [MEMORY_COLLECTION]: {
         path: agentMemDir,
         pattern: "**/*.md",
       },
+      [ACTIVE_COLLECTION]: {
+        path: path.dirname(agentManager.activePath(agentId)),
+        pattern: "ACTIVE.md",
+      },
     };
 
-    // 注册 memstores.toml 中启用的额外 store
     const memStoresCfg = loadMemStoresConfig();
     for (const store of memStoresCfg.stores) {
       if (!store.enabled) continue;
@@ -239,33 +228,21 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   }
 }
 
-/**
- * 在指定 Agent 的 QMD 中搜索与 query 相关的历史记忆片段。
- *
- * 四层增强检索流程：
- * 1. 混合搜索：同时调用 searchVector（向量语义）和 searchLex（BM25 关键词），各取 limit×2 条
- * 2. 加权融合：向量结果 ×0.7，BM25 结果 ×0.3，按 filepath 合并取最高分
- * 3. 时间衰减：decayedScore = blendedScore × e^(-λ×daysAgo)；常青文件（MEM.md 等）豁免衰减
- * 4. MMR 重排：Jaccard 集合相似度去冗余，确保结果多样性
- *
- * 返回格式化好的字符串，可直接注入 system prompt。
- * 无结果时返回空字符串；memory 未启用时返回 null。
- */
-export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string | null> {
-  const s = await getQMDStore(agentId);
-  if (!s) return null; // memory 未启用
-
-  // ── 1. 混合搜索：各取 limit×2 条备选，确保融合后有足够候选 ─────────────────
-  const fetchLimit = limit * 2;
+async function hybridSearchCollection(
+  s: QMDStore,
+  collection: string,
+  query: string,
+  limit: number,
+  source: MemorySource
+): Promise<SearchCandidate[]> {
+  const fetchLimit = Math.max(limit * ROUTED_FETCH_LIMIT_FACTOR, limit);
   const [vecResults, lexResults] = await Promise.all([
-    s.searchVector(query, { limit: fetchLimit, collection: "memory" }).catch(() => [] as SearchResult[]),
-    s.searchLex(query, { limit: fetchLimit, collection: "memory" }).catch(() => [] as SearchResult[]),
+    s.searchVector(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
+    s.searchLex(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
   ]);
 
-  if (vecResults.length === 0 && lexResults.length === 0) return "";
+  if (vecResults.length === 0 && lexResults.length === 0) return [];
 
-  // ── 2. 加权融合：按 filepath 为键合并，向量 ×0.7，BM25 ×0.3 ─────────────────
-  // 用 Map 按 filepath 去重，同一 chunk 取加权合并后的最高分
   const blendMap = new Map<string, SearchResult & { blendedScore: number }>();
 
   for (const r of vecResults) {
@@ -282,63 +259,98 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
     const weighted = r.score * WEIGHT_LEX;
     const existing = blendMap.get(key);
     if (existing) {
-      // 同一 chunk 出现在两路结果中：累加得分（体现双重命中的价值）
       existing.blendedScore += weighted;
     } else {
       blendMap.set(key, { ...r, blendedScore: weighted });
     }
   }
 
-  // ── 3. 时间衰减：常青文件豁免，日记文件指数衰减 ──────────────────────────────
-  type BlendedResult = SearchResult & { blendedScore: number };
-  type DecayedResult = BlendedResult & { decayedScore: number };
-
   const now = new Date();
-  const decayed: DecayedResult[] = Array.from(blendMap.values()).map((r) => ({
-    ...r,
-    decayedScore: r.blendedScore * decayFactor(r, now),
-  }));
-
-  // 按 decayedScore 降序排列
-  decayed.sort((a, b) => b.decayedScore - a.decayedScore);
-
-  // ── 4. MMR 多样性重排：避免同文档多段占满结果 ────────────────────────────────
-  const reranked = applyMMR(decayed, limit);
-
-  if (reranked.length === 0) return "";
-
-  // ── 格式化输出 ────────────────────────────────────────────────────────────────
-  const lines = reranked.map((r) => {
-    // 显示原始融合分（不显示衰减后分，避免用户困惑于低分旧记忆）
-    const score = Math.round(r.blendedScore * 100);
-    const evergreen = isEvergreen(r) ? " 🌿" : "";
-    // r.body 即为命中 chunk 的完整文本（QMD 直接在结果中携带）
-    // 注意：r.filepath 是 "qmd://..." 虚拟路径，不能用 fs.readFileSync 读取
-    const preview = (r.body ?? "").trim();
-    return `[${score}%${evergreen}] ${r.title || r.displayPath}\n${preview}`.trim();
-  });
-
-  return `## 相关历史记忆\n\n${lines.join("\n\n---\n\n")}`;
+  return Array.from(blendMap.values())
+    .map((r) => ({
+      ...r,
+      decayedScore: r.blendedScore * decayFactor(r, now),
+      memorySource: source,
+    }))
+    .sort((a, b) => b.decayedScore - a.decayedScore);
 }
 
-/**
- * 触发指定 Agent 的 QMD 增量索引（扫描文件 + 生成 embedding）。
- * 在写入新的压缩摘要后调用。
- */
+function formatMemorySections(results: SearchCandidate[]): string {
+  if (results.length === 0) return "";
+  const groups = new Map<MemorySource, SearchCandidate[]>();
+  for (const r of results) {
+    const existing = groups.get(r.memorySource) ?? [];
+    existing.push(r);
+    groups.set(r.memorySource, existing);
+  }
+
+  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "近期日记"];
+  const sections: string[] = [];
+  for (const source of orderedSources) {
+    const group = groups.get(source);
+    if (!group || group.length === 0) continue;
+    const lines = group.map((r) => {
+      const score = Math.round(r.blendedScore * 100);
+      const evergreen = isEvergreen(r) ? " 🌿" : "";
+      const preview = (r.body ?? "").trim();
+      return `[${score}%${evergreen}] ${r.title || r.displayPath}\n${preview}`.trim();
+    });
+    sections.push(`## ${source}\n\n${lines.join("\n\n---\n\n")}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string | null> {
+  const s = await getQMDStore(agentId);
+  if (!s) return null;
+
+  const kind = classifyMemoryQuery(query);
+  if (kind === "general_query") {
+    const generalResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
+    if (generalResults.length === 0) return "";
+    const reranked = applyMMR(generalResults, limit);
+    if (reranked.length === 0) return "";
+    return `## 近期日记\n\n${reranked.map((r) => {
+      const score = Math.round(r.blendedScore * 100);
+      const evergreen = isEvergreen(r) ? " 🌿" : "";
+      const preview = (r.body ?? "").trim();
+      return `[${score}%${evergreen}] ${r.title || r.displayPath}\n${preview}`.trim();
+    }).join("\n\n---\n\n")}`;
+  }
+
+  const candidates: SearchCandidate[] = [];
+  if (kind === "preference_query" || kind === "decision_query" || kind === "profile_query") {
+    const memResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "长期记忆");
+    candidates.push(...memResults.filter((r) => isEvergreen(r)));
+  }
+  if (kind === "active_context_query" || kind === "preference_query") {
+    const activeResults = await hybridSearchCollection(s, ACTIVE_COLLECTION, query, limit, "当前活跃上下文");
+    candidates.push(...activeResults);
+  }
+
+  const diaryResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
+  if (kind === "active_context_query") {
+    candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
+  } else {
+    candidates.push(...diaryResults.slice(0, limit));
+  }
+
+  if (candidates.length === 0) return "";
+  const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
+  if (reranked.length === 0) return "";
+  return formatMemorySections(reranked);
+}
+
 export async function updateMemoryIndex(agentId = "default"): Promise<void> {
   const s = await getQMDStore(agentId);
   if (!s) return;
-  await s.update({ collections: ["memory"] });
+  await s.update({ collections: [MEMORY_COLLECTION] });
   await s.embed();
 }
 
 export type { UpdateProgress, UpdateResult, EmbedProgress, EmbedResult };
 
-/**
- * 带进度回调的全量重建索引，供 CLI `memory index` 命令使用。
- * 先扫描文件（update），再生成 embedding（embed）。
- * @returns null 表示 memory 未启用
- */
 export async function rebuildMemoryIndex(
   agentId = "default",
   onUpdateProgress?: (info: UpdateProgress) => void,
@@ -347,7 +359,7 @@ export async function rebuildMemoryIndex(
   const s = await getQMDStore(agentId);
   if (!s) return null;
   const updateResult = await s.update({
-    collections: ["memory"],
+    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
   const embedResult = await s.embed(
@@ -363,10 +375,6 @@ export async function closeQMDStore(): Promise<void> {
   storeMap.clear();
 }
 
-/**
- * 在指定 MemStore collection 中做向量搜索。
- * 返回格式化后的 Markdown 字符串，可直接交给 LLM；无结果返回空字符串；未启用返回 null。
- */
 export async function searchStore(
   name: string,
   query: string,
@@ -381,7 +389,6 @@ export async function searchStore(
 
   const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
-    // r.body 即为命中 chunk 的完整文本，r.filepath 是 "qmd://..." 虚拟路径无法直接读取
     const preview = (r.body ?? "").trim();
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
   });
@@ -389,10 +396,6 @@ export async function searchStore(
   return `## Store: ${name} 搜索结果\n\n${lines.join("\n\n---\n\n")}`;
 }
 
-/**
- * 触发指定 MemStore collection 的增量索引更新。
- * 在 MCP server 写入新文件后调用，确保向量库与文件保持同步。
- */
 export async function updateStore(name: string, agentId = "default"): Promise<void> {
   const s = await getQMDStore(agentId);
   if (!s) return;

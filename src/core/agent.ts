@@ -85,6 +85,7 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
       : 'code_assist 调用次数不限制';
   const agentDir = join(workspacePath, '..');
   const memFilePath = join(agentDir, 'MEM.md');
+  const activeFilePath = join(agentDir, 'ACTIVE.md');
   const skillsFilePath = join(agentDir, 'SKILLS.md');
   const chatFeedbackPath = agentManager.feedbackPath(agentId, "chat");
 
@@ -156,15 +157,26 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - exec_shell 可切换任意目录，但严禁写入 \$HOME 根目录、系统目录（/etc /usr /bin 等）及敏感配置文件（.gitconfig / .bashrc / .ssh 等）
 - 使用 exec_shell 跑长命令时，要主动设置合适的 \`timeout_sec\`，不要让默认 60 秒误伤长任务
 
-## MEM.md（持久记忆）
-- MEM.md 是跨 session 的持久笔记，已在本 session 初始化时一次性加载
-- 如需更新，${memWriteDesc}
-- 要获取最新内容（本 session 内被更新过），${memReadDesc}
+## MEM.md(持久记忆)
+- MEM.md 是跨 session 的长期稳定记忆,已在本 session 初始化时一次性加载
+- 它属于 **chat 模式通用记忆**,不仅服务工程/项目任务,也覆盖日常对话、生活场景、长期偏好、关系与习惯
+- 如需更新,${memWriteDesc}
+- 要获取最新内容(本 session 内被更新过),${memReadDesc}
 
 ### 应主动记录到 MEM.md 的内容
-- 用户明确表达的偏好、习惯或固定要求
-- 重要结论、决策和项目关键信息（路径、技术栈、配置等）
-- 跨 session 仍需记住的待办事项
+- 用户明确表达的长期偏好、习惯或固定要求
+- 稳定的人物关系、身份信息、环境信息与长期有效规则
+- 重要结论、长期有效的决策和跨 session 仍需保留的稳定事实
+
+## ACTIVE.md(活跃上下文)
+- ACTIVE.md 用于保存近期活跃的上下文,如最近反复提起的话题、短期未完成事项、最新明确要求
+- 这层同时覆盖生活场景和项目场景,避免把所有短期信息都挤进 MEM.md
+- 若当前 Agent 可用 memory_read_active / memory_write_active,应优先用它们读取或更新 ${activeFilePath}
+
+### 更适合写入 ACTIVE.md 的内容
+- 最近 7~14 天仍在跟进的事项
+- 当前未完成任务、最新目标、短期阻塞点
+- 最近一次用户明确提出、后续仍可能继续提起的要求
 
 ## SKILLS.md（技能目录）
 - SKILLS.md 列出当前 Agent 所知技能和工作流程，已在本 session 初始化时一次性加载
