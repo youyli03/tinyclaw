@@ -105,6 +105,8 @@ async function main(): Promise<void> {
   if (cfg.channels.qqbot) {
     connector = new QQBotConnector();
     _activeConnector = connector;
+    // 注册 connector 到自动提交调度器（通知目标从 config.submitter.notify 读取）
+    tinyclawSubmitter.setConnector(connector);
   } else {
     console.log("[tinyclaw] QQBot not configured, running in IPC-only mode");
   }

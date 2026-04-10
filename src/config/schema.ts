@@ -146,6 +146,23 @@ const ChannelsSchema = z.object({
 
 // ── 向量记忆 ─────────────────────────────────────────────────────────────────
 
+const SubmitterNotifyTargetSchema = z.object({
+  /** QQ 用户/群的 openid / peerId */
+  peerId: z.string().min(1),
+  /** 消息类型，默认 c2c */
+  type: z.enum(["c2c", "group", "guild", "dm"]).default("c2c"),
+});
+
+const SubmitterSchema = z.object({
+  /** 自动提交间隔（秒），默认 4 小时 */
+  intervalSecs: z.number().int().positive().default(4 * 60 * 60),
+  /**
+   * 提交成功后通知的 QQ session 列表。
+   * 示例：[{ peerId = "5E93DFF4A42AFE45D206DEA724E5ECD2", type = "c2c" }]
+   */
+  notify: z.array(SubmitterNotifyTargetSchema).default([]),
+});
+
 const MemorySchema = z.object({
   /**
    * 是否启用向量记忆（需要下载 embedding 模型，首次约 380MB）。
@@ -459,6 +476,7 @@ export const ConfigSchema = z.object({
   auth: AuthSchema.default({}),
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
+  submitter: SubmitterSchema.default({}),
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,
