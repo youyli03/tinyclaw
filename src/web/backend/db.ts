@@ -160,6 +160,18 @@ export function insertMetric(opts: {
       `指标 "${opts.category}/${opts.key}" 未注册，请先用 /metric add ${opts.category}/${opts.key} 注册`
     );
   }
+  // 非负校验：某些指标（如 copilot/remaining）不允许负值
+  const NON_NEGATIVE_METRICS: Array<[string, string]> = [
+    ["copilot", "remaining"],
+  ];
+  if (
+    NON_NEGATIVE_METRICS.some(([c, k]) => c === opts.category && k === opts.key) &&
+    opts.value < 0
+  ) {
+    throw new Error(
+      `指标 "${opts.category}/${opts.key}" 不允许写入负值（value=${opts.value}），已跳过`
+    );
+  }
   const ts = opts.ts ?? Math.floor(Date.now() / 1000);
   db.prepare(
     "INSERT INTO metrics (ts, category, key, value, note) VALUES (?, ?, ?, ?, ?)"

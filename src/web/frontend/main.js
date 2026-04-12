@@ -100,6 +100,49 @@ function timeXAxis(maxTicks = 8) {
   };
 }
 
+// 智能时间轴：根据天数选择合适粒度，避免多天时横轴挤满分钟刻度
+function smartXAxis(days) {
+  days = Number(days) || 1;
+  if (days <= 1) {
+    return {
+      type: 'time',
+      time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+      adapters: { date: {} },
+      grid: { display: false },
+      border: { color: C.border },
+      ticks: { color: C.t3, maxTicksLimit: 8, maxRotation: 0 },
+    };
+  }
+  if (days <= 3) {
+    return {
+      type: 'time',
+      time: { unit: 'hour', displayFormats: { hour: 'MM/DD HH:mm' } },
+      adapters: { date: {} },
+      grid: { display: false },
+      border: { color: C.border },
+      ticks: { color: C.t3, maxTicksLimit: 12, maxRotation: 30 },
+    };
+  }
+  if (days <= 14) {
+    return {
+      type: 'time',
+      time: { unit: 'day', displayFormats: { day: 'MM/DD' } },
+      adapters: { date: {} },
+      grid: { display: false },
+      border: { color: C.border },
+      ticks: { color: C.t3, maxTicksLimit: 14, maxRotation: 0 },
+    };
+  }
+  return {
+    type: 'time',
+    time: { unit: 'day', displayFormats: { day: 'MM/DD' } },
+    adapters: { date: {} },
+    grid: { display: false },
+    border: { color: C.border },
+    ticks: { color: C.t3, maxTicksLimit: 10, maxRotation: 0 },
+  };
+}
+
 function relativeTime(isoOrTs) {
   if (!isoOrTs) return '—';
   const d = new Date(typeof isoOrTs === 'number' ? isoOrTs * 1000 : isoOrTs);
@@ -243,7 +286,7 @@ const app = createApp({
         },
         {
           key: 'copilot', label: '高级请求',
-          value: copilotVal !== '—' ? String(Math.round(Number(copilotVal))) : '—',
+          value: copilotVal !== '—' ? (Number(copilotVal) < 0 ? '—' : String(Math.round(Number(copilotVal)))) : '—',
           sub1: '剩余次数', sub2: '点击查看趋势 →',
           color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
           metricKey: 'copilot/remaining',
@@ -352,7 +395,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: timeXAxis(8),
+                x: smartXAxis(1),
                 y: { ...baseChartOpts().scales.y },
               },
             },
@@ -364,7 +407,7 @@ const app = createApp({
       try {
         const data = await fetch('/api/metrics?category=copilot&key=remaining&days=1').then(r => r.json());
         const rows = data.rows || [];
-        const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
+        const points = rows.filter(r => r.value >= 0).map(r => ({ x: r.ts * 1000, y: r.value }));
         const canvas2 = document.getElementById('chart-copilot');
         if (canvas2) {
           const ctx2 = canvas2.getContext('2d');
@@ -389,7 +432,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: timeXAxis(8),
+                x: smartXAxis(1),
                 y: { ...baseChartOpts().scales.y },
               },
             },
@@ -444,7 +487,7 @@ const app = createApp({
             options: {
               ...baseChartOpts(),
               scales: {
-                x: timeXAxis(8),
+                x: smartXAxis(1),
                 y: { ...baseChartOpts().scales.y, min: 0, max: 100 },
               },
             },
@@ -516,14 +559,14 @@ const app = createApp({
               backgroundColor: grad,
               fill: true,
               tension: 0.4,
-              pointRadius: 0,
+              pointRadius: Number(mDays.value) > 1 ? 2 : 0,
               pointHoverRadius: 5,
             }],
           },
           options: {
             ...baseChartOpts(),
             scales: {
-              x: timeXAxis(6),
+              x: smartXAxis(mDays.value),
               y: { ...baseChartOpts().scales.y },
             },
           },

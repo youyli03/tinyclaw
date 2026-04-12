@@ -363,12 +363,13 @@ export async function getCopilotUserQuota(
     userQuotaCache.set(githubTokenSource, { data: result, ts: Date.now() });
     // 同步写入 dashboard DB（premium_interactions 剩余次数）
     // 写入 dashboard DB（无论 unlimited 与否，每次请求后都记录）
-    if (result.premium_interactions) {
+    // unlimited 账号不写入，避免 -1 污染图表数据
+    if (result.premium_interactions && !result.premium_interactions.unlimited) {
       try {
-        const val = result.premium_interactions.unlimited
-          ? -1  // -1 表示无限制
-          : result.premium_interactions.remaining;
-        insertMetric({ category: "copilot", key: "remaining", value: val });
+        const val = result.premium_interactions.remaining;
+        if (val >= 0) {
+          insertMetric({ category: "copilot", key: "remaining", value: val });
+        }
       } catch {
         // dashboard DB 未初始化时忽略
       }
