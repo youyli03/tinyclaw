@@ -128,6 +128,35 @@ function flatConfigKeys(): string[] {
 }
 
 /**
+ * 渐进式 config key 补全。
+ *
+ * 根据用户已输入的前缀（typed），只返回下一层候选节点，避免一次性展示 100+ 个键。
+ *
+ * 规则：
+ *  - typed 为空 / 不含 "."  → 只返回 depth-1 顶层段（如 llm、auth、memory …）
+ *  - typed 含 "."           → 以 typed+"." 为前缀，取下一层 segment，去重排序
+ */
+function progressiveConfigKeys(typed: string): string[] {
+  const allKeys = flatConfigKeys();
+
+  if (!typed || !typed.includes(".")) {
+    // 只展示顶层段
+    return [...new Set(allKeys.map((k) => k.split(".")[0]!))].sort();
+  }
+
+  // 以 typed + "." 为前缀，取下一层 segment
+  const prefix = typed.endsWith(".") ? typed : typed + ".";
+  const depth = prefix.split(".").length; // 下一层 segment 数量
+
+  const matching = allKeys.filter((k) => k.startsWith(prefix));
+  if (matching.length === 0) return [];
+
+  return [
+    ...new Set(matching.map((k) => k.split(".").slice(0, depth).join("."))),
+  ].sort();
+}
+
+/**
  * --complete 模式：根据已输入的 words（不含 'tinyclaw'），输出补全候选词（每行一个）。
  * Shell 脚本通过 compgen -W 过滤前缀，此处输出全量候选即可。
  */
@@ -135,6 +164,7 @@ function outputCompletions(words: string[]): void {
   // 最后一个 word 是当前正在输入的（可能为空字符串）
   // 之前的 words 是已完成的上下文
   const prev = words.slice(0, -1);
+  const currentWord = words[words.length - 1] ?? "";
   const cmd = prev[0];
   const sub = prev[1];
 
@@ -154,7 +184,8 @@ function outputCompletions(words: string[]): void {
     // （config set 第四个参数是值，不补全）
     const argIdx = prev.length - 2; // prev = [cmd, sub, ...args]
     if (argIdx === 0) {
-      candidates = flatConfigKeys();
+      // 渐进式披露：根据已输入的前缀只返回下一层候选
+      candidates = progressiveConfigKeys(currentWord);
     } else {
       candidates = [];
     }
