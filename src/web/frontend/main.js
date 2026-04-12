@@ -584,7 +584,12 @@ const app = createApp({
         // 等浏览器完成布局，确保 canvas clientWidth 已正确计算
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const chartId = `chart-m-${category}-${key}`;
-        const canvas = document.getElementById(chartId);
+        let canvas = document.getElementById(chartId);
+        // 若 v-if/v-for 还未完成，再等一轮
+        if (!canvas) {
+          await new Promise(r => setTimeout(r, 80));
+          canvas = document.getElementById(chartId);
+        }
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         const h = canvas.clientHeight || 180;

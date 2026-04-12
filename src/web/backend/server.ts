@@ -168,7 +168,12 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 
   const ext = path.extname(fullPath);
   const contentType = MIME[ext] ?? "application/octet-stream";
-  res.writeHead(200, { "Content-Type": contentType });
+  // JS/CSS 文件强制不缓存，确保更新后浏览器立即获取最新版本
+  const noCache = (ext === ".js" || ext === ".css");
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    ...(noCache ? { "Cache-Control": "no-store" } : {}),
+  });
   fs.createReadStream(fullPath).pipe(res);
 }
 
