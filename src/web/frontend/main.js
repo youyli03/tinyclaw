@@ -268,21 +268,22 @@ function drawSparkline(id, data, color) {
 // ── Vue App ───────────────────────────────────────────────────────────────────
 const app = createApp({
   setup() {
-    // ── Pathname 路由：刷新后恢复 tab 与日报状态 ────────────────────────────
+    // ── Hash 路由:刷新后恢复 tab 与日报状态（兼容所有手机浏览器）──────────
     const VALID_PAGES = ['overview', 'metrics', 'reports', 'cron'];
     function parseURL() {
-      const parts = location.pathname.replace(/^\//, '').split('/');
-      // parts[0]: page, parts[1]: rType, parts[2]: rDate
+      const hash = location.hash.replace(/^#\/?/, '');
+      const parts = hash.split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
       return { pg, type: parts[1] || '', date: parts[2] || '' };
     }
     function pushURL(pg, type, date) {
-      let path = '/' + pg;
+      let h = pg;
       if (pg === 'reports' && type) {
-        path += '/' + type;
-        if (date) path += '/' + date;
+        h += '/' + type;
+        if (date) h += '/' + date;
       }
-      if (location.pathname !== path) history.pushState({}, '', path);
+      const next = '#' + h;
+      if (location.hash !== next) location.hash = next;
     }
     const _init = parseURL();
     const page = ref(_init.pg);
@@ -720,7 +721,7 @@ const app = createApp({
       pushURL(pg, pg === 'reports' ? rType.value : '', pg === 'reports' ? rDate.value : '');
       page.value = pg;
     }
-    window.addEventListener('popstate', applyURL);
+    window.addEventListener('hashchange', applyURL);
 
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
     onMounted(async () => {
@@ -765,7 +766,7 @@ const app = createApp({
         clearInterval(refreshTimer);
         clearInterval(timeTimer);
         Object.values(charts).forEach(c => c.destroy());
-        window.removeEventListener('popstate', applyURL);
+        window.removeEventListener('hashchange', applyURL);
       });
     });
 
