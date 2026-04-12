@@ -130,7 +130,7 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 
 1. **内置工具**（exec_shell / write_file / read_file / code_assist 等）——直接调用，响应最快
 2. **MCP 工具**（mcp_* 前缀）——若内置工具无法满足，先用 mcp_list_servers 查看可用服务，再用 mcp_enable_server 激活对应服务后调用其工具
-3. **Skill（工作流文档）**——若前两类均不适用，查阅 SKILLS.md 找到对应技能文档并按步骤执行
+3. **Skill（工作流文档）**——若前两类均不适用，且用户意图与可用技能的 description/trigger_phrases 精确匹配，使用 skill_run 工具执行
 
 不要跳级使用：能用内置工具解决的，不必启动 MCP 服务；能用 MCP 工具解决的，不必手动执行 Skill 脚本。
 - \`exec_shell\` 默认超时为 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
@@ -179,11 +179,12 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - 最近一次用户明确提出、后续仍可能继续提起的要求
 
 ## SKILLS.md（技能目录）
-- SKILLS.md 列出当前 Agent 所知技能和工作流程，已在本 session 初始化时一次性加载
-- 需要执行某个工作流程时：根据 SKILLS.md 中的路径读取对应文档文件并按照执行
+- 可用技能已通过 skill reminder 在每轮注入（XML 格式，含精确文档路径 <doc_path>）
+- 触发 skill 时：**必须先调用 read_file 读取 <doc_path> 文档**，再严格按文档步骤执行，禁止凭记忆执行
+- 触发条件：用户意图需与 <description> 或 <trigger_phrases> 精确匹配，禁止主动猜测
+- disable-model-invocation=true 的 skill：仅可通过 /skill:name 命令显式调用，AI 不得主动触发
 - 如需创建新技能，调用 create_skill 工具获取完整指南
-- 如果 SKILLS.md 中找不到对应技能，应告知用户并询问如何继续
-- 要获取最新 SKILLS.md（本 session 内被更新过），用 exec_shell 执行 cat ${skillsFilePath}
+- 要获取最新技能列表，用 exec_shell 执行 cat ${skillsFilePath}
 
 ## 时效性数据规范（强制）
 - 凡涉及实时或时效性数据（天气、股价、汇率、新闻、系统状态、磁盘空间等），必须先通过工具获取真实数据，再输出结果
