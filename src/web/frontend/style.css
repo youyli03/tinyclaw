@@ -267,10 +267,12 @@ body {
 
 .status-badge {
   display: inline-block;
-  padding: 2px 10px;
+  padding: 2px 8px;
   border-radius: 20px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .status-success  { background: rgba(52,199,117,0.12);  color: var(--green);  }
 .status-running  { background: rgba(255,159,10,0.12);  color: var(--orange); }
@@ -404,10 +406,11 @@ body {
   .metrics-controls { gap: 8px; }
   .metrics-controls select { flex: 1; min-width: 0; }
 
-  /* cron 名称截断宽度收窄 */
-  .cron-item-name { max-width: 180px; }
+  /* cron 状态 badge 不换行，名称省略，调度文本限宽 */
+  .cron-item-name { max-width: 140px; }
   .cron-item-right { gap: 8px; }
-  .cron-item-time { display: none; }  /* 小屏隐藏"上次运行"，保留状态和调度 */
+  .cron-item-time { display: none; }  /* 小屏隐藏"上次运行" */
+  .cron-item-schedule { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* card padding 缩小 */
   .card-header { padding: 12px 14px 0; }
@@ -462,7 +465,7 @@ body {
   transition: background 0.12s;
 }
 .cron-item-header:hover { background: var(--card2); }
-.cron-item-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cron-item-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; }
 .cron-item-name { font-size: 13px; color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .cron-item-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; font-size: 12px; color: var(--t3); }
 .cron-item-schedule { color: var(--accent); font-weight: 500; }
