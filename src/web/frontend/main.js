@@ -271,19 +271,17 @@ const app = createApp({
     // ── Hash 路由:刷新后恢复 tab 与日报状态（兼容所有手机浏览器）──────────
     const VALID_PAGES = ['overview', 'metrics', 'reports', 'cron'];
     function parseURL() {
-      const hash = location.hash.replace(/^#\/?/, '');
-      const parts = hash.split('/');
+      const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
       return { pg, type: parts[1] || '', date: parts[2] || '' };
     }
     function pushURL(pg, type, date) {
-      let h = pg;
+      let p = '/' + pg;
       if (pg === 'reports' && type) {
-        h += '/' + type;
-        if (date) h += '/' + date;
+        p += '/' + type;
+        if (date) p += '/' + date;
       }
-      const next = '#' + h;
-      if (location.hash !== next) location.hash = next;
+      if (location.pathname !== p) history.pushState({}, '', p);
     }
     const _init = parseURL();
     const page = ref(_init.pg);
@@ -574,14 +572,36 @@ const app = createApp({
       }
     }
 
-    async function loadOneMetricChart(category, key) {
+    // 记录每个指标图最后一条数据的 ts（Unix 秒），用于增量请求
+    const metricLastTs = {};
+
+    async function loadOneMetricChart(category, key, incremental = false) {
       try {
-        const data = await fetch(
-          `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`
-        ).then(r => r.json());
-        const rows = data.rows || [];
-        // v-show 下 canvas 始终存在于 DOM，直接获取即可
         const chartId = `chart-m-${category}-${key}`;
+        const ck = `${category}/${key}`;
+        const lastTs = metricLastTs[ck];
+
+        // 增量模式：图表已存在 + 有记录 ts + mDays 未变
+        const useIncremental = incremental && charts[chartId] && lastTs != null;
+        let url = `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`;
+        if (useIncremental) url += `&since=${lastTs}`;
+
+        const data = await fetch(url).then(r => r.json());
+        const rows = data.rows || [];
+
+        if (useIncremental) {
+          // 增量：只 push 新数据进已有图表
+          if (rows.length > 0) {
+            const chart = charts[chartId];
+            const ds = chart.data.datasets[0];
+            for (const r of rows) ds.data.push({ x: r.ts * 1000, y: r.value });
+            metricLastTs[ck] = rows[rows.length - 1].ts;
+            chart.update('none');
+          }
+          return;
+        }
+
+        // 全量：重建图表
         const canvas = document.getElementById(chartId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -593,15 +613,15 @@ const app = createApp({
           type: 'line',
           data: {
             datasets: [{
-              label: `${category}/${key}`,
+              label: ck,
               data: rows.map(r => ({ x: r.ts * 1000, y: r.value })),
               borderColor: C.accent,
-              borderWidth: 2,
+              borderWidth: 1.5,
               backgroundColor: grad,
               fill: true,
               tension: 0.4,
-              pointRadius: Number(mDays.value) > 1 ? 2 : 0,
-              pointHoverRadius: 5,
+              pointRadius: 0,
+              pointHoverRadius: 4,
             }],
           },
           options: {
@@ -612,6 +632,7 @@ const app = createApp({
             },
           },
         });
+        if (rows.length > 0) metricLastTs[ck] = rows[rows.length - 1].ts;
       } catch (e) { console.warn(`loadOneMetricChart ${category}/${key} failed`, e); }
     }
 
@@ -690,9 +711,11 @@ const app = createApp({
       }
     });
 
-    // mDays 变化时重新加载所有图
+    // mDays 变化时全量重载（清空增量 ts 记录）
     watch(mDays, async () => {
       if (page.value === 'metrics') {
+        // 清空增量记录，强制全量请求
+        Object.keys(metricLastTs).forEach(k => delete metricLastTs[k]);
         await loadAllMetricCharts();
       }
     });
@@ -718,7 +741,7 @@ const app = createApp({
       pushURL(pg, pg === 'reports' ? rType.value : '', pg === 'reports' ? rDate.value : '');
       page.value = pg;
     }
-    window.addEventListener('hashchange', applyURL);
+    window.addEventListener('popstate', applyURL);
 
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
     onMounted(async () => {
@@ -761,13 +784,18 @@ const app = createApp({
           await drawOverviewCharts();
           drawSparklines();
         }
+        if (page.value === 'metrics' && metricKeys.value.length) {
+          for (const k of metricKeys.value) {
+            await loadOneMetricChart(k.category, k.key, true); // 增量
+          }
+        }
       }, 30000);
 
       onUnmounted(() => {
         clearInterval(refreshTimer);
         clearInterval(timeTimer);
         Object.values(charts).forEach(c => c.destroy());
-        window.removeEventListener('hashchange', applyURL);
+        window.removeEventListener('popstate', applyURL);
       });
     });
 

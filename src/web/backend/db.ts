@@ -183,12 +183,14 @@ export function queryMetrics(opts: {
   category: string;
   key: string;
   days: number;
+  since?: number; // Unix 秒，若提供则只返回 ts > since 的行（增量）
 }): MetricRow[] {
   const db = openDB();
-  const since = Math.floor(Date.now() / 1000) - opts.days * 86400;
+  const windowSince = Math.floor(Date.now() / 1000) - opts.days * 86400;
+  const since = opts.since != null ? Math.max(opts.since, windowSince) : windowSince;
   return db
     .prepare(
-      "SELECT id, ts, category, key, value, note FROM metrics WHERE category = ? AND key = ? AND ts >= ? ORDER BY ts ASC"
+      "SELECT id, ts, category, key, value, note FROM metrics WHERE category = ? AND key = ? AND ts > ? ORDER BY ts ASC"
     )
     .all(opts.category, opts.key, since) as MetricRow[];
 }

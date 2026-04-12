@@ -75,7 +75,9 @@ export async function handleApi(
         err(res, "缺少 category 或 key 参数");
         return true;
       }
-      const rows = queryMetrics({ category, key, days });
+      const sinceParam = url.searchParams.get("since");
+      const sinceOpts = sinceParam ? { since: parseInt(sinceParam, 10) } : {};
+      const rows = queryMetrics({ category, key, days, ...sinceOpts });
       json(res, { category, key, rows });
       return true;
     }
