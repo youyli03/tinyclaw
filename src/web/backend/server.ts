@@ -23,6 +23,9 @@ const FRONTEND_DIR = path.join(
   "../../web/frontend"
 );
 
+// 服务启动时生成构建版本号，用于给静态资源加 ?v= 防缓存
+const BUILD_TS = Date.now();
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".css":  "text/css; charset=utf-8",
@@ -138,6 +141,20 @@ function go() {
 
 // ── 静态文件服务 ──────────────────────────────────────────────────────────────
 
+function serveIndexHtml(res: http.ServerResponse): void {
+  const indexPath = path.join(FRONTEND_DIR, "index.html");
+  let html = fs.readFileSync(indexPath, "utf-8");
+  // 注入版本号，强制浏览器获取最新 JS/CSS（解决手机/PC 浏览器缓存问题）
+  html = html
+    .replace(/\/main\.js"/g, `/main.js?v=${BUILD_TS}"`)
+    .replace(/\/style\.css"/g, `/style.css?v=${BUILD_TS}"`);
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(html);
+}
+
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
   const parsedUrl = new URL(req.url ?? "/", "http://localhost");
   let filePath = parsedUrl.pathname;
@@ -157,8 +174,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   if (!fs.existsSync(fullPath)) {
     const indexPath = path.join(FRONTEND_DIR, "index.html");
     if (fs.existsSync(indexPath)) {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      fs.createReadStream(indexPath).pipe(res);
+      serveIndexHtml(res);
     } else {
       res.writeHead(404);
       res.end("Not found");
@@ -167,8 +183,13 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   }
 
   const ext = path.extname(fullPath);
+  // index.html 动态注入版本号（强制不缓存 + 给 JS/CSS 加 ?v= 查询参数）
+  if (fullPath.endsWith("index.html")) {
+    serveIndexHtml(res);
+    return;
+  }
   const contentType = MIME[ext] ?? "application/octet-stream";
-  // JS/CSS 文件强制不缓存，确保更新后浏览器立即获取最新版本
+  // JS/CSS 文件强制不缓存,确保更新后浏览器立即获取最新版本
   const noCache = (ext === ".js" || ext === ".css");
   res.writeHead(200, {
     "Content-Type": contentType,

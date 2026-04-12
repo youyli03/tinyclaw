@@ -682,6 +682,7 @@ const app = createApp({
       }
       if (newPage === 'metrics') {
         if (!metricKeys.value.length) await fetchMetricKeys();
+        await nextTick(); // 等 v-show → display:block 生效，canvas 才有尺寸
         await loadAllMetricCharts();
       }
       if (newPage === 'reports') {
@@ -728,16 +729,14 @@ const app = createApp({
       await drawOverviewCharts();
       drawSparklines();
 
-      // 指标页：提前加载 metricKeys，v-show 下 canvas 已存在
-      await fetchMetricKeys();
-      // 用 setTimeout 确保所有 canvas 完成布局后再渲染
-      setTimeout(() => loadAllMetricCharts(), 100);
+      // 指标页:只预取 key 列表，不绘图（display:none 时 canvas 尺寸为 0）
 
+      await fetchMetricKeys();
       // 根据初始 hash 决定首屏（不再需要重复加载数据，只需跳到对应页面）
       if (_init.pg === 'overview') {
         // 已在上面渲染
       } else if (_init.pg === 'metrics') {
-        // 已在上面初始化
+        await loadAllMetricCharts(); // display:block，可以安全绘图
       } else if (_init.pg === 'reports') {
         await fetchReportTypes();
         // fetchReportTypes 内部会 selectReportType -> selectReportDate 自动加载第一条
