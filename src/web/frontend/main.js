@@ -246,24 +246,23 @@ function drawSparkline(id, data, color) {
 // ── Vue App ───────────────────────────────────────────────────────────────────
 const app = createApp({
   setup() {
-    // ── URL Hash 路由：刷新后恢复 tab 与日报状态 ──────────────────────────────
+    // ── Pathname 路由：刷新后恢复 tab 与日报状态 ────────────────────────────
     const VALID_PAGES = ['overview', 'metrics', 'reports', 'cron'];
-    function parseHash() {
-      const raw = window.location.hash.slice(1);
-      const parts = raw.split('/');
-      return {
-        pg:   VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview',
-        type: parts[1] || '',
-        date: parts[2] || '',
-      };
+    function parseURL() {
+      const parts = location.pathname.replace(/^\//, '').split('/');
+      // parts[0]: page, parts[1]: rType, parts[2]: rDate
+      const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
+      return { pg, type: parts[1] || '', date: parts[2] || '' };
     }
-    function buildHash(pg, type, date) {
+    function pushURL(pg, type, date) {
+      let path = '/' + pg;
       if (pg === 'reports' && type) {
-        return '#' + (date ? `reports/${type}/${date}` : `reports/${type}`);
+        path += '/' + type;
+        if (date) path += '/' + date;
       }
-      return '#' + pg;
+      if (location.pathname !== path) history.pushState({}, '', path);
     }
-    const _init = parseHash();
+    const _init = parseURL();
     const page = ref(_init.pg);
 
     // ── 时间 ────────────────────────────────────────────────────────────────
@@ -614,8 +613,7 @@ const app = createApp({
       rDate.value = '';
       reportHtml.value = '';
       if (!skipHash) {
-        const h = buildHash('reports', type, '');
-        if (window.location.hash !== h) window.location.hash = h;
+        pushURL('reports', type, '');
       }
       try {
         const data = await fetch(`/api/reports?type=${encodeURIComponent(type)}`).then(r => r.json());
@@ -630,8 +628,7 @@ const app = createApp({
       rDate.value = date;
       reportHtml.value = '';
       if (!skipHash) {
-        const h = buildHash('reports', rType.value, date);
-        if (window.location.hash !== h) window.location.hash = h;
+        pushURL('reports', rType.value, date);
       }
       try {
         const data = await fetch(
@@ -650,11 +647,11 @@ const app = createApp({
       expandedReports.value = s;
     }
 
-    // 页面切换时绘图 + 同步 hash
+    // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
-      // 更新 hash（不触发 popstate，只改 hash 部分）
-      const h = buildHash(newPage, rType.value, rDate.value);
-      if (window.location.hash !== h) window.location.hash = h;
+      // 更新地址栏（不刷新页面）
+      pushURL(newPage, rType.value, rDate.value);
+
 
       if (newPage === 'overview') {
         await nextTick();
@@ -680,8 +677,8 @@ const app = createApp({
     });
 
     // ── popstate：浏览器前进/后退时同步状态 ──────────────────────────────────
-    function applyHash() {
-      const { pg, type, date } = parseHash();
+    function applyURL() {
+      const { pg, type, date } = parseURL();
       page.value = pg;
       if (pg === 'reports' && type) {
         // 如果 rType 已匹配则只切日期，否则重新加载
@@ -696,7 +693,7 @@ const app = createApp({
         }
       }
     }
-    window.addEventListener('popstate', applyHash);
+    window.addEventListener('popstate', applyURL);
 
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
     onMounted(async () => {
@@ -741,7 +738,7 @@ const app = createApp({
         clearInterval(refreshTimer);
         clearInterval(timeTimer);
         Object.values(charts).forEach(c => c.destroy());
-        window.removeEventListener('popstate', applyHash);
+        window.removeEventListener('popstate', applyURL);
       });
     });
 
