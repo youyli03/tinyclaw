@@ -470,6 +470,16 @@ export interface AgentRunOptions {
    * 传入 streamChat 的 turnRequestIdOverride。
    */
   turnRequestIdOverride?: string;
+  /**
+   * 覆盖本次 run 的 X-Agent-Task-Id。
+   * 供 restart 后续接原任务时复用，避免被服务端识别为新的任务。
+   */
+  agentTaskIdOverride?: string;
+  /**
+   * 将本次 run 的第 0 轮标记为 agent continuation，而非新的用户发起请求。
+   * 供 restart 后续接已有 tool_result 时使用，避免额外消耗 premium request。
+   */
+  continueAsAgentRound?: boolean;
 }
 
 export interface AgentRunResult {
@@ -708,7 +718,8 @@ export async function runAgent(
   // 5. ReAct 循环
   // 每次用户消息生成一个固定 taskId，供所有 round 共享 X-Agent-Task-Id。
   // Copilot 服务端据此将整次 agent 运行识别为同一任务，只对首轮（X-Initiator: user）计费。
-  const agentTaskId = crypto.randomUUID();
+  const agentTaskId = opts.agentTaskIdOverride ?? crypto.randomUUID();
+  session.currentAgentTaskId = agentTaskId;
   let promptExceededRetried = false;  // guard: compress+retry at most once per run
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
@@ -783,7 +794,7 @@ export async function runAgent(
               ? { tools, tool_choice: "auto" }
               : {}),
             signal: llmAc.signal,
-            isUserInitiated: round === 0 && !opts.skipPreamble,
+            isUserInitiated: round === 0 && !opts.skipPreamble && !opts.continueAsAgentRound,
             taskId: agentTaskId,
             _retryHooks: {
               onRetryWait: () => {

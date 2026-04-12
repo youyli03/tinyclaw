@@ -77,7 +77,13 @@ async function restartToolImpl(
         fs.mkdirSync(path.dirname(markerPath), { recursive: true });
         fs.writeFileSync(
           markerPath,
-          JSON.stringify({ peerId, msgType, codeSessionId: sessionId, restartCallId: ctx?.currentCallId ?? "" }),
+          JSON.stringify({
+            peerId,
+            msgType,
+            codeSessionId: sessionId,
+            restartCallId: ctx?.currentCallId ?? "",
+            restartTaskId: ctx?.masterSession?.currentAgentTaskId ?? "",
+          }),
           "utf-8",
         );
       } catch {

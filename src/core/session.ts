@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ChatMessage, ContentPart, ToolCallResult, OpenAIToolCall } from "../llm/client.js";
+import type { ChatMessage, ContentPart, LLMChatMessage, ToolCallResult, OpenAIToolCall } from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode, microCompactMessages } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
@@ -135,6 +135,9 @@ export class Session {
    */
   lastFailedUserContent?: string;
 
+  /** 当前 runAgent() 绑定的 X-Agent-Task-Id，供 restart_tool 在重启后续接原任务使用。 */
+  currentAgentTaskId?: string;
+
   /**
    * /retry 命令设置此字段以请求 main.ts 重新触发 runAgent。
    * main.ts 在命令执行后检查并清除此字段；若非 null 则以原始用户消息内容重新运行。
@@ -196,8 +199,8 @@ export class Session {
    * - 最后一条：展开文件实际内容（执行时始终使用最新 task 文件）
    * - 非最后一条：折叠为单行摘要（减少 token，避免上下文膨胀）
    */
-  getMessagesForLLM(): ChatMessage[] {
-    const result: Array<ChatMessage> = [];
+  getMessagesForLLM(): LLMChatMessage[] {
+    const result: Array<LLMChatMessage> = [];
     // 找到最后一条带 _loopTaskRef 的 user 消息的索引
     let lastLoopIdx = -1;
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -215,9 +218,14 @@ export class Session {
           plain.role === "assistant" &&
           (plain as { role: "assistant"; tool_calls?: unknown[] }).tool_calls?.length
         ) {
-          result.push({ ...plain, content: "" } as ChatMessage);
+          // content 置为 null（不含 content 字段）而非 ""，
+          // 避免 Copilot 的 Claude 路由在转换为 Anthropic 格式时因 content="" 丢失 tool_use block，
+          // 从而导致 "unexpected tool_use_id in tool_result" 400 错误。
+          const { content: _c, ...withoutContent } =
+            plain as Extract<LLMChatMessage, { role: "assistant" }>;
+          result.push(withoutContent);
         } else {
-          result.push(plain as ChatMessage);
+          result.push(plain as LLMChatMessage);
         }
       } else if (i === lastLoopIdx) {
         // 最后一条 loop task 消息：展开文件内容

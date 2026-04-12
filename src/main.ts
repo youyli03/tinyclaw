@@ -745,11 +745,17 @@ async function main(): Promise<void> {
           codeSessionId?: string;
           /** restart_tool 写入的字段：重启前写入的 tool_result 的 callId，重启后用于回填 */
           restartCallId?: string;
+          /** restart_tool 写入的字段：原 run 的 X-Agent-Task-Id，重启后用于续接原任务 */
+          restartTaskId?: string;
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
-          // 1. 发 QQ 通知（原有逻辑）
-          void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，服务已恢复").catch(() => {});
+          // 1. 仅非 code 模式重启才主动发通知。
+          //    code 模式重启(含 codeSessionId)由 resume runAgent 的 result.content 返回结果，
+          //    不额外推送 "✅ 重启完成" 避免重复打扰。
+          if (!marker.codeSessionId) {
+            void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成,服务已恢复").catch(() => {});
+          }
 
           // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后续接 code session
           if (marker.codeSessionId) {
@@ -762,7 +768,11 @@ async function main(): Promise<void> {
                 }
                 codeSession.running = true;
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
-                const resumePromise = runAgent(codeSession, "", { skipAddUserMessage: true });
+                const resumePromise = runAgent(codeSession, "", {
+                  skipAddUserMessage: true,
+                  continueAsAgentRound: true,
+                  ...(marker.restartTaskId ? { agentTaskIdOverride: marker.restartTaskId } : {}),
+                });
                 codeSession.currentRunPromise = resumePromise;
                 resumePromise
                   .then((result) => {

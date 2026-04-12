@@ -22,7 +22,7 @@ import type {
   FunctionTool,
   Response as OpenAIResponse,
 } from "openai/resources/responses/responses";
-import type { ChatMessage, ChatResult, ToolCallResult } from "./client.js";
+import { getContentParts, getTextContent, type ChatResult, type LLMChatMessage, type ToolCallResult } from "./client.js";
 
 // ============================================================
 // Message format converters (Chat Completions ↔ Responses API)
@@ -33,7 +33,7 @@ import type { ChatMessage, ChatResult, ToolCallResult } from "./client.js";
  * Returns the extracted `instructions` (from system messages) and the
  * `input` array (all other messages in Responses API format).
  */
-export function chatMessagesToResponsesInput(messages: ChatMessage[]): {
+export function chatMessagesToResponsesInput(messages: LLMChatMessage[]): {
   instructions: string;
   input: ResponseInputItem[];
 } {
@@ -42,13 +42,7 @@ export function chatMessagesToResponsesInput(messages: ChatMessage[]): {
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      const text =
-        typeof msg.content === "string"
-          ? msg.content
-          : msg.content
-              .filter((p) => p.type === "text")
-              .map((p) => (p as { type: "text"; text: string }).text)
-              .join("\n");
+      const text = getTextContent(msg.content, "\n");
       if (text) systemParts.push(text);
       continue;
     }
@@ -76,13 +70,7 @@ export function chatMessagesToResponsesInput(messages: ChatMessage[]): {
         }
       }
       // If there is also text content, emit as an assistant message
-      const text =
-        typeof msg.content === "string"
-          ? msg.content
-          : msg.content
-              .filter((p) => p.type === "text")
-              .map((p) => (p as { type: "text"; text: string }).text)
-              .join("");
+      const text = getTextContent(msg.content);
       if (text) {
         input.push({
           type: "message",
@@ -106,7 +94,7 @@ export function chatMessagesToResponsesInput(messages: ChatMessage[]): {
           | { type: "input_text"; text: string }
           | { type: "input_image"; image_url: string; detail: "low" | "high" | "auto" }
         )[] = [];
-        for (const p of msg.content) {
+        for (const p of getContentParts(msg.content)) {
           if (p.type === "text") {
             contentList.push({ type: "input_text", text: p.text });
           } else if (p.type === "image_url") {

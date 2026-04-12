@@ -264,6 +264,32 @@ export type ChatMessage =
   | { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
+/**
+ * 发送给 LLM 前的消息形态。
+ * assistant + tool_calls 在 Copilot/Claude 路由下允许省略 content，
+ * 因此这里显式放宽 assistant.content，避免恢复/重放路径依赖不安全断言。
+ */
+export type LLMChatMessage =
+  | { role: "system"; content: string | ContentPart[] }
+  | { role: "user"; content: string | ContentPart[] }
+  | { role: "assistant"; content?: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+export function getContentParts(content: string | ContentPart[] | undefined): ContentPart[] {
+  return Array.isArray(content) ? content : [];
+}
+
+export function getTextContent(
+  content: string | ContentPart[] | undefined,
+  separator = ""
+): string {
+  if (typeof content === "string") return content;
+  return getContentParts(content)
+    .filter((p) => p.type === "text")
+    .map((p) => (p as { type: "text"; text: string }).text)
+    .join(separator);
+}
+
 /** 从 LLM 响应中解析出的单次工具调用 */
 export interface ToolCallResult {
   name: string;
@@ -440,13 +466,14 @@ function pathToDataUrlCompressed(imgPath: string): string | null {
 
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
  *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
-function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
+function resolveMessagesForApi(messages: LLMChatMessage[]): LLMChatMessage[] {
   // 找出最后一条含 image_path 的消息索引（该轮图片正常传输，历史图片丢弃）
   let lastImageMsgIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.role === "tool" || typeof m.content === "string") continue;
-    if (m.content.some((p) => p.type === "image_path")) {
+    if (m.role === "tool") continue;
+    const parts = getContentParts(m.content);
+    if (parts.some((p) => p.type === "image_path")) {
       lastImageMsgIdx = i;
       break;
     }
@@ -456,10 +483,8 @@ function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
   const imagePaths: string[] = [];
   if (lastImageMsgIdx >= 0) {
     const m = messages[lastImageMsgIdx]!;
-    if (typeof m.content !== "string") {
-      for (const p of m.content) {
-        if (p.type === "image_path") imagePaths.push(p.path);
-      }
+    for (const p of getContentParts(m.content)) {
+      if (p.type === "image_path") imagePaths.push(p.path);
     }
   }
 
@@ -483,7 +508,9 @@ function resolveMessagesForApi(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m, idx) => {
     if (m.role === "tool") return m;
     if (typeof m.content === "string") return m;
-    const resolved = m.content.map((p) => {
+    const parts = getContentParts(m.content);
+    if (parts.length === 0) return m;
+    const resolved = parts.map((p) => {
       if (p.type === "image_path") {
         // 历史图片（非最后一条含图消息）直接丢弃，替换为文本提示
         if (idx !== lastImageMsgIdx) {
@@ -606,7 +633,7 @@ export class LLMClient {
    * Throws if streaming fails; caller should check shouldFallbackToHttp().
    */
   private async streamChatViaWebSocket(
-    messages: ChatMessage[],
+    messages: LLMChatMessage[],
     onChunk: (delta: string) => void,
     opts: ChatOptions,
     turnRequestId?: string
@@ -677,7 +704,7 @@ export class LLMClient {
     return this.backend.supportsParallelToolCalls ?? false;
   }
 
-  async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
+  async chat(messages: LLMChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
@@ -771,7 +798,7 @@ export class LLMClient {
    * 内置 withRetry 保护：流中断时自动重试；每 chunk 间有 idle timeout 防止服务端挂起。
    */
   async streamChat(
-    messages: ChatMessage[],
+    messages: LLMChatMessage[],
     onChunk: (delta: string) => void,
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
