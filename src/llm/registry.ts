@@ -149,3 +149,51 @@ class LLMRegistry {
 
 export const llmRegistry = new LLMRegistry();
 
+// ── Premium 白名单工具函数 ────────────────────────────────────────────────────
+
+/**
+ * 判断一个 modelId（不含 provider 前缀）是否属于"高级模型"（消耗 Premium Interactions）。
+ */
+export function isPremiumModel(modelId: string): boolean {
+  const cfg = loadConfig();
+  const allowlist = cfg.llm.premiumAllowlist;
+  if (!allowlist.enabled) return false;
+  return allowlist.premiumModels.includes(modelId);
+}
+
+/**
+ * 构建 fallback LLM client（不消耗 Premium Interactions）。
+ * 失败时返回 undefined（调用方回退到原有逻辑）。
+ */
+export async function buildFallbackClient(): Promise<LLMClient | undefined> {
+  const cfg = loadConfig();
+  const allowlist = cfg.llm.premiumAllowlist;
+  if (!allowlist.enabled || !allowlist.fallbackModel) return undefined;
+  try {
+    const { provider, modelId } = parseModelSymbol(allowlist.fallbackModel);
+    if (provider === "copilot") {
+      const copilotCfg = cfg.providers.copilot;
+      if (!copilotCfg) return undefined;
+      const { client } = await buildCopilotClient({
+        githubToken: copilotCfg.githubToken,
+        model: modelId,
+        timeoutMs: copilotCfg.timeoutMs,
+      });
+      return client;
+    } else if (provider === "openai") {
+      const openaiCfg = cfg.providers.openai;
+      if (!openaiCfg) return undefined;
+      return new LLMClient({
+        baseUrl: openaiCfg.baseUrl,
+        apiKey: openaiCfg.apiKey,
+        model: modelId,
+        maxTokens: openaiCfg.maxTokens,
+        timeoutMs: openaiCfg.timeoutMs,
+      });
+    }
+  } catch {
+    // 构建失败时静默返回 undefined，不影响主流程
+  }
+  return undefined;
+}
+

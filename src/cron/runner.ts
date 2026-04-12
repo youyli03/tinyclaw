@@ -16,7 +16,7 @@ import { runAgent } from "../core/agent.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
-import { parseModelSymbol } from "../llm/registry.js";
+import { parseModelSymbol, isPremiumModel, buildFallbackClient } from "../llm/registry.js";
 import { buildCopilotClient } from "../llm/copilot.js";
 import { LLMClient } from "../llm/client.js";
 import { loadConfig } from "../config/loader.js";
@@ -59,17 +59,47 @@ export interface CronRuntimeBridge {
   ): Promise<string>;
 }
 
-// ── 构建 LLM override client（cron job 指定 model 时使用）──────────────────────
+// ─// ── 构建 LLM override client(cron job 指定 model 时使用)──────────────────────
 
 async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined> {
-  if (!job.model) return undefined;
+  const cfg = loadConfig();
+
+  if (!job.model) {
+    // 未指定 model，走 daily backend，但仍需检查 cron 白名单
+    const allowlist = cfg.llm.premiumAllowlist;
+    if (allowlist.enabled) {
+      const dailyModelId = cfg.llm.backends.daily.model.split("/").pop() ?? "";
+      if (isPremiumModel(dailyModelId) && !allowlist.allowedCronJobs.includes(job.id)) {
+        console.warn(
+          `[cron][premiumGuard] job=${job.id} 不在 cron 白名单，` +
+          `daily 模型 ${cfg.llm.backends.daily.model} → ${allowlist.fallbackModel}`
+        );
+        return buildFallbackClient();
+      }
+    }
+    return undefined;
+  }
+
   try {
     const { provider, modelId } = parseModelSymbol(job.model);
+
+    // ── Premium 白名单检查（job 明确指定了模型）────────────────────────────
+    const allowlist = cfg.llm.premiumAllowlist;
+    if (allowlist.enabled && isPremiumModel(modelId)) {
+      if (!allowlist.allowedCronJobs.includes(job.id)) {
+        console.warn(
+          `[cron][premiumGuard] job=${job.id} 不在 cron 白名单，` +
+          `降级 ${job.model} → ${allowlist.fallbackModel}`
+        );
+        return buildFallbackClient();
+      }
+    }
+    // ── END Premium 白名单检查 ─────────────────────────────────────────────
+
     if (provider === "copilot") {
-      const cfg = loadConfig();
       const copilotCfg = cfg.providers.copilot;
       if (!copilotCfg) {
-        throw new Error("job.model 使用 copilot provider，但 [providers.copilot] 未配置");
+        throw new Error("job.model 使用 copilot provider,但 [providers.copilot] 未配置");
       }
       const { client } = await buildCopilotClient({
         githubToken: copilotCfg.githubToken,
@@ -79,10 +109,9 @@ async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined>
       console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
       return client;
     } else if (provider === "openai") {
-      const cfg = loadConfig();
       const openaiCfg = cfg.providers.openai;
       if (!openaiCfg) {
-        throw new Error("job.model 使用 openai provider，但 [providers.openai] 未配置");
+        throw new Error("job.model 使用 openai provider,但 [providers.openai] 未配置");
       }
       console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
       return new LLMClient({
@@ -96,7 +125,7 @@ async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined>
       throw new Error(`job.model 使用未知 provider "${provider}"`);
     }
   } catch (err) {
-    console.error(`[cron] job=${job.id} 模型初始化失败，回退到 daily：`, err);
+    console.error(`[cron] job=${job.id} 模型初始化失败,回退到 daily:`, err);
     return undefined;
   }
 }

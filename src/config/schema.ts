@@ -75,8 +75,60 @@ const LLMBackendsSchema = z.object({
   summarizer: BackendRoleSchema.optional(),
 });
 
+/**
+ * 高级模型使用白名单。
+ *
+ * 启用后，只有白名单内的 session / cron job 才能使用"高级模型"（消耗 Copilot Premium Interactions）。
+ * 其余 session / cron job 一律强制走 fallbackModel（不消耗 Premium）。
+ *
+ * 配置示例（config.toml）：
+ * ```toml
+ * [llm.premiumAllowlist]
+ * enabled = true
+ * fallbackModel = "copilot/gpt-4o-mini"
+ * premiumModels = ["claude-sonnet-4.5", "claude-sonnet-4.6"]
+ * allowedSessions = ["qqbot:c2c:5E93DFF4A42AFE45D206DEA724E5ECD2"]
+ * allowedCronJobs = []
+ * ```
+ */
+const PremiumAllowlistSchema = z.object({
+  /** 是否启用白名单守卫，默认 false（不限制） */
+  enabled: z.boolean().default(false),
+  /**
+   * 不在白名单时使用的替代模型（格式同后端 model 字段，如 "copilot/gpt-4o-mini"）。
+   * 必须是不消耗 Premium Interactions 的模型。
+   */
+  fallbackModel: z.string().default("copilot/gpt-4o-mini"),
+  /**
+   * 哪些 modelId（不含 provider 前缀）视为"高级模型"，消耗 Premium Interactions。
+   * 精确匹配 modelId 部分（如 "claude-sonnet-4.6"，而非完整的 "copilot/claude-sonnet-4.6"）。
+   */
+  premiumModels: z.array(z.string()).default([]),
+  /**
+   * 允许使用高级模型的 sessionId 白名单（精确匹配）。
+   * chat 模式和 code 模式的 sessionId 相同，通过 isCodeMode 区分。
+   * 示例：["qqbot:c2c:5E93DFF4A42AFE45D206DEA724E5ECD2"]
+   */
+  allowedSessions: z.array(z.string()).default([]),
+  /**
+   * 仅允许白名单 session 在 code 模式下使用高级模型（默认 true）。
+   * true：白名单 session 仅 code 模式允许用高级模型，chat 模式也降级
+   * false：白名单 session 的 chat 和 code 模式均允许使用高级模型
+   */
+  codeOnly: z.boolean().default(true),
+  /**
+   * 允许使用高级模型的 cron job id 白名单。
+   * 示例：["2quff5jh", "hs5xjebl"]
+   */
+  allowedCronJobs: z.array(z.string()).default([]),
+}).default({});
+
+export type PremiumAllowlistConfig = z.infer<typeof PremiumAllowlistSchema>;
+
 const LLMSchema = z.object({
   backends: LLMBackendsSchema,
+  /** 高级模型使用白名单（可选），不配置则不限制 */
+  premiumAllowlist: PremiumAllowlistSchema,
 });
 
 // ── Microsoft MFA ─────────────────────────────────────────────────────────────

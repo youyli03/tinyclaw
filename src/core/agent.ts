@@ -1,5 +1,5 @@
 import { Session } from "./session.js";
-import { llmRegistry } from "../llm/registry.js";
+import { llmRegistry, buildFallbackClient } from "../llm/registry.js";
 import { LLMConnectionError } from "../llm/client.js";
 import { APIError } from "openai";
 import type { ChatResult } from "../llm/client.js";
@@ -546,10 +546,34 @@ export async function runAgent(
   opts: AgentRunOptions = {}
 ): Promise<AgentRunResult> {
   const isCodeMode = session.mode === "code";
-  const client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
-  const toolsUsed: string[] = [];
-  // slave session ID 格式为 "slave:abc12345"，显示为 "[slave:abc12345]"；其他 session 取末尾 12 位
+  let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
+
+  // ── Premium 白名单守卫 ─────────────────────────────────────────────────────
+  // slave session 继承 master 的鉴权上下文，不单独做白名单检查
   const isSlave = session.sessionId.startsWith("slave:");
+  if (!isSlave) {
+    const cfg = loadConfig();
+    const allowlist = cfg.llm.premiumAllowlist;
+    if (allowlist.enabled && allowlist.premiumModels.includes(client.model)) {
+      const inSessionAllowlist = allowlist.allowedSessions.includes(session.sessionId);
+      // codeOnly=true 时，仅 code 模式才可用高级模型；false 时 chat 也可以
+      const modeAllowed = allowlist.codeOnly ? isCodeMode : true;
+      const allowed = inSessionAllowlist && modeAllowed;
+      if (!allowed) {
+        const reason = inSessionAllowlist ? "非 code 模式" : "session 不在白名单";
+        console.warn(
+          `[premiumGuard] session=${session.sessionId} ${reason}，` +
+          `降级 ${client.model} → ${allowlist.fallbackModel}`
+        );
+        const fallback = await buildFallbackClient();
+        if (fallback) client = fallback;
+      }
+    }
+  }
+  // ── END Premium 白名单守卫 ─────────────────────────────────────────────────
+
+  const toolsUsed: string[] = [];
+  // slave session ID 格式为 "slave:abc12345",显示为 "[slave:abc12345]";其他 session 取末尾 12 位
   const sid = isSlave ? session.sessionId.slice("slave:".length) : session.sessionId.slice(-12);
   const logPrefix = isSlave ? `[slave:${sid}]` : `[agent] ${sid}`;
   const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
