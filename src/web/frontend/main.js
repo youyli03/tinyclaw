@@ -580,16 +580,9 @@ const app = createApp({
           `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`
         ).then(r => r.json());
         const rows = data.rows || [];
-        await nextTick();
-        // 等浏览器完成布局，确保 canvas clientWidth 已正确计算
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        // v-show 下 canvas 始终存在于 DOM，直接获取即可
         const chartId = `chart-m-${category}-${key}`;
-        let canvas = document.getElementById(chartId);
-        // 若 v-if/v-for 还未完成，再等一轮
-        if (!canvas) {
-          await new Promise(r => setTimeout(r, 80));
-          canvas = document.getElementById(chartId);
-        }
+        const canvas = document.getElementById(chartId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         const h = canvas.clientHeight || 180;
@@ -688,8 +681,7 @@ const app = createApp({
         drawSparklines();
       }
       if (newPage === 'metrics') {
-        await fetchMetricKeys();
-        await nextTick();
+        if (!metricKeys.value.length) await fetchMetricKeys();
         await loadAllMetricCharts();
       }
       if (newPage === 'reports') {
@@ -700,7 +692,6 @@ const app = createApp({
     // mDays 变化时重新加载所有图
     watch(mDays, async () => {
       if (page.value === 'metrics') {
-        await nextTick();
         await loadAllMetricCharts();
       }
     });
@@ -733,14 +724,20 @@ const app = createApp({
       await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
       await nextTick();
 
-      // 根据初始 hash 决定首屏
+      // overview 图表（初始化时总是绘制，v-show 不会销毁 canvas）
+      await drawOverviewCharts();
+      drawSparklines();
+
+      // 指标页：提前加载 metricKeys，v-show 下 canvas 已存在
+      await fetchMetricKeys();
+      // 用 setTimeout 确保所有 canvas 完成布局后再渲染
+      setTimeout(() => loadAllMetricCharts(), 100);
+
+      // 根据初始 hash 决定首屏（不再需要重复加载数据，只需跳到对应页面）
       if (_init.pg === 'overview') {
-        await drawOverviewCharts();
-        drawSparklines();
+        // 已在上面渲染
       } else if (_init.pg === 'metrics') {
-        await fetchMetricKeys();
-        await nextTick();
-        await loadAllMetricCharts();
+        // 已在上面初始化
       } else if (_init.pg === 'reports') {
         await fetchReportTypes();
         // fetchReportTypes 内部会 selectReportType -> selectReportDate 自动加载第一条

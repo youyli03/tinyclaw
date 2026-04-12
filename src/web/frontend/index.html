@@ -44,7 +44,7 @@
   <main id="main">
 
     <!-- 概览页 -->
-    <div v-if="page==='overview'">
+    <div v-show="page==='overview'">
       <div class="page-header">
         <div class="page-title">
           概览
@@ -148,7 +148,7 @@
     </div>
 
         <!-- 指标页 -->
-    <div v-if="page==='metrics'">
+    <div v-show="page==='metrics'">
       <div class="page-header">
         <div class="page-title">指标 <span class="page-title-sub">/ 历史数据</span></div>
       </div>
@@ -178,7 +178,7 @@
     </div>
 
     <!-- 日报页 -->
-    <div v-if="page==='reports'">
+    <div v-show="page==='reports'">
       <div class="page-header">
         <div class="page-title">日报 <span class="page-title-sub">/ 归档</span></div>
       </div>
@@ -224,7 +224,7 @@
     </div>
 
 <!-- Cron 任务页 -->
-    <div v-if="page==='cron'">
+    <div v-show="page==='cron'">
       <div class="page-header">
         <div class="page-title">Cron 任务 <span class="page-title-sub">/ 全部</span></div>
       </div>
