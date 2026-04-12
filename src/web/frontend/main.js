@@ -143,6 +143,28 @@ function smartXAxis(days) {
   };
 }
 
+// 指标页专用 X 轴：使用 linear + callback 格式化，无需 date adapter
+function metricXAxis(days) {
+  days = Number(days) || 1;
+  const fmt = (ms) => {
+    const d = new Date(ms);
+    if (days <= 1) return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    if (days <= 3) return (d.getMonth()+1)+'/'+ d.getDate() + ' ' + d.getHours().toString().padStart(2,'0') + ':00';
+    return (d.getMonth()+1) + '/' + d.getDate();
+  };
+  return {
+    type: 'linear',
+    grid: { display: false },
+    border: { color: C.border },
+    ticks: {
+      color: C.t3,
+      maxTicksLimit: days <= 1 ? 8 : days <= 7 ? 14 : 10,
+      maxRotation: 0,
+      callback: (val) => fmt(val),
+    },
+  };
+}
+
 function relativeTime(isoOrTs) {
   if (!isoOrTs) return '—';
   const d = new Date(typeof isoOrTs === 'number' ? isoOrTs * 1000 : isoOrTs);
@@ -586,7 +608,7 @@ const app = createApp({
           options: {
             ...baseChartOpts(),
             scales: {
-              x: smartXAxis(mDays.value),
+              x: metricXAxis(mDays.value),
               y: { ...baseChartOpts().scales.y },
             },
           },
@@ -652,6 +674,8 @@ const app = createApp({
 
     // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
+      // 更新地址栏
+      pushURL(newPage, newPage === 'reports' ? rType.value : '', newPage === 'reports' ? rDate.value : '');
       if (newPage === 'overview') {
         await nextTick();
         await drawOverviewCharts();
