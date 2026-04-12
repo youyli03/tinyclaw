@@ -329,8 +329,30 @@ class TinyclawSubmitterScheduler {
       }
     };
 
-    // warmup：启动 30s 后执行一次
-    const warmup = setTimeout(() => void doRun(), 30_000);
+    // warmup：启动 30s 后执行一次，但仅当距上次 git 提交已超过 intervalSecs 时才触发。
+    // 避免进程频繁重启（如 restart_tool 触发的热重载）导致每次启动都立即提交。
+    const warmup = setTimeout(() => {
+      try {
+        const lastCommitTs = execSync(
+          `git -C ${JSON.stringify(TINYCLAW_DIR)} log -1 --format=%ct`,
+          { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
+        ).trim();
+        const elapsedSecs = lastCommitTs
+          ? Date.now() / 1000 - parseInt(lastCommitTs, 10)
+          : Infinity;
+        if (elapsedSecs >= intervalSecs) {
+          void doRun();
+        } else {
+          console.log(
+            `[tinyclaw-submitter] warmup 跳过：距上次提交仅 ${Math.round(elapsedSecs / 60)} 分钟，` +
+            `未达 ${intervalSecs / 3600}h 间隔`
+          );
+        }
+      } catch {
+        // git log 失败（首次无提交）时仍执行一次
+        void doRun();
+      }
+    }, 30_000);
     if (warmup.unref) warmup.unref();
 
     // 周期执行
