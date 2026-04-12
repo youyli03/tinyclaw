@@ -650,7 +650,7 @@ const app = createApp({
     // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
       // 更新地址栏（不刷新页面）
-      pushURL(newPage, rType.value, rDate.value);
+      pushURL(newPage, newPage === 'reports' ? rType.value : '', newPage === 'reports' ? rDate.value : '');
 
 
       if (newPage === 'overview') {
@@ -743,7 +743,7 @@ const app = createApp({
     });
 
     return {
-      page, currentTime, dateStr,
+      page, navTo: (pg) => { page.value = pg; }, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, mDays,
       reportTypes, reportDates, rType, rDate, reportHtml,

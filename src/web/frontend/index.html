@@ -21,13 +21,13 @@
     <nav class="sidebar-nav">
       <div class="nav-section">
         <div class="nav-section-label">主要</div>
-        <div class="nav-item" :class="{active: page==='overview'}" @click="page='overview'">概览</div>
-        <div class="nav-item" :class="{active: page==='metrics'}"  @click="page='metrics'">指标</div>
-        <div class="nav-item" :class="{active: page==='reports'}"  @click="page='reports'">日报</div>
+        <div class="nav-item" :class="{active: page==='overview'}" @click="navTo('overview')">概览</div>
+        <div class="nav-item" :class="{active: page==='metrics'}"  @click="navTo('metrics')">指标</div>
+        <div class="nav-item" :class="{active: page==='reports'}"  @click="navTo('reports')">日报</div>
       </div>
       <div class="nav-section" style="margin-top:16px">
         <div class="nav-section-label">系统</div>
-        <div class="nav-item" :class="{active: page==='cron'}"     @click="page='cron'">Cron 任务</div>
+        <div class="nav-item" :class="{active: page==='cron'}"     @click="navTo('cron')">Cron 任务</div>
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -260,19 +260,19 @@
 
   <!-- 底部 Tab Bar（仅移动端显示） -->
   <nav class="bottom-tabbar">
-    <div class="tab-item" :class="{active: page==='overview'}" @click="page='overview'">
+    <div class="tab-item" :class="{active: page==='overview'}" @click="navTo('overview')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       概览
     </div>
-    <div class="tab-item" :class="{active: page==='metrics'}" @click="page='metrics'">
+    <div class="tab-item" :class="{active: page==='metrics'}" @click="navTo('metrics')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       指标
     </div>
-    <div class="tab-item" :class="{active: page==='reports'}" @click="page='reports'">
+    <div class="tab-item" :class="{active: page==='reports'}" @click="navTo('reports')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       日报
     </div>
-    <div class="tab-item" :class="{active: page==='cron'}" @click="page='cron'">
+    <div class="tab-item" :class="{active: page==='cron'}" @click="navTo('cron')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       任务
     </div>
