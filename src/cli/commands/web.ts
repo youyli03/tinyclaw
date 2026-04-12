@@ -16,6 +16,7 @@ import { parse as parseToml } from "smol-toml";
 import { bold, dim, green, red, cyan, yellow, section, closeRl } from "../ui.js";
 import { CONFIG_PATH, patchTomlField } from "../../config/writer.js";
 
+export const subcommands = ["info", "token", "help"] as const;
 export const description = "管理 Dashboard Web 访问（地址、token）";
 export const usage = `tinyclaw web <subcommand> [args]
 

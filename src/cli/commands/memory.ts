@@ -20,6 +20,7 @@ import { memoryMaintenance } from "../../core/memory-maintenance.js";
 import { agentManager } from "../../core/agent-manager.js";
 import { llmRegistry } from "../../llm/registry.js";
 
+export const subcommands = ["save", "list", "search", "index", "maintain", "help"] as const;
 export const description = "管理 Agent 长期记忆（摘要、搜索、向量索引）";
 export const usage = "memory <save|list|search|index|maintain> [options]";
 

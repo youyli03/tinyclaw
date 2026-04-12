@@ -277,6 +277,7 @@ ${bold("说明：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
+export const subcommands = ["show", "list", "set", "--all", "-a", "help"] as const;
 export const description = "模型管理：列出 / 查看 / 切换当前 LLM 模型";
 export const usage = "model <show|list|set> [backend]";
 

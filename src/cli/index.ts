@@ -19,25 +19,26 @@
  * - 每个子命令模块自行处理 --help / -h / help 子参数
  */
 
-import { run as modelRun, description as modelDesc, usage as modelUsage } from "./commands/model.js";
-import { run as configRun, description as configDesc, usage as configUsage } from "./commands/config.js";
-import { run as authRun, description as authDesc, usage as authUsage } from "./commands/auth.js";
+import { run as modelRun, description as modelDesc, usage as modelUsage, subcommands as modelSubs } from "./commands/model.js";
+import { run as configRun, description as configDesc, usage as configUsage, subcommands as configSubs } from "./commands/config.js";
+import { run as authRun, description as authDesc, usage as authUsage, subcommands as authSubs } from "./commands/auth.js";
 import { run as statusRun, description as statusDesc, usage as statusUsage } from "./commands/status.js";
 import { run as restartRun, description as restartDesc, usage as restartUsage } from "./commands/restart.js";
-import { run as completionsRun, description as completionsDesc, usage as completionsUsage } from "./commands/completions.js";
-import { run as chatRun, description as chatDesc, usage as chatUsage } from "./commands/chat.js";
+import { run as completionsRun, description as completionsDesc, usage as completionsUsage, subcommands as completionsSubs } from "./commands/completions.js";
+import { run as chatRun, description as chatDesc, usage as chatUsage, subcommands as chatSubs } from "./commands/chat.js";
 import { run as startRun, description as startDesc, usage as startUsage } from "./commands/start.js";
-import { run as logsRun, description as logsDesc, usage as logsUsage } from "./commands/logs.js";
-import { run as agentRun, description as agentDesc, usage as agentUsage } from "./commands/agent.js";
-import { run as cronRun, description as cronDesc, usage as cronUsage } from "./commands/cron.js";
-import { run as memoryRun, description as memoryDesc, usage as memoryUsage } from "./commands/memory.js";
-import { run as sessionRun, description as sessionDesc, usage as sessionUsage } from "./commands/session.js";
-import { run as dbRun, description as dbDesc, usage as dbUsage } from "./commands/db.js";
-import { run as webRun, description as webDesc, usage as webUsage } from "./commands/web.js";
+import { run as logsRun, description as logsDesc, usage as logsUsage, subcommands as logsSubs } from "./commands/logs.js";
+import { run as agentRun, description as agentDesc, usage as agentUsage, subcommands as agentSubs } from "./commands/agent.js";
+import { run as cronRun, description as cronDesc, usage as cronUsage, subcommands as cronSubs } from "./commands/cron.js";
+import { run as memoryRun, description as memoryDesc, usage as memoryUsage, subcommands as memorySubs } from "./commands/memory.js";
+import { run as sessionRun, description as sessionDesc, usage as sessionUsage, subcommands as sessionSubs } from "./commands/session.js";
+import { run as dbRun, description as dbDesc, usage as dbUsage, subcommands as dbSubs } from "./commands/db.js";
+import { run as webRun, description as webDesc, usage as webUsage, subcommands as webSubs } from "./commands/web.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
 import { CONFIG_PATH } from "../config/writer.js";
+import { ALL_CONFIG_KEYS } from "../config/schema-keys.js";
 
 // ── 命令注册表 ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,8 @@ interface CommandModule {
   description: string;
   usage: string;
   run: (args: string[]) => Promise<void>;
+  /** 该命令支持的子命令列表，用于 tab 补全自动汇聚 */
+  subcommands?: readonly string[];
 }
 
 /**
@@ -52,78 +55,76 @@ interface CommandModule {
  * 添加新命令只需在此处插入一行。
  */
 const COMMANDS: Record<string, CommandModule> = {
-  model:       { description: modelDesc,       usage: modelUsage,       run: modelRun },
-  config:      { description: configDesc,      usage: configUsage,      run: configRun },
-  auth:        { description: authDesc,        usage: authUsage,        run: authRun },
+  model:       { description: modelDesc,       usage: modelUsage,       run: modelRun,       subcommands: modelSubs },
+  config:      { description: configDesc,      usage: configUsage,      run: configRun,      subcommands: configSubs },
+  auth:        { description: authDesc,        usage: authUsage,        run: authRun,        subcommands: authSubs },
   status:      { description: statusDesc,      usage: statusUsage,      run: statusRun },
   restart:     { description: restartDesc,     usage: restartUsage,     run: restartRun },
   start:       { description: startDesc,       usage: startUsage,       run: startRun },
-  chat:        { description: chatDesc,        usage: chatUsage,        run: chatRun },
-  agent:       { description: agentDesc,       usage: agentUsage,       run: agentRun },
-  cron:        { description: cronDesc,        usage: cronUsage,        run: cronRun },
-  memory:      { description: memoryDesc,      usage: memoryUsage,      run: memoryRun },
-  session:     { description: sessionDesc,     usage: sessionUsage,     run: sessionRun },
-  logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun },
-  db:          { description: dbDesc,          usage: dbUsage,          run: dbRun },
-  web:         { description: webDesc,         usage: webUsage,         run: webRun },
-  completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun },
+  chat:        { description: chatDesc,        usage: chatUsage,        run: chatRun,        subcommands: chatSubs },
+  agent:       { description: agentDesc,       usage: agentUsage,       run: agentRun,       subcommands: agentSubs },
+  cron:        { description: cronDesc,        usage: cronUsage,        run: cronRun,        subcommands: cronSubs },
+  memory:      { description: memoryDesc,      usage: memoryUsage,      run: memoryRun,      subcommands: memorySubs },
+  session:     { description: sessionDesc,     usage: sessionUsage,     run: sessionRun,     subcommands: sessionSubs },
+  logs:        { description: logsDesc,        usage: logsUsage,        run: logsRun,        subcommands: logsSubs },
+  db:          { description: dbDesc,          usage: dbUsage,          run: dbRun,          subcommands: dbSubs },
+  web:         { description: webDesc,         usage: webUsage,         run: webRun,         subcommands: webSubs },
+  completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun, subcommands: completionsSubs },
 };
 
 // ── Tab 补全候选词表 ──────────────────────────────────────────────────────────
 
-/** 每个命令的子命令列表，供 --complete 模式使用 */
-const SUBCOMMANDS: Record<string, string[]> = {
-  model:       ["show", "list", "set", "--all", "-a", "help"],
-  config:      ["show", "get", "edit", "path", "set", "help"],
-  auth:        ["github", "status", "mfa-setup", "help"],
-  status:      [],
-  restart:     [],
-  start:       [],
-  chat:        ["list", "new", "loop", "-s", "--agent", "-a", "help"],
-  agent:       ["list", "new", "show", "edit", "delete", "repair", "perm", "access", "memoryonly"],
-  cron:        ["list", "add", "remove", "enable", "disable", "run", "logs", "help"],
-  memory:      ["save", "list", "search", "index", "maintain", "help"],
-  session:     ["list", "abort", "memory", "help"],
-  logs:        ["-f", "--follow", "-n", "help"],
-  db:          ["list", "add", "remove", "help"],
-  web:         ["info", "token", "help"],
-  completions: ["bash", "zsh", "fish", "install", "help"],
-};
+/**
+ * 每个命令的子命令列表，从 COMMANDS 注册表自动汇聚。
+ * 各命令模块通过 export const subcommands = [...] 声明，无需在此手动维护。
+ */
+function buildSubcommands(): Record<string, readonly string[]> {
+  return Object.fromEntries(
+    Object.entries(COMMANDS)
+      .filter(([, m]) => m.subcommands && m.subcommands.length > 0)
+      .map(([k, m]) => [k, m.subcommands!])
+  );
+}
+
+const SUBCOMMANDS: Record<string, readonly string[]> = buildSubcommands();
 
 const BACKENDS = ["daily", "code", "summarizer"];
 
 /**
- * 读取 config.toml，返回所有叶子节点的 dot-path 列表（供 tab 补全用）。
- * 数组项不展开，仅返回 object 类型的叶子键。
+ * 返回所有 config 字段的 dot-path 列表（供 tab 补全用）。
+ * 优先使用 ConfigSchema 生成的全量路径（含默认值字段），
+ * 再合并 config.toml 里实际写入的键（可能有 schema 外的自定义键）。
  */
 function flatConfigKeys(): string[] {
-  try {
-    if (!existsSync(CONFIG_PATH)) return [];
-    const raw = parseToml(readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown>;
-    const keys: string[] = [];
+  // 从 schema 得到全量键（含未写入 TOML 的默认值字段）
+  const keySet = new Set<string>(ALL_CONFIG_KEYS);
 
-    function walk(obj: unknown, prefix: string): void {
-      if (obj === null || Array.isArray(obj) || typeof obj !== "object") {
-        if (prefix) keys.push(prefix);
-        return;
-      }
-      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-        const full = prefix ? `${prefix}.${k}` : k;
-        if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-          // 中间路径（对象节点）也加入，方便 `get llm.backends` 等
-          keys.push(full);
-          walk(v, full);
-        } else {
-          keys.push(full);
+  // 合并 TOML 文件里已有的键
+  try {
+    if (existsSync(CONFIG_PATH)) {
+      const raw = parseToml(readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown>;
+
+      function walk(obj: unknown, prefix: string): void {
+        if (obj === null || Array.isArray(obj) || typeof obj !== "object") {
+          if (prefix) keySet.add(prefix);
+          return;
+        }
+        for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+          const full = prefix ? `${prefix}.${k}` : k;
+          keySet.add(full);
+          if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+            walk(v, full);
+          }
         }
       }
-    }
 
-    walk(raw, "");
-    return keys;
+      walk(raw, "");
+    }
   } catch {
-    return [];
+    // TOML 解析失败时退化为纯 schema 键
   }
+
+  return [...keySet];
 }
 
 /**
@@ -144,7 +145,7 @@ function outputCompletions(words: string[]): void {
     candidates = Object.keys(COMMANDS);
   } else if (!sub) {
     // 补全子命令
-    candidates = SUBCOMMANDS[cmd] ?? [];
+    candidates = [...(SUBCOMMANDS[cmd] ?? [])];
   } else if (cmd === "model" && (sub === "list" || sub === "set")) {
     // 补全 backend 名
     candidates = BACKENDS;

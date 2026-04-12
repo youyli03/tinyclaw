@@ -21,6 +21,7 @@ import { agentManager } from "../../core/agent-manager.js";
 import { patchTomlField } from "../../config/writer.js";
 import type { SessionInfo } from "../../ipc/protocol.js";
 
+export const subcommands = ["list", "new", "loop", "-s", "--agent", "-a", "help"] as const;
 export const description = "会话管理与消息发送";
 export const usage = "chat <list|new|loop|-s <id> <msg>>";
 

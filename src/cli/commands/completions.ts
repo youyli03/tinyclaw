@@ -242,6 +242,7 @@ ${bold("说明：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
+export const subcommands = ["bash", "zsh", "fish", "install", "help"] as const;
 export const description = "生成并安装 shell tab 补全脚本（bash/zsh/fish）";
 export const usage = "completions <bash|zsh|fish|install>";
 

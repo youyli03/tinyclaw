@@ -22,6 +22,7 @@ import { AgentManager } from "../../core/agent-manager.js";
 import type { LoopSessionConfig as _LoopSessionConfig } from "../../core/agent-manager.js";
 import { stringify } from "smol-toml";
 
+export const subcommands = ["list", "new", "show", "edit", "delete", "repair", "perm", "access", "memoryonly", "help"] as const;
 export const description = "管理 Agent 工作区（独立人格与记忆命名空间）";
 export const usage = "agent <list|new|show|edit|delete|repair|mcp|tools|perm|access|loop> [id|--all]";
 

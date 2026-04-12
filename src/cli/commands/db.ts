@@ -16,6 +16,7 @@ import {
   listRegisteredKeys,
 } from "../../web/backend/db.js";
 
+export const subcommands = ["list", "add", "remove", "help"] as const;
 export const description = "管理 Dashboard 指标白名单";
 export const usage = `tinyclaw db <subcommand> [args]
 

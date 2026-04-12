@@ -11,6 +11,7 @@
 import { listSessions, abortSession, memorizeSession } from "../../ipc/client.js";
 import { bold, dim, cyan, green, yellow, red, section, select } from "../ui.js";
 
+export const subcommands = ["list", "abort", "memory", "help"] as const;
 export const description = "管理活跃 session（list / abort / memory）";
 export const usage = "session <list|abort|memory> [id]";
 

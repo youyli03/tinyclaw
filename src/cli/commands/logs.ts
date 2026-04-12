@@ -16,6 +16,7 @@ import { spawn } from "node:child_process";
 import { bold, yellow, dim } from "../ui.js";
 import { SERVICE_LOG_FILE } from "./start.js";
 
+export const subcommands = ["-f", "--follow", "-n", "help"] as const;
 export const description = "查看 tinyclaw 主服务运行日志";
 export const usage = "logs [-f] [-n <lines>]";
 

@@ -367,6 +367,7 @@ ${bold("参数：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
+export const subcommands = ["list", "add", "remove", "enable", "disable", "run", "logs", "help"] as const;
 export const description = "Cron 定时任务：创建、管理、查看定时执行记录";
 export const usage = "cron <list|add|remove|enable|disable|run|logs>";
 

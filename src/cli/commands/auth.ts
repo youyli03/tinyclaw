@@ -161,6 +161,7 @@ ${bold("tinyclaw auth mfa-setup")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
+export const subcommands = ["github", "status", "mfa-setup", "help"] as const;
 export const description = "认证管理：GitHub Copilot token 授权与 TOTP MFA 绑定";
 export const usage = "auth <github|status|mfa-setup>";
 
