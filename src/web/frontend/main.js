@@ -246,7 +246,25 @@ function drawSparkline(id, data, color) {
 // ── Vue App ───────────────────────────────────────────────────────────────────
 const app = createApp({
   setup() {
-    const page = ref('overview');
+    // ── URL Hash 路由：刷新后恢复 tab 与日报状态 ──────────────────────────────
+    const VALID_PAGES = ['overview', 'metrics', 'reports', 'cron'];
+    function parseHash() {
+      const raw = window.location.hash.slice(1);
+      const parts = raw.split('/');
+      return {
+        pg:   VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview',
+        type: parts[1] || '',
+        date: parts[2] || '',
+      };
+    }
+    function buildHash(pg, type, date) {
+      if (pg === 'reports' && type) {
+        return '#' + (date ? `reports/${type}/${date}` : `reports/${type}`);
+      }
+      return '#' + pg;
+    }
+    const _init = parseHash();
+    const page = ref(_init.pg);
 
     // ── 时间 ────────────────────────────────────────────────────────────────
     const currentTime = ref('');
@@ -591,22 +609,30 @@ const app = createApp({
       } catch (e) { console.warn('fetchReportTypes failed', e); }
     }
 
-    async function selectReportType(type) {
+    async function selectReportType(type, skipHash = false) {
       rType.value = type;
       rDate.value = '';
       reportHtml.value = '';
+      if (!skipHash) {
+        const h = buildHash('reports', type, '');
+        if (window.location.hash !== h) window.location.hash = h;
+      }
       try {
         const data = await fetch(`/api/reports?type=${encodeURIComponent(type)}`).then(r => r.json());
         reportDates.value = data.dates || [];
         if (reportDates.value.length) {
-          await selectReportDate(reportDates.value[0]);
+          await selectReportDate(reportDates.value[0], skipHash);
         }
       } catch (e) { console.warn('fetchReportDates failed', e); }
     }
 
-    async function selectReportDate(date) {
+    async function selectReportDate(date, skipHash = false) {
       rDate.value = date;
       reportHtml.value = '';
+      if (!skipHash) {
+        const h = buildHash('reports', rType.value, date);
+        if (window.location.hash !== h) window.location.hash = h;
+      }
       try {
         const data = await fetch(
           `/api/reports?type=${encodeURIComponent(rType.value)}&date=${encodeURIComponent(date)}`
@@ -624,8 +650,12 @@ const app = createApp({
       expandedReports.value = s;
     }
 
-    // 页面切换时绘图
+    // 页面切换时绘图 + 同步 hash
     watch(page, async (newPage) => {
+      // 更新 hash（不触发 popstate，只改 hash 部分）
+      const h = buildHash(newPage, rType.value, rDate.value);
+      if (window.location.hash !== h) window.location.hash = h;
+
       if (newPage === 'overview') {
         await nextTick();
         await drawOverviewCharts();
@@ -649,12 +679,54 @@ const app = createApp({
       }
     });
 
+    // ── popstate：浏览器前进/后退时同步状态 ──────────────────────────────────
+    function applyHash() {
+      const { pg, type, date } = parseHash();
+      page.value = pg;
+      if (pg === 'reports' && type) {
+        // 如果 rType 已匹配则只切日期，否则重新加载
+        if (rType.value === type && date && date !== rDate.value) {
+          selectReportDate(date, true);
+        } else if (rType.value !== type) {
+          // 先设 rType 再异步加载，传 skipHash=true 避免再次写 hash
+          rType.value = type;
+          selectReportType(type, true).then(() => {
+            if (date && date !== rDate.value) selectReportDate(date, true);
+          });
+        }
+      }
+    }
+    window.addEventListener('popstate', applyHash);
+
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
     onMounted(async () => {
       await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
       await nextTick();
-      await drawOverviewCharts();
-      drawSparklines();
+
+      // 根据初始 hash 决定首屏
+      if (_init.pg === 'overview') {
+        await drawOverviewCharts();
+        drawSparklines();
+      } else if (_init.pg === 'metrics') {
+        await fetchMetricKeys();
+        await nextTick();
+        await loadAllMetricCharts();
+      } else if (_init.pg === 'reports') {
+        await fetchReportTypes();
+        // fetchReportTypes 内部会 selectReportType -> selectReportDate 自动加载第一条
+        // 若 hash 里有指定 type/date，等 fetchReportTypes 完成后再精确跳转
+        if (_init.type && rType.value !== _init.type) {
+          await selectReportType(_init.type, true);
+        }
+        if (_init.date && rDate.value !== _init.date) {
+          await selectReportDate(_init.date, true);
+        }
+      } else if (_init.pg === 'cron') {
+        // cron 页无特殊初始化
+      } else {
+        await drawOverviewCharts();
+        drawSparklines();
+      }
 
       // 每 30 秒刷新
       const refreshTimer = setInterval(async () => {
@@ -669,6 +741,7 @@ const app = createApp({
         clearInterval(refreshTimer);
         clearInterval(timeTimer);
         Object.values(charts).forEach(c => c.destroy());
+        window.removeEventListener('popstate', applyHash);
       });
     });
 
