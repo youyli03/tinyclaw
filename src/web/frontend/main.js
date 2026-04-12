@@ -693,6 +693,9 @@ const app = createApp({
         }
       }
     }
+    function navTo(pg) {
+      page.value = pg;
+    }
     window.addEventListener('popstate', applyURL);
 
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
@@ -743,7 +746,7 @@ const app = createApp({
     });
 
     return {
-      page, navTo: (pg) => { page.value = pg; }, currentTime, dateStr,
+      page, navTo, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, mDays,
       reportTypes, reportDates, rType, rDate, reportHtml,
