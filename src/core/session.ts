@@ -206,9 +206,19 @@ export class Session {
     for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i]!;
       if (!m._loopTaskRef) {
-        // 普通消息：原样透传
+        // 普通消息：原样透传，但 assistant+tool_calls 消息需清空 content。
+        // 部分模型（如 Claude via Copilot）不允许 assistant 消息同时携带非空 content
+        // 和 tool_calls（视为"prefill"），会返回 400 错误。
+        // AI 在调用工具前输出的文字说明可以安全丢弃，不影响对话语义。
         const { _loopTaskRef: _ignored, ...plain } = m as ChatMessage & { _loopTaskRef?: string };
-        result.push(plain as ChatMessage);
+        if (
+          plain.role === "assistant" &&
+          (plain as { role: "assistant"; tool_calls?: unknown[] }).tool_calls?.length
+        ) {
+          result.push({ ...plain, content: "" } as ChatMessage);
+        } else {
+          result.push(plain as ChatMessage);
+        }
       } else if (i === lastLoopIdx) {
         // 最后一条 loop task 消息：展开文件内容
         let expanded: string;
