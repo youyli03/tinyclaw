@@ -532,72 +532,225 @@ body {
 
 .report-body {
   display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: 16px;
+  grid-template-columns: 160px 1fr;
+  gap: 20px;
   align-items: start;
 }
+
+/* 日期侧栏：去掉整体 border，改为轻分隔线 */
 .report-date-list {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 .report-date-item {
-  padding: 10px 16px;
+  padding: 9px 16px;
   font-size: 13px;
   color: var(--t2);
   cursor: pointer;
   border-bottom: 1px solid var(--border);
-  transition: background .15s;
+  transition: background .12s, color .12s;
+  position: relative;
 }
 .report-date-item:last-child { border-bottom: none; }
-.report-date-item:hover { background: var(--card2); }
+.report-date-item:hover { background: var(--card2); color: var(--t1); }
 .report-date-item.active {
-  background: var(--accent-light, #e8f0fe);
+  background: rgba(79,126,248,0.07);
   color: var(--accent);
   font-weight: 600;
 }
+/* 选中态左侧竖条 */
+.report-date-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
 
-.report-content { min-height: 300px; }
-/* Markdown 渲染样式 */
-.report-md { font-size: 14px; line-height: 1.8; color: var(--t1); }
-.report-md h1 { font-size: 20px; font-weight: 700; margin: 0 0 16px; }
-.report-md h2 { font-size: 16px; font-weight: 600; margin: 20px 0 8px; color: var(--t1); }
-.report-md h3 { font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
-.report-md p  { margin: 8px 0; color: var(--t2); }
-.report-md ul, .report-md ol { padding-left: 20px; margin: 8px 0; color: var(--t2); }
-.report-md li { margin: 4px 0; }
-.report-md code {
-  background: var(--card2);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: monospace;
+/* 内容区：无外框，仅内边距 */
+.report-content {
+  min-height: 300px;
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
-.report-md pre {
-  background: var(--card2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  overflow-x: auto;
-  font-size: 12px;
+
+/* 日报顶部信息行 */
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px 14px;
+  border-bottom: 1px solid var(--border);
 }
-.report-md pre code { background: none; padding: 0; }
+.report-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--t1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.report-header-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(79,126,248,0.10);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── Markdown 渲染：与页面融合，无边框感 ── */
+.report-md {
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--t1);
+  padding: 24px 28px 32px;
+  word-break: break-word;
+}
+
+/* 标题 */
+.report-md h1 {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--t1);
+  margin: 0 0 6px;
+  padding-bottom: 10px;
+  /* accent 渐变下划线，替代 border */
+  border-bottom: 2px solid transparent;
+  background-image: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%);
+  background-size: 100% 2px;
+  background-position: bottom;
+  background-repeat: no-repeat;
+}
+.report-md h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--t1);
+  margin: 28px 0 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--accent);
+}
+.report-md h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--t1);
+  margin: 18px 0 6px;
+  padding-left: 6px;
+  border-left: 2px solid var(--accent2);
+}
+
+/* 正文 */
+.report-md p { margin: 8px 0; color: var(--t1); }
+.report-md ul, .report-md ol {
+  padding-left: 22px;
+  margin: 8px 0;
+  color: var(--t1);
+}
+.report-md li { margin: 4px 0; line-height: 1.8; }
+.report-md li::marker { color: var(--accent); }
+
+/* 分隔线 */
+.report-md hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+  margin: 20px 0;
+}
+
+/* 引用块 */
 .report-md blockquote {
   border-left: 3px solid var(--accent);
-  padding: 4px 12px;
-  margin: 8px 0;
+  padding: 6px 14px;
+  margin: 10px 0;
   color: var(--t2);
-  background: var(--card2);
-  border-radius: 0 6px 6px 0;
+  background: rgba(79,126,248,0.05);
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
 }
-.report-md table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
-.report-md th { background: var(--card2); padding: 6px 10px; text-align: left; border: 1px solid var(--border); }
-.report-md td { padding: 6px 10px; border: 1px solid var(--border); color: var(--t2); }
-.report-md hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+/* 行内代码 */
+.report-md code {
+  background: rgba(79,126,248,0.08);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+/* 代码块：无边框，深背景 */
+.report-md pre {
+  background: #f3f5fb;
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  margin: 12px 0;
+  line-height: 1.7;
+}
+.report-md pre code {
+  background: none;
+  color: var(--t1);
+  padding: 0;
+  font-size: inherit;
+}
+
+/* 表格：无四边框，只保留行底线 */
+.report-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0;
+  font-size: 13.5px;
+}
+.report-md thead tr {
+  border-bottom: 2px solid var(--accent);
+}
+.report-md th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--t1);
+  background: transparent;
+  white-space: nowrap;
+}
+.report-md td {
+  padding: 7px 12px;
+  color: var(--t1);
+  border-bottom: 1px solid var(--border);
+}
+.report-md tbody tr:last-child td { border-bottom: none; }
+/* 奇偶行轻微交替，无背景 */
+.report-md tbody tr:nth-child(even) td {
+  background: rgba(79,126,248,0.03);
+}
+.report-md tbody tr:hover td {
+  background: rgba(79,126,248,0.06);
+  transition: background .12s;
+}
+
+/* 强调 */
+.report-md strong { color: var(--t1); font-weight: 700; }
+.report-md em { color: var(--t2); }
 
 @media (max-width: 768px) {
   .report-body { grid-template-columns: 1fr; }
-  .report-date-list { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-radius: 8px; }
-  .report-date-item { border: 1px solid var(--border); border-radius: 6px; border-bottom: 1px solid var(--border) !important; padding: 6px 12px; }
+  .report-date-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .report-date-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    border-bottom: 1px solid var(--border) !important;
+    padding: 6px 12px;
+  }
+  .report-md { padding: 16px 16px 24px; }
 }

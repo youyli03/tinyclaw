@@ -205,14 +205,16 @@
           </div>
           <div v-if="!reportDates.length" class="empty-state" style="padding:24px 0">暂无记录</div>
         </div>
-        <div class="report-content card" v-if="rDate">
-          <div class="card-header" style="margin-bottom:16px">
-            <span class="card-title">{{ rType }} · {{ rDate }}</span>
+        <div class="report-content" v-if="rDate">
+          <div class="report-header">
+            <div class="report-header-title">
+              <span>{{ rDate }}</span>
+              <span class="report-header-badge">{{ rType }}</span>
+            </div>
           </div>
           <div class="report-md" v-html="reportHtml"></div>
-          <div class="empty-state" v-if="!reportHtml && rDate" style="padding:40px 0">加载中…</div>
+          <div class="empty-state" v-if="!reportHtml && rDate" style="padding:40px 0">加载中...</div>
         </div>
-        <div class="report-content empty-state" v-else style="padding:60px 0">请选择左侧日期</div>
       </div>
       <div class="empty-state" style="margin-top:60px" v-if="!reportTypes.length">
         <div style="font-size:32px;margin-bottom:12px">📋</div>
