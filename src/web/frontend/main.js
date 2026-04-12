@@ -558,11 +558,14 @@ const app = createApp({
         ).then(r => r.json());
         const rows = data.rows || [];
         await nextTick();
+        // 等浏览器完成布局，确保 canvas clientWidth 已正确计算
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const chartId = `chart-m-${category}-${key}`;
         const canvas = document.getElementById(chartId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const grad = ctx.createLinearGradient(0, 0, 0, 180);
+        const h = canvas.clientHeight || 180;
+        const grad = ctx.createLinearGradient(0, 0, 0, h);
         grad.addColorStop(0, C.accent + '30');
         grad.addColorStop(1, C.accent + '00');
         createOrUpdateChart(chartId, {
@@ -649,10 +652,6 @@ const app = createApp({
 
     // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
-      // 更新地址栏（不刷新页面）
-      pushURL(newPage, newPage === 'reports' ? rType.value : '', newPage === 'reports' ? rDate.value : '');
-
-
       if (newPage === 'overview') {
         await nextTick();
         await drawOverviewCharts();
@@ -694,6 +693,7 @@ const app = createApp({
       }
     }
     function navTo(pg) {
+      pushURL(pg, pg === 'reports' ? rType.value : '', pg === 'reports' ? rDate.value : '');
       page.value = pg;
     }
     window.addEventListener('popstate', applyURL);
