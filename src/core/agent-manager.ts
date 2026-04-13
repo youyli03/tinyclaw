@@ -342,6 +342,21 @@ export class AgentManager {
    * - chat：~/.tinyclaw/agents/<id>/feedback.md
    * - code：~/.tinyclaw/agents/<id>/code/feedback.md
    */
+  /** Code 模式项目记忆根目录 */
+  codeProjectsDir(agentId: string): string {
+    return path.join(AGENTS_ROOT, agentId, "code", "projects");
+  }
+
+  /** 指定项目的 NOTES.md 路径 */
+  codeProjectNotesPath(agentId: string, project: string): string {
+    return path.join(this.codeProjectsDir(agentId), project, "NOTES.md");
+  }
+
+  /** project-aliases.json 路径（hostname/IP → 项目 slug 映射） */
+  codeProjectAliasesPath(agentId: string): string {
+    return path.join(AGENTS_ROOT, agentId, "code", "project-aliases.json");
+  }
+
   feedbackPath(agentId: string, mode: "chat" | "code"): string {
     if (mode === "code") {
       return path.join(AGENTS_ROOT, agentId, "code", "feedback.md");

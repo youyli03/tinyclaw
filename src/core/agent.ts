@@ -614,6 +614,9 @@ export async function runAgent(
   const CODE_MODE_EXCLUDED = new Set([
     "code_assist", "code_assist_run", "skill_run",
     "agent_fork", "agent_status", "agent_wait", "agent_abort",
+    // chat 专属记忆工具（code 模式用 code_note_read/code_note 替代）
+    "memory_write_mem", "memory_write_active", "memory_read_mem",
+    "memory_read_active", "memory_append_card", "memory_append",
   ]);
   const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
     if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;

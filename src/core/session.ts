@@ -525,6 +525,22 @@ export class Session {
     }
     this.messages = compressed;
     this.rewriteCodeJsonl();
+
+    // 压缩成功后，将摘要追加到当前项目的 NOTES.md
+    try {
+      const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
+      const summaryText = typeof summaryMsg?.content === "string" ? summaryMsg.content.trim() : "";
+      if (summaryText && this.codeWorkdir) {
+        const { pathToProjectSlug } = await import("../tools/memory.js");
+        const slug = pathToProjectSlug(this.codeWorkdir);
+        const notesPath = agentManager.codeProjectNotesPath(this.agentId, slug);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const entry = `\n## 压缩摘要 [${dateStr}]\n\n${summaryText}\n`;
+        fs.mkdirSync(path.dirname(notesPath), { recursive: true });
+        fs.appendFileSync(notesPath, entry, "utf-8");
+      }
+    } catch { /* 存档失败不阻断主流程 */ }
+
     return true;
   }
 

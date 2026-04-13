@@ -13,6 +13,8 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
+import * as dns from "node:dns/promises";
 import { registerTool, type ToolContext } from "./registry.js";
 import { agentManager } from "../core/agent-manager.js";
 import { searchMemory, updateStore } from "../memory/qmd.js";
@@ -231,5 +233,214 @@ registerTool({
     if (!content) return "错误:缺少 content 参数";
     await persistSummary(content, agentId);
     return `记忆已存档并触发索引更新(agentId=${agentId},${content.length} 字节)`;
+  },
+});
+
+// ── Code 模式项目记忆工具 ──────────────────────────────────────────────────────
+
+/**
+ * 将 workdir 路径或 ssh host:path 转换为项目 slug。
+ * /home/lyy/tinyclaw → _home_lyy_tinyclaw
+ * root@m1saka.cc:/opt/app → ssh_m1saka.cc_opt_app
+ */
+export function pathToProjectSlug(p: string): string {
+  // SSH 格式：user@host:/path 或 ssh://user@host/path
+  const sshMatch = p.match(/(?:ssh:\/\/)?(?:[^@]+@)?([^:/]+):?(\/.*)?$/);
+  if (p.startsWith("ssh://") || p.includes("@")) {
+    const host = sshMatch?.[1] ?? p;
+    const remotePath = sshMatch?.[2] ?? "";
+    return "ssh_" + host.replace(/\./g, "_") + remotePath.replace(/\//g, "_");
+  }
+  // 本地路径
+  return p.replace(/\//g, "_");
+}
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "code_note_read",
+      description:
+        "读取指定项目的跨 session 记忆（NOTES.md）。" +
+        "不传 project 时，列出所有已知项目名称。" +
+        "适合在 code session 开始时，识别出当前项目后主动调用，了解历史约束和进度。",
+      parameters: {
+        type: "object",
+        properties: {
+          project: {
+            type: "string",
+            description:
+              "项目 slug（如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app）。" +
+              "不传则返回所有已知项目列表。",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
+    const agentId = ctx?.agentId ?? "default";
+    const projectsDir = agentManager.codeProjectsDir(agentId);
+
+    // 不传 project → 列出所有已知项目
+    if (!args["project"]) {
+      if (!fs.existsSync(projectsDir)) return "（暂无已知项目记忆，可通过 code_note 写入）";
+      const dirs = fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+      if (dirs.length === 0) return "（暂无已知项目记忆）";
+      return `已知项目列表：\n${dirs.map(d => `- ${d}`).join("\n")}`;
+    }
+
+    const project = String(args["project"]).trim();
+    const notesPath = agentManager.codeProjectNotesPath(agentId, project);
+    if (!fs.existsSync(notesPath)) {
+      return `项目 "${project}" 暂无记忆（${notesPath} 不存在），可通过 code_note 创建。`;
+    }
+    const content = fs.readFileSync(notesPath, "utf-8").trim();
+    return content || `项目 "${project}" 的 NOTES.md 为空。`;
+  },
+});
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "code_note",
+      description:
+        "向指定项目的跨 session 记忆（NOTES.md）写入或追加内容。\n" +
+        "在以下情况立即调用（不要等 session 结束）：\n" +
+        "1. 发现跨 session 有价值的约束（如\"此进程不能自行 kill\"）\n" +
+        "2. 完成重要里程碑（如\"pathname 路由已完成\"）\n" +
+        "3. 定位到非显而易见的根因\n" +
+        "4. 任务完成（说\"已完成\"）前更新进度\n" +
+        "mode=append 追加新行；mode=overwrite 全量覆写（谨慎使用）。",
+      parameters: {
+        type: "object",
+        properties: {
+          project: {
+            type: "string",
+            description:
+              "项目 slug（如 _home_lyy_tinyclaw）。" +
+              "根据当前操作的仓库/服务器语义自行命名，不确定时调用 code_clarify_project。",
+          },
+          content: { type: "string", description: "要写入的内容（Markdown 格式）" },
+          mode: {
+            type: "string",
+            enum: ["append", "overwrite"],
+            description: "append（默认）追加到末尾；overwrite 全量覆写",
+          },
+        },
+        required: ["project", "content"],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
+    const agentId = ctx?.agentId ?? "default";
+    const project = String(args["project"] ?? "").trim();
+    if (!project) return "错误：缺少 project 参数";
+    const content = String(args["content"] ?? "").trim();
+    if (!content) return "错误：缺少 content 参数";
+    const mode = String(args["mode"] ?? "append");
+
+    const notesPath = agentManager.codeProjectNotesPath(agentId, project);
+    fs.mkdirSync(path.dirname(notesPath), { recursive: true });
+
+    if (mode === "overwrite") {
+      fs.writeFileSync(notesPath, content + "\n", "utf-8");
+      return `已覆写项目 "${project}" 的 NOTES.md（${content.length} 字节）`;
+    }
+    // append：加时间戳行
+    const ts = new Date().toISOString().slice(0, 10);
+    const entry = `\n<!-- ${ts} -->\n${content}\n`;
+    fs.appendFileSync(notesPath, entry, "utf-8");
+    return `已追加到项目 "${project}" 的 NOTES.md（${content.length} 字节）：${notesPath}`;
+  },
+});
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "code_clarify_project",
+      description:
+        "当无法通过 workdir 路径或对话语义确定当前操作属于哪个项目时，调用此工具向用户确认。\n" +
+        "会列出所有已知项目，并让用户选择或输入新项目名。\n" +
+        "若提供了 ssh_host，会自动做 DNS 解析并与已有 IP 映射比对，找到已知项目直接返回，无需打扰用户。",
+      parameters: {
+        type: "object",
+        properties: {
+          hint: {
+            type: "string",
+            description: "当前操作的线索（如仓库名、服务描述），帮助用户做出判断",
+          },
+          ssh_host: {
+            type: "string",
+            description: "若当前操作涉及 SSH，传入 hostname（如 m1saka.cc），工具会自动 DNS 解析比对",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
+    const agentId = ctx?.agentId ?? "default";
+    const aliasesPath = agentManager.codeProjectAliasesPath(agentId);
+    const projectsDir = agentManager.codeProjectsDir(agentId);
+
+    // 读取别名表
+    let aliases: Record<string, string> = {};
+    if (fs.existsSync(aliasesPath)) {
+      try { aliases = JSON.parse(fs.readFileSync(aliasesPath, "utf-8")); } catch { /* ignore */ }
+    }
+
+    // SSH DNS 解析：先查是否已有映射
+    const sshHost = String(args["ssh_host"] ?? "").trim();
+    if (sshHost) {
+      try {
+        const result = await dns.lookup(sshHost);
+        const ip = result.address;
+        if (aliases[ip]) {
+          return `DNS 解析 ${sshHost} → ${ip}，已匹配到项目：${aliases[ip]}`;
+        }
+        // IP 已知但未映射 → 告知 AI，附带 IP，让 AI 决定是否继续问用户
+        const knownIPs = Object.keys(aliases);
+        if (knownIPs.length > 0) {
+          return `DNS 解析 ${sshHost} → ${ip}，未在别名表中找到匹配项目。已知 IP 映射：${JSON.stringify(aliases)}。请继续调用 code_clarify_project（不传 ssh_host）让用户确认。`;
+        }
+      } catch {
+        // DNS 失败不阻断流程
+      }
+    }
+
+    // 列出已知项目
+    let knownProjects: string[] = [];
+    if (fs.existsSync(projectsDir)) {
+      knownProjects = fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+    }
+
+    const hint = String(args["hint"] ?? "").trim();
+    const hintText = hint ? `\n当前操作线索：${hint}` : "";
+
+    // 构建选项
+    const options = [
+      ...knownProjects.map(p => ({ label: p, description: "已有项目" })),
+      { label: "（新建项目）", description: "输入新项目名（格式如 _home_lyy_myrepo 或 ssh_host_path）" },
+    ];
+
+    // 通过 ask_user 工具机制无法在这里直接调用，返回结构化信息让 AI 调用 ask_user
+    return JSON.stringify({
+      action: "ask_user",
+      question: `请确认当前操作属于哪个项目？${hintText}`,
+      options,
+      instruction: "请调用 ask_user 工具，将上面的 question 和 options 展示给用户，获得确认后：\n1. 若用户选择已有项目，直接使用该 slug\n2. 若用户输入新项目名，用 code_note 写入初始记忆，并用下面的方式更新别名表",
+      aliasesPath,
+      resolvedIP: sshHost ? "（DNS 解析失败或未提供）" : undefined,
+    });
   },
 });

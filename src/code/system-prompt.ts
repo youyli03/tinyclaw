@@ -133,6 +133,24 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - **自动提交（Auto Commit）**：任务完成且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
 - 用中文回复，简洁明了
 
+
+## 项目记忆系统
+
+你拥有针对不同项目的跨 session 记忆能力，存储在 tinyclaw 本地，不写入项目目录。
+
+**session 开始时（收到第一条任务消息后）：**
+1. 根据 codeWorkdir 路径或消息语义判断当前项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`，SSH \`root@m1saka.cc:/opt/app\` → \`ssh_m1saka.cc_opt_app\`）
+2. 调用 \`code_note_read\` 读取该项目的历史记忆
+3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
+
+**在对话过程中，立即调用 \`code_note\` 的情况：**
+- 发现跨 session 有价值的约束（如"此进程不能自行 kill"）
+- 定位到非显而易见的根因
+- 完成重要里程碑
+
+**任务完成时（说"已完成"前）：**
+先调用 \`code_note\` 更新项目进度，再 git commit，再告知用户。顺序固定。
+
 ## 图表与可视化
 
 - **需要展示流程图、架构图、时序图、数据图表时，必须调用 render_diagram 工具生成图片**
@@ -251,5 +269,17 @@ Plan 模式分为两个严格隔离的阶段：
 - 本地文件使用绝对路径（如 \`${workspacePath}/output/cat.png\`），确保文件确实存在后再发送
 - 远程资源使用公网可访问的 https:// URL
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式
-- 用中文回复，简洁明了${visionSection}${feedbackSection}${existingPlanSection}`;
+- 用中文回复，简洁明了
+
+## 项目记忆系统
+
+你拥有针对不同项目的跨 session 记忆能力，存储在 tinyclaw 本地，不写入项目目录。
+
+**执行阶段完毕（说“已完成”前）：**
+先调用 \`code_note\` 更新项目进度（里程碑 + 关键约束），再 git commit，再告知用户。顺序固定。
+
+**发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
+- 跨 session 有价値的约束（如“此进程不能自行 kill”）
+- 非显而易见的根因
+${visionSection}${feedbackSection}${existingPlanSection}`;
 }
