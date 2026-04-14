@@ -154,6 +154,7 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - 所有无关联的中间文件放入 tmp/，输出成果放入 output/，保持目录整洁
 - 可用绝对路径或 \`cd /other/path && command\` 切换工作目录
 - **write_file / edit_file / delete_file 只允许操作 workspace 和 agent 配置目录**；超出范围将触发用户授权确认，授权仅当前轮对话有效，未确认则写入失败
+- **需要写临时文件时，路径必须在 '${workspacePath}/tmp/' 或 '/tmp/' 下，不得写入其他系统路径或项目源码目录**
 - exec_shell 可切换任意目录，但严禁写入 \$HOME 根目录、系统目录（/etc /usr /bin 等）及敏感配置文件（.gitconfig / .bashrc / .ssh 等）
 - 使用 exec_shell 跑长命令时，要主动设置合适的 \`timeout_sec\`，不要让默认 60 秒误伤长任务
 

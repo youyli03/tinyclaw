@@ -808,7 +808,11 @@ export class Session {
         this.messages
           .map((m) => Session.serializeMsgFull(m))
           .join("\n") + "\n";
-      fs.writeFileSync(filePath, lines, "utf-8");
+      // 重写后追加 _meta:promptTokens，确保压缩后 lastPromptTokens 不丢失
+      const metaLine = this.lastPromptTokens > 0
+        ? JSON.stringify({ _meta: "promptTokens", value: this.lastPromptTokens, ts: new Date().toISOString() }) + "\n"
+        : "";
+      fs.writeFileSync(filePath, lines + metaLine, "utf-8");
     } catch (err) {
       console.error("[session] JSONL rewrite failed:", err);
     }
