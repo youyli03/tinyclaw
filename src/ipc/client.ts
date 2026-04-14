@@ -494,3 +494,65 @@ export async function requestQQBotUserInput(opts: {
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
+
+
+export interface OneshotOptions {
+  prompt: string;
+  backend?: "daily" | "code" | "summarizer";
+  onChunk?: (delta: string) => void;
+}
+
+/**
+ * 向 tinyclaw 服务发起一次性 LLM 调用(无 session 历史，无工具权限)。
+ * 走 daily backend(oswe-vscode-prime)，不消耗高级请求。
+ * @returns 完整的 LLM 回复文本
+ */
+export async function sendOneshot(opts: OneshotOptions): Promise<string> {
+  const { prompt, backend = "daily", onChunk } = opts;
+
+  return new Promise<string>((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let fullContent = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "llm_oneshot", prompt, backend };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+        if (resp.type === "chunk") {
+          fullContent += resp.delta;
+          onChunk?.(resp.delta);
+        } else if (resp.type === "done") {
+          settle(() => resolve(fullContent));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => {
+      if (fullContent) resolve(fullContent);
+      else reject(new Error("Connection closed unexpectedly"));
+    }));
+  });
+}

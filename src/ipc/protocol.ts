@@ -59,7 +59,13 @@ export type IpcRequest =
    * idOrSuffix 可为完整 sessionId，或 sessionId 的末尾子串（如日志中显示的 12 位后缀）。
    * 返回 aborted（已中断）或 not_found。
    */
-  | { type: "abort_session"; idOrSuffix: string };
+  | { type: "abort_session"; idOrSuffix: string }
+  /**
+   * 一次性 LLM 调用(无 session 历史，无工具权限)。
+   * 直接走指定 backend 的 LLM，流式返回 chunk → done。
+   * 用于 TradeJournal-skill 等需要纯 LLM 分析文本但不需要 agent 工具的场景。
+   */
+  | { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }

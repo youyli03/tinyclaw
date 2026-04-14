@@ -14,6 +14,8 @@ import { Session } from "../core/session.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { cronScheduler } from "../cron/scheduler.js";
 import { runAgent } from "../core/agent.js";
+import { llmRegistry } from "../llm/registry.js";
+import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { agentManager } from "../core/agent-manager.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
@@ -330,6 +332,28 @@ async function handleRequest(
     }
 
     send({ type: "session_aborted", sessionId: idOrSuffix, found: false });
+    return;
+  }
+
+  // ── llm_oneshot 请求:一次性 LLM 调用(无 session 历史，无工具权限)─────────────
+  if (req.type === "llm_oneshot") {
+    const { prompt, backend = "daily" } = req as { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" };
+    const client = llmRegistry.get(backend);
+    let slotHeld = false;
+    try {
+      await acquireLLMSlot();
+      slotHeld = true;
+      await client.streamChat(
+        [{ role: "user", content: prompt }],
+        (delta) => { send({ type: "chunk", delta }); },
+        { tools: [], isUserInitiated: true },
+      );
+      send({ type: "done" });
+    } catch (err) {
+      send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      if (slotHeld) releaseLLMSlot();
+    }
     return;
   }
 

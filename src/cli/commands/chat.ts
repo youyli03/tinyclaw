@@ -187,13 +187,16 @@ export async function run(args: string[]): Promise<void> {
     return;
   }
 
-  // ── 解析 -s / --session ────────────────────────────────────────────────────
+  // ── 解析 -s / --session / --json ─────────────────────────────────────────
   let sessionId: string | undefined;
+  let jsonMode = false;
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if ((arg === "-s" || arg === "--session") && i + 1 < args.length) {
       sessionId = args[++i];
+    } else if (arg === "--json" || arg === "-j") {
+      jsonMode = true;
     } else {
       rest.push(arg);
     }
@@ -224,7 +227,7 @@ export async function run(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  await runSend(sessionId, message);
+  await runSend(sessionId, message, jsonMode);
 }
 
 // ── chat list（只读）─────────────────────────────────────────────────────────
@@ -409,27 +412,38 @@ function runBind(sessionId: string, agentId: string): void {
 
 // ── chat -s <id> <msg> ────────────────────────────────────────────────────────
 
-async function runSend(sessionId: string, message: string): Promise<void> {
+async function runSend(sessionId: string, message: string, jsonMode = false): Promise<void> {
   if (!existsSync(IPC_SOCKET_PATH)) {
-    console.error(red("错误：tinyclaw 主服务未运行，请先执行 tinyclaw start"));
+    console.error(red("错误:tinyclaw 主服务未运行,请先执行 tinyclaw start"));
     process.exit(1);
   }
 
-  const isQQBot = sessionId.startsWith("qqbot:");
-  console.log(dim(`Session: ${sessionId}`));
-  if (isQQBot) console.log(dim("回复将同时推送至对应 QQ 频道"));
-  process.stdout.write("\n");
+  if (!jsonMode) {
+    const isQQBot = sessionId.startsWith("qqbot:");
+    console.log(dim(`Session: ${sessionId}`));
+    if (isQQBot) console.log(dim("回复将同时推送至对应 QQ 频道"));
+    process.stdout.write("\n");
+  }
 
   try {
-    await sendToAgent({
-      sessionId,
-      message,
-      onChunk: (delta) => process.stdout.write(delta),
-    });
-    process.stdout.write("\n");
+    if (jsonMode) {
+      const fullText = await sendToAgent({ sessionId, message });
+      process.stdout.write(JSON.stringify({ text: fullText }) + "\n");
+    } else {
+      await sendToAgent({
+        sessionId,
+        message,
+        onChunk: (delta) => process.stdout.write(delta),
+      });
+      process.stdout.write("\n");
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(red(`\n发送失败：${msg}`));
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ error: msg }) + "\n");
+    } else {
+      console.error(red(`\n发送失败:${msg}`));
+    }
     process.exit(1);
   }
 }

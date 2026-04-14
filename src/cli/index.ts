@@ -34,6 +34,7 @@ import { run as memoryRun, description as memoryDesc, usage as memoryUsage, subc
 import { run as sessionRun, description as sessionDesc, usage as sessionUsage, subcommands as sessionSubs } from "./commands/session.js";
 import { run as dbRun, description as dbDesc, usage as dbUsage, subcommands as dbSubs } from "./commands/db.js";
 import { run as webRun, description as webDesc, usage as webUsage, subcommands as webSubs } from "./commands/web.js";
+import { run as sendRun, description as sendDesc, usage as sendUsage, subcommands as sendSubs } from "./commands/send.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
@@ -70,6 +71,7 @@ const COMMANDS: Record<string, CommandModule> = {
   db:          { description: dbDesc,          usage: dbUsage,          run: dbRun,          subcommands: dbSubs },
   web:         { description: webDesc,         usage: webUsage,         run: webRun,         subcommands: webSubs },
   completions: { description: completionsDesc, usage: completionsUsage, run: completionsRun, subcommands: completionsSubs },
+  send:        { description: sendDesc,        usage: sendUsage,        run: sendRun,        subcommands: sendSubs },
 };
 
 // ── Tab 补全候选词表 ──────────────────────────────────────────────────────────
