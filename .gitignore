@@ -1,6 +1,7 @@
 # 依赖
 node_modules/
 bun.lockb
+bun.lock
 
 # 编译输出 / 打包产物
 dist/
@@ -42,6 +43,14 @@ Thumbs.db
 *.log.*
 tmp/
 temp/
+
+# 离线包 / 压缩包
+*.tgz
+*.tar.gz
+*.zip
+
+# workspace 运行时数据(脚本/任务产物，不纳入版本控制)
+workspace/
 
 # 测试覆盖率
 coverage/
