@@ -192,7 +192,11 @@ async function writeFileImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   const content = String(args["content"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
-  const resolved = path.resolve(expandHome(filePath));
+  // 相对路径基于 ctx.cwd（agent workspace）解析，而非进程 cwd
+  const _base = ctx?.cwd ?? process.cwd();
+  const resolved = path.isAbsolute(expandHome(filePath))
+    ? path.resolve(expandHome(filePath))
+    : path.resolve(_base, expandHome(filePath));
 
   const check = checkWritePath(resolved, ctx);
   if (!check.allow) {
@@ -234,7 +238,11 @@ async function deleteFileImpl(args: Record<string, unknown>, ctx?: ToolContext):
   const filePath = String(args["path"] ?? "");
   if (!filePath) return "错误：缺少 path 参数";
 
-  const resolved = path.resolve(expandHome(filePath));
+  // 相对路径基于 ctx.cwd（agent workspace）解析，而非进程 cwd
+  const _base = ctx?.cwd ?? process.cwd();
+  const resolved = path.isAbsolute(expandHome(filePath))
+    ? path.resolve(expandHome(filePath))
+    : path.resolve(_base, expandHome(filePath));
 
   const check = checkWritePath(resolved, ctx);
   if (!check.allow) {
@@ -280,7 +288,11 @@ async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): P
   if (!filePath) return "错误：缺少 path 参数";
   if (!oldStr) return "错误：缺少 old_str 参数";
 
-  const resolved = path.resolve(expandHome(filePath));
+  // 相对路径基于 ctx.cwd（agent workspace）解析，而非进程 cwd
+  const _base = ctx?.cwd ?? process.cwd();
+  const resolved = path.isAbsolute(expandHome(filePath))
+    ? path.resolve(expandHome(filePath))
+    : path.resolve(_base, expandHome(filePath));
 
   const check = checkWritePath(resolved, ctx);
   if (!check.allow) {
