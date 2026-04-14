@@ -131,6 +131,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
   - 其他语言/框架：根据项目实际情况选择合适命令
 - **任务完成时**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
 - **自动提交（Auto Commit）**：任务完成且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
+  - **提交前必须先执行 \`git diff --cached --name-only\` 检查暂存文件**:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；若发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存再提交。
 - 用中文回复，简洁明了
 
 
@@ -210,6 +211,7 @@ Plan 模式分为两个严格隔离的阶段：
   - 其他语言/框架：根据项目实际情况选择合适命令
 - **执行完毕**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
 - **自动提交（Auto Commit）**：执行完毕且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
+  - **提交前必须先执行 \`git diff --cached --name-only\` 检查暂存文件**:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；若发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存再提交。
 
 ## 重要约束
 
