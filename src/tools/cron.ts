@@ -48,7 +48,7 @@ registerTool({
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
           timeOfDay:     { type: "string",  description: "[daily] 触发时间，格式 HH:MM（本地时间）" },
           agentId:       { type: "string",  description: "使用的 agent（默认 default）。注意：在交互式会话中，实际使用的 agentId 由调用方 agent 决定，此参数仅在 CLI 等无 agent 上下文的场景下生效。" },
-          notify:        { type: "string",  enum: ["always","on_change","on_error","never"], description: "通知策略（默认 always）" },
+          notify:        { type: "string",  enum: ["always","on_change","on_error","never","llm"], description: "通知策略（默认 always）。llm=由LLM决定，输出含[NOTIFY]块时才推送" },
           stateful:      { type: "boolean", description: "是否保留跨 run 对话历史（默认 false）" },
           peerId:        { type: "string",  description: "推送目标的 QQ peerId（不填则仅写 log）" },
           msgType:       { type: "string",  enum: ["c2c","group","guild","dm"], description: "消息类型（默认 c2c）" },
@@ -98,7 +98,7 @@ registerTool({
         sessionId,
         peerId,
         msgType,
-        notify: (args["notify"] as "always" | "on_change" | "on_error" | "never") ?? "always",
+        notify: (args["notify"] as "always" | "on_change" | "on_error" | "never" | "llm") ?? "always",
       },
       stateful: Boolean(args["stateful"] ?? false),
       mfaExempt: true, // agent 调用本身已经过 MFA，默认豁免

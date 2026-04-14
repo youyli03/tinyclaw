@@ -42,7 +42,15 @@ const CronOutputSchema = z.object({
    * - on_error  — 仅出错时推送
    * - never     — 仅写 log，不推送
    */
-  notify: z.enum(["always", "on_change", "on_error", "never"]).default("always"),
+  /**
+   * 通知策略:
+   * - always    — 每次完成都推送
+   * - on_change — 结果与上次不同时推送
+   * - on_error  — 仅出错时推送
+   * - never     — 仅写 log,不推送
+   * - llm       — 由 LLM 决定:输出包含 [NOTIFY]...[/NOTIFY] 块时推送,内容为块内文字
+   */
+  notify: z.enum(["always", "on_change", "on_error", "never", "llm"]).default("always"),
 });
 
 // ── CronJob Schema ────────────────────────────────────────────────────────────
