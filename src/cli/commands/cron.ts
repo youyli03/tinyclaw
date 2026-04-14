@@ -60,9 +60,10 @@ function cmdList(): void {
 
 function scheduleDesc(j: CronJob): string {
   switch (j.type) {
-    case "once":  return j.runAt ? new Date(j.runAt).toLocaleString("zh-CN") : "-";
-    case "every": return `每 ${j.intervalSecs}s`;
-    case "daily": return `每天 ${j.timeOfDay}`;
+    case "once":   return j.runAt ? new Date(j.runAt).toLocaleString("zh-CN") : "-";
+    case "every":  return `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`;
+    case "daily":  return `每天 ${j.timeOfDay}`;
+    case "manual": return "手动触发";
   }
 }
 

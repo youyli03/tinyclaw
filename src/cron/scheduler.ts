@@ -5,9 +5,10 @@
  * 并在 stop() 时清理所有 timer。
  *
  * 调度策略：
- *   once  — setTimeout(msUntilRunAt)；触发后自动从 jobs.json 删除
- *   every — setInterval(intervalSecs * 1000)；启动时若上次运行已过期则立即补跑一次
- *   daily — setTimeout(msUntilNextHH:MM) + 触发后重新 arm 明日同一时间
+ *   once   — setTimeout(msUntilRunAt);触发后自动从 jobs.json 删除
+ *   every  — setInterval(intervalSecs * 1000);有 timeRange 则段外跳过
+ *   daily  — setTimeout(msUntilNextHH:MM) + 触发后重新 arm 明日同一时间
+ *   manual — 无自动调度，只能通过 cron_run 手动触发
  */
 
 import { loadJobs, removeJob } from "./store.js";
@@ -27,17 +28,31 @@ function msUntil(iso: string): number {
   return new Date(iso).getTime() - Date.now();
 }
 
-/** 计算今天（或明天）"HH:MM" 的下次触发时间距今 ms */
+/** 计算今天(或明天)"HH:MM" 的下次触发时间距今 ms */
 function msUntilTimeOfDay(timeOfDay: string): number {
   const [hh, mm] = timeOfDay.split(":").map(Number);
   const now = new Date();
   const next = new Date(now);
   next.setHours(hh!, mm!, 0, 0);
   if (next.getTime() <= now.getTime()) {
-    // 已过，定到明天
+    // 已过,定到明天
     next.setDate(next.getDate() + 1);
   }
   return next.getTime() - now.getTime();
+}
+
+/** 判断当前时刻是否在 job.timeRange 指定的时段内(无 timeRange 始终返回 true) */
+function isInTimeRange(job: CronJob): boolean {
+  if (!job.timeRange) return true;
+  const now = new Date();
+  const weekday = now.getDay(); // 0=周日 ... 6=周六
+  if (job.timeRange.weekdays && !job.timeRange.weekdays.includes(weekday)) return false;
+  const [sh, sm] = job.timeRange.start.split(':').map(Number);
+  const [eh, em] = job.timeRange.end.split(':').map(Number);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const startMins = sh! * 60 + sm!;
+  const endMins = eh! * 60 + em!;
+  return nowMins >= startMins && nowMins < endMins;
 }
 
 // ── 调度器 ────────────────────────────────────────────────────────────────────
@@ -122,6 +137,7 @@ class CronScheduler {
       case "once":  return this.scheduleOnce(job);
       case "every": return this.scheduleEvery(job);
       case "daily": return this.scheduleDaily(job);
+      case "manual": return; // 无自动调度，等待 cron_run 手动触发
     }
   }
 
@@ -147,11 +163,18 @@ class CronScheduler {
     if (job.lastRunAt) {
       const elapsed = Date.now() - new Date(job.lastRunAt).getTime();
       if (elapsed >= intervalMs) {
-        void this.fire(job);
+        if (isInTimeRange(job)) void this.fire(job);
       }
     }
 
-    const handle = setInterval(() => void this.fire(job), intervalMs);
+    const handle = setInterval(() => {
+      if (!isInTimeRange(job)) {
+        const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        console.log(`[${ts}] [cron] Job ${job.id} skipped: out of timeRange`);
+        return;
+      }
+      void this.fire(job);
+    }, intervalMs);
     this.timers.set(job.id, handle);
   }
 
