@@ -340,16 +340,23 @@ async function handleRequest(
     const { prompt, backend = "daily" } = req as { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" };
     const client = llmRegistry.get(backend);
     let slotHeld = false;
+    const oneshotId = Math.random().toString(36).slice(2, 7);
+    const oneshotStart = Date.now();
+    console.log(`[llm_oneshot] id=${oneshotId} backend=${backend} prompt_len=${prompt.length} 开始`);
     try {
       await acquireLLMSlot();
       slotHeld = true;
+      const slotWait = Date.now() - oneshotStart;
+      if (slotWait > 100) console.log(`[llm_oneshot] id=${oneshotId} 等待slot ${slotWait}ms`);
       await client.streamChat(
         [{ role: "user", content: prompt }],
         (delta) => { send({ type: "chunk", delta }); },
         { tools: [], isUserInitiated: true },
       );
       send({ type: "done" });
+      console.log(`[llm_oneshot] id=${oneshotId} 完成 耗时=${Date.now() - oneshotStart}ms`);
     } catch (err) {
+      console.log(`[llm_oneshot] id=${oneshotId} 失败 耗时=${Date.now() - oneshotStart}ms err=${err instanceof Error ? err.message : String(err)}`);
       send({ type: "error", message: err instanceof Error ? err.message : String(err) });
     } finally {
       if (slotHeld) releaseLLMSlot();

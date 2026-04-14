@@ -652,7 +652,7 @@ export async function runAgent(
     if (!isCodeMode) {
       const memoryContext = await searchMemory(userContent, session.agentId);
       if (memoryContext) {
-        session.addSystemMessage(memoryContext);
+        session.replaceOrAddMemoryContext(memoryContext);
       }
     }
 
@@ -865,6 +865,7 @@ export async function runAgent(
     lastUsage = response.usage;
     // 记录到 session，供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
+    Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值

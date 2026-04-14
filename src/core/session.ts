@@ -170,9 +170,10 @@ export class Session {
     // .code.active 不存在说明用户主动切回了 chat，不做恢复
     const codeRestored = Session.loadFromJsonl(sessionId, "code");
     const codeActive = fs.existsSync(Session.getCodeActivePath(sessionId));
-    if (codeRestored && codeRestored.length > 0 && codeActive) {
+    if (codeRestored && codeRestored.messages.length > 0 && codeActive) {
       this.mode = "code";
-      this.messages = codeRestored;
+      this.messages = codeRestored.messages;
+      this.lastPromptTokens = codeRestored.lastPromptTokens;
       this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
       this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
       this._persistReady = true;
@@ -182,7 +183,8 @@ export class Session {
     // 尝试从 chat JSONL 恢复（进程崩溃后重启）
     const restored = Session.loadFromJsonl(sessionId, "chat");
     if (restored) {
-      this.messages = restored;
+      this.messages = restored.messages;
+      this.lastPromptTokens = restored.lastPromptTokens;
     } else if (opts.systemPrompt) {
       this.messages.push({ role: "system", content: opts.systemPrompt });
     }
@@ -350,6 +352,26 @@ export class Session {
    * 用特殊前缀标记识别上轮注入的 reminder，找到则原地替换，否则追加。
    * 这样每轮只有一条 skill reminder，不会堆积。
    */
+  /**
+   * 替换或新增记忆注入 system 消息。
+   * 用内容第一行（如 "## 近期日记"、"## 当前活跃上下文" 等）作为 marker 识别同类注入，
+   * 找到则原地替换，否则追加。每类记忆只保留最新一条，不无限堆积。
+   */
+  replaceOrAddMemoryContext(content: string): void {
+    // 取第一行作为 marker（如 "## 近期日记"）
+    const firstLine = content.split("\n")[0]?.trim() ?? "";
+    const marker = firstLine ? `<!-- memory:${firstLine} -->` : "<!-- memory:context -->";
+    const marked = marker + "\n" + content;
+    const idx = this.messages.findIndex(
+      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith(marker)
+    );
+    if (idx !== -1) {
+      this.messages[idx] = { role: "system", content: marked };
+    } else {
+      this.messages.push({ role: "system", content: marked });
+    }
+  }
+
   replaceOrAddSkillReminder(content: string): void {
     const MARKER = "<!-- skill-reminder -->";
     const idx = this.messages.findIndex(
@@ -824,15 +846,22 @@ export class Session {
    * - tool：role + tool_call_id + content
    * tool 与 assistant+tool_calls 必须成对出现，孤立的 tool 消息（缺少对应 tool_call_id）会被跳过。
    */
-  private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): ChatMessage[] | null {
+  private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): { messages: ChatMessage[]; lastPromptTokens: number } | null {
     const filePath = Session.getJsonlPath(sessionId, mode);
     if (!fs.existsSync(filePath)) return null;
     try {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
       const messages: ChatMessage[] = [];
+      let lastPromptTokens = 0;
       for (const line of lines) {
         try {
           const entry = JSON.parse(line) as Record<string, unknown>;
+          // _meta 行：不加入 messages，只提取元数据
+          if (entry["_meta"] === "promptTokens") {
+            const v = entry["value"];
+            if (typeof v === "number" && v > 0) lastPromptTokens = v;
+            continue;
+          }
           const role = entry["role"];
           const content = entry["content"];
 
@@ -944,10 +973,26 @@ export class Session {
         validated.forEach((m) => sanitized.push(m));
       }
 
-      return sanitized.length > 0 ? sanitized : null;
+      return sanitized.length > 0 ? { messages: sanitized, lastPromptTokens } : null;
     } catch (err) {
       console.error("[session] JSONL load failed:", err);
       return null;
+    }
+  }
+
+  /**
+   * 将本轮实际 promptTokens 持久化到 JSONL 末尾（_meta 行）。
+   * loadFromJsonl 读取时识别并恢复到 session.lastPromptTokens，供 shouldSummarize 使用。
+   */
+  static persistPromptTokens(sessionId: string, mode: "chat" | "code", tokens: number): void {
+    if (tokens <= 0) return;
+    try {
+      const filePath = Session.getJsonlPath(sessionId, mode);
+      if (!fs.existsSync(filePath)) return;
+      const line = JSON.stringify({ _meta: "promptTokens", value: tokens, ts: new Date().toISOString() }) + "\n";
+      fs.appendFileSync(filePath, line, "utf-8");
+    } catch (err) {
+      console.error("[session] persistPromptTokens failed:", err);
     }
   }
 
@@ -1031,8 +1076,9 @@ export class Session {
       }
     }
     const restored = Session.loadFromJsonl(this.sessionId, targetMode);
-    if (restored && restored.length > 0) {
-      this.messages = restored;
+    if (restored && restored.messages.length > 0) {
+      this.messages = restored.messages;
+      this.lastPromptTokens = restored.lastPromptTokens;
       return true;
     }
     this.messages = [];
