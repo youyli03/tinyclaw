@@ -379,10 +379,18 @@ export async function summarizeAndCompress(
 ): Promise<ChatMessage[]> {
   const client = llmRegistry.get("summarizer");
 
-  // 永久性 system messages（过滤 QMD 召回注入的临时 system messages）
-  const systemMessages = messages.filter(
-    (m) => m.role === "system" && (typeof m.content === "string" ? !m.content.startsWith("## 相关历史记忆") : true)
-  );
+  // 永久性 system messages:
+  // - 保留主 system prompt（不以 ## 或 <!-- memory: 开头）
+  // - 保留 skill-reminder（含 <!-- skill-reminder --> marker）
+  // - 保留有 <!-- memory:xxx --> marker 的记忆注入（每类只有1条）
+  // - 清除旧格式无 marker 的临时记忆注入（以 ## 开头的 ## 近期日记/相关卡片等）
+  const systemMessages = messages.filter((m) => {
+    if (m.role !== "system") return false;
+    const c = typeof m.content === "string" ? m.content : "";
+    const isMain   = !c.startsWith("##") && !c.startsWith("<!-- memory:");  // 主 prompt 或 skill-reminder
+    const isMarked = c.startsWith("<!-- memory:");                           // 新格式记忆注入
+    return isMain || isMarked;
+  });
   const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
   // 找出最后 CHAT_KEEP_TURNS 个 user 消息的起始位置，保留该位置起的全部消息
