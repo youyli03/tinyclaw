@@ -170,7 +170,7 @@ class CronScheduler {
     const handle = setInterval(() => {
       if (!isInTimeRange(job)) {
         const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-        console.log(`[${ts}] [cron] Job ${job.id} skipped: out of timeRange`);
+        // out of timeRange 静默跳过，不打印日志
         return;
       }
       void this.fire(job);
