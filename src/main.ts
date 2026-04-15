@@ -750,6 +750,9 @@ async function main(): Promise<void> {
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
+          // one-shot: 发送完通知后立即清除，防止 QQ Bot 后续重连触发 READY 时重复推送
+          delete connector!.onReady;
+
           // 1. 仅非 code 模式重启才主动发通知。
           //    code 模式重启(含 codeSessionId)由 resume runAgent 的 result.content 返回结果，
           //    不额外推送 "✅ 重启完成" 避免重复打扰。

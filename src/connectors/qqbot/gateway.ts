@@ -70,6 +70,7 @@ export interface GatewayConfig {
 
 import { getDataFile } from "../../config/loader.js";
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 interface SessionState {
   sessionId: string;
@@ -93,7 +94,8 @@ function loadSession(appId: string): SessionState | null {
 function saveSession(s: SessionState): void {
   try {
     const p = getDataFile("qqbot", "session.json");
-    fs.mkdirSync(fs.realpathSync(p.replace(/\/[^/]+$/, "")), { recursive: true });
+    // 用 path.dirname 而非 realpathSync（目录不存在时 realpathSync 会抛异常）
+    fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify(s, null, 2));
   } catch { /* non-critical */ }
 }
