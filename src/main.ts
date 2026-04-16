@@ -37,6 +37,7 @@ import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js"
 import { startIpcServer } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
+import { loopTriggerManager } from "./core/loop-trigger.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
 import { tinyclawSubmitter } from "./core/tinyclaw-submitter.js";
 import { skillWatcher } from "./skills/watcher.js";
@@ -666,12 +667,11 @@ async function main(): Promise<void> {
       if (!senderAccess.can_access.includes("*") && !senderAccess.can_access.includes(targetAgentId)) continue;
       const receiverAccess = agentManager.readAccessConfig(targetAgentId);
       if (!receiverAccess.allow_from.includes(fromAgentId)) continue;
-      const loopCfg = agentManager.readSessionLoop(sid);
       result.push({
         sessionId: sid,
         agentId: targetAgentId,
         running: session.running,
-        isLoop: loopCfg !== null,
+        isLoop: agentManager.readSessionLoop(sid) !== null || loopTriggerManager.isBound(sid),
       });
     }
     return result;
@@ -698,6 +698,13 @@ async function main(): Promise<void> {
   };
   await loopRunner.start(loopTick);
 
+  // 启动 loop 触发器管理器（新机制：bindTo 绑定任意 session）
+  loopTriggerManager.start({
+    getSession,
+    runAgent,
+    connector,
+  });
+
   // 7. 启动内置每日记忆维护调度器
   memoryMaintenance.start();
 
@@ -720,6 +727,7 @@ async function main(): Promise<void> {
     ipcServer.close();
     cronScheduler.stop();
     loopRunner.stop();
+    loopTriggerManager.stop();
     memoryMaintenance.stop();
     tinyclawSubmitter.stop();
     stopCollector();
