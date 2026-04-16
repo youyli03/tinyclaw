@@ -236,7 +236,7 @@ const MemorySchema = z.object({
    * 触发摘要的 token 使用率阈值（0-1），默认 0.8
    * 达到模型上下文长度的该比例时，自动压缩对话历史
    */
-  tokenThreshold: z.number().min(0.1).max(0.99).default(0.8),
+  tokenThreshold: z.number().min(0.1).max(0.99).default(0.6),
   /** 上下文最大 token 数，用于计算阈值，默认 128000 */
   contextWindow: z.number().int().positive().default(128_000),
 
