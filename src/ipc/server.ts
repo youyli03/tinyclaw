@@ -17,6 +17,7 @@ import { runAgent } from "../core/agent.js";
 import { llmRegistry } from "../llm/registry.js";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { agentManager } from "../core/agent-manager.js";
+import { loopTriggerManager } from "../core/loop-trigger.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { parseCommand, executeCommand } from "../commands/registry.js";
@@ -158,56 +159,48 @@ async function handleRequest(
     return;
   }
 
-  // ── loop_trigger 请求：立即触发指定 loop session 的一次 tick ──────────────
+  // ── loop_trigger 请求:立即触发指定 loop（通过 id） ──────────────
   if (req.type === "loop_trigger") {
     const { sessionId: loopSid } = req as { type: "loop_trigger"; sessionId: string };
-    const { loopRunner } = await import("../core/loop-runner.js");
-    const found = loopRunner.triggerNow(loopSid);
+    const found = loopTriggerManager.triggerNow(loopSid);
     send({ type: "loop_triggered", sessionId: loopSid, found });
     return;
   }
 
-  // ── loop_pause 请求：暂停指定 loop session 的定时触发 ─────────────────────
+  // ── loop_pause 请求:暂停指定 loop ─────────────────────
   if (req.type === "loop_pause") {
     const { sessionId: loopSid } = req as { type: "loop_pause"; sessionId: string };
-    const { loopRunner } = await import("../core/loop-runner.js");
-    const found = loopRunner.pause(loopSid);
+    const found = loopTriggerManager.pause(loopSid);
     send({ type: "loop_paused", sessionId: loopSid, found });
     return;
   }
 
-  // ── loop_resume 请求：恢复指定 loop session 的定时触发 ────────────────────
+  // ── loop_resume 请求:恢复指定 loop ────────────────────
   if (req.type === "loop_resume") {
     const { sessionId: loopSid } = req as { type: "loop_resume"; sessionId: string };
-    const { loopRunner } = await import("../core/loop-runner.js");
-    const found = loopRunner.resume(loopSid);
+    const found = loopTriggerManager.resume(loopSid);
     send({ type: "loop_resumed", sessionId: loopSid, found });
     return;
   }
 
-  // ── loop_status 请求：查询指定 loop session 的实时状态 ────────────────────
+  // ── loop_status 请求:查询指定 loop 的实时状态 ────────────────────
   if (req.type === "loop_status") {
     const { sessionId: loopSid } = req as { type: "loop_status"; sessionId: string };
-    const { loopRunner } = await import("../core/loop-runner.js");
-    const status = loopRunner.getStatus(loopSid);
+    const statusList = loopTriggerManager.listStatus();
+    const item = statusList.find((s) => s.id === loopSid || s.bindTo === loopSid);
+    const status = item?.status ?? "not_found";
     send({ type: "loop_status_result", sessionId: loopSid, status });
     return;
   }
 
-  // ── loop_list_status 请求：列出所有 loop session 的实时状态 ───────────────
+  // ── loop_list_status 请求:列出所有 loop 的实时状态 ───────────────
   if (req.type === "loop_list_status") {
-    const { loopRunner } = await import("../core/loop-runner.js");
-    const statusList = loopRunner.listStatus();
-    // 合并 toml 配置（agentId / tickSeconds）
-    const items = statusList.map(({ sessionId: sid, status }) => {
-      const cfg = agentManager.readSessionLoop(sid);
-      return {
-        sessionId: sid,
-        status,
-        agentId: cfg?.agentId ?? "unknown",
-        tickSeconds: cfg?.tickSeconds ?? 0,
-      };
-    });
+    const items = loopTriggerManager.listStatus().map(({ id, bindTo, status }) => ({
+      sessionId: id,
+      status,
+      agentId: "default",
+      tickSeconds: 0,
+    }));
     send({ type: "loop_list_status_result", items });
     return;
   }

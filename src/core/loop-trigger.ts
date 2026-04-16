@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
-import { executeTool, type ToolContext } from "../tools/registry.js";
+import { executeTool, getTool, type ToolContext } from "../tools/registry.js";
 import type { Session } from "./session.js";
 import type { runAgent as RunAgentFn } from "./agent.js";
 
@@ -51,15 +51,9 @@ const TriggerConfigSchema = z.object({
     }).transform((v) => [v]),
   ]).optional(),
   /**
-   * 退出令牌（默认 "LOOP_DONE"）:AI 输出中**独立一行**包含此字符串时，视为本轮任务完成。
-   * 必须配合 allowExit: true 才生效。
-   */
-  exitToken: z.string().default("LOOP_DONE"),
-  /**
-   * 是否允许 AI 通过 exitToken 退出本轮任务（默认 false）。
-   * true: 检测到 exitToken 后，本时间窗口内不再 tick，等下一个 timeRange 窗口重置后继续；
-   *       不修改 enabled 字段，下一个窗口会自动重新开始。
-   * false: 忽略 exitToken，时间段内持续每 tickSeconds tick 一次（适合持续监控）。
+   * 是否允许 AI 通过调用 loop_exit 工具退出本轮任务（默认 false）。
+   * true: AI 调用 loop_exit 后，本时间窗口内不再 tick，等下一个窗口重置后继续；
+   * false: AI 无法自主退出，持续每 tickSeconds 一次（适合持续监控）。
    */
   allowExit: z.boolean().default(false),
   /** tool steps：顺序执行，输出拼成前缀字符串 */
@@ -266,7 +260,7 @@ export class LoopTriggerManager {
   }
 
 
-  /** 返回 true 表示检测到 exitToken（任务完成信号） */
+  /** 返回 true 表示 AI 调用了 loop_exit（本窗口任务完成信号） */
   private async tick(cfg: TriggerConfig): Promise<boolean> {
     if (this.running.has(cfg.id)) {
       console.log(`[loop-trigger] id=${cfg.id} tick 跳过（上次仍在执行）`);
@@ -292,10 +286,14 @@ export class LoopTriggerManager {
       // 构建 notifyFn（从 bindTo 解析 peerId）
       const notifyFn = this.buildNotifyFn(cfg.bindTo);
 
+      // allowExit=true 时：退出信号标志 + onLoopExit 回调
+      let exitSignaled = false;
+      const onLoopExit = cfg.allowExit ? () => { exitSignaled = true; } : undefined;
+
       // 执行 tool steps，收集输出拼成前缀
       let prefix = "";
       if (cfg.steps?.length) {
-        const toolCtx = this.buildToolCtx(cfg, session, notifyFn);
+        const toolCtx = this.buildToolCtx(cfg, session, notifyFn, onLoopExit);
         const parts: string[] = [];
         for (const step of cfg.steps) {
           console.log(`[loop-trigger] id=${cfg.id} tool step: ${step.name}`);
@@ -311,37 +309,36 @@ export class LoopTriggerManager {
         }
       }
 
-      const content = prefix + message;
+      // allowExit=true 时在 message 末尾追加退出提示（退出条件由用户写在 message 字段里）
+      const exitHint = cfg.allowExit
+        ? "\n\n---\n你可以调用 loop_exit 工具退出本次监控窗口。退出条件见上面的任务描述。"
+        : "";
+      const content = prefix + message + exitHint;
       if (!content.trim()) {
         console.warn(`[loop-trigger] id=${cfg.id} 合并后内容为空，跳过`);
         return false;
       }
 
       // 以 addLoopTaskMessage 注入（历史中折叠为占位符，不堆积 K 线数据）
-      // 用一个虚拟 taskFilePath 作为折叠 key（相同 id 的 tick 共用同一 key）
       const taskRef = path.join(this.loopsDir, `${cfg.id}.json`);
       session.addLoopTaskMessage(taskRef, content);
+
+      // allowExit=true 时通过 customTools 注入 loop_exit 工具 spec
+      const loopExitDef = cfg.allowExit ? getTool("loop_exit") : undefined;
+      const customTools = loopExitDef ? [loopExitDef.spec] : undefined;
 
       await this.runAgent(session, content, {
         skipAddUserMessage: true,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
+        ...(onLoopExit ? { onLoopExit } : {}),
+        ...(customTools ? { customTools } : {}),
       });
 
-      // 检查退出令牌（仅 allowExit=true 时有效）
-      let exited = false;
-      if (cfg.allowExit) {
-        const msgs = session.getMessages();
-        const last = [...msgs].reverse().find((m) => m.role === "assistant");
-        const lastText = typeof last?.content === "string" ? last.content : "";
-        // exitToken 必须独占一行（trim 后精确匹配，防止正常输出中出现相同词汇误触发）
-        const outputLines = lastText.split("\n").map((l: string) => l.trim());
-        if (outputLines.includes(cfg.exitToken)) {
-          console.log(`[loop-trigger] id=${cfg.id} 检测到 exitToken "${cfg.exitToken}"，本窗口任务完成`);
-          exited = true;
-        }
+      if (exitSignaled) {
+        console.log(`[loop-trigger] id=${cfg.id} AI 调用了 loop_exit，本窗口任务完成`);
       }
       console.log(`[loop-trigger] id=${cfg.id} tick 完成`);
-      return exited;
+      return exitSignaled;
     } catch (err) {
       console.error(`[loop-trigger] id=${cfg.id} tick 失败:`, err);
       return false;
@@ -362,7 +359,12 @@ export class LoopTriggerManager {
     };
   }
 
-  private buildToolCtx(cfg: TriggerConfig, session: Session, notifyFn: ((msg: string) => Promise<void>) | undefined): ToolContext {
+  private buildToolCtx(
+    cfg: TriggerConfig,
+    session: Session,
+    notifyFn: ((msg: string) => Promise<void>) | undefined,
+    onLoopExit?: () => void,
+  ): ToolContext {
     return {
       sessionId: cfg.bindTo,
       agentId: cfg.agentId,
@@ -376,6 +378,7 @@ export class LoopTriggerManager {
         }),
       onSlaveComplete: async () => { /* no-op */ },
       ...(notifyFn ? { onNotify: notifyFn } : {}),
+      ...(onLoopExit ? { onLoopExit } : {}),
     };
   }
 

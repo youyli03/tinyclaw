@@ -48,6 +48,7 @@ import { parseCommand, executeCommand } from "./commands/registry.js";
 import "./commands/builtin.js";
 import "./tools/db-write.js";
 import "./tools/write-report.js";
+import "./tools/loop-exit.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 

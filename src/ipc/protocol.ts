@@ -87,7 +87,7 @@ export type IpcResponse =
   /** loop_status 请求的响应 */
   | { type: "loop_status_result"; sessionId: string; status: "running" | "paused" | "idle" | "not_found" }
   /** loop_list_status 请求的响应 */
-  | { type: "loop_list_status_result"; items: Array<{ sessionId: string; status: "running" | "paused" | "idle"; agentId: string; tickSeconds: number }> }
+  | { type: "loop_list_status_result"; items: Array<{ sessionId: string; status: "running" | "paused" | "idle" | "not_found"; agentId: string; tickSeconds: number }> }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */

@@ -68,6 +68,12 @@ export interface ToolContext {
    * - isFreeform：true 表示用户自由输入，false 表示选择了预设选项
    * 仅在交互式会话下注入；CLI/cron 模式时为 undefined，工具自动返回 skipped。
    */
+  /**
+   * loop_exit 工具调用时触发的回调(由 loop-trigger 注入)。
+   * 调用后当前 tick 完成时退出本轮时间窗口,不再继续 tick,直到下一个时间窗口重置。
+   * allowExit=false 时不注入,工具返回错误。
+   */
+  onLoopExit?: () => void;
   onAskUser?: (
     question: string,
     options?: Array<{ label: string; description?: string; recommended?: boolean }>,
