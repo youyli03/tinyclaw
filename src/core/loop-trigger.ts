@@ -50,8 +50,18 @@ const TriggerConfigSchema = z.object({
       weekdays: z.array(z.number().int().min(0).max(6)).optional(),
     }).transform((v) => [v]),
   ]).optional(),
-  /** 退出令牌:AI 输出中包含此字符串时，触发器自动停止（enabled 置 false 持久化）。适合一次性任务。 */
-  exitToken: z.string().optional(),
+  /**
+   * 退出令牌（默认 "LOOP_DONE"）:AI 输出中**独立一行**包含此字符串时，视为本轮任务完成。
+   * 必须配合 allowExit: true 才生效。
+   */
+  exitToken: z.string().default("LOOP_DONE"),
+  /**
+   * 是否允许 AI 通过 exitToken 退出本轮任务（默认 false）。
+   * true: 检测到 exitToken 后，本时间窗口内不再 tick，等下一个 timeRange 窗口重置后继续；
+   *       不修改 enabled 字段，下一个窗口会自动重新开始。
+   * false: 忽略 exitToken，时间段内持续每 tickSeconds tick 一次（适合持续监控）。
+   */
+  allowExit: z.boolean().default(false),
   /** tool steps：顺序执行，输出拼成前缀字符串 */
   steps: z.array(ToolStepSchema).optional(),
   /** 注入 session 的 user message（steps 输出作为前缀拼在其前面） */
@@ -62,12 +72,13 @@ export type TriggerConfig = z.infer<typeof TriggerConfigSchema>;
 
 // ── 工具函数 ───────────────────────────────────────────────────────────────
 
-function isInTimeRange(cfg: TriggerConfig): boolean {
-  if (!cfg.timeRanges?.length) return true;
+/** 返回当前命中的时间段索引（-1=未命中；无 timeRanges 配置视为全天，返回 0） */
+function currentTimeRangeIndex(cfg: TriggerConfig): number {
+  if (!cfg.timeRanges?.length) return 0;
   const now = new Date();
-  const weekday = now.getDay(); // 0=周日
+  const weekday = now.getDay();
   const cur = now.getHours() * 60 + now.getMinutes();
-  return cfg.timeRanges.some((r) => {
+  return cfg.timeRanges.findIndex((r) => {
     if (r.weekdays && !r.weekdays.includes(weekday)) return false;
     const [sh = 0, sm = 0] = r.start.split(":").map(Number);
     const [eh = 0, em = 0] = r.end.split(":").map(Number);
@@ -209,6 +220,9 @@ export class LoopTriggerManager {
   }
 
   private async loop(cfg: TriggerConfig): Promise<void> {
+    // exitedWindowIdx: 当前时间窗口已被 AI 退出，等待切换到新窗口后重置
+    let exitedWindowIdx: number | null = null;
+
     while (!this.stopped.has(cfg.id)) {
       await delay(cfg.tickSeconds * 1000);
       if (this.stopped.has(cfg.id)) break;
@@ -224,27 +238,46 @@ export class LoopTriggerManager {
         break;
       }
 
-      if (!isInTimeRange(latest)) {
-        // 段外静默跳过
+      const windowIdx = currentTimeRangeIndex(latest);
+
+      // 段外：静默跳过，同时重置退出状态（下次进入新窗口时从头开始）
+      if (windowIdx === -1) {
+        exitedWindowIdx = null;
         continue;
       }
 
-      await this.tick(latest);
+      // 当前窗口已被 AI 退出（allowExit=true），等待进入新窗口
+      if (latest.allowExit && exitedWindowIdx === windowIdx) {
+        continue;
+      }
+
+      // 窗口切换时重置退出状态
+      if (exitedWindowIdx !== null && exitedWindowIdx !== windowIdx) {
+        exitedWindowIdx = null;
+      }
+
+      const exited = await this.tick(latest);
+      if (exited && latest.allowExit) {
+        exitedWindowIdx = windowIdx;
+        console.log(`[loop-trigger] id=${latest.id} 当前窗口任务完成，等待下一个时间窗口`);
+      }
     }
     this.scheduled.delete(cfg.id);
   }
 
-  private async tick(cfg: TriggerConfig): Promise<void> {
+
+  /** 返回 true 表示检测到 exitToken（任务完成信号） */
+  private async tick(cfg: TriggerConfig): Promise<boolean> {
     if (this.running.has(cfg.id)) {
       console.log(`[loop-trigger] id=${cfg.id} tick 跳过（上次仍在执行）`);
-      return;
+      return false;
     }
-    if (!this.getSession || !this.runAgent) return;
+    if (!this.getSession || !this.runAgent) return false;
 
     const message = cfg.message ?? "";
     if (!cfg.steps?.length && !message) {
       console.warn(`[loop-trigger] id=${cfg.id} 无 steps 也无 message，跳过`);
-      return;
+      return false;
     }
 
     this.running.add(cfg.id);
@@ -281,7 +314,7 @@ export class LoopTriggerManager {
       const content = prefix + message;
       if (!content.trim()) {
         console.warn(`[loop-trigger] id=${cfg.id} 合并后内容为空，跳过`);
-        return;
+        return false;
       }
 
       // 以 addLoopTaskMessage 注入（历史中折叠为占位符，不堆积 K 线数据）
@@ -294,26 +327,24 @@ export class LoopTriggerManager {
         ...(notifyFn ? { onNotify: notifyFn } : {}),
       });
 
-      // 检查退出令牌：AI 输出包含 exitToken 时自动停止触发器
-      if (cfg.exitToken) {
+      // 检查退出令牌（仅 allowExit=true 时有效）
+      let exited = false;
+      if (cfg.allowExit) {
         const msgs = session.getMessages();
         const last = [...msgs].reverse().find((m) => m.role === "assistant");
         const lastText = typeof last?.content === "string" ? last.content : "";
-        if (lastText.includes(cfg.exitToken)) {
-          console.log(`[loop-trigger] id=${cfg.id} 检测到 exitToken，触发器自动停止`);
-          this.stopped.add(cfg.id);
-          // 持久化：将配置文件 enabled 置为 false
-          try {
-            const filePath = path.join(this.loopsDir, `${cfg.id}.json`);
-            const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
-            raw["enabled"] = false;
-            fs.writeFileSync(filePath, JSON.stringify(raw, null, 2), "utf-8");
-          } catch { /* 忽略持久化失败 */ }
+        // exitToken 必须独占一行（trim 后精确匹配，防止正常输出中出现相同词汇误触发）
+        const outputLines = lastText.split("\n").map((l: string) => l.trim());
+        if (outputLines.includes(cfg.exitToken)) {
+          console.log(`[loop-trigger] id=${cfg.id} 检测到 exitToken "${cfg.exitToken}"，本窗口任务完成`);
+          exited = true;
         }
       }
       console.log(`[loop-trigger] id=${cfg.id} tick 完成`);
+      return exited;
     } catch (err) {
       console.error(`[loop-trigger] id=${cfg.id} tick 失败:`, err);
+      return false;
     } finally {
       this.running.delete(cfg.id);
     }
