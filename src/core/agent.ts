@@ -214,7 +214,8 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - 任务执行到一半遇到分支，需要用户决策才能继续
 
 使用方式：
-- 提供 2～5 个预设选项（含 label，可加 description 说明和 recommended 推荐标记）
+- **合并问题**:将任务中所有不确定点整合为**一次 ask_user** 调用,用结构化 question 列出多个子问题,options 给出最可能的答案组合;避免多轮串行询问
+- 提供 2~5 个预设选项(含 label,可加 description 说明和 recommended 推荐标记)
 - 默认允许用户自由输入（不局限于预设选项）
 - 不要用此工具询问**可以自行通过读文件/执行命令确认**的事项
 
