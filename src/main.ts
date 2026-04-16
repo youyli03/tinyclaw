@@ -252,6 +252,11 @@ async function main(): Promise<void> {
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;
 
+    /** 每次用户消息处理中，exit_plan_mode + ask_user 合计最多调用次数 */
+    const MAX_INTERACTIVE_CALLS = 15;
+    /** 当前用户消息处理中已使用的交互调用计数 */
+    let interactiveCallCount = 0;
+
     /**
      * Slave 完成时的通知回调：
      * 1. 等待 Master 当前 run 结束（如果正在运行）
@@ -356,7 +361,7 @@ async function main(): Promise<void> {
      * 仅在 code + plan 子模式下注入。
      */
     const buildPlanRequestCallback = (): AgentRunOptions["onPlanRequest"] | undefined => {
-      if (session.mode !== "code" || session.codeSubMode !== "plan") return undefined;
+      if (session.mode !== "code") return undefined;
 
       return async (
         summary: string,
@@ -364,7 +369,16 @@ async function main(): Promise<void> {
         recommendedAction?: string,
         planPath?: string,
       ): Promise<PlanApprovalResult> => {
-        const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
+        // 达到最大交互次数：自动拒绝并通知 AI 总结
+        interactiveCallCount++;
+        if (interactiveCallCount > MAX_INTERACTIVE_CALLS) {
+          return {
+            approved: false,
+            feedback: `⚠️ 本次处理已达到最大交互次数（${MAX_INTERACTIVE_CALLS} 次）。请立即停止规划，总结当前已确认的内容并输出给用户，不要再调用 exit_plan_mode 或 ask_user。`,
+          };
+        }
+
+                const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
         const resolvedRecommended = recommendedAction ?? "autopilot";
 
         // 构建操作菜单（Markdown 格式，用于渲染为图片）
@@ -426,6 +440,13 @@ async function main(): Promise<void> {
       options?: Array<{ label: string; description?: string; recommended?: boolean }>,
       allowFreeform = true,
     ): Promise<{ answer: string; isFreeform: boolean }> => {
+      // 达到最大交互次数：通知 AI 总结
+      interactiveCallCount++;
+      if (interactiveCallCount > MAX_INTERACTIVE_CALLS) {
+        const limitMsg = `⚠️ 本次处理已达到最大交互次数（${MAX_INTERACTIVE_CALLS} 次），请立即总结当前内容并输出给用户，不要再调用 ask_user 或 exit_plan_mode。`;
+        await connector.send(msg.peerId, msg.type, limitMsg).catch(() => {});
+        throw new Error(limitMsg);
+      }
       const optionLabels = (options ?? []).map((o) => o.label);
 
       // 构建菜单消息（Markdown 格式，尝试渲染为图片）

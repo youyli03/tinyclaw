@@ -205,6 +205,7 @@ function runCli(bin: string, argv: string[], label: string): Promise<string> {
 
 registerTool({
   requiresMFA: false,
+  hidden: true,  // chat 模式下暂时禁用，用户不可见
   spec: {
     type: "function",
     function: {

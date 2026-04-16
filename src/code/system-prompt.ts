@@ -19,7 +19,7 @@ import { readFeedback } from "../core/feedback-writer.js";
 export function buildCodeSystemPrompt(
   agentId = "default",
   supportsVision = false,
-  subMode: "auto" | "plan" = "auto",
+  _subMode: "auto" | "plan" = "plan",  // auto 已移除，统一使用 plan
   workdir?: string,
   sessionId?: string,
 ): string {
@@ -42,21 +42,17 @@ export function buildCodeSystemPrompt(
   // 读取 code/feedback.md（跨 session 永久有效的行为约束）
   const feedbackContent = readFeedback(agentId, "code");
 
-  // 读取已有 PLAN.md（plan 模式下注入，让 AI 感知上次遗留计划）
+  // 读取已有 PLAN.md，注入让 AI 感知上次遗留计划
   let existingPlan: string | undefined;
-  if (subMode === "plan") {
-    try {
-      if (existsSync(planPath)) {
-        const content = readFileSync(planPath, "utf-8").trim();
-        if (content.length > 0) existingPlan = content;
-      }
-    } catch { /* ignore */ }
-  }
+  try {
+    if (existsSync(planPath)) {
+      const content = readFileSync(planPath, "utf-8").trim();
+      if (content.length > 0) existingPlan = content;
+    }
+  } catch { /* ignore */ }
 
-  if (subMode === "plan") {
-    return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId });
-  }
-  return buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId });
+  // Code 模式统一使用 Plan 模式（已移除 Auto）
+  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId });
 }
 
 interface PromptParts {
@@ -248,7 +244,8 @@ Plan 模式分为两个严格隔离的阶段：
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
 - 执行测试、构建、安装依赖等长命令时，必须根据任务规模主动设置合适的 \`timeout_sec\`
 - **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**严禁**自行执行任何重启或终止进程的操作（包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等）。tinyclaw 进程的生命周期由用户统一管理，完成修改后告知用户即可，由用户决定何时重启。
-- **规划过程中遇到需求歧义或多个合理方向时**:调用 ask_user 工具向用户提问,提供 2~4 个预设选项,明确后再继续规划;不要把模糊假设写入计划。ask_user 在同一次处理过程中不消耗额外请求,可多次使用
+- **规划过程中遇到需求歧义或多个合理方向时**:调用 ask_user 工具向用户提问,提供 2~4 个预设选项,明确后再继续规划;不要把模糊假设写入计划
+- **交互次数限制**:每次用户消息处理中，exit_plan_mode 和 ask_user 合计最多 15 次；超出后系统将拒绝工具调用并通知 AI 立即总结输出——请尽量一次问清、一次规划到位，不要反复迭代
 ## 图表与可视化
 
 - **需要展示流程图、架构图、时序图、数据图表时，必须调用 render_diagram 工具生成图片**

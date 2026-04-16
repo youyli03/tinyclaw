@@ -637,7 +637,7 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, session.codeSubMode, session.codeWorkdir ?? undefined, session.sessionId);
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId);
       } else {
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
       }

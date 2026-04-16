@@ -140,22 +140,15 @@ registerCommand({
 
 registerCommand({
   name: "auto",
-  description: "切换到 Auto 子模式：AI 直接执行任务，不经过规划阶段（默认模式，需在 Code 模式下）",
+  description: "Auto 子模式已移除，Code 模式现在统一使用 Plan 模式",
   usage: "/auto",
   modes: ["code"],
-  execute({ session }) {
-    const denied = denyWhileRunning(session);
-    if (denied) return denied;
-    if (session.codeSubMode === "auto") {
-      return "ℹ️ 已处于 Auto 子模式（默认）。发送 `/plan` 可切换到规划子模式。";
-    }
-    session.saveCodeSubMode(agentManager.codeSubModePath(session.agentId), "auto");
+  execute({ session: _session }) {
     return [
-      "🚀 **已切换到 Auto 子模式**",
+      "⚠️ **Auto 子模式已移除**",
       "",
-      "• AI 将直接分析并执行任务，不经过规划确认",
-      "• 这是 Code 模式的默认行为",
-      "• 发送 `/plan` 可切换回规划子模式",
+      "Code 模式现在统一使用 **Plan 模式**：AI 先分析任务、提交计划，用户确认后再执行修改。",
+      "发送 `/plan` 查看当前 Plan 模式说明。",
     ].join("\n");
   },
 });

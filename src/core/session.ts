@@ -1110,11 +1110,11 @@ export class Session {
    */
   static readCodeSubMode(subModeFile: string): "auto" | "plan" {
     try {
-      if (!fs.existsSync(subModeFile)) return "auto";
+      if (!fs.existsSync(subModeFile)) return "plan"; // 默认 plan
       const val = fs.readFileSync(subModeFile, "utf-8").trim();
       if (val === "plan" || val === "auto") return val;
     } catch { /* ignore */ }
-    return "auto";
+    return "plan"; // 默认 plan
   }
 
   /**
