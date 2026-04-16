@@ -37,12 +37,21 @@ const TriggerConfigSchema = z.object({
   agentId: z.string().default("default"),
   /** 每次 tick 间隔秒数（上次结束后等待） */
   tickSeconds: z.number().int().min(1).default(60),
-  /** 时间段过滤：段外静默跳过 */
-  timeRange: z.object({
-    start: z.string().regex(/^\d{2}:\d{2}$/),
-    end: z.string().regex(/^\d{2}:\d{2}$/),
-    weekdays: z.array(z.number().int().min(0).max(6)).optional(),
-  }).optional(),
+  /** 时间段过滤:支持多段，任一命中即触发；兼容单对象写法。段外静默跳过。 */
+  timeRanges: z.union([
+    z.array(z.object({
+      start: z.string().regex(/^\d{2}:\d{2}$/),
+      end: z.string().regex(/^\d{2}:\d{2}$/),
+      weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+    })),
+    z.object({
+      start: z.string().regex(/^\d{2}:\d{2}$/),
+      end: z.string().regex(/^\d{2}:\d{2}$/),
+      weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+    }).transform((v) => [v]),
+  ]).optional(),
+  /** 退出令牌:AI 输出中包含此字符串时，触发器自动停止（enabled 置 false 持久化）。适合一次性任务。 */
+  exitToken: z.string().optional(),
   /** tool steps：顺序执行，输出拼成前缀字符串 */
   steps: z.array(ToolStepSchema).optional(),
   /** 注入 session 的 user message（steps 输出作为前缀拼在其前面） */
@@ -54,14 +63,16 @@ export type TriggerConfig = z.infer<typeof TriggerConfigSchema>;
 // ── 工具函数 ───────────────────────────────────────────────────────────────
 
 function isInTimeRange(cfg: TriggerConfig): boolean {
-  if (!cfg.timeRange) return true;
+  if (!cfg.timeRanges?.length) return true;
   const now = new Date();
   const weekday = now.getDay(); // 0=周日
-  if (cfg.timeRange.weekdays && !cfg.timeRange.weekdays.includes(weekday)) return false;
   const cur = now.getHours() * 60 + now.getMinutes();
-  const [sh = 0, sm = 0] = cfg.timeRange.start.split(":").map(Number);
-  const [eh = 0, em = 0] = cfg.timeRange.end.split(":").map(Number);
-  return cur >= sh * 60 + sm && cur < eh * 60 + em;
+  return cfg.timeRanges.some((r) => {
+    if (r.weekdays && !r.weekdays.includes(weekday)) return false;
+    const [sh = 0, sm = 0] = r.start.split(":").map(Number);
+    const [eh = 0, em = 0] = r.end.split(":").map(Number);
+    return cur >= sh * 60 + sm && cur < eh * 60 + em;
+  });
 }
 
 function delay(ms: number): Promise<void> {
@@ -283,6 +294,23 @@ export class LoopTriggerManager {
         ...(notifyFn ? { onNotify: notifyFn } : {}),
       });
 
+      // 检查退出令牌：AI 输出包含 exitToken 时自动停止触发器
+      if (cfg.exitToken) {
+        const msgs = session.getMessages();
+        const last = [...msgs].reverse().find((m) => m.role === "assistant");
+        const lastText = typeof last?.content === "string" ? last.content : "";
+        if (lastText.includes(cfg.exitToken)) {
+          console.log(`[loop-trigger] id=${cfg.id} 检测到 exitToken，触发器自动停止`);
+          this.stopped.add(cfg.id);
+          // 持久化：将配置文件 enabled 置为 false
+          try {
+            const filePath = path.join(this.loopsDir, `${cfg.id}.json`);
+            const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+            raw["enabled"] = false;
+            fs.writeFileSync(filePath, JSON.stringify(raw, null, 2), "utf-8");
+          } catch { /* 忽略持久化失败 */ }
+        }
+      }
       console.log(`[loop-trigger] id=${cfg.id} tick 完成`);
     } catch (err) {
       console.error(`[loop-trigger] id=${cfg.id} tick 失败:`, err);
