@@ -474,6 +474,11 @@ export interface AgentRunOptions {
    */
   sessionGetFn?: import("../tools/registry.js").ToolContext["sessionGetFn"];
   /**
+   * loop_exit 工具回调（由 loop-trigger 注入）。
+   * 透传到 ToolContext，AI 调用 loop_exit 工具时触发，设置退出信号标志。
+   */
+  onLoopExit?: import("../tools/registry.js").ToolContext["onLoopExit"];
+  /**
    * 覆盖本轮 X-Request-Id（/retry 命令传入上次失败的 requestId，避免服务端重复计费）。
    * 传入 streamChat 的 turnRequestIdOverride。
    */
@@ -1021,6 +1026,7 @@ export async function runAgent(
           ...(opts.codeRunFn ? { codeRunFn: opts.codeRunFn } : {}),
           ...(opts.sessionSendFn ? { sessionSendFn: opts.sessionSendFn } : {}),
           ...(opts.sessionGetFn ? { sessionGetFn: opts.sessionGetFn } : {}),
+          ...(opts.onLoopExit ? { onLoopExit: opts.onLoopExit } : {}),
         });
       } catch (err) {
         if (err instanceof MFAError) {
