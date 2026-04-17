@@ -329,6 +329,7 @@ export class LoopTriggerManager {
 
       await this.runAgent(session, content, {
         skipAddUserMessage: true,
+        skipMemorySearch: true,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onLoopExit ? { onLoopExit } : {}),
         ...(customTools ? { customTools } : {}),

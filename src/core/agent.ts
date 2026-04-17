@@ -428,6 +428,11 @@ export interface AgentRunOptions {
    */
   skipPreamble?: boolean;
   /**
+   * 跳过记忆搜索步骤（step 2）。
+   * 用于 loop trigger tick：task content 可能包含大量 K 线数据，超出 embedding 模型上下文限制。
+   */
+  skipMemorySearch?: boolean;
+  /**
    * 跳过向 session 添加用户消息（step 4）。
    * 用于 loop session：task 消息已通过 session.addLoopTaskMessage() 预先注入，
    * 避免 runAgent 内部重复 addUserMessage。
@@ -651,7 +656,7 @@ export async function runAgent(
     preRunLength = session.getMessages().length;
 
     // 2. 搜索相关历史记忆，注入为 system 消息（code 模式跳过，null = 未启用，"" = 无结果）
-    if (!isCodeMode) {
+    if (!isCodeMode && !opts.skipMemorySearch) {
       const memoryContext = await searchMemory(userContent, session.agentId);
       if (memoryContext) {
         session.replaceOrAddMemoryContext(memoryContext);
