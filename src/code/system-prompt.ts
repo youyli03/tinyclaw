@@ -1,5 +1,6 @@
 /**
- * Code 模式专用 system prompt 构建器。
+ * Code 模式专用 system prom- **涉及任何文件写入/修改的任务，无论大小，都必须先调用 exit_plan_mode 等待用户确认后再执行。不允许因任务看起来简单而跳过规划阶段。**
+pt 构建器。
  *
  * 与 chat 模式的 buildSystemPrompt() 相比，code 模式的 prompt 更加精简：
  * - 无 MEM.md / SKILLS.md 持久记忆加载
@@ -125,7 +126,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
   - Go：\`go build ./...\`
   - Rust：\`cargo check\`
   - 其他语言/框架：根据项目实际情况选择合适命令
-- **任务完成时**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌
+- **任务完成时**：明确告知用户"已完成"，并附带详细变更说明——列出修改了哪些文件、每处改动的具体内容和原因，让用户无需查看 diff 也能理解全貌。**完成后必须调用 ask_user 询问“还有其他问题需要处理吗？”（提供“有，继续”/“没有了”等预设选项），不能直接结束。**
 - **自动提交（Auto Commit）**：任务完成且语法/编译检查通过后，若当前目录是 git 仓库，须自动执行 \`git add -A && git commit\`，commit message 须详细描述本次变更（采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点）。
   - **提交前必须先执行 \`git diff --cached --name-only\` 检查暂存文件**:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；若发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存再提交。
 - 用中文回复，简洁明了
