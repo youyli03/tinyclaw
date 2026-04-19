@@ -967,6 +967,11 @@ export async function runAgent(
       session.addAssistantMessage(content || "");
     }
 
+    // tool call 伴随的文本内容（如"好的，我来查一下"）也发给用户
+    if (content && content.trim() && opts.onNotify) {
+      void opts.onNotify(content.trim());
+    }
+
     // ── 工具执行（支持批量并发）────────────────────────────────────────────
     //
     // 并发策略：
