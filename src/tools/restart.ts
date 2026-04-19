@@ -82,7 +82,7 @@ async function restartToolImpl(
             msgType,
             codeSessionId: sessionId,
             restartCallId: ctx?.currentCallId ?? "",
-            restartTaskId: ctx?.masterSession?.currentAgentTaskId ?? "",
+            restartTaskId: ctx?.masterSession?.currentAgentTaskId ?? ctx?.agentTaskId ?? "",
           }),
           "utf-8",
         );

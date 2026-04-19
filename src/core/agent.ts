@@ -1017,6 +1017,7 @@ export async function runAgent(
           sessionId: session.sessionId,
           agentId: session.agentId,
           masterSession: session,
+          ...(session.currentAgentTaskId ? { agentTaskId: session.currentAgentTaskId } : {}),
           ...(!textMode && call.callId ? { currentCallId: call.callId } : {}),  // function calling 模式下注入 callId，供 restart_tool 等在 process.exit 前写 tool result
           ...(currentDepth < MAX_SLAVE_DEPTH
             ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) }) }

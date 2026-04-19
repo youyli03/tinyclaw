@@ -111,6 +111,8 @@ export interface ToolContext {
    * text 模式下不注入（undefined）。
    */
   currentCallId?: string;
+  /** 当前 agent run 的 taskId（X-Agent-Task-Id），供 restart_tool 写入 marker 续接计费 */
+  agentTaskId?: string | undefined;
 }
 
 export interface ToolDef {
