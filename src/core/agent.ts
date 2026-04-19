@@ -600,7 +600,9 @@ export async function runAgent(
   const sid = isSlave ? session.sessionId.slice("slave:".length) : session.sessionId.slice(-12);
   const logPrefix = isSlave ? `[slave:${sid}]` : `[agent] ${sid}`;
   const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
-  console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "…" : ""}"`);
+  if (!opts.skipAddUserMessage || userContent) {
+    console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "..." : ""}"`)
+  }
   const startMs = Date.now();
 
   // code 模式工具调用节流：每分钟汇总一次通知
