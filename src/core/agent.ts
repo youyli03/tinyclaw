@@ -1178,9 +1178,28 @@ export async function runAgent(
       // ── 分类:串行工具先 flush 再单独执行;其余加入并发批次 ──────────
       if (SERIAL_TOOLS.has(call.name)) {
         await flushConcurrentBatch();
+        // restart_tool 必须等本轮所有其他工具执行完再重启
+        if (call.name === "restart_tool") {
+          const restIdx = validToolCalls.indexOf(call);
+          const pending = validToolCalls.slice(restIdx + 1);
+          if (pending.length > 0) {
+            // 先把剩余工具全部串行/并发执行完
+            for (const later of pending) {
+              if (!later) continue;
+              if (SERIAL_TOOLS.has(later.name) && later.name !== "restart_tool") {
+                await flushConcurrentBatch();
+                const r = await runOneTool(later);
+                flushResults([{ call: later, result: r }]);
+              } else if (!SERIAL_TOOLS.has(later.name)) {
+                concurrentBatch.push(later);
+              }
+            }
+            await flushConcurrentBatch();
+          }
+        }
         const result = await runOneTool(call);
         flushResults([{ call, result }]);
-        // ask_user 执行后，同轮剩余工具全部 skip，等用户回复后 LLM 再决定
+        // ask_user 执行后,同轮剩余工具全部 skip,等用户回复后 LLM 再决定
         if (call.name === "ask_user") {
           for (const remaining of validToolCalls.slice(validToolCalls.indexOf(call) + 1)) {
             if (!remaining) continue;
