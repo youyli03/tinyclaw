@@ -280,6 +280,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               } else if (t === "RESUMED") {
                 log?.info("[qqbot] Session resumed");
                 if (sessionId) saveSession({ sessionId, lastSeq, intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel), appId });
+                onReady?.(); // RESUMED 也视为就绪,触发 restart_tool 续接等逻辑
               } else if (t === "C2C_MESSAGE_CREATE") {
                 const ev = d as C2CMessageEvent;
                 enqueue({

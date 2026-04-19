@@ -1172,11 +1172,21 @@ export async function runAgent(
         session.mfaApprovedForThisRun = true;
       }
 
-      // ── 分类：串行工具先 flush 再单独执行；其余加入并发批次 ──────────
+      // ── 分类:串行工具先 flush 再单独执行;其余加入并发批次 ──────────
       if (SERIAL_TOOLS.has(call.name)) {
         await flushConcurrentBatch();
         const result = await runOneTool(call);
         flushResults([{ call, result }]);
+        // ask_user 执行后，同轮剩余工具全部 skip，等用户回复后 LLM 再决定
+        if (call.name === "ask_user") {
+          for (const remaining of validToolCalls.slice(validToolCalls.indexOf(call) + 1)) {
+            if (!remaining) continue;
+            const skipMsg = "skipped: ask_user is pending, waiting for user reply";
+            if (!textMode) session.addToolResultMessage(remaining.callId, skipMsg);
+            else session.addSystemMessage(`[tool_result:${remaining.name}]\n${skipMsg}`);
+          }
+          break;
+        }
       } else {
         concurrentBatch.push(call);
       }

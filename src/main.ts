@@ -799,6 +799,7 @@ async function main(): Promise<void> {
                 if (marker.restartCallId) {
                   codeSession.updateToolResult(marker.restartCallId, "✅ 重启完成，继续执行之前的任务。");
                 }
+                void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，继续执行之前的任务。").catch(() => {});
                 codeSession.running = true;
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
                 const resumePromise = runAgent(codeSession, "", {
