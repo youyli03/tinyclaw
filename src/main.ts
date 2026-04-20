@@ -200,6 +200,20 @@ async function main(): Promise<void> {
       return "";
     }
 
+    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
+    const parsedCmd = parseCommand(msg.content);
+    if (parsedCmd) {
+      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
+      if (result) {
+        await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+      }
+      // /retry 命令设置了 pendingRetry：fall-through，继续构建 opts 并重新调用 runAgent
+      if (!session.pendingRetry) {
+        return "";
+      }
+    }
+
+    
     // ── ask_user 拦截：AI 通过 ask_user 工具等待用户选择/输入时 ─────────
     if (session.pendingAskUser) {
       const trimmed = resolvedContent.trim();
@@ -223,19 +237,6 @@ async function main(): Promise<void> {
       }
       void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       return "";
-    }
-
-    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
-    const parsedCmd = parseCommand(msg.content);
-    if (parsedCmd) {
-      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
-      if (result) {
-        await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
-      }
-      // /retry 命令设置了 pendingRetry：fall-through，继续构建 opts 并重新调用 runAgent
-      if (!session.pendingRetry) {
-        return "";
-      }
     }
 
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
