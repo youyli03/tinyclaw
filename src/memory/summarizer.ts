@@ -436,8 +436,11 @@ export async function summarizeAndCompress(
   // 构建待摘要文本，使用 formatMsgForSummary 展开 tool_calls
   const historyText = toSummarize
     .map((m) => {
+      // loop task 消息折叠为占位符,避免将 K 线数据传给摘要 LLM
+      const loopRef = (m as { _loopTaskRef?: string })._loopTaskRef;
+      if (loopRef) return `[用户-Loop任务触发 @ ${loopRef}]`;
       const text = formatMsgForSummary(m);
-      return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长，已截断]" : text;
+      return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长,已截断]" : text;
     })
     .filter(Boolean)
     .join("\n\n");

@@ -67,6 +67,7 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
 
     const child = spawn("bash", ["-c", command], {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,   // 让 bash 成为新进程组 leader，kill 时可杀整组
       ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
     });
 
@@ -81,17 +82,17 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
 
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      const terminated = child.kill("SIGTERM");
-      if (!terminated) {
-        const stdout = Buffer.concat(chunks).toString("utf-8").trim();
-        const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
-        const partial = formatExecOutput(stdout, stderr);
-        const timeoutMsg = `执行超时：命令在 ${timeoutSec} 秒后仍未结束，且未能发送终止信号。`;
-        finish(partial ? `${timeoutMsg}\n\n[部分输出]\n${partial}` : timeoutMsg);
-        return;
-      }
+      // detached=true 时 bash 是进程组 leader，用 -pid 向整个进程组发信号
+      // 这样 bash 下 spawn 的子进程（如 sleep 1800000）也会被一并杀掉
+      const killGroup = (sig: NodeJS.Signals) => {
+        if (child.pid != null) {
+          try { process.kill(-child.pid, sig); return; } catch { /* pgid 可能已消失 */ }
+        }
+        child.kill(sig);
+      };
+      killGroup("SIGTERM");
       killHandle = setTimeout(() => {
-        if (!settled) child.kill("SIGKILL");
+        if (!settled) killGroup("SIGKILL");
       }, EXEC_TIMEOUT_KILL_GRACE_MS);
     }, timeoutMs);
 

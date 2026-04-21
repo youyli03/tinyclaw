@@ -474,7 +474,12 @@ function resolveMessagesForApi(messages: LLMChatMessage[]): LLMChatMessage[] {
     if (m.role === "tool") continue;
     const parts = getContentParts(m.content);
     if (parts.some((p) => p.type === "image_path")) {
-      lastImageMsgIdx = i;
+      // 检查该消息之后是否已有 assistant 回复；若有，说明 LLM 上轮已见过该图，
+      // 本轮无需再次编码（降级为历史图片文本提示）。
+      const hasAssistantAfter = messages.slice(i + 1).some((mm) => mm.role === "assistant");
+      if (!hasAssistantAfter) {
+        lastImageMsgIdx = i;
+      }
       break;
     }
   }

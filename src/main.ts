@@ -803,9 +803,44 @@ async function main(): Promise<void> {
                 void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，继续执行之前的任务。").catch(() => {});
                 codeSession.running = true;
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
+                // 重建 onAskUser / onNotify,供续接的 runAgent 使用
+                // (marker.peerId/msgType 记录了原始请求者,重启后仍向其发送交互消息)
+                let restartInteractiveCallCount = 0;
+                const MAX_INTERACTIVE_CALLS_RESTART = 15;
+                const resumeOnAskUser = async (
+                  resumeQuestion: string,
+                  resumeOptions?: Array<{ label: string; description?: string; recommended?: boolean }>,
+                  resumeAllowFreeform = true,
+                ): Promise<{ answer: string; isFreeform: boolean }> => {
+                  restartInteractiveCallCount++;
+                  if (restartInteractiveCallCount > MAX_INTERACTIVE_CALLS_RESTART) {
+                    const limitMsg = `⚠️ 本次处理已达到最大交互次数(${MAX_INTERACTIVE_CALLS_RESTART} 次),请立即总结当前内容并输出给用户,不要再调用 ask_user 或 exit_plan_mode。`;
+                    await connector!.send(marker.peerId, marker.msgType, limitMsg).catch(() => {});
+                    throw new Error(limitMsg);
+                  }
+                  const optionLabels = (resumeOptions ?? []).map((o) => o.label);
+                  const optionLines = (resumeOptions ?? []).map((opt, i) => {
+                    const recMark = opt.recommended ? " —— 推荐" : "";
+                    const desc = opt.description ? `(${opt.description})` : "";
+                    return `  ${i + 1}. ${opt.label}${desc}${recMark}`;
+                  });
+                  const plainMsg =
+                    `🤔 有一个问题\n\n${resumeQuestion}` +
+                    (optionLines.length > 0 ? `\n\n─────────────────\n${optionLines.join("\n")}` : "") +
+                    (resumeAllowFreeform ? "\n\n或直接输入你的想法..." : "");
+                  await connector!.send(marker.peerId, marker.msgType, plainMsg).catch(() => {});
+                  return codeSession.waitForAskUser(optionLabels, resumeAllowFreeform);
+                };
+                const resumeOnNotify = async (notifyMessage: string) => {
+                  await connector!.send(marker.peerId, marker.msgType, notifyMessage).catch(() => {});
+                };
+
+                // skipAddUserMessage: true — 直接从已有的 tool_result 续接,不注入多余的用户消息
                 const resumePromise = runAgent(codeSession, "", {
                   skipAddUserMessage: true,
                   continueAsAgentRound: true,
+                  onAskUser: resumeOnAskUser,
+                  onNotify: resumeOnNotify,
                   ...(marker.restartTaskId ? { agentTaskIdOverride: marker.restartTaskId } : {}),
                 });
                 codeSession.currentRunPromise = resumePromise;
