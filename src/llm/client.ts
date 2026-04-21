@@ -13,6 +13,17 @@ import {
   processResponsesStream,
 } from "./responses-ws.js";
 
+/** 遍历 Error.cause 链，输出 "msg1 → msg2 → msg3" 格式字符串，便于日志和错误提示中显示完整原因 */
+function formatErrChain(err: unknown, maxDepth = 4): string {
+  const parts: string[] = [];
+  let cur: unknown = err;
+  for (let i = 0; i < maxDepth && cur instanceof Error; i++) {
+    parts.push(cur.message);
+    cur = (cur as Error & { cause?: unknown }).cause;
+  }
+  return parts.join(" → ");
+}
+
 /** 退避延迟（毫秒），带 ±10% 随机 jitter，防止并发请求同时重试造成"惊群" */
 function backoff(baseMs: number, attempt: number): number {
   const exp = Math.pow(2, Math.max(0, attempt - 1));
@@ -85,7 +96,8 @@ export class LLMConnectionError extends Error {
     const attemptsDesc = attempts === -1 ? "已多次" : `已重试 ${attempts} 次`;
     super(
       message ??
-      `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`
+      `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`,
+      cause instanceof Error ? { cause } : undefined
     );
     this.name = "LLMConnectionError";
     if (requestId !== undefined) this.requestId = requestId;
@@ -137,9 +149,9 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       // 超出最大重试时长：停止重试，抛出含操作提示的友好错误
       if (MAX_DURATION > 0 && Date.now() - startedAt >= MAX_DURATION) {
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
-        console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试`);
+        console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试：${formatErrChain(err)}`);
         throw new LLMConnectionError(err,
-          `⚠️ 连接持续中断（已重试约 ${elapsed}s）：${err instanceof Error ? err.message : String(err)}\n` +
+          `⚠️ 连接持续中断（已重试约 ${elapsed}s）：${formatErrChain(err)}\n` +
           `发送 /retry 可重试（不额外消耗高级请求）；若多次重试仍失败，发送 /new 清空上下文后重试`
         );
       }
@@ -164,7 +176,7 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
             ? `发送 /retry 可重试（不消耗额外高级请求）`
             : `建议发送 /retry 重试或 /new 清空上下文后重试`;
           throw new LLMConnectionError(err,
-            `⚠️ 连接中断（已重试 ${consecutiveTransport - 1} 次）：${err instanceof Error ? err.message : String(err)}\n${retryHint}`
+            `⚠️ 连接中断（已重试 ${consecutiveTransport - 1} 次）：${formatErrChain(err)}\n${retryHint}`
           );
         }
       } else {
@@ -177,7 +189,7 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
         : backoff(BASE_DELAY, attempt);
       const delay = is5xx ? Math.min(rawDelay, MAX_5XX_DELAY) : rawDelay;
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
-      console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${formatErrChain(err)}`);
       // 进入等待前通知外部（release slot），等待期间让其他请求使用 slot
       hooks?.onRetryWait?.();
       await new Promise<void>((res, rej) => {
