@@ -26,6 +26,10 @@ interface FreeModel {
   name: string;
   context_length: number;
   supported_parameters: string[];
+  top_provider?: {
+    context_length?: number;
+    max_completion_tokens?: number | null;
+  };
 }
 
 interface FreeModelsCache {
@@ -111,6 +115,24 @@ function isRateLimitError(err: unknown): boolean {
   return false;
 }
 
+/** 获取一个免费模型的有效上下文窗口大小（取 context_length 与 top_provider.context_length 的较小值） */
+function getModelContextLength(m: FreeModel): number {
+  const base = m.context_length ?? 0;
+  const provider = m.top_provider?.context_length ?? base;
+  return Math.min(base, provider) || base;
+}
+
+/** 获取一个免费模型的最大输出 token 数 */
+function getModelMaxTokens(m: FreeModel, cfgMaxTokens: number): number {
+  const limit = m.top_provider?.max_completion_tokens;
+  if (limit != null && limit > 0) {
+    return Math.min(cfgMaxTokens, Math.floor(limit * 0.9));
+  }
+  return cfgMaxTokens;
+}
+
+export { getModelContextLength };
+
 /**
  * AutoFreeClient：自动在 OpenRouter 免费模型间路由。
  *
@@ -122,6 +144,15 @@ function isRateLimitError(err: unknown): boolean {
  */
 export class AutoFreeClient {
   private readonly cfg: OpenRouterProviderConfig;
+  /**
+   * 当前选定模型的上下文窗口大小。
+   * 初始为 0（未知），首次拉取榜单后更新为榜单第一名的 context_length。
+   * 每次成功切换模型后更新为目标模型的值。
+   * registry.getContextWindow() 会读取此值，供 agent.ts 的 summarize 逻辑使用。
+   */
+  contextWindow = 0;
+  /** 当前实际使用的模型 ID（最后一次成功发起请求的模型，用于日志） */
+  private _currentModelId = "openrouter/auto-free";
 
   constructor(cfg: OpenRouterProviderConfig) {
     this.cfg = cfg;
@@ -129,7 +160,7 @@ export class AutoFreeClient {
 
   /** 当前绑定的模型（最后一次成功使用的模型） */
   get model(): string {
-    return "openrouter/auto-free";
+    return this._currentModelId;
   }
 
   get supportsToolCalls(): boolean { return true; }
@@ -142,19 +173,29 @@ export class AutoFreeClient {
       throw new Error("[openrouter] 无可用免费模型");
     }
 
+    if (this.contextWindow === 0 && models.length > 0) {
+      this.contextWindow = Math.max(...models.map(getModelContextLength));
+    }
+
     let lastErr: unknown;
     for (const m of models) {
       try {
-        const client = buildOpenRouterClient(this.cfg, m.id);
-        console.log(`[openrouter] auto-free 尝试模型 ${m.id}`);
+        const modelCtx = getModelContextLength(m);
+        const maxTokens = getModelMaxTokens(m, this.cfg.maxTokens);
+        const client = buildOpenRouterClient({ ...this.cfg, maxTokens }, m.id);
+        if (this._currentModelId !== m.id) {
+          console.log(`[openrouter] auto-free 切换到模型 ${m.id}(上下文窗口: ${modelCtx} tokens)`);
+          this._currentModelId = m.id;
+          this.contextWindow = modelCtx;
+        }
         return await client.chat(messages, opts);
       } catch (err) {
         if (isRateLimitError(err)) {
-          console.warn(`[openrouter] 模型 ${m.id} 触发限额，尝试下一个...`);
+          console.warn(`[openrouter] 模型 ${m.id} 触发限额,尝试下一个...`);
           lastErr = err;
           continue;
         }
-        throw err; // 非限额错误直接抛出
+        throw err;
       }
     }
     throw lastErr ?? new Error("[openrouter] 所有免费模型均触发限额");
@@ -170,15 +211,25 @@ export class AutoFreeClient {
       throw new Error("[openrouter] 无可用免费模型");
     }
 
+    if (this.contextWindow === 0 && models.length > 0) {
+      this.contextWindow = Math.max(...models.map(getModelContextLength));
+    }
+
     let lastErr: unknown;
     for (const m of models) {
       try {
-        const client = buildOpenRouterClient(this.cfg, m.id);
-        console.log(`[openrouter] auto-free streamChat 尝试模型 ${m.id}`);
+        const modelCtx = getModelContextLength(m);
+        const maxTokens = getModelMaxTokens(m, this.cfg.maxTokens);
+        const client = buildOpenRouterClient({ ...this.cfg, maxTokens }, m.id);
+        if (this._currentModelId !== m.id) {
+          console.log(`[openrouter] auto-free 切换到模型 ${m.id}(上下文窗口: ${modelCtx} tokens)`);
+          this._currentModelId = m.id;
+          this.contextWindow = modelCtx;
+        }
         return await client.streamChat(messages, onChunk, opts);
       } catch (err) {
         if (isRateLimitError(err)) {
-          console.warn(`[openrouter] 模型 ${m.id} 触发限额，尝试下一个...`);
+          console.warn(`[openrouter] 模型 ${m.id} 触发限额,尝试下一个...`);
           lastErr = err;
           continue;
         }

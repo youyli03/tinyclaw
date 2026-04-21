@@ -139,6 +139,11 @@ class LLMRegistry {
    * Copilot 后端由模型元数据决定；OpenAI 后端使用 memory.contextWindow 配置。
    */
   getContextWindow(name: BackendName = "daily"): number {
+    // AutoFreeClient 动态维护 contextWindow，优先取其值
+    const cached = this.clients.get(name);
+    if (cached instanceof AutoFreeClient && cached.contextWindow > 0) {
+      return cached.contextWindow;
+    }
     return (
       this.contextWindows.get(name) ?? loadConfig().memory.contextWindow
     );
