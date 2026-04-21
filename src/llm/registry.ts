@@ -1,9 +1,13 @@
 import { LLMClient } from "./client.js";
+import { AutoFreeClient, buildOpenRouterClient } from "./openrouter.js";
 import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
 
 export type BackendName = "daily" | "summarizer" | "code";
+
+/** LLMClient 或兼容实现（如 AutoFreeClient）的联合类型 */
+export type AnyLLMClient = LLMClient | AutoFreeClient;
 
 /**
  * 解析模型 symbol，格式为 "provider/model-id"。
@@ -29,7 +33,7 @@ export function parseModelSymbol(symbol: string): { provider: string; modelId: s
  * - 未配置 summarizer 时自动回退到 daily。
  */
 class LLMRegistry {
-  private clients = new Map<BackendName, LLMClient>();
+  private clients = new Map<BackendName, AnyLLMClient>();
   /** 从 Copilot 模型元数据获取的上下文窗口大小（tokens） */
   private contextWindows = new Map<BackendName, number>();
 
@@ -82,7 +86,7 @@ class LLMRegistry {
    * - Copilot 后端：必须先调用 init()，否则抛出错误。
    * - 未配置时回退到 daily。
    */
-  get(name: BackendName = "daily"): LLMClient {
+  get(name: BackendName = "daily"): AnyLLMClient {
     const cached = this.clients.get(name);
     if (cached) return cached;
 
@@ -165,7 +169,7 @@ export function isPremiumModel(modelId: string): boolean {
  * 构建 fallback LLM client（不消耗 Premium Interactions）。
  * 失败时返回 undefined（调用方回退到原有逻辑）。
  */
-export async function buildFallbackClient(): Promise<LLMClient | undefined> {
+export async function buildFallbackClient(): Promise<AnyLLMClient | undefined> {
   const cfg = loadConfig();
   const allowlist = cfg.llm.premiumAllowlist;
   if (!allowlist.enabled || !allowlist.fallbackModel) return undefined;
@@ -190,9 +194,16 @@ export async function buildFallbackClient(): Promise<LLMClient | undefined> {
         maxTokens: openaiCfg.maxTokens,
         timeoutMs: openaiCfg.timeoutMs,
       });
+    } else if (provider === "openrouter") {
+      const orCfg = cfg.providers.openrouter;
+      if (!orCfg) return undefined;
+      if (modelId === "auto-free") {
+        return new AutoFreeClient(orCfg);
+      }
+      return buildOpenRouterClient(orCfg, modelId);
     }
   } catch {
-    // 构建失败时静默返回 undefined，不影响主流程
+    // 构建失败时静默返回 undefined,不影响主流程
   }
   return undefined;
 }

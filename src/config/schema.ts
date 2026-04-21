@@ -29,9 +29,27 @@ const CopilotProviderSchema = z.object({
 });
 export type CopilotProviderConfig = z.infer<typeof CopilotProviderSchema>;
 
+/** OpenRouter 提供商(OpenAI-compatible，默认 baseUrl = https://openrouter.ai/api/v1) */
+const OpenRouterProviderSchema = z.object({
+  apiKey: z.string().min(1),
+  /** API base URL，默认 https://openrouter.ai/api/v1 */
+  baseUrl: z.string().url().default("https://openrouter.ai/api/v1"),
+  /** 最大输出 token 数，默认 4096（可被后端角色覆盖） */
+  maxTokens: z.number().int().positive().default(4096),
+  /** 请求超时（毫秒），默认 120000（可被后端角色覆盖） */
+  timeoutMs: z.number().int().positive().default(120_000),
+  /**
+   * 免费模型榜单缓存时间（毫秒），默认 3600000（1 小时）。
+   * 配置 auto-free 时生效，每隔此时长重新拉取 OpenRouter 免费模型排行。
+   */
+  freeCacheTtlMs: z.number().int().positive().default(3_600_000),
+});
+export type OpenRouterProviderConfig = z.infer<typeof OpenRouterProviderSchema>;
+
 const ProvidersSchema = z.object({
   openai: OpenAIProviderSchema.optional(),
   copilot: CopilotProviderSchema.optional(),
+  openrouter: OpenRouterProviderSchema.optional(),
 }).default({});
 export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
 

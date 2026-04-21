@@ -217,6 +217,8 @@ export interface ResolvedBackend {
   supportsVision?: boolean;
   /** 是否支持并行工具调用（parallel_tool_calls）。未设置时视为 false。 */
   supportsParallelToolCalls?: boolean;
+  /** 可选的额外请求 headers（如 HTTP-Referer、X-Title 等） */
+  defaultHeaders?: Record<string, string>;
   /**
    * 是否为 GitHub Copilot provider。
    * 设为 true 时，LLM 调用会根据 ChatOptions.isUserInitiated 设置 X-Initiator header，
@@ -592,6 +594,7 @@ export class LLMClient {
       baseURL: backend.baseUrl,
       apiKey: backend.apiKey,
       timeout: backend.timeoutMs,
+      ...(backend.defaultHeaders ? { defaultHeaders: backend.defaultHeaders } : {}),
       ...(fetchFn ? { fetch: fetchFn } : {}),
     });
   }

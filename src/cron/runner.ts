@@ -19,6 +19,7 @@ import type { CronJob } from "./schema.js";
 import { parseModelSymbol, isPremiumModel, buildFallbackClient } from "../llm/registry.js";
 import { buildCopilotClient } from "../llm/copilot.js";
 import { LLMClient } from "../llm/client.js";
+import type { AnyLLMClient } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { executeTool } from "../tools/registry.js";
 import type { ToolContext } from "../tools/registry.js";
@@ -86,7 +87,7 @@ export interface CronRuntimeBridge {
 
 // ─// ── 构建 LLM override client(cron job 指定 model 时使用)──────────────────────
 
-async function buildOverrideClient(job: CronJob): Promise<LLMClient | undefined> {
+async function buildOverrideClient(job: CronJob): Promise<AnyLLMClient | undefined> {
   const cfg = loadConfig();
 
   if (!job.model) {
@@ -172,7 +173,7 @@ async function runPipelineJob(
   session: Session,
   onMFARequest: (msg: string, verify?: (code: string) => boolean) => Promise<boolean>,
   notifyFn: ((message: string) => Promise<void>) | undefined,
-  overrideClient: LLMClient | undefined,
+  overrideClient: AnyLLMClient | undefined,
   systemPrompt: string,
 ): Promise<string> {
   const steps = job.steps!;

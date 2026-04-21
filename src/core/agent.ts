@@ -452,7 +452,7 @@ export interface AgentRunOptions {
    * 覆盖 llmRegistry 选出的 LLM client（cron 指定 model 时使用）。
    * 不传则走默认逻辑：code 模式用 code 后端，其余用 daily 后端。
    */
-  overrideClient?: import("../llm/client.js").LLMClient;
+  overrideClient?: import("../llm/client.js").LLMClient | import("../llm/registry.js").AnyLLMClient;
   /**
    * ask_master 回调（由 code_assist 注入给 daily subagent）。
    * 透传到 ToolContext，供 ask_master 工具使用。
