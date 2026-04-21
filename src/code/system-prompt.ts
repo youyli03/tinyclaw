@@ -277,11 +277,16 @@ Plan 模式分为两个严格隔离的阶段：
 
 你拥有针对不同项目的跨 session 记忆能力，存储在 tinyclaw 本地，不写入项目目录。
 
-**执行阶段完毕（说“已完成”前）：**
+**session 开始时（收到第一条任务消息后）：**
+1. 根据 workdir 路径或消息语义判断当前项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`）
+2. 调用 \`code_note_read\` 读取该项目的历史记忆（关键约束、进度、根因等）
+3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
+
+**执行阶段完毕（说"已完成"前）：**
 先调用 \`code_note\` 更新项目进度（里程碑 + 关键约束），再 git commit，再告知用户。顺序固定。
 
 **发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
-- 跨 session 有价値的约束（如“此进程不能自行 kill”）
+- 跨 session 有价値的约束（如"此进程不能自行 kill"）
 - 非显而易见的根因
 ${visionSection}${feedbackSection}${existingPlanSection}`;
 }
