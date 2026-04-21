@@ -403,133 +403,101 @@ const app = createApp({
     }
 
     // ── 图表绘制 ─────────────────────────────────────────────────────────────
-    async function drawOverviewCharts() {
-      // 电费图（今日趋势，每5分钟一条，最多288点）
+    // 记录 overview 各图最后一条数据 ts(用于增量刷新)
+    const overviewLastTs = {};
+
+    async function drawOverviewCharts(incremental = false) {
+      // 并行拉取 3 个数据源
+      const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
+      const copilotUrl = '/api/metrics?category=copilot&key=remaining&days=1' + (incremental && overviewLastTs.copilot  != null ? '&since=' + overviewLastTs.copilot  : '');
+      const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
+      let elecData, copilotData, systemData;
       try {
-        const data = await fetch('/api/metrics?category=electric&key=balance&days=1').then(r => r.json());
-        const rows = data.rows || [];
-        const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
-        const canvas = document.getElementById('chart-electric');
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          const grad = ctx.createLinearGradient(0, 0, 0, 200);
-          grad.addColorStop(0, C.accent + '30');
-          grad.addColorStop(1, C.accent + '00');
-          createOrUpdateChart('chart-electric', {
-            type: 'line',
-            data: {
-              datasets: [{
-                label: '电费余额(元)',
-                data: points,
-                borderColor: C.accent,
-                borderWidth: 2,
-                backgroundColor: grad,
-                fill: true,
-                tension: 0.4,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-              }],
-            },
-            options: {
-              ...baseChartOpts(),
-              scales: {
-                x: smartXAxis(1),
-                y: { ...baseChartOpts().scales.y },
-              },
-            },
-          });
+        [elecData, copilotData, systemData] = await Promise.all([
+          fetch(elecUrl).then(r => r.json()),
+          fetch(copilotUrl).then(r => r.json()),
+          fetch(systemUrl).then(r => r.json()),
+        ]);
+      } catch (e) { console.warn('overview parallel fetch failed', e); return; }
+
+      // 电费图(今日趋势)
+      try {
+        const rows = (elecData.rows || []);
+        if (rows.length) overviewLastTs.electric = rows[rows.length-1].ts;
+        const chart = charts['chart-electric'];
+        if (incremental && chart && rows.length) {
+          for (const r of rows) chart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
+          chart.update('none');
+        } else if (!incremental) {
+          const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
+          const canvas = document.getElementById('chart-electric');
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 200);
+            grad.addColorStop(0, C.accent + '30');
+            grad.addColorStop(1, C.accent + '00');
+            createOrUpdateChart('chart-electric', {
+              type: 'line',
+              data: { datasets: [{ label: '电费余额(元)', data: points, borderColor: C.accent, borderWidth: 2, backgroundColor: grad, fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 5 }] },
+              options: { ...baseChartOpts(), scales: { x: smartXAxis(1), y: { ...baseChartOpts().scales.y } } },
+            });
+          }
         }
       } catch (e) { console.warn('electric chart failed', e); }
 
-      // 高级请求剩余趋势（今日趋势，每次请求写入一条）
+      // 高级请求剩余趋势
       try {
-        const data = await fetch('/api/metrics?category=copilot&key=remaining&days=1').then(r => r.json());
-        const rows = data.rows || [];
-        const points = rows.filter(r => r.value >= 0).map(r => ({ x: r.ts * 1000, y: r.value }));
-        const canvas2 = document.getElementById('chart-copilot');
-        if (canvas2) {
-          const ctx2 = canvas2.getContext('2d');
-          const grad2 = ctx2.createLinearGradient(0, 0, 0, 200);
-          grad2.addColorStop(0, C.accent2 + '30');
-          grad2.addColorStop(1, C.accent2 + '00');
-          createOrUpdateChart('chart-copilot', {
-            type: 'line',
-            data: {
-              datasets: [{
-                label: '高级请求剩余',
-                data: points,
-                borderColor: C.accent2,
-                borderWidth: 2,
-                backgroundColor: grad2,
-                fill: true,
-                tension: 0.3,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-              }],
-            },
-            options: {
-              ...baseChartOpts(),
-              scales: {
-                x: smartXAxis(1),
-                y: { ...baseChartOpts().scales.y },
-              },
-            },
-          });
+        const rows = (copilotData.rows || []).filter(r => r.value >= 0);
+        if (rows.length) overviewLastTs.copilot = rows[rows.length-1].ts;
+        const chart2 = charts['chart-copilot'];
+        if (incremental && chart2 && rows.length) {
+          for (const r of rows) chart2.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
+          chart2.update('none');
+        } else if (!incremental) {
+          const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
+          const canvas2 = document.getElementById('chart-copilot');
+          if (canvas2) {
+            const ctx2 = canvas2.getContext('2d');
+            const grad2 = ctx2.createLinearGradient(0, 0, 0, 200);
+            grad2.addColorStop(0, C.accent2 + '30');
+            grad2.addColorStop(1, C.accent2 + '00');
+            createOrUpdateChart('chart-copilot', {
+              type: 'line',
+              data: { datasets: [{ label: '高级请求剩余', data: points, borderColor: C.accent2, borderWidth: 2, backgroundColor: grad2, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }] },
+              options: { ...baseChartOpts(), scales: { x: smartXAxis(1), y: { ...baseChartOpts().scales.y } } },
+            });
+          }
         }
       } catch (e) { console.warn('copilot chart failed', e); }
 
-      // 系统 CPU/内存（今日24小时，每5分钟一条）
+      // 系统 CPU/内存
       try {
-        const data = await fetch('/api/metrics?category=system&days=1').then(r => r.json());
-        const rows = data.rows || [];
-        const cpuPoints = rows.map(r => ({ x: r.ts * 1000, y: r.cpu_percent }));
-        const memPoints = rows.map(r => ({ x: r.ts * 1000, y: Math.round(r.mem_used_mb / r.mem_total_mb * 100) }));
-
-        const canvas = document.getElementById('chart-system');
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          const gradCpu = ctx.createLinearGradient(0, 0, 0, 240);
-          gradCpu.addColorStop(0, C.accent + '25');
-          gradCpu.addColorStop(1, C.accent + '00');
-          const gradMem = ctx.createLinearGradient(0, 0, 0, 240);
-          gradMem.addColorStop(0, C.green + '25');
-          gradMem.addColorStop(1, C.green + '00');
-          createOrUpdateChart('chart-system', {
-            type: 'line',
-            data: {
-              datasets: [
-                {
-                  label: 'CPU %',
-                  data: cpuPoints,
-                  borderColor: C.accent,
-                  borderWidth: 1.8,
-                  backgroundColor: gradCpu,
-                  fill: true,
-                  tension: 0.4,
-                  pointRadius: 0,
-                  pointHoverRadius: 5,
-                },
-                {
-                  label: '内存 %',
-                  data: memPoints,
-                  borderColor: C.green,
-                  borderWidth: 1.8,
-                  backgroundColor: gradMem,
-                  fill: true,
-                  tension: 0.4,
-                  pointRadius: 0,
-                  pointHoverRadius: 5,
-                },
-              ],
-            },
-            options: {
-              ...baseChartOpts(),
-              scales: {
-                x: smartXAxis(1),
-                y: { ...baseChartOpts().scales.y, min: 0, max: 100 },
-              },
-            },
-          });
+        const rows = systemData.rows || [];
+        if (rows.length) overviewLastTs.system = rows[rows.length-1].ts;
+        const sysChart = charts['chart-system'];
+        if (incremental && sysChart && rows.length) {
+          for (const r of rows) {
+            sysChart.data.datasets[0].data.push({ x: r.ts*1000, y: r.cpu_percent });
+            sysChart.data.datasets[1].data.push({ x: r.ts*1000, y: Math.round(r.mem_used_mb / r.mem_total_mb * 100) });
+          }
+          sysChart.update('none');
+        } else if (!incremental) {
+          const cpuPoints = rows.map(r => ({ x: r.ts * 1000, y: r.cpu_percent }));
+          const memPoints = rows.map(r => ({ x: r.ts * 1000, y: Math.round(r.mem_used_mb / r.mem_total_mb * 100) }));
+          const canvas = document.getElementById('chart-system');
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const gradCpu = ctx.createLinearGradient(0, 0, 0, 240); gradCpu.addColorStop(0, C.accent + '25'); gradCpu.addColorStop(1, C.accent + '00');
+            const gradMem = ctx.createLinearGradient(0, 0, 0, 240); gradMem.addColorStop(0, C.green + '25'); gradMem.addColorStop(1, C.green + '00');
+            createOrUpdateChart('chart-system', {
+              type: 'line',
+              data: { datasets: [
+                { label: 'CPU %',  data: cpuPoints, borderColor: C.accent, borderWidth: 1.8, backgroundColor: gradCpu, fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 5 },
+                { label: '内存 %', data: memPoints, borderColor: C.green,  borderWidth: 1.8, backgroundColor: gradMem, fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 5 },
+              ]},
+              options: { ...baseChartOpts(), scales: { x: smartXAxis(1), y: { ...baseChartOpts().scales.y, min: 0, max: 100 } } },
+            });
+          }
         }
       } catch (e) { console.warn('system chart failed', e); }
     }
@@ -781,7 +749,7 @@ const app = createApp({
       const refreshTimer = setInterval(async () => {
         await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
         if (page.value === 'overview') {
-          await drawOverviewCharts();
+          await drawOverviewCharts(true); // 增量刷新
           drawSparklines();
         }
         if (page.value === 'metrics' && metricKeys.value.length) {

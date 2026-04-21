@@ -189,11 +189,18 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
     return;
   }
   const contentType = MIME[ext] ?? "application/octet-stream";
-  // JS/CSS 文件强制不缓存,确保更新后浏览器立即获取最新版本
-  const noCache = (ext === ".js" || ext === ".css");
+  // main.js / style.css 已通过 ?v=BUILD_TS 实现版本化，可以长期缓存
+  // 第三方 vendor 库（chart.umd、vue.global、marked、chartjs-adapter）同样不变，1 年缓存
+  // 其余资源（图片等）走默认缓存
+  const fileName = path.basename(fullPath);
+  const hasVersion = parsedUrl.searchParams.has("v");
+  const isVersioned = hasVersion || fileName.includes(".min.") || fileName.includes("vue.global");
+  const cacheControl = isVersioned
+    ? "public, max-age=31536000, immutable"  // 1 年，不变
+    : "public, max-age=3600";               // 其他资源 1 小时
   res.writeHead(200, {
     "Content-Type": contentType,
-    ...(noCache ? { "Cache-Control": "no-store" } : {}),
+    "Cache-Control": cacheControl,
   });
   fs.createReadStream(fullPath).pipe(res);
 }
