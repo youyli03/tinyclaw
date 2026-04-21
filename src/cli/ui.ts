@@ -275,3 +275,138 @@ export async function multiSelect(
 
   return Array.from(selected);
 }
+
+// ── searchableSelect ──────────────────────────────────────────────────────────
+
+/**
+ * 可搜索的单选菜单。
+ *
+ * TTY 模式:
+ *   ↑↓ 在过滤后的列表中移动，Enter 确认
+ *   Tab 切换到搜索框 / 从搜索框返回列表
+ *   在搜索框中按任意字符追加过滤词，Backspace 删除
+ *
+ * 非 TTY fallback:先 prompt 输入关键词，再数字编号选择。
+ */
+export async function searchableSelect<T>(
+  title: string,
+  allItems: { label: string; value: T; note?: string }[],
+): Promise<T> {
+  if (!hasTTY()) {
+    const kw = await prompt("搜索关键词 (直接回车跳过): ");
+    const filtered = kw.trim()
+      ? allItems.filter((i) =>
+          i.label.toLowerCase().includes(kw.toLowerCase()) ||
+          String(i.value).toLowerCase().includes(kw.toLowerCase())
+        )
+      : allItems;
+    return select(title, filtered.length > 0 ? filtered : allItems);
+  }
+
+  let searchMode = false;
+  let query = "";
+  let cursor = 0;
+
+  const getFiltered = () => {
+    if (!query) return allItems;
+    const q = query.toLowerCase();
+    return allItems.filter(
+      (i) =>
+        i.label.toLowerCase().includes(q) ||
+        String(i.value).toLowerCase().includes(q)
+    );
+  };
+
+  let lastLineCount = 0;
+
+  const render = (first: boolean) => {
+    const list = getFiltered();
+    if (cursor >= list.length) cursor = Math.max(0, list.length - 1);
+    if (!first) clearLines(lastLineCount);
+
+    console.log(`\n${bold(title)}`);
+    let lines = 2; // blank + title
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i]!;
+      const note = item.note ? `  ${dim(item.note)}` : "";
+      const prefix = i === cursor ? cyan("❯ ") : "  ";
+      const label = i === cursor ? bold(item.label) : item.label;
+      console.log(`${prefix}${label}${note}`);
+      lines++;
+    }
+    if (list.length === 0) {
+      console.log(dim("  (无匹配结果)"));
+      lines++;
+    }
+    const searchLine = searchMode
+      ? `  搜索: ${cyan(query)}█`
+      : `  搜索: ${dim("(Tab 激活)")}`;
+    console.log(searchLine);
+    const hintLine = searchMode
+      ? dim("Enter 确认  Esc 清空  ↑↓ 移动")
+      : dim("↑↓ 移动  Enter 确认  Tab 搜索");
+    console.log(hintLine);
+    lastLineCount = lines + 2; // searchLine + hintLine
+  };
+
+  render(true);
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf-8");
+
+  try {
+    while (true) {
+      const key = await readKey();
+
+      if (key === "quit") process.exit(0);
+
+      if (key === "\t") {
+        searchMode = !searchMode;
+        render(false);
+        continue;
+      }
+
+      if (key === "\x1b") {
+        if (query) { query = ""; cursor = 0; }
+        searchMode = false;
+        render(false);
+        continue;
+      }
+
+      if (key === "up") {
+        const list = getFiltered();
+        if (list.length > 0) cursor = (cursor - 1 + list.length) % list.length;
+        render(false);
+        continue;
+      }
+
+      if (key === "down") {
+        const list = getFiltered();
+        if (list.length > 0) cursor = (cursor + 1) % list.length;
+        render(false);
+        continue;
+      }
+
+      if (key === "enter") {
+        const list = getFiltered();
+        if (list.length === 0) continue;
+        clearLines(lastLineCount);
+        return list[cursor]!.value;
+      }
+
+      if (searchMode) {
+        if (key === "\x7f" || key === "backspace") {
+          query = query.slice(0, -1);
+        } else if (key.length === 1 && key >= " ") {
+          query += key;
+        }
+        cursor = 0;
+        render(false);
+      }
+    }
+  } finally {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  }
+}
