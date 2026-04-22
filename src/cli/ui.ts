@@ -151,9 +151,8 @@ function readKey(): Promise<string> {
 
 /** 用 ANSI 上移 n 行并清除到底部，用于重绘菜单 */
 function clearLines(n: number): void {
-  for (let i = 0; i < n; i++) {
-    process.stdout.write("\x1b[1A\x1b[2K");
-  }
+  if (n <= 0) return;
+  process.stdout.write(`\x1b[${n}A\x1b[J`);
 }
 
 // ── singleSelect ──────────────────────────────────────────────────────────────
