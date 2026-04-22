@@ -150,9 +150,13 @@ function readKey(): Promise<string> {
 }
 
 /** 用 ANSI 上移 n 行并清除到底部，用于重绘菜单 */
-function clearLines(n: number): void {
-  if (n <= 0) return;
-  process.stdout.write(`\x1b[${n}A\x1b[J`);
+function clearLines(_n: number): void {
+  // 用 cursor restore + clear-to-end 代替逐行清除，避免终端滚动导致菜单上飘
+  process.stdout.write("\x1b[u\x1b[J");
+}
+
+function saveCursor(): void {
+  process.stdout.write("\x1b[s");
 }
 
 // ── singleSelect ──────────────────────────────────────────────────────────────
@@ -204,6 +208,7 @@ export async function singleSelect<T>(
     lastLineCount = lines + 1;
   };
 
+  saveCursor();
   render(true);
   console.log(dim("\u2191\u2193 移动  Enter 确认"));
 
@@ -267,6 +272,7 @@ export async function multiSelect(
     }
   };
 
+  saveCursor();
   render(true);
   console.log(dim("↑↓ 移动  Space 切换  Enter 确认"));
 
@@ -390,6 +396,7 @@ export async function searchableSelect<T>(
     lastLineCount = lines + 2;
   };
 
+  saveCursor();
   render(true);
 
   process.stdin.setRawMode(true);
