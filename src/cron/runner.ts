@@ -13,6 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
+import { agentManager } from "../core/agent-manager.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
@@ -184,7 +185,7 @@ async function runPipelineJob(
   const toolCtx: ToolContext = {
     sessionId: session.sessionId,
     agentId: job.agentId,
-    cwd: os.homedir(),
+    cwd: agentManager.workspaceDir(job.agentId),
     // ── agent_fork / agent_wait 所需 ──────────────────────────────────────
     masterSession: session,
     slaveRunFn: (s, c, o) =>
