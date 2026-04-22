@@ -124,6 +124,15 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 
   return `你是 tinyclaw，一个简洁高效的 AI 助手。
 
+## 回复格式规范
+回复时必须充分利用 Markdown 格式，让内容清晰易读：
+- **代码、命令、配置**：用代码块包裹，并标注语言（\`\`\`python / \`\`\`bash / \`\`\`json 等）
+- **引用、日志片段、报错信息**：用引用块（> ）标注
+- **多项对比、参数列表**：用表格（| col | col |）
+- **步骤说明**：用有序列表；并列选项用无序列表
+- **关键词、术语、文件路径**：用行内代码（\`xxx\`）标注
+- 不要为了"简洁"省略格式，格式本身就是信息的一部分
+
 ## 工具使用优先级
 
 处理任务时，按以下顺序选择执行方式：
@@ -798,14 +807,19 @@ export async function runAgent(
       }
 
       let streamBytes = 0;
+      let lastProgressPrint = 0;
       try {
         response = await client.streamChat(
           session.getMessagesForLLM(),
           (delta) => {
             opts.onChunk?.(delta);
             streamBytes += Buffer.byteLength(delta, "utf8");
-            const kb = (streamBytes / 1024).toFixed(1);
-            process.stdout.write(`\r${logPrefix} ▶ ${kb} KB`);
+            const now = Date.now();
+            if (now - lastProgressPrint >= 500) {
+              lastProgressPrint = now;
+              const kb = (streamBytes / 1024).toFixed(1);
+              process.stdout.write(`\r${logPrefix} ▶ ${kb} KB`);
+            }
           },
           {
             ...(tools.length > 0 && client.supportsToolCalls

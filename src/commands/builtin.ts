@@ -103,6 +103,16 @@ registerCommand({
       lines.push(`后台任务：${slaves.length} 个（${running} 个运行中）`);
     }
 
+    // ── Loop 状态（chat 模式才显示）──────────────────────────────────────────
+    if (!isCodeMode) {
+      const loops = loopTriggerManager.listStatus();
+      if (loops.length > 0) {
+        const icons: Record<string, string> = { running: "⏳", paused: "⏸️", idle: "✅", not_found: "❓" };
+        const loopStrs = loops.map((l) => `${icons[l.status] ?? "❓"} \`${l.id}\`(${l.status})`);
+        lines.push(`Loop 触发器:${loopStrs.join(" / ")}`);
+      }
+    }
+
     // ── Copilot 信息 ─────────────────────────────────────────────────────────
     try {
       const config = loadConfig();
@@ -416,5 +426,45 @@ registerCommand({
     delete session.lastFailedRequestId;
     delete session.lastFailedUserContent;
     return "↩️ 正在重试（复用上次请求 ID，不额外计费）...";
+  },
+});
+
+// ── /loop ─────────────────────────────────────────────────────────────────────
+
+import { loopTriggerManager } from "../core/loop-trigger.js";
+
+registerCommand({
+  name: "loop",
+  description: "管理 Loop 触发器。子命令: pause <id> | resume <id> | list",
+  usage: "/loop pause <id> | /loop resume <id> | /loop list",
+  modes: ["chat"],
+  execute({ args }) {
+    const sub = args[0]?.toLowerCase();
+    const id = args[1];
+
+    if (sub === "list" || !sub) {
+      const all = loopTriggerManager.listStatus();
+      if (all.length === 0) return "ℹ️ 当前没有已加载的 Loop 触发器。";
+      const icons: Record<string, string> = { running: "⏳", paused: "⏸️", idle: "✅", not_found: "❓" };
+      const lines = ["**Loop 触发器列表**\n"];
+      for (const s of all) {
+        lines.push(`${icons[s.status] ?? "❓"} \`${s.id}\` — ${s.status}  (绑定: \`${s.bindTo}\`)`);
+      }
+      return lines.join("\n");
+    }
+
+    if (sub === "pause") {
+      if (!id) return "❌ 用法: `/loop pause <id>`";
+      const ok = loopTriggerManager.pause(id);
+      return ok ? `⏸️ Loop \`${id}\` 已暂停。` : `❌ 未找到 Loop \`${id}\`，发送 \`/loop list\` 查看可用 ID。`;
+    }
+
+    if (sub === "resume") {
+      if (!id) return "❌ 用法: `/loop resume <id>`";
+      const ok = loopTriggerManager.resume(id);
+      return ok ? `▶️ Loop \`${id}\` 已恢复。` : `❌ 未找到 Loop \`${id}\`，发送 \`/loop list\` 查看可用 ID。`;
+    }
+
+    return `❌ 未知子命令 \`${sub}\`。用法: \`/loop list\` / \`/loop pause <id>\` / \`/loop resume <id>\``;
   },
 });
