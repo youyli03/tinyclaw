@@ -11,10 +11,12 @@
 
 import { loadConfig } from "../../config/loader.js";
 import { getCopilotModels } from "../../llm/copilot.js";
+import { fetchFreeModels } from "../../llm/openrouter.js";
 import { patchTomlField } from "../../config/writer.js";
 import {
   printTable, select, confirm, prompt,
-  bold, dim, green, yellow, cyan, red, section,
+  singleSelect, searchableSelect,
+  bold, dim, green, yellow, cyan, red, magenta, section,
 } from "../ui.js";
 
 type BackendName = "daily" | "code" | "summarizer";
@@ -104,25 +106,93 @@ async function listOpenAI(baseUrl: string, apiKey: string, showAll: boolean): Pr
   }
 }
 
+async function listOpenRouter(apiKey: string, showAll: boolean): Promise<void> {
+  if (showAll) {
+    const baseUrl = "https://openrouter.ai/api/v1";
+    process.stdout.write(`\n正在获取 OpenRouter 全量模型列表......`);
+    try {
+      const resp = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      });
+      if (!resp.ok) {
+        console.log(` ${red("失败")}`);
+        console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
+        return;
+      }
+      const data = (await resp.json()) as { data?: { id: string; context_length?: number; pricing?: { prompt?: string } }[] };
+      const list = data.data ?? [];
+      console.log(` ${green("OK")}`);
+      section(`OpenRouter 全量模型(共 ${list.length} 个)`);
+      printTable(
+        ["#", "Symbol", "CTX", "定价(prompt/1M)"],
+        list.map((m, i) => {
+          const ctx = m.context_length ? `${Math.round(m.context_length / 1000)}k` : "-";
+          const price = m.pricing?.prompt != null
+            ? (parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2) === "0.00"
+              ? green("free")
+              : yellow(`$${(parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2)}`)
+            : "-";
+          return [String(i + 1), cyan(`openrouter/${m.id}`), ctx, price];
+        })
+      );
+    } catch (e) {
+      console.log(` ${red("失败")}`);
+      console.error(red(`  ${e}`));
+    }
+    return;
+  }
+
+  // 默认：免费榜单
+  process.stdout.write(`\n正在获取 OpenRouter 免费模型榜单......`);
+  try {
+    const models = await fetchFreeModels(apiKey);
+    console.log(` ${green("OK")}`);
+    section(`OpenRouter 免费模型(top-weekly，共 ${models.length} 个)`);
+    printTable(
+      ["#", "Symbol", "CTX", "max_out"],
+      models.map((m, i) => {
+        const ctx = m.context_length ? `${Math.round(m.context_length / 1000)}k` : "-";
+        const maxOut = m.top_provider?.max_completion_tokens
+          ? String(m.top_provider.max_completion_tokens)
+          : "-";
+        return [String(i + 1), cyan(`openrouter/${m.id}`), ctx, maxOut];
+      })
+    );
+    console.log(dim(`\n加 -a 查看全量模型`));
+  } catch (e) {
+    console.log(` ${red("失败")}`);
+    console.error(red(`  ${e}`));
+  }
+}
+
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const showAll = args.includes("--all") || args.includes("-a");
 
-  // 遍历所有已配置的 provider，与后端角色无关
-  const { copilot, openai } = cfg.providers;
+  // 支持 provider 筛选：model list [copilot|openrouter|openai] [-a]
+  const filterArg = args.find((a) => ["copilot", "openrouter", "openai"].includes(a));
+  const { copilot, openai, openrouter } = cfg.providers;
 
-  if (!copilot && !openai) {
-    console.log(red("\n未配置任何 provider，请在 config.toml 中添加 [providers.openai] 或 [providers.copilot]"));
+  if (!copilot && !openai && !openrouter) {
+    console.log(red("\n未配置任何 provider，请在 config.toml 中配置 provider"));
     return;
   }
 
-  if (copilot) {
+  const showCopilot = !filterArg || filterArg === "copilot";
+  const showOpenRouter = !filterArg || filterArg === "openrouter";
+  const showOpenAI = !filterArg || filterArg === "openai";
+
+  if (showCopilot && copilot) {
     await listCopilot(copilot.githubToken, showAll);
   }
-  if (openai) {
+  if (showOpenRouter && openrouter) {
+    await listOpenRouter(openrouter.apiKey, showAll);
+  }
+  if (showOpenAI && openai) {
     await listOpenAI(openai.baseUrl, openai.apiKey, showAll);
   }
 }
+
 
 async function cmdSet(args: string[]): Promise<void> {
   const cfg = loadConfig();
@@ -142,19 +212,37 @@ async function cmdSet(args: string[]): Promise<void> {
     : backendName === "code"      ? cfg.llm.backends.code
     : cfg.llm.backends.summarizer;
 
-  const currentSymbol = currentRole?.model ?? dim("(未配置)");
+  const currentSymbol = currentRole?.model ?? "(未配置)";
+  console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(currentSymbol)}`);
 
-  // 收集所有可选的 symbol
-  interface PickItem { label: string; value: string; note: string }
-  const items: PickItem[] = [];
+  // ── 第一级：选 provider ────────────────────────────────────────────────
+  const { copilot, openai, openrouter } = cfg.providers;
+  interface ProviderItem { label: string; value: string; note?: string }
+  const providerItems: ProviderItem[] = [];
+  if (copilot)     providerItems.push({ label: "Copilot",     value: "copilot",     note: "GitHub Copilot" });
+  if (openrouter)  providerItems.push({ label: "OpenRouter",  value: "openrouter",  note: "免费/付费模型" });
+  if (openai)      providerItems.push({ label: "OpenAI",      value: "openai",      note: "手动输入" });
 
-  if (cfg.providers.copilot) {
-    console.log(`\n正在获取 Copilot 可用模型……`);
-    const models = await getCopilotModels(cfg.providers.copilot.githubToken);
+  if (providerItems.length === 0) {
+    console.error(red("未配置任何 provider，无法选择模型"));
+    return;
+  }
+
+  const provider = await singleSelect("选择 Provider", providerItems);
+
+  // ── 第二级：选模型 ─────────────────────────────────────────────────────
+  let newSymbol: string;
+
+  if (provider === "copilot" && copilot) {
+    process.stdout.write("\n正在获取 Copilot 可用模型......");
+    const models = await getCopilotModels(copilot.githubToken);
     const picker = models.filter((m) => m.isPickerEnabled);
-    for (const m of picker) {
+    console.log(` ${green("OK")} (${picker.length} 个)`);
+
+    interface PickItem { label: string; value: string; note?: string }
+    const items: PickItem[] = picker.map((m) => {
       const symbol = `copilot/${m.id}`;
-      items.push({
+      return {
         label: m.isDefault ? `${m.name} ${green("(默认)")}` : m.name,
         value: symbol,
         note: [
@@ -162,46 +250,69 @@ async function cmdSet(args: string[]): Promise<void> {
           m.vendor,
           m.category ?? "",
           m.multiplier === undefined ? ""
-            : m.multiplier === 0 ? "free"
-            : `×${m.multiplier}`,
-          m.preview ? "[preview]" : "",
-          currentSymbol === symbol ? "← 当前" : "",
+            : m.multiplier === 0 ? green("free")
+            : yellow(`×${m.multiplier}`),
+          m.preview ? dim("[preview]") : "",
+          currentSymbol === symbol ? magenta("← 当前") : "",
         ].filter(Boolean).join(" · "),
-      });
-    }
-    // auto 选项
+      };
+    });
     items.push({
-      label: bold("copilot/auto") + dim("（自动选择 Copilot 默认模型）"),
+      label: "copilot/auto  " + dim("自动选择默认模型"),
       value: "copilot/auto",
-      note: currentSymbol === "copilot/auto" ? "← 当前" : "",
+      note: currentSymbol === "copilot/auto" ? magenta("← 当前") : "",
     });
-  }
+    newSymbol = await searchableSelect("选择 Copilot 模型", items);
 
-  if (cfg.providers.openai) {
-    // OpenAI 无法列举，提供手动输入路径
-    items.push({
-      label: bold("openai/...") + dim("（手动输入 model ID）"),
-      value: "__openai_manual__",
-      note: "",
-    });
-  }
+  } else if (provider === "openrouter" && openrouter) {
+    process.stdout.write("\n正在获取 OpenRouter 免费模型榜单......");
+    const freeModels = await fetchFreeModels(openrouter.apiKey);
+    console.log(` ${green("OK")} (${freeModels.length} 个)`);
 
-  if (items.length === 0) {
-    console.error(red("未配置任何 provider，无法选择模型"));
-    return;
-  }
+    interface PickItem { label: string; value: string; note?: string }
+    const items: PickItem[] = [
+      {
+        label: "openrouter/auto-free  " + dim("自动路由免费模型"),
+        value: "openrouter/auto-free",
+        note: currentSymbol === "openrouter/auto-free" ? magenta("← 当前") : "",
+      },
+      ...freeModels.map((m) => {
+        const symbol = `openrouter/${m.id}`;
+        const ctx = m.context_length ? `${Math.round(m.context_length / 1000)}k ctx` : "";
+        const maxOut = m.top_provider?.max_completion_tokens
+          ? `max_out=${m.top_provider.max_completion_tokens}`
+          : "";
+        return {
+          label: m.id,
+          value: symbol,
+          note: [green("free"), ctx, maxOut, currentSymbol === symbol ? magenta("← 当前") : ""].filter(Boolean).join(" · "),
+        };
+      }),
+      {
+        label: dim("[手动输入 model ID]"),
+        value: "__openrouter_manual__",
+        note: "",
+      },
+    ];
+    const picked = await searchableSelect("选择 OpenRouter 模型", items);
+    if (picked === "__openrouter_manual__") {
+      const input = await prompt("输入 OpenRouter model ID（如 google/gemma-3-27b-it:free）: ");
+      const trimmed = input.trim();
+      if (!trimmed) { console.log(dim("已取消")); return; }
+      newSymbol = `openrouter/${trimmed}`;
+    } else {
+      newSymbol = picked;
+    }
 
-  console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(String(currentSymbol))}`);
-  const selected = await select(`选择新的模型 Symbol`, items);
-
-  let newSymbol: string;
-  if (selected === "__openai_manual__") {
+  } else if (provider === "openai" && openai) {
     const input = await prompt("输入 OpenAI model ID（如 gpt-4o-mini）: ");
     const trimmed = input.trim();
     if (!trimmed) { console.log(dim("已取消")); return; }
     newSymbol = `openai/${trimmed}`;
+
   } else {
-    newSymbol = selected;
+    console.error(red("所选 provider 未配置"));
+    return;
   }
 
   patchTomlField(["llm", "backends", backendName], "model", JSON.stringify(newSymbol));
@@ -213,6 +324,8 @@ async function cmdSet(args: string[]): Promise<void> {
     await restartRun([]);
   }
 }
+
+
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
