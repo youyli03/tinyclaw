@@ -278,9 +278,21 @@ export class LoopTriggerManager {
     try {
       const session = this.getSession(cfg.bindTo);
 
+      // 若 session 当前处于 code 模式，跳过本次 tick，避免 loop 消息污染编码上下文
+      if (session.mode === "code") {
+        console.log(`[loop-trigger] id=${cfg.id} tick 跳过(session 处于 code 模式)`);
+        return false;
+      }
+
       // 等待 session 当前 run 完成
       if (session.running && session.currentRunPromise) {
         await session.currentRunPromise.catch(() => {});
+      }
+
+      // 再次检查：等待期间 session 可能切换到 code 模式
+      if ((session.mode as string) === "code") {
+        console.log(`[loop-trigger] id=${cfg.id} tick 跳过(session 在等待期间切换到 code 模式)`);
+        return false;
       }
 
       // 构建 notifyFn（从 bindTo 解析 peerId）
