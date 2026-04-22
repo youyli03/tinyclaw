@@ -176,41 +176,40 @@ export async function singleSelect<T>(
   let cursor = 0;
   const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 6);
   let scrollTop = 0;
-  let lastLineCount = 0;
 
-  const render = (first: boolean) => {
+  const buildLines = (): string[] => {
     if (cursor < scrollTop) scrollTop = cursor;
     if (cursor >= scrollTop + pageSize) scrollTop = cursor - pageSize + 1;
-    const visibleItems = items.slice(scrollTop, scrollTop + pageSize);
-
-    if (!first) clearLines(lastLineCount);
-    console.log(`\n${bold(title)}`);
-    let lines = 2;
-
-    if (scrollTop > 0) {
-      console.log(dim(`  \u2191 ${scrollTop} 项...`));
-      lines++;
+    const visible = items.slice(scrollTop, scrollTop + pageSize);
+    const out: string[] = [];
+    out.push(bold(title));
+    if (scrollTop > 0) out.push("  " + dim("\u2191 " + String(scrollTop) + " \u9879..."));
+    for (let i = 0; i < visible.length; i++) {
+      const item = visible[i]!;
+      const abs = scrollTop + i;
+      const note = item.note ? "  " + dim(item.note) : "";
+      const pfx = abs === cursor ? cyan("\u276f ") : "  ";
+      const lbl = abs === cursor ? bold(item.label) : item.label;
+      out.push(pfx + lbl + note);
     }
-    for (let i = 0; i < visibleItems.length; i++) {
-      const item = visibleItems[i]!;
-      const absIdx = scrollTop + i;
-      const note = item.note ? `  ${dim(item.note)}` : "";
-      const prefix = absIdx === cursor ? cyan("\u276f ") : "  ";
-      const label = absIdx === cursor ? bold(item.label) : item.label;
-      console.log(`${prefix}${label}${note}`);
-      lines++;
-    }
-    const remaining = items.length - scrollTop - visibleItems.length;
-    if (remaining > 0) {
-      console.log(dim(`  \u2193 ${remaining} 项...`));
-      lines++;
-    }
-    lastLineCount = lines + 1;
+    const rem = items.length - scrollTop - visible.length;
+    if (rem > 0) out.push("  " + dim("\u2193 " + String(rem) + " \u9879..."));
+    out.push(dim("\u2191\u2193 \u79fb\u52a8  Enter \u786e\u8ba4"));
+    return out;
   };
 
-  saveCursor();
-  render(true);
-  console.log(dim("\u2191\u2193 移动  Enter 确认"));
+  let lastN = 0;
+  const printLines = (ls: string[]) => {
+    process.stdout.write(ls.join("\n") + "\n");
+    lastN = ls.length;
+  };
+  const redraw = () => {
+    process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J");
+    printLines(buildLines());
+  };
+
+  process.stdout.write("\n");
+  printLines(buildLines());
 
   process.stdin.setRawMode(true);
   process.stdin.resume();
@@ -219,9 +218,9 @@ export async function singleSelect<T>(
   try {
     while (true) {
       const key = await readKey();
-      if (key === "up")         { cursor = (cursor - 1 + items.length) % items.length; render(false); }
-      else if (key === "down")  { cursor = (cursor + 1) % items.length; render(false); }
-      else if (key === "enter") { clearLines(lastLineCount); break; }
+      if (key === "up")         { cursor = (cursor - 1 + items.length) % items.length; redraw(); }
+      else if (key === "down")  { cursor = (cursor + 1) % items.length; redraw(); }
+      else if (key === "enter") { process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J"); break; }
       else if (key === "quit")  { process.exit(0); }
     }
   } finally {
@@ -318,7 +317,7 @@ export async function searchableSelect<T>(
   allItems: { label: string; value: T; note?: string }[],
 ): Promise<T> {
   if (!hasTTY()) {
-    const kw = await prompt("搜索关键词 (直接回车跳过): ");
+    const kw = await prompt("\u641c\u7d22\u5173\u952e\u8bcd (\u76f4\u63a5\u56de\u8f66\u8df3\u8fc7): ");
     const filtered = kw.trim()
       ? allItems.filter((i) =>
           i.label.toLowerCase().includes(kw.toLowerCase()) ||
@@ -333,71 +332,58 @@ export async function searchableSelect<T>(
   let cursor = 0;
   const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 8);
   let scrollTop = 0;
-  let lastLineCount = 0;
 
   const getFiltered = () => {
     if (!query) return allItems;
     const q = query.toLowerCase();
     return allItems.filter(
-      (i) =>
-        i.label.toLowerCase().includes(q) ||
-        String(i.value).toLowerCase().includes(q)
+      (i) => i.label.toLowerCase().includes(q) || String(i.value).toLowerCase().includes(q)
     );
   };
 
-  const render = (first: boolean) => {
+  const buildLines = (): string[] => {
     const list = getFiltered();
     if (cursor >= list.length) cursor = Math.max(0, list.length - 1);
-
-    // viewport scroll
     if (cursor < scrollTop) scrollTop = cursor;
     if (cursor >= scrollTop + pageSize) scrollTop = cursor - pageSize + 1;
-    const visibleItems = list.slice(scrollTop, scrollTop + pageSize);
+    const visible = list.slice(scrollTop, scrollTop + pageSize);
 
-    if (!first) clearLines(lastLineCount);
-
-    console.log(`\n${bold(title)}`);
-    let lines = 2;
-
-    if (scrollTop > 0) {
-      console.log(dim(`  \u2191 ${scrollTop} 项...`));
-      lines++;
+    const out: string[] = [];
+    out.push(bold(title));
+    if (scrollTop > 0) out.push("  " + dim("\u2191 " + String(scrollTop) + " \u9879..."));
+    for (let i = 0; i < visible.length; i++) {
+      const item = visible[i]!;
+      const abs = scrollTop + i;
+      const note = item.note ? "  " + dim(item.note) : "";
+      const pfx = abs === cursor ? cyan("\u276f ") : "  ";
+      const lbl = abs === cursor ? bold(item.label) : item.label;
+      out.push(pfx + lbl + note);
     }
-
-    for (let i = 0; i < visibleItems.length; i++) {
-      const item = visibleItems[i]!;
-      const absIdx = scrollTop + i;
-      const note = item.note ? `  ${dim(item.note)}` : "";
-      const prefix = absIdx === cursor ? cyan("\u276f ") : "  ";
-      const label = absIdx === cursor ? bold(item.label) : item.label;
-      console.log(`${prefix}${label}${note}`);
-      lines++;
-    }
-
-    const remaining = list.length - scrollTop - visibleItems.length;
-    if (remaining > 0) {
-      console.log(dim(`  \u2193 ${remaining} 项...`));
-      lines++;
-    }
-
-    if (list.length === 0) {
-      console.log(dim("  (无匹配结果)"));
-      lines++;
-    }
-
+    const rem = list.length - scrollTop - visible.length;
+    if (rem > 0) out.push("  " + dim("\u2193 " + String(rem) + " \u9879..."));
+    if (list.length === 0) out.push("  " + dim("(\u65e0\u5339\u914d\u7ed3\u679c)"));
     const searchLine = searchMode
-      ? `  搜索: ${cyan(query)}█`
-      : `  搜索: ${dim("(Tab 激活)")}`;
-    console.log(searchLine);
-    const hintLine = searchMode
-      ? dim("Enter 确认  Esc 清空  \u2191\u2193 移动")
-      : dim("\u2191\u2193 移动  Enter 确认  Tab 搜索");
-    console.log(hintLine);
-    lastLineCount = lines + 2;
+      ? "  \u641c\u7d22: " + cyan(query) + "\u2588"
+      : "  \u641c\u7d22: " + dim("(Tab \u6fc0\u6d3b)");
+    out.push(searchLine);
+    out.push(searchMode
+      ? dim("Enter \u786e\u8ba4  Esc \u6e05\u7a7a  \u2191\u2193 \u79fb\u52a8")
+      : dim("\u2191\u2193 \u79fb\u52a8  Enter \u786e\u8ba4  Tab \u641c\u7d22"));
+    return out;
   };
 
-  saveCursor();
-  render(true);
+  let lastN = 0;
+  const printLines = (ls: string[]) => {
+    process.stdout.write(ls.join("\n") + "\n");
+    lastN = ls.length;
+  };
+  const redraw = () => {
+    process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J");
+    printLines(buildLines());
+  };
+
+  process.stdout.write("\n");
+  printLines(buildLines());
 
   process.stdin.setRawMode(true);
   process.stdin.resume();
@@ -406,40 +392,35 @@ export async function searchableSelect<T>(
   try {
     while (true) {
       const key = await readKey();
-
       if (key === "quit") process.exit(0);
 
-      if (key === "\t") {
-        searchMode = !searchMode;
-        render(false);
-        continue;
-      }
+      if (key === "\t") { searchMode = !searchMode; redraw(); continue; }
 
       if (key === "\x1b") {
         if (query) { query = ""; cursor = 0; scrollTop = 0; }
         searchMode = false;
-        render(false);
+        redraw();
         continue;
       }
 
       if (key === "up") {
         const list = getFiltered();
         if (list.length > 0) cursor = (cursor - 1 + list.length) % list.length;
-        render(false);
+        redraw();
         continue;
       }
 
       if (key === "down") {
         const list = getFiltered();
         if (list.length > 0) cursor = (cursor + 1) % list.length;
-        render(false);
+        redraw();
         continue;
       }
 
       if (key === "enter") {
         const list = getFiltered();
         if (list.length === 0) continue;
-        clearLines(lastLineCount);
+        process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J");
         return list[cursor]!.value;
       }
 
@@ -451,7 +432,7 @@ export async function searchableSelect<T>(
         }
         cursor = 0;
         scrollTop = 0;
-        render(false);
+        redraw();
       }
     }
   } finally {
