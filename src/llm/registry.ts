@@ -131,6 +131,19 @@ class LLMRegistry {
       return client;
     }
 
+    if (provider === "openrouter") {
+      const orCfg = config.providers.openrouter;
+      if (!orCfg) {
+        throw new Error(
+          `后端 '${name}' 使用 openrouter 模型，但 [providers.openrouter] 未配置`
+        );
+      }
+      const client = modelId === "auto-free"
+        ? new AutoFreeClient(orCfg)
+        : buildOpenRouterClient(orCfg, modelId);
+      this.clients.set(name, client);
+      return client;
+    }
     throw new Error(`未知 provider "${provider}"（来自模型 symbol "${role.model}"）`);
   }
 

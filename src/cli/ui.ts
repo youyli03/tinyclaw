@@ -167,26 +167,46 @@ export async function singleSelect<T>(
   items: { label: string; value: T; note?: string }[],
 ): Promise<T> {
   if (!hasTTY()) {
-    // fallback：数字编号
     return select(title, items);
   }
 
   let cursor = 0;
+  const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 6);
+  let scrollTop = 0;
+  let lastLineCount = 0;
 
   const render = (first: boolean) => {
-    if (!first) clearLines(items.length + 2);
+    if (cursor < scrollTop) scrollTop = cursor;
+    if (cursor >= scrollTop + pageSize) scrollTop = cursor - pageSize + 1;
+    const visibleItems = items.slice(scrollTop, scrollTop + pageSize);
+
+    if (!first) clearLines(lastLineCount);
     console.log(`\n${bold(title)}`);
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]!;
-      const note = item.note ? `  ${dim(item.note)}` : "";
-      const prefix = i === cursor ? cyan("❯ ") : "  ";
-      const label = i === cursor ? bold(item.label) : item.label;
-      console.log(`${prefix}${label}${note}`);
+    let lines = 2;
+
+    if (scrollTop > 0) {
+      console.log(dim(`  \u2191 ${scrollTop} 项...`));
+      lines++;
     }
+    for (let i = 0; i < visibleItems.length; i++) {
+      const item = visibleItems[i]!;
+      const absIdx = scrollTop + i;
+      const note = item.note ? `  ${dim(item.note)}` : "";
+      const prefix = absIdx === cursor ? cyan("\u276f ") : "  ";
+      const label = absIdx === cursor ? bold(item.label) : item.label;
+      console.log(`${prefix}${label}${note}`);
+      lines++;
+    }
+    const remaining = items.length - scrollTop - visibleItems.length;
+    if (remaining > 0) {
+      console.log(dim(`  \u2193 ${remaining} 项...`));
+      lines++;
+    }
+    lastLineCount = lines + 1;
   };
 
   render(true);
-  console.log(dim("↑↓ 移动  Enter 确认"));
+  console.log(dim("\u2191\u2193 移动  Enter 确认"));
 
   process.stdin.setRawMode(true);
   process.stdin.resume();
@@ -195,9 +215,9 @@ export async function singleSelect<T>(
   try {
     while (true) {
       const key = await readKey();
-      if (key === "up")    { cursor = (cursor - 1 + items.length) % items.length; render(false); }
+      if (key === "up")         { cursor = (cursor - 1 + items.length) % items.length; render(false); }
       else if (key === "down")  { cursor = (cursor + 1) % items.length; render(false); }
-      else if (key === "enter") { clearLines(items.length + 2); break; }
+      else if (key === "enter") { clearLines(lastLineCount); break; }
       else if (key === "quit")  { process.exit(0); }
     }
   } finally {
@@ -306,6 +326,9 @@ export async function searchableSelect<T>(
   let searchMode = false;
   let query = "";
   let cursor = 0;
+  const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 8);
+  let scrollTop = 0;
+  let lastLineCount = 0;
 
   const getFiltered = () => {
     if (!query) return allItems;
@@ -317,36 +340,55 @@ export async function searchableSelect<T>(
     );
   };
 
-  let lastLineCount = 0;
-
   const render = (first: boolean) => {
     const list = getFiltered();
     if (cursor >= list.length) cursor = Math.max(0, list.length - 1);
+
+    // viewport scroll
+    if (cursor < scrollTop) scrollTop = cursor;
+    if (cursor >= scrollTop + pageSize) scrollTop = cursor - pageSize + 1;
+    const visibleItems = list.slice(scrollTop, scrollTop + pageSize);
+
     if (!first) clearLines(lastLineCount);
 
     console.log(`\n${bold(title)}`);
-    let lines = 2; // blank + title
-    for (let i = 0; i < list.length; i++) {
-      const item = list[i]!;
+    let lines = 2;
+
+    if (scrollTop > 0) {
+      console.log(dim(`  \u2191 ${scrollTop} 项...`));
+      lines++;
+    }
+
+    for (let i = 0; i < visibleItems.length; i++) {
+      const item = visibleItems[i]!;
+      const absIdx = scrollTop + i;
       const note = item.note ? `  ${dim(item.note)}` : "";
-      const prefix = i === cursor ? cyan("❯ ") : "  ";
-      const label = i === cursor ? bold(item.label) : item.label;
+      const prefix = absIdx === cursor ? cyan("\u276f ") : "  ";
+      const label = absIdx === cursor ? bold(item.label) : item.label;
       console.log(`${prefix}${label}${note}`);
       lines++;
     }
+
+    const remaining = list.length - scrollTop - visibleItems.length;
+    if (remaining > 0) {
+      console.log(dim(`  \u2193 ${remaining} 项...`));
+      lines++;
+    }
+
     if (list.length === 0) {
       console.log(dim("  (无匹配结果)"));
       lines++;
     }
+
     const searchLine = searchMode
       ? `  搜索: ${cyan(query)}█`
       : `  搜索: ${dim("(Tab 激活)")}`;
     console.log(searchLine);
     const hintLine = searchMode
-      ? dim("Enter 确认  Esc 清空  ↑↓ 移动")
-      : dim("↑↓ 移动  Enter 确认  Tab 搜索");
+      ? dim("Enter 确认  Esc 清空  \u2191\u2193 移动")
+      : dim("\u2191\u2193 移动  Enter 确认  Tab 搜索");
     console.log(hintLine);
-    lastLineCount = lines + 2; // searchLine + hintLine
+    lastLineCount = lines + 2;
   };
 
   render(true);
@@ -368,7 +410,7 @@ export async function searchableSelect<T>(
       }
 
       if (key === "\x1b") {
-        if (query) { query = ""; cursor = 0; }
+        if (query) { query = ""; cursor = 0; scrollTop = 0; }
         searchMode = false;
         render(false);
         continue;
@@ -402,6 +444,7 @@ export async function searchableSelect<T>(
           query += key;
         }
         cursor = 0;
+        scrollTop = 0;
         render(false);
       }
     }
