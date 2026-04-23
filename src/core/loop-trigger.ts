@@ -335,16 +335,21 @@ export class LoopTriggerManager {
       const taskRef = path.join(this.loopsDir, `${cfg.id}.json`);
       session.addLoopTaskMessage(taskRef, content);
 
-      // allowExit=true 时通过 customTools 注入 loop_exit 工具 spec
+      // allowExit=true 时通过 customTools 注入 loop_exit 和 loop_control 工具 spec
       const loopExitDef = cfg.allowExit ? getTool("loop_exit") : undefined;
-      const customTools = loopExitDef ? [loopExitDef.spec] : undefined;
+      const loopControlDef = cfg.allowExit ? getTool("loop_control") : undefined;
+      const customTools = [
+        ...(loopExitDef ? [loopExitDef.spec] : []),
+        ...(loopControlDef ? [loopControlDef.spec] : []),
+      ] as import("openai/resources/chat/completions").ChatCompletionTool[] | undefined;
+      const customToolsFinal = customTools?.length ? customTools : undefined;
 
       await this.runAgent(session, content, {
         skipAddUserMessage: true,
         skipMemorySearch: true,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onLoopExit ? { onLoopExit } : {}),
-        ...(customTools ? { customTools } : {}),
+        ...(customToolsFinal ? { customTools: customToolsFinal } : {}),
       });
 
       if (exitSignaled) {
