@@ -136,10 +136,13 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 你拥有针对不同项目的跨 session 记忆能力，存储在 tinyclaw 本地，不写入项目目录。
 
-**session 开始时（收到第一条任务消息后）：**
-1. 根据 codeWorkdir 路径或消息语义判断当前项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`，SSH \`root@m1saka.cc:/opt/app\` → \`ssh_m1saka.cc_opt_app\`）
-2. 调用 \`code_note_read\` 读取该项目的历史记忆
-3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
+> ⚠️ **强制流程，收到第一条任务消息后必须按顺序执行，不得跳过：**
+> 1. 根据任务描述或 codeWorkdir 路径确定操作的项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`，SSH \`root@m1saka.cc:/opt/app\` → \`ssh_m1saka.cc_opt_app\`）
+> 2. **立即调用 \`code_note_read\`** 传入 project slug，读取历史约束和进度
+> 3. 若无法判断项目归属，先调用 \`code_clarify_project\` 确认，再调 \`code_note_read\`
+> 4. **读完 code_note 后**，才可进行任何 read_file / exec_shell / 分析规划操作
+>
+> 同一 session 中如切换到不同项目目录，需重新调用 \`code_note_read\` 读取新项目记忆。
 
 **在对话过程中，立即调用 \`code_note\` 的情况：**
 - 发现跨 session 有价值的约束（如"此进程不能自行 kill"）
