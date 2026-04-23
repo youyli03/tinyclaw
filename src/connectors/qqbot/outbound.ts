@@ -22,6 +22,10 @@ import {
 } from "./api.js";
 import type { InboundMessage } from "../base.js";
 import { parseMediaTags } from "../utils/media-parser.js";
+import { mdToImage } from "../utils/md-to-image.js";
+
+/** 超过该字符数时，自动渲染为图片发送（仅 text 段，无 <img>/<audio>/<video> 标签） */
+const AUTO_RENDER_THRESHOLD = 500;
 
 // ── 限流 ──────────────────────────────────────────────────────────────────────
 
@@ -182,6 +186,19 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
 
   for (const segment of segments) {
     if (segment.type === "text") {
+      // ── 长文本自动渲染为图片 ─────────────────────────────────────────────
+      if (segment.content.length > AUTO_RENDER_THRESHOLD && type !== "guild") {
+        try {
+          const imgPath = await mdToImage(segment.content);
+          const mediaReplyToId2 = replyToId && checkLimit(replyToId).allowed ? replyToId : undefined;
+          await doSendMedia(token, type, peerId, "img", imgPath, mediaReplyToId2);
+          if (replyToId) recordReply(replyToId);
+          continue;
+        } catch (err) {
+          console.warn("[qqbot] 长文本渲染图片失败，降级为文字:", err);
+          // 降级继续走文字路径
+        }
+      }
       // ── 纯文本分块发送 ──────────────────────────────────────────────────
       const chunks = chunkText(segment.content);
       for (const chunk of chunks) {
