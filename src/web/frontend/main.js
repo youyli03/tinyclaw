@@ -407,16 +407,18 @@ const app = createApp({
     const overviewLastTs = {};
 
     async function drawOverviewCharts(incremental = false) {
-      // 并行拉取 3 个数据源
+      // 并行拉取 4 个数据源
       const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
       const copilotUrl = '/api/metrics?category=copilot&key=remaining&days=1' + (incremental && overviewLastTs.copilot  != null ? '&since=' + overviewLastTs.copilot  : '');
       const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
-      let elecData, copilotData, systemData;
+      const llmTokenUrl = '/api/metrics?category=llm&key=output_tokens&days=7' + (incremental && overviewLastTs.llmToken != null ? '&since=' + overviewLastTs.llmToken : '');
+      let elecData, copilotData, systemData, llmTokenData;
       try {
-        [elecData, copilotData, systemData] = await Promise.all([
+        [elecData, copilotData, systemData, llmTokenData] = await Promise.all([
           fetch(elecUrl).then(r => r.json()),
           fetch(copilotUrl).then(r => r.json()),
           fetch(systemUrl).then(r => r.json()),
+          fetch(llmTokenUrl).then(r => r.json()).catch(() => ({ rows: [] })),
         ]);
       } catch (e) { console.warn('overview parallel fetch failed', e); return; }
 
@@ -469,6 +471,34 @@ const app = createApp({
           }
         }
       } catch (e) { console.warn('copilot chart failed', e); }
+
+      // LLM Token 用量(非 copilot 模型，如 deepseek)
+      try {
+        const tokenRows = (llmTokenData.rows || []);
+        if (tokenRows.length) overviewLastTs.llmToken = tokenRows[tokenRows.length-1].ts;
+        const tokenChart = charts['chart-llm-tokens'];
+        if (incremental && tokenChart && tokenRows.length) {
+          for (const r of tokenRows) tokenChart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
+          tokenChart.update('none');
+        } else if (!incremental) {
+          const llmCard = document.getElementById('llm-token-card');
+          if (llmCard) llmCard.style.display = tokenRows.length ? '' : 'none';
+          if (!tokenRows.length) return;
+          const points = tokenRows.map(r => ({ x: r.ts * 1000, y: r.value }));
+          const tokenCanvas = document.getElementById('chart-llm-tokens');
+          if (tokenCanvas) {
+            const ctx = tokenCanvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 200);
+            grad.addColorStop(0, C.purple + '30');
+            grad.addColorStop(1, C.purple + '00');
+            createOrUpdateChart('chart-llm-tokens', {
+              type: 'bar',
+              data: { datasets: [{ label: 'Output Tokens', data: points, borderColor: C.purple, backgroundColor: C.purple + '80', borderWidth: 1 }] },
+              options: { ...baseChartOpts(), scales: { x: smartXAxis(7), y: { ...baseChartOpts().scales.y } } },
+            });
+          }
+        }
+      } catch (e) { console.warn('llm token chart failed', e); }
 
       // 系统 CPU/内存
       try {

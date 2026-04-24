@@ -100,6 +100,19 @@
         </div>
       </div>
 
+      <!-- LLM Token 用量 -->
+      <div class="chart-row chart-row-1" id="llm-token-card" style="display:none">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">LLM Token 用量</span>
+            <span class="card-sub">7日 Output Tokens（非 copilot 模型）</span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:220px">
+            <canvas id="chart-llm-tokens" style="width:100%;height:200px"></canvas>
+          </div>
+        </div>
+      </div>
+
       <!-- CPU/内存 + Cron表 -->
       <div class="chart-row chart-row-2b">
         <div class="card">

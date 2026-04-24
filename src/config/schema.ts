@@ -46,10 +46,23 @@ const OpenRouterProviderSchema = z.object({
 });
 export type OpenRouterProviderConfig = z.infer<typeof OpenRouterProviderSchema>;
 
+/** DeepSeek 提供商(OpenAI-compatible，默认 baseUrl = https://api.deepseek.com/v1) */
+const DeepSeekProviderSchema = z.object({
+  apiKey: z.string().min(1),
+  /** API base URL，默认 https://api.deepseek.com/v1 */
+  baseUrl: z.string().url().default("https://api.deepseek.com/v1"),
+  /** 最大输出 token 数，默认 4096(可被后端角色覆盖) */
+  maxTokens: z.number().int().positive().default(4096),
+  /** 请求超时(毫秒)，默认 120000(可被后端角色覆盖) */
+  timeoutMs: z.number().int().positive().default(120_000),
+});
+export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderSchema>;
+
 const ProvidersSchema = z.object({
   openai: OpenAIProviderSchema.optional(),
   copilot: CopilotProviderSchema.optional(),
   openrouter: OpenRouterProviderSchema.optional(),
+  deepseek: DeepSeekProviderSchema.optional(),
 }).default({});
 export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
 

@@ -12,6 +12,7 @@ import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { agentManager } from "./agent-manager.js";
@@ -902,6 +903,22 @@ export async function runAgent(
     // 记录到 session，供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
     Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
+    // 非 copilot provider:写真实 token 用量到 dashboard DB
+    try {
+      const _usageProvider = (() => {
+        try {
+          const backends = loadConfig().llm.backends;
+          const backendKey = isCodeMode ? "code" : "daily";
+          const model = (backends as Record<string, { model?: string }>)[backendKey]?.model ?? "";
+          return model.split("/")[0];
+        } catch { return ""; }
+      })();
+      if (_usageProvider && _usageProvider !== "copilot" && lastUsage.completionTokens > 0) {
+        const LLM_CAT = "llm", LLM_KEY = "output_tokens";
+        if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 用量");
+        insertMetric({ category: LLM_CAT, key: LLM_KEY, value: lastUsage.completionTokens, note: client.model });
+      }
+    } catch { /* 写 db 失败不影响主流程 */ }
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值

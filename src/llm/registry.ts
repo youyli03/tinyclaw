@@ -144,6 +144,23 @@ class LLMRegistry {
       this.clients.set(name, client);
       return client;
     }
+    
+    if (provider === "deepseek") {
+      const dsCfg = config.providers.deepseek;
+      if (!dsCfg) {
+        throw new Error(`后端 '${name}' 使用 deepseek 模型,但 [providers.deepseek] 未配置`);
+      }
+      const client = new LLMClient({
+        baseUrl: dsCfg.baseUrl,
+        apiKey: dsCfg.apiKey,
+        model: modelId,
+        maxTokens: role.maxTokens ?? dsCfg.maxTokens,
+        timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : dsCfg.timeoutMs),
+        ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+      });
+      this.clients.set(name, client);
+      return client;
+    }
     throw new Error(`未知 provider "${provider}"（来自模型 symbol "${role.model}"）`);
   }
 
