@@ -174,8 +174,8 @@ async function listDeepSeek(baseUrl: string, apiKey: string, showAll: boolean): 
     printTable(
       ["#", "Symbol", "说明"],
       [
-        ["1", cyan("deepseek/deepseek-chat"),    "DeepSeek-V3（对话模型，低价）"],
-        ["2", cyan("deepseek/deepseek-reasoner"), "DeepSeek-R1（推理模型）"],
+        ["1", cyan("deepseek/deepseek-chat"),     "DeepSeek-V3 Flash（对话/代码，低价）"],
+        ["2", cyan("deepseek/deepseek-reasoner"),  "DeepSeek-R1 Pro（推理模型）"],
       ]
     );
     return;
@@ -361,9 +361,9 @@ async function cmdSet(args: string[]): Promise<void> {
   } else if (provider === "deepseek" && deepseek) {
     interface DsItem { label: string; value: string; note?: string }
     const dsItems: DsItem[] = [
-      { label: "deepseek-chat",              value: "deepseek/deepseek-chat",     note: green("对话模型，低价") },
-      { label: "deepseek-reasoner",           value: "deepseek/deepseek-reasoner", note: yellow("推理模型 R1") },
-      { label: dim("[手动输入 model ID]"), value: "__deepseek_manual__",          note: "" },
+      { label: "deepseek-chat（V3-0324）",   value: "deepseek/deepseek-chat",     note: green("DeepSeek-V3 Flash，低价") },
+      { label: "deepseek-reasoner（R1）",     value: "deepseek/deepseek-reasoner", note: yellow("DeepSeek-R1，推理模型") },
+      { label: dim("[手动输入 model ID]"),    value: "__deepseek_manual__",          note: "" },
     ];
     const dsPicked = await searchableSelect("选择 DeepSeek 模型", dsItems);
     if (dsPicked === "__deepseek_manual__") {
