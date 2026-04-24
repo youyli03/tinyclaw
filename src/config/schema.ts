@@ -499,6 +499,16 @@ const AgentSchema = z.object({
    * 0 = 关闭心跳。默认 120（2 分钟）。
    */
   heartbeatIntervalSecs: z.number().int().min(0).default(120),
+  /**
+   * 按 LLM provider 配置的 response hook 文本。
+   * 键为 provider 名称(如 "copilot"、"openai"、"openrouter"),值为追加到 system prompt 末尾的指令。
+   * 每次构建 system prompt 时,若当前后端 provider 匹配,自动 append 对应文本。
+   *
+   * 示例 agent.toml 配置:
+   * [agent.responseHooks]
+   * copilot = "完成后请用askuser问用户下一步"
+   */
+  responseHooks: z.record(z.string()).optional(),
 }).default({});
 export type AgentConfig = z.infer<typeof AgentSchema>;
 

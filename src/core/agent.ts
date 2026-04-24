@@ -349,7 +349,7 @@ function buildSkillReminder(agentId: string): string | null {
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  * opts.systemPromptSuffix 追加到 Agent 提示之后（不替换）。
  */
-function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false, suffix?: string): string {
+function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false, suffix?: string, currentProvider?: string): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
   const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision, agentId)];
@@ -359,9 +359,15 @@ function buildSystemPrompt(agentId = "default", extra?: string, supportsVision =
   if (agentPrompt) parts.push(agentPrompt);
   if (suffix) parts.push(suffix);
   const mem = loadAgentMem(agentId);
-  if (mem) parts.push(`## 持久记忆（MEM.md）\n\n${mem}`);
+  if (mem) parts.push(`## 持久记忆(MEM.md)\n\n${mem}`);
   const skills = loadAgentSkills(agentId);
-  if (skills) parts.push(`## 技能目录（SKILLS.md）\n\n${skills}`);
+  if (skills) parts.push(`## 技能目录(SKILLS.md)\n\n${skills}`);
+  // Response hook:按 provider 注入
+  if (currentProvider) {
+    const hooks = loadConfig().agent.responseHooks;
+    const hookText = hooks?.[currentProvider];
+    if (hookText) parts.push(hookText);
+  }
   return parts.join("\n\n");
 }
 
@@ -660,7 +666,8 @@ export async function runAgent(
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
         sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId);
       } else {
-        sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix);
+        const _provider = (() => { try { return loadConfig().llm.backends[isCodeMode ? "code" : "daily"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
+        sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix, _provider);
       }
       if (textMode && initialTools.length > 0) {
         sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);

@@ -52,8 +52,18 @@ export function buildCodeSystemPrompt(
     }
   } catch { /* ignore */ }
 
-  // Code 模式统一使用 Plan 模式（已移除 Auto）
-  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId });
+  // 读取 code/ENV.md(AI 自主维护的环境上下文:本机服务、工具路径等)
+  let envContent: string | undefined;
+  try {
+    const envPath = join(agentDir, "code", "ENV.md");
+    if (existsSync(envPath)) {
+      const ec = readFileSync(envPath, "utf-8").trim();
+      if (ec.length > 0) envContent = ec;
+    }
+  } catch { /* ignore */ }
+
+  // Code 模式统一使用 Plan 模式(已移除 Auto)
+  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent });
 }
 
 interface PromptParts {
@@ -68,6 +78,8 @@ interface PromptParts {
   feedbackContent?: string | null;
   /** 当前 session ID（用于 PLAN.md 路径标注） */
   sessionId?: string | undefined;
+  /** code/ENV.md 内容(AI 自主维护的环境上下文) */
+  envContent?: string | undefined;
 }
 
 function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
@@ -149,6 +161,12 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 定位到非显而易见的根因
 - 完成重要里程碑
 
+**ENV.md 自主维护（\`${agentDir}/code/ENV.md\`）：**
+发现以下信息时，立即用 \`edit_file\` append 到 ENV.md（追加，不要覆盖）：
+- 本机已运行的服务（路径、端口、管理方式，如 mcsm、pin-hunter-bot）
+- 常用工具路径（如 tj.py、aria2c 等）
+- 已知项目仓库位置
+
 **任务完成时（说"已完成"前）：**
 先调用 \`code_note\` 更新项目进度，再 git commit，再告知用户。顺序固定。
 
@@ -175,7 +193,8 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式${visionSection}${feedbackSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId }: PromptParts): string {
+function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent }: PromptParts): string {
+  const envSection = envContent ? `\n\n## 本机环境上下文（ENV.md）\n\n${envContent}` : "";
   const existingPlanSection = existingPlan
     ? `\n\n## 已有计划（上次会话遗留）\n\n> ⚠️ PLAN.md 已有内容，**禁止用 write_file 覆盖**。无论是新任务还是续接，都只能用 \`edit_file\` 追加或修改相关部分，保留历史轨迹。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
     : "";
@@ -291,5 +310,5 @@ Plan 模式分为两个严格隔离的阶段：
 **发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
 - 跨 session 有价値的约束（如"此进程不能自行 kill"）
 - 非显而易见的根因
-${visionSection}${feedbackSection}${existingPlanSection}`;
+${envSection}${visionSection}${feedbackSection}${existingPlanSection}`;
 }
