@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { agentManager } from "../core/agent-manager.js";
 import { readFeedback } from "../core/feedback-writer.js";
+import { loadConfig } from "../config/loader.js";
 
 export function buildCodeSystemPrompt(
   agentId = "default",
@@ -23,6 +24,7 @@ export function buildCodeSystemPrompt(
   _subMode: "auto" | "plan" = "plan",  // auto 已移除，统一使用 plan
   workdir?: string,
   sessionId?: string,
+  currentProvider?: string,
 ): string {
   const workspacePath = workdir ?? agentManager.workspaceDir(agentId);
   const agentDir = join(workspacePath, "..");
@@ -63,7 +65,13 @@ export function buildCodeSystemPrompt(
   } catch { /* ignore */ }
 
   // Code 模式统一使用 Plan 模式(已移除 Auto)
-  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent });
+  // Response hook:按 provider 注入到 code 模式 system prompt
+  let codeHookText: string | undefined;
+  if (currentProvider) {
+    const hookText = loadConfig().agent.responseHooks?.[currentProvider];
+    if (hookText) codeHookText = hookText;
+  }
+  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText });
 }
 
 interface PromptParts {
@@ -80,6 +88,8 @@ interface PromptParts {
   sessionId?: string | undefined;
   /** code/ENV.md 内容(AI 自主维护的环境上下文) */
   envContent?: string | undefined;
+  /** code 模式 response hook 文本(按 provider 配置) */
+  codeHookText?: string | undefined;
 }
 
 function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
@@ -193,7 +203,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式${visionSection}${feedbackSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent }: PromptParts): string {
+function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText }: PromptParts): string {
   const envSection = envContent ? `\n\n## 本机环境上下文（ENV.md）\n\n${envContent}` : "";
   const existingPlanSection = existingPlan
     ? `\n\n## 已有计划（上次会话遗留）\n\n> ⚠️ PLAN.md 已有内容，**禁止用 write_file 覆盖**。无论是新任务还是续接，都只能用 \`edit_file\` 追加或修改相关部分，保留历史轨迹。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
@@ -310,5 +320,5 @@ Plan 模式分为两个严格隔离的阶段：
 **发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
 - 跨 session 有价値的约束（如"此进程不能自行 kill"）
 - 非显而易见的根因
-${envSection}${visionSection}${feedbackSection}${existingPlanSection}`;
+${envSection}${visionSection}${feedbackSection}${codeHookText ? "\n\n" + codeHookText : ""}${existingPlanSection}`;
 }

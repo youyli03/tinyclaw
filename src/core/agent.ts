@@ -664,7 +664,8 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId);
+        const _codeProvider = (() => { try { return loadConfig().llm.backends["code"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
+        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId, _codeProvider);
       } else {
         const _provider = (() => { try { return loadConfig().llm.backends[isCodeMode ? "code" : "daily"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix, _provider);
