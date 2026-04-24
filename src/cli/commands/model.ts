@@ -165,15 +165,58 @@ async function listOpenRouter(apiKey: string, showAll: boolean): Promise<void> {
   }
 }
 
+async function listDeepSeek(baseUrl: string, apiKey: string, showAll: boolean): Promise<void> {
+  if (!showAll) {
+    // DeepSeek 目前只有两个模型，直接显示
+    console.log(dim(`
+[providers.deepseek] ${baseUrl}`));
+    section("DeepSeek 可用模型");
+    printTable(
+      ["#", "Symbol", "说明"],
+      [
+        ["1", cyan("deepseek/deepseek-chat"),    "DeepSeek-V3（对话模型，低价）"],
+        ["2", cyan("deepseek/deepseek-reasoner"), "DeepSeek-R1（推理模型）"],
+      ]
+    );
+    return;
+  }
+  process.stdout.write(`
+正在调用 ${baseUrl}/models......`);
+  try {
+    const resp = await fetch(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!resp.ok) {
+      console.log(` ${red("失败")}`);
+      console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
+      return;
+    }
+    const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
+    const list = data.data ?? [];
+    console.log(` ${green("OK")}`);
+    section(`DeepSeek 可用模型(共 ${list.length} 个)`);
+    printTable(
+      ["#", "Symbol", "创建方"],
+      list.map((m, i) => [String(i + 1), cyan(`deepseek/${m.id}`), m.owned_by ?? "-"])
+    );
+  } catch (e) {
+    console.log(` ${red("失败")}`);
+    console.error(red(`  无法获取模型列表:${e}`));
+  }
+}
+
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const showAll = args.includes("--all") || args.includes("-a");
 
   // 支持 provider 筛选：model list [copilot|openrouter|openai] [-a]
-  const filterArg = args.find((a) => ["copilot", "openrouter", "openai"].includes(a));
-  const { copilot, openai, openrouter } = cfg.providers;
+  const filterArg = args.find((a) => ["copilot", "openrouter", "openai", "deepseek"].includes(a));
+  const { copilot, openai, openrouter, deepseek } = cfg.providers;
 
-  if (!copilot && !openai && !openrouter) {
+  if (!copilot && !openai && !openrouter && !deepseek) {
     console.log(red("\n未配置任何 provider，请在 config.toml 中配置 provider"));
     return;
   }
@@ -181,6 +224,7 @@ async function cmdList(args: string[]): Promise<void> {
   const showCopilot = !filterArg || filterArg === "copilot";
   const showOpenRouter = !filterArg || filterArg === "openrouter";
   const showOpenAI = !filterArg || filterArg === "openai";
+  const showDeepSeek = !filterArg || filterArg === "deepseek";
 
   if (showCopilot && copilot) {
     await listCopilot(copilot.githubToken, showAll);
@@ -190,6 +234,9 @@ async function cmdList(args: string[]): Promise<void> {
   }
   if (showOpenAI && openai) {
     await listOpenAI(openai.baseUrl, openai.apiKey, showAll);
+  }
+  if (showDeepSeek && deepseek) {
+    await listDeepSeek(deepseek.baseUrl, deepseek.apiKey, showAll);
   }
 }
 
@@ -216,12 +263,13 @@ async function cmdSet(args: string[]): Promise<void> {
   console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(currentSymbol)}`);
 
   // ── 第一级：选 provider ────────────────────────────────────────────────
-  const { copilot, openai, openrouter } = cfg.providers;
+  const { copilot, openai, openrouter, deepseek } = cfg.providers;
   interface ProviderItem { label: string; value: string; note?: string }
   const providerItems: ProviderItem[] = [];
   if (copilot)     providerItems.push({ label: "Copilot",     value: "copilot",     note: "GitHub Copilot" });
   if (openrouter)  providerItems.push({ label: "OpenRouter",  value: "openrouter",  note: "免费/付费模型" });
   if (openai)      providerItems.push({ label: "OpenAI",      value: "openai",      note: "手动输入" });
+  if (deepseek)    providerItems.push({ label: "DeepSeek",    value: "deepseek",    note: "deepseek-chat / deepseek-reasoner" });
 
   if (providerItems.length === 0) {
     console.error(red("未配置任何 provider，无法选择模型"));
@@ -309,6 +357,23 @@ async function cmdSet(args: string[]): Promise<void> {
     const trimmed = input.trim();
     if (!trimmed) { console.log(dim("已取消")); return; }
     newSymbol = `openai/${trimmed}`;
+
+  } else if (provider === "deepseek" && deepseek) {
+    interface DsItem { label: string; value: string; note?: string }
+    const dsItems: DsItem[] = [
+      { label: "deepseek-chat",              value: "deepseek/deepseek-chat",     note: green("对话模型，低价") },
+      { label: "deepseek-reasoner",           value: "deepseek/deepseek-reasoner", note: yellow("推理模型 R1") },
+      { label: dim("[手动输入 model ID]"), value: "__deepseek_manual__",          note: "" },
+    ];
+    const dsPicked = await searchableSelect("选择 DeepSeek 模型", dsItems);
+    if (dsPicked === "__deepseek_manual__") {
+      const dsInput = await prompt("输入 DeepSeek model ID(如 deepseek-chat): ");
+      const dsTrimmed = dsInput.trim();
+      if (!dsTrimmed) { console.log(dim("已取消")); return; }
+      newSymbol = `deepseek/${dsTrimmed}`;
+    } else {
+      newSymbol = dsPicked;
+    }
 
   } else {
     console.error(red("所选 provider 未配置"));
