@@ -313,6 +313,7 @@ const app = createApp({
       // 从 metrics 里取最新电费/请求（如果有）
       const elecVal = latestMetricVal.value['electric/balance'] ?? '—';
       const copilotVal = latestMetricVal.value['copilot/remaining'] ?? '—';
+      const llmTokenVal = latestMetricVal.value['llm/output_tokens'] ?? '—';
 
       return [
         {
@@ -329,6 +330,13 @@ const app = createApp({
           color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
           metricKey: 'copilot/remaining',
         },
+        ...(llmTokenVal !== '—' ? [{
+          key: 'llm_tokens', label: 'Token 用量',
+          value: llmTokenVal !== '—' ? String(Math.round(Number(llmTokenVal))) : '—',
+          sub1: '最近一次 output tokens', sub2: '点击查看趋势 →',
+          color: C.purple, spark: latestSpark.value['llm/output_tokens'] || [],
+          metricKey: 'llm/output_tokens',
+        }] : []),
         {
           key: 'cpu', label: 'CPU',
           value: s ? `${s.cpu_percent} %` : '—',
@@ -391,7 +399,7 @@ const app = createApp({
       try {
         const keysData = await fetch('/api/metric-keys').then(r => r.json());
         for (const { category, key } of (keysData.keys || [])) {
-          const data = await fetch(`/api/metrics?category=${category}&key=${key}&days=14`).then(r => r.json());
+          const data = await fetch(`/api/metrics?category=${category}&key=${key}&days=1`).then(r => r.json());
           const rows = data.rows || [];
           if (rows.length) {
             const k = `${category}/${key}`;
@@ -476,14 +484,14 @@ const app = createApp({
       try {
         const tokenRows = (llmTokenData.rows || []);
         if (tokenRows.length) overviewLastTs.llmToken = tokenRows[tokenRows.length-1].ts;
+        const llmCard = document.getElementById('llm-token-card');
+        if (llmCard) llmCard.style.display = tokenRows.length ? '' : 'none';
         const tokenChart = charts['chart-llm-tokens'];
         if (incremental && tokenChart && tokenRows.length) {
           for (const r of tokenRows) tokenChart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
           tokenChart.update('none');
         } else if (!incremental) {
-          const llmCard = document.getElementById('llm-token-card');
-          if (llmCard) llmCard.style.display = tokenRows.length ? '' : 'none';
-          if (!tokenRows.length) return;
+          if (!tokenRows.length) { /* no data */ } else {
           const points = tokenRows.map(r => ({ x: r.ts * 1000, y: r.value }));
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
@@ -496,6 +504,7 @@ const app = createApp({
               data: { datasets: [{ label: 'Output Tokens', data: points, borderColor: C.purple, backgroundColor: C.purple + '80', borderWidth: 1 }] },
               options: { ...baseChartOpts(), scales: { x: smartXAxis(7), y: { ...baseChartOpts().scales.y } } },
             });
+          }
           }
         }
       } catch (e) { console.warn('llm token chart failed', e); }
@@ -544,7 +553,7 @@ const app = createApp({
 
     // ── 指标页 ───────────────────────────────────────────────────────────────
     const metricKeys = ref([]);
-    const mDays = ref('30');
+    const mDays = ref('1');
 
     async function fetchMetricKeys() {
       try {
@@ -556,7 +565,7 @@ const app = createApp({
     // 从概览卡片跳转到指标页
     async function navigateToMetric(categoryKey) {
       await fetchMetricKeys();
-      mDays.value = '30';
+      mDays.value = '1';
       page.value = 'metrics';
       await nextTick();
       await loadAllMetricCharts();
