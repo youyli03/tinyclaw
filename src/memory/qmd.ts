@@ -281,7 +281,7 @@ function formatMemorySections(results: SearchCandidate[]): string {
   return sections.join("\n\n");
 }
 
-export async function searchMemory(query: string, agentId = "default", limit = 5): Promise<string | null> {
+export async function searchMemory(query: string, agentId = "default", limit = 5, mode: "chat" | "code" = "chat"): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
 
@@ -316,12 +316,13 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
   if (kind === "active_context_query") candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
   else candidates.push(...diaryResults.slice(0, limit));
 
-  // Code 模式项目记忆(NOTES.md 向量+词法检索)
-  const codeNotesResults = await hybridSearchCollection(s, CODE_NOTES_COLLECTION, query, limit, "项目记忆");
-  candidates.push(...codeNotesResults.slice(0, limit));
-
-  const codeSessionResults = await hybridSearchCollection(s, "code_sessions", query, limit, "会话记录");
-  candidates.push(...codeSessionResults.slice(0, limit));
+  // Code 模式项目记忆（NOTES.md 向量+词法检索），chat 模式跳过
+  if (mode === "code") {
+    const codeNotesResults = await hybridSearchCollection(s, CODE_NOTES_COLLECTION, query, limit, "项目记忆");
+    candidates.push(...codeNotesResults.slice(0, limit));
+    const codeSessionResults = await hybridSearchCollection(s, "code_sessions", query, limit, "会话记录");
+    candidates.push(...codeSessionResults.slice(0, limit));
+  }
 
   if (candidates.length === 0) return "";
   const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
