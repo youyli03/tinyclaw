@@ -30,11 +30,12 @@ const ROUTED_FETCH_LIMIT_FACTOR = 2;
 const MEMORY_COLLECTION = "memory";
 const ACTIVE_COLLECTION = "active";
 const CARDS_COLLECTION = "cards";
+const CODE_NOTES_COLLECTION = "code_notes";
 
 const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "/cards/", "mem.md", "active.md", "memory.md"];
 
 type MemoryQueryKind = "preference_query" | "active_context_query" | "decision_query" | "profile_query" | "general_query";
-type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记";
+type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆";
 type SearchCandidate = SearchResult & { blendedScore: number; decayedScore: number; memorySource: MemorySource };
 
 function classifyMemoryQuery(query: string): MemoryQueryKind {
@@ -175,10 +176,13 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
     process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
 
     const { createStore } = await import("@tobilu/qmd");
+    const codeProjectsDir = agentManager.codeProjectsDir(agentId);
+    fs.mkdirSync(codeProjectsDir, { recursive: true });
     const collections: Record<string, { path: string; pattern: string }> = {
       [MEMORY_COLLECTION]: { path: agentMemDir, pattern: "**/*.md" },
       [ACTIVE_COLLECTION]: { path: path.dirname(agentManager.activePath(agentId)), pattern: "ACTIVE.md" },
       [CARDS_COLLECTION]: { path: agentManager.cardsDir(agentId), pattern: "**/*.md" },
+      [CODE_NOTES_COLLECTION]: { path: codeProjectsDir, pattern: "**/NOTES.md" },
     };
 
     const memStoresCfg = loadMemStoresConfig();
@@ -260,7 +264,7 @@ function formatMemorySections(results: SearchCandidate[]): string {
     groups.set(r.memorySource, existing);
   }
 
-  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记"];
+  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记", "项目记忆"];
   const sections: string[] = [];
   for (const source of orderedSources) {
     const group = groups.get(source);
@@ -311,6 +315,10 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
   if (kind === "active_context_query") candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
   else candidates.push(...diaryResults.slice(0, limit));
 
+  // Code 模式项目记忆(NOTES.md 向量+词法检索)
+  const codeNotesResults = await hybridSearchCollection(s, CODE_NOTES_COLLECTION, query, limit, "项目记忆");
+  candidates.push(...codeNotesResults.slice(0, limit));
+
   if (candidates.length === 0) return "";
   const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
   if (reranked.length === 0) return "";
@@ -334,7 +342,7 @@ export async function rebuildMemoryIndex(
   const s = await getQMDStore(agentId);
   if (!s) return null;
   const updateResult = await s.update({
-    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION],
+    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
   const embedResult = await s.embed(onEmbedProgress ? { onProgress: onEmbedProgress } : undefined);
