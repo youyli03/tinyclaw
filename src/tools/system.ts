@@ -339,20 +339,86 @@ registerTool({
 
 // ── read_file ─────────────────────────────────────────────────────────────────
 
-async function readFileImpl(args: Record<string, unknown>): Promise<string> {
-  const filePath = String(args["path"] ?? "");
-  if (!filePath) return "错误：缺少 path 参数";
+/** 从文件提取纯文本（按后缀分流：PDF/DOCX/XLSX/普通文本）*/
+async function extractFileText(resolved: string): Promise<string> {
+  const ext = path.extname(resolved).toLowerCase();
 
-  const resolved = path.resolve(expandHome(filePath));
-  if (!fs.existsSync(resolved)) return `文件不存在：${resolved}`;
-
-  const maxBytes = 50_000;
-  const stat = fs.statSync(resolved);
-  if (stat.size > maxBytes) {
-    return `文件过大（${stat.size} 字节），请使用 exec_shell 配合 head/tail 读取`;
+  if (ext === ".pdf") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
+    const buf = fs.readFileSync(resolved);
+    const data = await pdfParse(buf);
+    return data.text;
   }
 
+  if (ext === ".docx") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mammoth = require("mammoth") as {
+      extractRawText: (opts: { path: string }) => Promise<{ value: string }>;
+    };
+    const result = await mammoth.extractRawText({ path: resolved });
+    return result.value;
+  }
+
+  if (ext === ".xlsx" || ext === ".xls") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const XLSX = require("xlsx") as typeof import("xlsx");
+    const wb = XLSX.readFile(resolved);
+    return wb.SheetNames
+      .map((name) => {
+        const sheet = wb.Sheets[name];
+        const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
+        return `=== Sheet: ${name} ===\n${csv}`;
+      })
+      .join("\n\n");
+  }
+
+  // 普通文本文件
   return fs.readFileSync(resolved, "utf-8");
+}
+
+async function readFileImpl(args: Record<string, unknown>): Promise<string> {
+  const filePath = String(args["path"] ?? "");
+  if (!filePath) return "错误:缺少 path 参数";
+
+  const resolved = path.resolve(expandHome(filePath));
+  if (!fs.existsSync(resolved)) return `文件不存在:${resolved}`;
+
+  const offset = Math.max(0, Number(args["offset"] ?? 0) || 0);
+  const length = Math.max(1, Number(args["length"] ?? 50_000) || 50_000);
+
+  const ext = path.extname(resolved).toLowerCase();
+  const isRichFormat = [".pdf", ".docx", ".xlsx", ".xls"].includes(ext);
+
+  // 普通文本：保留原有大小检查（未指定 offset/length 时）
+  if (!isRichFormat && offset === 0 && args["length"] == null) {
+    const stat = fs.statSync(resolved);
+    if (stat.size > 500_000) {
+      return `文件过大(${stat.size} 字节),请使用 offset/length 参数分段读取`;
+    }
+    // 原有简洁路径：直接读取返回
+    const text = fs.readFileSync(resolved, "utf-8");
+    if (text.length <= 50_000) return text;
+    return text.slice(0, 50_000) + `\n[...已截断,共 ${text.length} 字符,可传 offset=50000 继续读取]`;
+  }
+
+  let fullText: string;
+  try {
+    fullText = await extractFileText(resolved);
+  } catch (err: unknown) {
+    return `解析失败:${(err as Error).message}`;
+  }
+
+  const total = fullText.length;
+  const slice = fullText.slice(offset, offset + length);
+  const remaining = Math.max(0, total - offset - slice.length);
+
+  const header = `[偏移: ${offset}, 返回: ${slice.length}, 总长: ${total}]`;
+  const footer = remaining > 0
+    ? `\n[还有 ${remaining} 字符，可传 offset=${offset + slice.length} 继续读取]`
+    : "";
+
+  return `${header}\n${slice}${footer}`;
 }
 
 registerTool({
@@ -361,11 +427,21 @@ registerTool({
     type: "function",
     function: {
       name: "read_file",
-      description: "读取文件内容（不超过 50KB）。",
+      description:
+        "读取文件内容（不超过 50KB）。支持 PDF(.pdf)、Word(.docx)、Excel(.xlsx/.xls) 及普通文本文件，" +
+        "自动提取纯文本。可通过 offset/length 参数分段读取大文件。",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "文件路径" },
+          offset: {
+            type: "integer",
+            description: "字符偏移，从第几个字符开始读取（默认 0）",
+          },
+          length: {
+            type: "integer",
+            description: "最大读取字符数（默认 50000）。对于大文件可减小此值分段读取",
+          },
         },
         required: ["path"],
       },
