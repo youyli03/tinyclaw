@@ -78,7 +78,7 @@ export interface ToolContext {
     question: string,
     options?: Array<{ label: string; description?: string; recommended?: boolean }>,
     allowFreeform?: boolean,
-  ) => Promise<{ answer: string; isFreeform: boolean }>;
+  ) => Promise<{ answer: string; isFreeform: boolean; imagePaths?: string[] }>;
   /**
    * ask_master 回调（由 code_assist 注入给 daily subagent）。
    * daily subagent 遇到不确定时调用，同步阻塞直到用户通过 master 回复。

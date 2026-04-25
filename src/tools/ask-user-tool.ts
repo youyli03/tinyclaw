@@ -95,6 +95,9 @@ registerTool({
       return JSON.stringify({
         answer: result.answer,
         is_freeform: result.isFreeform,
+        ...(result.imagePaths && result.imagePaths.length > 0
+          ? { image_paths: result.imagePaths }
+          : {}),
       });
     } catch (err) {
       return JSON.stringify({

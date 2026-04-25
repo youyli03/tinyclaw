@@ -34,6 +34,8 @@ interface PendingPlanApproval {
 export type AskUserResult = {
   answer: string;
   isFreeform: boolean;
+  /** 用户回复时携带的图片本地路径（可选） */
+  imagePaths?: string[];
 };
 
 /** ask_user 控制柄 */

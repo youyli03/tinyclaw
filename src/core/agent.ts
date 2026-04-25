@@ -1243,6 +1243,15 @@ export async function runAgent(
         flushResults([{ call, result }]);
         // ask_user 执行后,同轮剩余工具全部 skip,等用户回复后 LLM 再决定
         if (call.name === "ask_user") {
+          // 若用户回复携带图片，在 tool_result 之后注入 image_path 供 LLM 查看
+          try {
+            const parsed = JSON.parse(result) as { image_paths?: string[] };
+            if (parsed.image_paths && parsed.image_paths.length > 0 && client.supportsVision) {
+              const imgParts: import("../llm/client.js").ContentPart[] =
+                parsed.image_paths.map((p) => ({ type: "image_path" as const, path: p }));
+              session.addUserMessage(imgParts);
+            }
+          } catch { /* ignore */ }
           for (const remaining of validToolCalls.slice(validToolCalls.indexOf(call) + 1)) {
             if (!remaining) continue;
             const skipMsg = "skipped: ask_user is pending, waiting for user reply";

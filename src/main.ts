@@ -222,22 +222,32 @@ async function main(): Promise<void> {
       const { optionLabels, allowFreeform } = session.pendingAskUser;
       const n = parseInt(trimmed, 10);
 
+      // 收集用户回复中的图片附件
+      const imagePaths = earlyDownloaded
+        .filter((d) => d.contentType.startsWith("image/") && d.localPath)
+        .map((d) => d.localPath);
+
       if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
-        // 用户输入数字，映射到预设选项
+        // 用户输入数字,映射到预设选项
         session.pendingAskUser.resolve({
           answer: optionLabels[n - 1]!,
           isFreeform: false,
+          ...(imagePaths.length > 0 ? { imagePaths } : {}),
         });
       } else if (allowFreeform) {
         // 自由输入
-        session.pendingAskUser.resolve({ answer: trimmed, isFreeform: true });
+        session.pendingAskUser.resolve({
+          answer: trimmed,
+          isFreeform: true,
+          ...(imagePaths.length > 0 ? { imagePaths } : {}),
+        });
       } else {
-        // 不允许自由输入，提示用户重新选择
+        // 不允许自由输入,提示用户重新选择
         const hint = optionLabels.map((l, i) => `${i + 1}. ${l}`).join("\n");
-        void connector.send(msg.peerId, msg.type, `请输入选项编号（1～${optionLabels.length}）：\n${hint}`, msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
+        void connector.send(msg.peerId, msg.type, `请输入选项编号(1~${optionLabels.length}):\n${hint}`, msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
         return "";
       }
-      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
+      void connector.send(msg.peerId, msg.type, "已收到,处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
       return "";
     }
 
