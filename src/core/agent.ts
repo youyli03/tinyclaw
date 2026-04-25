@@ -744,6 +744,7 @@ export async function runAgent(
   let finalContent = "";
   let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let totalCompletionTokens = 0; // 本次 runAgent 所有 LLM 轮次的 output token 累计
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
 
@@ -904,22 +905,10 @@ export async function runAgent(
     }
 
     lastUsage = response.usage;
-    // 记录到 session，供 /status 展示实际 token 用量
+    totalCompletionTokens += lastUsage.completionTokens;
+    // 记录到 session,供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
     Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
-    // 非 copilot provider:写真实 token 用量到 dashboard DB
-    try {
-      // 从实际使用的 client.model 取 provider(而非 config 里配置的 backend model)
-      // 这样 cron/overrideClient 场景下也能正确识别 deepseek/openrouter 等非 copilot 模型
-      const _usageProvider = (() => {
-        try { return client.model?.split("/")[0] ?? ""; } catch { return ""; }
-      })();
-      if (_usageProvider && _usageProvider !== "copilot" && lastUsage.completionTokens > 0) {
-        const LLM_CAT = "llm", LLM_KEY = "output_tokens";
-        if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 用量");
-        insertMetric({ category: LLM_CAT, key: LLM_KEY, value: lastUsage.completionTokens, note: client.model });
-      }
-    } catch { /* 写 db 失败不影响主流程 */ }
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值
@@ -1427,6 +1416,18 @@ export async function runAgent(
       );
     }
   }
+
+  // 写本次 runAgent 汇总 output_tokens 到 dashboard DB
+  try {
+    const _usageProvider = (() => {
+      try { return client.model?.split("/")[0] ?? ""; } catch { return ""; }
+    })();
+    if (_usageProvider && _usageProvider !== "copilot" && totalCompletionTokens > 0) {
+      const LLM_CAT = "llm", LLM_KEY = "output_tokens";
+      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 用量");
+      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: totalCompletionTokens, note: client.model });
+    }
+  } catch { /* 写 db 失败不影响主流程 */ }
 
   return { content: finalContent, toolsUsed };
 }
