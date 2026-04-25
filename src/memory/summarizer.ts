@@ -363,7 +363,8 @@ const CODE_DISTILL_SYSTEM = `你是一个代码项目记忆助手。
   - 路径必须来自 AI 回复中实际操作或 read_file/exec_shell 的文件路径,不能用当前工作目录(codeWorkdir)替代
   - 若同一轮改动涉及多个项目,每个项目分别写一行并各自标注路径
   - 若 AI 本轮未修改任何文件(只有分析/解释),标注为 [分析] 前缀而非项目路径
-  - 不要把 workdir 当成改动路径,也不要省略实际项目路径`;
+  - 不要把 workdir 当成改动路径,也不要省略实际项目路径
+  - 本地路径可用 ~/xxx 缩写;SSH 远程路径必须用 host:/path 或 user@host:/path 绝对格式,不能写 ~`;
 
 /**
  * Code 模式:将单轮交互提炼为项目 NOTES.md 要点，fire-and-forget。
