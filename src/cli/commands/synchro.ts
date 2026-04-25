@@ -13,7 +13,7 @@
  * Ctrl-C 退出。
  */
 
-import { connect } from "net";
+import { connect, type Socket } from "net";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { IPC_SOCKET_PATH, type IpcResponse, type ActivityEvent } from "../../ipc/protocol.js";
@@ -78,76 +78,111 @@ export async function run(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const socket = connect(IPC_SOCKET_PATH);
-  let buf = "";
-  let subscribed = false;
+  // 并发 tool_call / tool_result 可能交错，用 pendingLine 暂存未换行的状态
+  let inChunk = false; // 当前是否处于 chunk 流式输出中（未换行）
 
-  socket.on("connect", () => {
-    socket.write(JSON.stringify({ type: "subscribe", idOrSuffix }) + "\n");
-  });
+  function connectAndSubscribe(idOrSuffix: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let buf = "";
+      let subscribed = false;
 
-  socket.on("data", (data) => {
-    buf += data.toString("utf-8");
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
+      const socket: Socket = connect(IPC_SOCKET_PATH, () => {
+        socket.write(JSON.stringify({ type: "subscribe", idOrSuffix }) + "\n");
+      });
 
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let resp: IpcResponse;
-      try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+      socket.on("data", (data) => {
+        buf += data.toString("utf-8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
 
-      if (resp.type === "subscribed") {
-        subscribed = true;
-        console.log(dim(`✅ 已订阅 session: ${resp.sessionId}`));
-        console.log(dim("按 Ctrl-C 退出\n"));
-      } else if (resp.type === "error") {
-        console.error(red(`错误: ${resp.message}`));
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let resp: IpcResponse;
+          try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+
+          if (resp.type === "subscribed") {
+            subscribed = true;
+            console.log(dim(`✅ 已订阅 session: ${resp.sessionId}`));
+            console.log(dim("按 Ctrl-C 退出\n"));
+          } else if (resp.type === "error") {
+            if (!subscribed) {
+              // subscribe 失败 → 等待后重试（服务刚重启时 session 尚未恢复）
+              socket.destroy();
+              resolve(); // 触发外层重连
+            } else {
+              console.error(red(`\n错误: ${resp.message}`));
+              socket.destroy();
+              process.exit(1);
+            }
+          } else if (resp.type === "activity") {
+            printEvent(resp.sessionId, resp.event, { inChunk: () => inChunk, setInChunk: (v) => { inChunk = v; } });
+          }
+        }
+      });
+
+      socket.on("error", (err) => {
+        if (!subscribed) {
+          resolve(); // 触发重连
+        } else {
+          console.error(red(`\n连接错误: ${err.message}`));
+          process.exit(1);
+        }
+      });
+
+      socket.on("close", () => {
+        if (subscribed) {
+          // 服务重启 → 自动重连
+          if (inChunk) { process.stdout.write("\n"); inChunk = false; }
+          console.log(dim("\n[服务重启，正在重连...]"));
+          socket.destroy();
+          resolve(); // 触发重连
+        } else {
+          resolve();
+        }
+      });
+
+      // Ctrl-C 优雅退出
+      process.on("SIGINT", () => {
         socket.destroy();
-        process.exit(1);
-      } else if (resp.type === "activity") {
-        printEvent(resp.sessionId, resp.event);
-      }
+        process.exit(0);
+      });
+    });
+  }
+
+  // 自动重连循环
+  while (true) {
+    if (!existsSync(IPC_SOCKET_PATH)) {
+      process.stdout.write(dim("."));
+      await new Promise(r => setTimeout(r, 1000));
+      continue;
     }
-  });
-
-  socket.on("error", (err) => {
-    console.error(red(`连接错误: ${err.message}`));
-    process.exit(1);
-  });
-
-  socket.on("close", () => {
-    if (subscribed) {
-      console.log(dim("\n[连接断开]"));
+    await connectAndSubscribe(idOrSuffix);
+    // 等待 sock 文件出现（服务重启期间）
+    let waited = 0;
+    while (!existsSync(IPC_SOCKET_PATH) && waited < 10000) {
+      await new Promise(r => setTimeout(r, 500));
+      waited += 500;
     }
-    process.exit(0);
-  });
-
-  // Ctrl-C 优雅退出
-  process.on("SIGINT", () => {
-    socket.destroy();
-    process.exit(0);
-  });
-
-  // 保持进程运行
-  await new Promise<void>(() => {});
+    // 等待 session 恢复（服务刚重启时 session 还未加载）
+    await new Promise(r => setTimeout(r, 800));
+  }
 }
 
-function printEvent(sessionId: string, event: ActivityEvent): void {
+function printEvent(sessionId: string, event: ActivityEvent, chunkState: { inChunk: () => boolean; setInChunk: (v: boolean) => void }): void {
   const ts = dim(new Date().toLocaleTimeString());
 
   switch (event.kind) {
     case "chunk":
-      // 直接白色输出，不加 dim
       process.stdout.write(event.delta);
+      chunkState.setInChunk(!event.delta.endsWith("\n"));
       break;
 
     case "tool_call": {
-      // 工具调用：亮黄色标题行 + 参数摘要
       const argsDisplay = event.argsSummary.length > 160
         ? event.argsSummary.slice(0, 160) + "…"
         : event.argsSummary;
       const bar = brightYellow("▶");
-      process.stdout.write("\n");
+      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${bar} ${bold(brightYellow(event.name))}`);
       if (argsDisplay.trim()) {
         console.log(`   ${dim("args")} ${argsDisplay}`);
@@ -156,7 +191,6 @@ function printEvent(sessionId: string, event: ActivityEvent): void {
     }
 
     case "tool_result": {
-      // 工具结果：亮绿色标题行 + 结果摘要
       const resultDisplay = event.resultSummary.length > 300
         ? event.resultSummary.slice(0, 300) + "…"
         : event.resultSummary;
@@ -170,12 +204,12 @@ function printEvent(sessionId: string, event: ActivityEvent): void {
     }
 
     case "done":
-      process.stdout.write("\n");
+      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${bold(brightCyan("◼ done"))}\n`);
       break;
 
     case "error":
-      process.stdout.write("\n");
+      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${bold(brightRed("✗ error"))} ${event.message}`);
       break;
   }
