@@ -9,7 +9,7 @@
 import { createServer, type Server } from "net";
 import { unlinkSync, existsSync } from "fs";
 import { randomUUID } from "node:crypto";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
+import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo, type ActivityEvent } from "./protocol.js";
 import { Session } from "../core/session.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { cronScheduler } from "../cron/scheduler.js";
@@ -22,6 +22,19 @@ import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { parseCommand, executeCommand } from "../commands/registry.js";
 import "../commands/builtin.js";
+
+/** sessionId → 所有订阅者的 send 函数 */
+const subscriberMap = new Map<string, Set<(event: ActivityEvent) => void>>();
+
+/** 广播 ActivityEvent 给所有订阅该 session 的客户端 */
+function broadcastActivity(sessionId: string, event: ActivityEvent) {
+  const subs = subscriberMap.get(sessionId);
+  if (subs) {
+    for (const fn of subs) {
+      try { fn(event); } catch { /* ignore closed socket */ }
+    }
+  }
+}
 
 export function startIpcServer(
   sessions: Map<string, Session>,
@@ -357,6 +370,40 @@ async function handleRequest(
     return;
   }
 
+  // ── subscribe 请求:订阅 session 的实时活动事件 ──────────────────────────
+  if (req.type === "subscribe") {
+    const { idOrSuffix } = req as { type: "subscribe"; idOrSuffix: string };
+    // 解析 sessionId(支持后缀匹配)
+    let targetId: string | undefined;
+    if (sessions.has(idOrSuffix)) {
+      targetId = idOrSuffix;
+    } else {
+      for (const id of sessions.keys()) {
+        if (id.endsWith(idOrSuffix)) { targetId = id; break; }
+      }
+    }
+    if (!targetId) {
+      send({ type: "error", message: `找不到 session "${idOrSuffix}"` });
+      return;
+    }
+    const sid = targetId;
+    // 注册订阅者
+    const handler = (event: ActivityEvent) => {
+      try {
+        send({ type: "activity", sessionId: sid, event });
+      } catch { /* socket already closed */ }
+    };
+    if (!subscriberMap.has(sid)) subscriberMap.set(sid, new Set());
+    subscriberMap.get(sid)!.add(handler);
+    send({ type: "subscribed", sessionId: sid });
+    // socket 断开时自动取消订阅
+    socket.once("close", () => {
+      subscriberMap.get(sid)?.delete(handler);
+    });
+    // 不 return:保持 socket 长连接接收 activity 事件
+    return;
+  }
+
   const { sessionId, message } = req as { type: "chat"; sessionId: string; message: string };
 
   // 防御：sessionId 或 message 缺失时拒绝处理（可能来自不兼容的旧客户端）
@@ -398,6 +445,7 @@ async function handleRequest(
     onChunk: (delta) => {
       fullContent += delta;
       send({ type: "chunk", delta });
+      broadcastActivity(session!.sessionId, { kind: "chunk", delta });
     },
     onMFAPrompt: (prompt) => {
       send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
@@ -417,6 +465,12 @@ async function handleRequest(
         send({ type: "chunk", delta: `✅ 记忆整理完成\n\n${summary}\n` });
       }
     },
+    onToolCall: (name, args) => {
+      broadcastActivity(session!.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+    },
+    onToolResult: (name, result) => {
+      broadcastActivity(session!.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+    },
   });
   session.currentRunPromise = runPromise;
 
@@ -426,8 +480,10 @@ async function handleRequest(
       fullContent = result.content;
       send({ type: "chunk", delta: fullContent });
     }
+    broadcastActivity(session.sessionId, { kind: "done" });
     send({ type: "done" });
   } catch (e) {
+    broadcastActivity(session.sessionId, { kind: "error", message: String(e) });
     send({ type: "error", message: String(e) });
   } finally {
     // 只在本 run 仍是当前 run 时才清状态，防止新 run 启动后被旧 finally 覆盖

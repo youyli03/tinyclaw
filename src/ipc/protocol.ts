@@ -65,7 +65,13 @@ export type IpcRequest =
    * 直接走指定 backend 的 LLM，流式返回 chunk → done。
    * 用于 TradeJournal-skill 等需要纯 LLM 分析文本但不需要 agent 工具的场景。
    */
-  | { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" };
+  | { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" }
+  /**
+   * 订阅指定 session 的实时活动事件(LLM chunk、工具调用、工具结果、done/error)。
+   * 服务端持续推送 activity 帧,直到 socket 断开。
+   * idOrSuffix 可为完整 sessionId 或其末尾子串。
+   */
+  | { type: "subscribe"; idOrSuffix: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
@@ -91,7 +97,14 @@ export type IpcResponse =
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */
-  | { type: "session_aborted"; sessionId: string; found: boolean };
+  | { type: "session_aborted"; sessionId: string; found: boolean }
+  /**
+   * subscribe 的活动事件推送。
+   * 每当目标 session 有 chunk/tool_call/tool_result/done/error 时发送一帧。
+   */
+  | { type: "activity"; sessionId: string; event: ActivityEvent }
+  /** subscribe 时 session 未找到的错误 */
+  | { type: "subscribed"; sessionId: string };
 
 export type IpcClientMessage =
   | IpcRequest
@@ -100,3 +113,14 @@ export type IpcClientMessage =
    *  - TOTP 模式：approved 字段忽略，code 字段携带用户输入的 6 位验证码（服务端用 verifyCode 校验）
    */
   | { type: "mfa_response"; approved: boolean; code?: string };
+
+/**
+ * synchro 订阅事件：描述 session 内发生的一次动作。
+ */
+export type ActivityEvent =
+  | { kind: "chunk"; delta: string }
+  | { kind: "tool_call"; name: string; argsSummary: string }
+  | { kind: "tool_result"; name: string; resultSummary: string }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
+

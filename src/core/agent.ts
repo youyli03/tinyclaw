@@ -423,6 +423,14 @@ export interface AgentRunOptions {
    */
   onNotify?: (message: string) => Promise<void>;
   /**
+   * 工具调用通知(synchro 订阅使用)。在 runOneTool 开始前调用。
+   */
+  onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  /**
+   * 工具结果通知(synchro 订阅使用)。在 runOneTool 完成后调用。
+   */
+  onToolResult?: (name: string, result: string) => void;
+  /**
    * Plan 模式：向用户展示计划摘要并等待确认（由 main.ts 注入）。
    * 仅在 code + plan 子模式下注入；auto 模式或非 code 模式时不注入。
    */
@@ -1042,6 +1050,7 @@ export async function runAgent(
       if (call.name !== "notify_user") {
         toolThrottler?.add(call.name);
       }
+      opts.onToolCall?.(call.name, call.args as Record<string, unknown>);
 
       let result: string;
       const currentDepth = opts.slaveDepth ?? 0;
@@ -1082,6 +1091,7 @@ export async function runAgent(
         result = result.slice(0, maxResultChars) +
           `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${maxResultChars} 字符。如需查看更多请缩小范围重新调用。]`;
       }
+      opts.onToolResult?.(call.name, result);
       return result;
     };
 
