@@ -229,7 +229,7 @@ function printEvent(
       console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
       const lines = resultDisplay.split("\n").slice(0, 8);
       for (const l of lines) {
-        if (l.trim()) console.log(`   ${brightWhite("·")} ${l}`);
+        if (l.trim()) console.log(`   ${dim("·")} ${dim(l)}`);
       }
       break;
     }
