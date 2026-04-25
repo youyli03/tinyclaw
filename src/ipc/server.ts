@@ -27,7 +27,7 @@ import "../commands/builtin.js";
 const subscriberMap = new Map<string, Set<(event: ActivityEvent) => void>>();
 
 /** 广播 ActivityEvent 给所有订阅该 session 的客户端 */
-function broadcastActivity(sessionId: string, event: ActivityEvent) {
+export function broadcastActivity(sessionId: string, event: ActivityEvent) {
   const subs = subscriberMap.get(sessionId);
   if (subs) {
     for (const fn of subs) {

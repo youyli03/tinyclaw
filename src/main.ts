@@ -34,7 +34,7 @@ import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/at
 import { transcribeAudio } from "./connectors/qqbot/transcribe.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
-import { startIpcServer } from "./ipc/server.js";
+import { startIpcServer, broadcastActivity } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
@@ -524,6 +524,15 @@ async function main(): Promise<void> {
       },
       ...(_sessionSendFn ? { sessionSendFn: _sessionSendFn } : {}),
       ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
+      onToolCall: (name: string, args: Record<string, unknown>) => {
+        broadcastActivity(session.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+      },
+      onToolResult: (name: string, result: string) => {
+        broadcastActivity(session.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+      },
+      onChunk: (delta: string) => {
+        broadcastActivity(session.sessionId, { kind: "chunk", delta });
+      },
     };
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
@@ -607,7 +616,11 @@ async function main(): Promise<void> {
           console.error("[qqbot] send error:", sendErr);
         }
       })
+      .then(() => {
+        broadcastActivity(session.sessionId, { kind: "done" });
+      })
       .catch(async (err: unknown) => {
+        broadcastActivity(session.sessionId, { kind: "error", message: String(err) });
         console.error("[qqbot] runAgent error:", err);
         const userMsg = err instanceof Error && err.name === "LLMConnectionError"
           ? err.message
