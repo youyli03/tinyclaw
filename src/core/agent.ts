@@ -681,13 +681,8 @@ export async function runAgent(
     preRunLength = session.getMessages().length;
 
     // 2. 搜索相关历史记忆，注入为 system 消息（code 模式跳过，null = 未启用，"" = 无结果）
-    if (!opts.skipMemorySearch) {
-      const memMode = isCodeMode ? "code" : "chat";
-      const memoryContext = await searchMemory(userContent, session.agentId, 5, memMode);
-      if (memoryContext) {
-        session.replaceOrAddMemoryContext(memoryContext);
-      }
-    }
+    // 记忆搜索：已改为由 AI 主动调用 memory_search 工具按需查询
+    // 不再自动注入 system 消息，避免 chat/code 每轮消耗大量 token
 
     // 2.3 Skill Reminder:每轮注入可用技能列表（chat 模式 + 非 slave）
     if (!isCodeMode && !isSlave) {

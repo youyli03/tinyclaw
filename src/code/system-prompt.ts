@@ -45,14 +45,8 @@ export function buildCodeSystemPrompt(
   // 读取 code/feedback.md（跨 session 永久有效的行为约束）
   const feedbackContent = readFeedback(agentId, "code");
 
-  // 读取已有 PLAN.md，注入让 AI 感知上次遗留计划
-  let existingPlan: string | undefined;
-  try {
-    if (existsSync(planPath)) {
-      const content = readFileSync(planPath, "utf-8").trim();
-      if (content.length > 0) existingPlan = content;
-    }
-  } catch { /* ignore */ }
+  // PLAN.md 不再自动注入 system prompt，AI 在 session 开始时主动用 read_file 读取
+  const existingPlan: string | undefined = undefined;
 
   // 读取 code/ENV.md(AI 自主维护的环境上下文:本机服务、工具路径等)
   let envContent: string | undefined;
