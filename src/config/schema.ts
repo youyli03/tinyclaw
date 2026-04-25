@@ -438,7 +438,7 @@ const MCPSSEServerSchema = z.object({
   description: z.string().optional(),
 });
 
-const MCPServerSchema = z.discriminatedUnion("transport", [
+export const MCPServerSchema = z.discriminatedUnion("transport", [
   MCPStdioServerSchema,
   MCPSSEServerSchema,
 ]);

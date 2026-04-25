@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config, MCPConfigSchema, type MCPConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, type SecretsConfig } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, MCPServerSchema, type MCPConfig, type MCPServerConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, type SecretsConfig } from "./schema.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -118,16 +118,32 @@ export function loadMcpConfig(): MCPConfig {
     raw = parse(fs.readFileSync(mcpPath, "utf-8"));
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn(`[tinyclaw] 无法读取 mcp.toml：${err}`);
+      console.warn(`[tinyclaw] 无法读取 mcp.toml:${err}`);
     }
     return MCPConfigSchema.parse({});
   }
+
+  // 先尝试整体解析(快路径)
   const result = MCPConfigSchema.safeParse(raw);
-  if (!result.success) {
-    console.warn(`[tinyclaw] mcp.toml 验证失败，使用空 MCP 配置：${result.error.message}`);
-    return MCPConfigSchema.parse({});
+  if (result.success) {
+    return result.data;
   }
-  return result.data;
+
+  // 整体解析失败 → 逐个 server 容错解析,避免单个错误配置使全部 MCP 失效
+  console.warn(`[tinyclaw] mcp.toml 包含无效 server 配置,尝试逐个加载:${result.error.message}`);
+  const servers: Record<string, MCPServerConfig> = {};
+  const rawServers = (raw as { servers?: Record<string, unknown> })?.servers ?? {};
+  for (const [name, cfg] of Object.entries(rawServers)) {
+    const sr = MCPServerSchema.safeParse(cfg);
+    if (sr.success) {
+      servers[name] = sr.data;
+    } else {
+      console.warn(
+        `[tinyclaw] mcp.toml [servers.${name}] 配置无效,已跳过:${JSON.stringify(sr.error.issues)}`
+      );
+    }
+  }
+  return { servers };
 }
 
 /** 加载 ~/.tinyclaw/secrets.toml，文件不存在时返回空对象（非致命）。
