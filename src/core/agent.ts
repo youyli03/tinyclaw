@@ -681,8 +681,9 @@ export async function runAgent(
     preRunLength = session.getMessages().length;
 
     // 2. 搜索相关历史记忆，注入为 system 消息（code 模式跳过，null = 未启用，"" = 无结果）
-    if (!isCodeMode && !opts.skipMemorySearch) {
-      const memoryContext = await searchMemory(userContent, session.agentId, 5, "chat");
+    if (!opts.skipMemorySearch) {
+      const memMode = isCodeMode ? "code" : "chat";
+      const memoryContext = await searchMemory(userContent, session.agentId, 5, memMode);
       if (memoryContext) {
         session.replaceOrAddMemoryContext(memoryContext);
       }
