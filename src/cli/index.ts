@@ -147,15 +147,24 @@ function progressiveConfigKeys(typed: string): string[] {
   }
 
   // 以 typed + "." 为前缀，取下一层 segment
-  const prefix = typed.endsWith(".") ? typed : typed + ".";
-  const depth = prefix.split(".").length; // 下一层 segment 数量
-
-  const matching = allKeys.filter((k) => k.startsWith(prefix));
-  if (matching.length === 0) return [];
-
-  return [
-    ...new Set(matching.map((k) => k.split(".").slice(0, depth).join("."))),
-  ].sort();
+  if (typed.endsWith(".")) {
+    const d = typed.split(".").length;
+    const m = allKeys.filter((k) => k.startsWith(typed));
+    if (m.length === 0) return [];
+    return [...new Set(m.map((k) => k.split(".").slice(0, d).join(".")))].sort();
+  } else {
+    const d3 = typed.split(".").length;
+    const m3 = allKeys.filter((k) => k.startsWith(typed));
+    if (m3.length > 0) {
+      return [...new Set(m3.map((k) => k.split(".").slice(0, d3).join(".")))].sort();
+    }
+    const lastDot = typed.lastIndexOf(".");
+    if (lastDot < 0) return [];
+    const pp = typed.slice(0, lastDot + 1);
+    const pd = pp.split(".").length;
+    const pm = allKeys.filter((k) => k.startsWith(pp));
+    return [...new Set(pm.map((k) => k.split(".").slice(0, pd).join(".")))].sort();
+  }
 }
 
 /**
