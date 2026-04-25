@@ -116,6 +116,10 @@ registerTool({
       return `❌ skill "${skillName}" 执行失败：${msg}`;
     }
 
+
+    // 清理 skill 临时 session JSONL，并裁剪同前缀旧文件
+    slaveSession.deleteJsonl();
+    Session.pruneOldByPrefix(`skill_${skillName}_`, 1);
     return `✅ skill \`${skillName}\` 执行完成\n\n${result}`;
   },
 });

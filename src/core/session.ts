@@ -1038,6 +1038,26 @@ export class Session {
     }
   }
 
+  /**
+   * 清理同前缀的旧 session JSONL，只保留最新 `keep` 个（默认 1）。
+   * 适用于带时间戳的 cron/skill session（前缀如 `cron_ftbg5yiv_`）。
+   * @param sanitizedPrefix  形如 `cron_ftbg5yiv_` 的前缀（下划线结尾）
+   * @param keep             保留最新几个，默认 1
+   */
+  static pruneOldByPrefix(sanitizedPrefix: string, keep = 1): void {
+    try {
+      const dir = path.join(os.homedir(), ".tinyclaw", "sessions");
+      if (!fs.existsSync(dir)) return;
+      const files = fs.readdirSync(dir)
+        .filter((f) => f.startsWith(sanitizedPrefix) && f.endsWith(".jsonl"))
+        .sort() // 字典序即时间序（时间戳为 13 位数字，等长可字典排序）
+        .reverse(); // 最新的排前面
+      for (let i = keep; i < files.length; i++) {
+        try { fs.unlinkSync(path.join(dir, files[i]!)); } catch { /* 忽略 */ }
+      }
+    } catch { /* 忽略 */ }
+  }
+
   /** `.code.active` 标记文件路径（存在表示当前 session 正处于 code 模式，用于区分 crash 和主动切换） */
   static getCodeActivePath(sessionId: string): string {
     const sanitized = sessionId.replace(/[:/\\]/g, "_");

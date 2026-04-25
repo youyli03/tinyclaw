@@ -365,11 +365,21 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
     lastRunResult: resultText,
   });
 
-  // ── 无状态模式：运行完删 JSONL ────────────────────────────────────────────
-  // Pipeline 模式不删除（session 是其共享状态的载体；若需无状态可在 steps 执行完后清理）
+  // ── 无状态模式:运行完删 JSONL ────────────────────────────────────────────
+  // Pipeline 模式不删除(session 是其共享状态的载体;若需无状态可在 steps 执行完后清理)
   if (!job.stateful && !isPipeline) {
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
     const jsonlPath = path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
-    try { fs.unlinkSync(jsonlPath); } catch { /* 文件可能不存在，忽略 */ }
+    try { fs.unlinkSync(jsonlPath); } catch { /* 文件可能不存在,忽略 */ }
+  }
+
+  // ── 带时间戳 session 同前缀只保最新 1 个 ──────────────────────────────
+  {
+    const sanitized2 = sessionId.replace(/[:/\\]/g, "_");
+    const tsMatch = sanitized2.match(/^(.+_)\d{13}$/);
+    if (tsMatch) {
+      const { Session } = await import("../core/session.js");
+      Session.pruneOldByPrefix(tsMatch[1]!, 1);
+    }
   }
 }
