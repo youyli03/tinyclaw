@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { IPC_SOCKET_PATH, type IpcResponse, type ActivityEvent } from "../../ipc/protocol.js";
 import { bold, dim, red, yellow } from "../ui.js";
 import { listSessions } from "../../ipc/client.js";
+import { highlight as cliHighlight, supportsLanguage } from "cli-highlight";
 
 export const subcommands = ["list", "help"] as const;
 export const description = "实时跟踪指定 session 的 AI 活动(LLM chunk + 工具调用)";
@@ -219,7 +220,7 @@ function printEvent(
         ? event.resultSummary.slice(0, 400) + "…"
         : event.resultSummary;
       console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
-      const lines = resultDisplay.split("\n").slice(0, 5);
+      const lines = resultDisplay.split("\n").slice(0, 8);
       for (const l of lines) {
         if (l.trim()) console.log(`   ${dim("·")} ${l}`);
       }
@@ -246,29 +247,63 @@ const brightRed    = (s: string) => `\x1b[91m${s}\x1b[0m`;
 
 /**
  * 将 JSON 参数字符串转为可读多行摘要。
- * 每个顶级字段单独一行，长字符串截断，嵌套对象折叠。
+ * - command: bash 语法高亮
+ * - content/code/new_str/old_str: 检测语言后语法高亮（前 6 行）
+ * - 其他字符串: 截断
  */
-function formatArgs(raw: string, maxLen: number): string[] {
+function formatArgs(raw: string, _maxLen: number): string[] {
   let parsed: Record<string, unknown>;
   try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch {
-    return [raw.length > maxLen ? raw.slice(0, maxLen) + "…" : raw];
+    return [raw.length > 200 ? raw.slice(0, 200) + "…" : raw];
   }
 
   const lines: string[] = [];
   for (const [k, v] of Object.entries(parsed)) {
     let valStr: string;
     if (typeof v === "string") {
-      const firstLine = v.split("\n")[0] ?? v;
-      const hasMore = v.includes("\n");
-      valStr = firstLine.length > 120 ? firstLine.slice(0, 120) + "…" : firstLine;
-      if (hasMore) valStr += dim(" [↵…]");
+      if (k === "command") {
+        const firstLine = v.split("\n")[0]?.slice(0, 200) ?? v;
+        const hl = tryHighlight(firstLine, "bash");
+        valStr = hl + (v.includes("\n") ? dim(" [↵…]") : "");
+      } else if (["content", "code", "new_str", "old_str"].includes(k)) {
+        const srcLines = v.split("\n").slice(0, 6);
+        const lang = detectLang(v);
+        const highlighted = srcLines.map((l: string) => tryHighlight(l, lang));
+        valStr = "\n" + highlighted.map((l: string) => `        ${l}`).join("\n");
+        if (v.split("\n").length > 6) valStr += `\n        ${dim("…更多行")}`;
+      } else {
+        const firstLine = v.split("\n")[0] ?? v;
+        const hasMore = v.includes("\n");
+        valStr = firstLine.length > 140 ? firstLine.slice(0, 140) + "…" : firstLine;
+        if (hasMore) valStr += dim(" [↵…]");
+      }
     } else if (v === null || typeof v !== "object") {
       valStr = String(v);
     } else {
       const compact = JSON.stringify(v);
-      valStr = compact.length > 120 ? compact.slice(0, 120) + "…" : compact;
+      valStr = compact.length > 140 ? compact.slice(0, 140) + "…" : compact;
     }
     lines.push(`${dim(k + ":")} ${valStr}`);
   }
-  return lines.length ? lines : [raw.slice(0, maxLen)];
+  return lines.length ? lines : [raw.slice(0, 200)];
+}
+
+/** 尝试 cli-highlight 语法高亮，失败则原样返回 */
+function tryHighlight(code: string, lang: string): string {
+  try {
+    if (!supportsLanguage(lang)) return code;
+    return cliHighlight(code, { language: lang, ignoreIllegals: true }).trimEnd();
+  } catch {
+    return code;
+  }
+}
+
+/** 根据内容首行猜测语言 */
+function detectLang(content: string): string {
+  const first = content.trimStart().slice(0, 100);
+  if (/^(import |const |let |var |function |class |export |interface |type )/.test(first)) return "typescript";
+  if (/^(def |import |class |async def |from )/.test(first)) return "python";
+  if (/^(package |func |import )/.test(first)) return "go";
+  if (/^#!|^\$/.test(first)) return "bash";
+  return "plaintext";
 }
