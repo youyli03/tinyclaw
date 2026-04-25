@@ -133,40 +133,57 @@ export async function run(args: string[]): Promise<void> {
 }
 
 function printEvent(sessionId: string, event: ActivityEvent): void {
-  const prefix = dim(`[${new Date().toLocaleTimeString()}]`);
+  const ts = dim(new Date().toLocaleTimeString());
 
   switch (event.kind) {
     case "chunk":
-      process.stdout.write(dim(event.delta));
+      // 直接白色输出，不加 dim
+      process.stdout.write(event.delta);
       break;
 
     case "tool_call": {
-      const argsDisplay = event.argsSummary.length > 120
-        ? event.argsSummary.slice(0, 120) + "…"
+      // 工具调用：亮黄色标题行 + 参数摘要
+      const argsDisplay = event.argsSummary.length > 160
+        ? event.argsSummary.slice(0, 160) + "…"
         : event.argsSummary;
+      const bar = brightYellow("▶");
       process.stdout.write("\n");
-      console.log(`${prefix} ${yellow("⚡ tool_call")} ${bold(event.name)}  ${dim(argsDisplay)}`);
+      console.log(`${ts} ${bar} ${bold(brightYellow(event.name))}`);
+      if (argsDisplay.trim()) {
+        console.log(`   ${dim("args")} ${argsDisplay}`);
+      }
       break;
     }
 
     case "tool_result": {
-      const resultDisplay = event.resultSummary.length > 200
-        ? event.resultSummary.slice(0, 200) + "…"
+      // 工具结果：亮绿色标题行 + 结果摘要
+      const resultDisplay = event.resultSummary.length > 300
+        ? event.resultSummary.slice(0, 300) + "…"
         : event.resultSummary;
-      // 结果可能有多行，压成一行预览
-      const oneLiner = resultDisplay.replace(/\n/g, "↵ ");
-      console.log(`${prefix} ${green("✅ tool_result")} ${bold(event.name)}  ${dim(oneLiner)}`);
+      const oneLiner = resultDisplay.replace(/\n/g, " ↵ ").trim();
+      const bar = brightGreen("◀");
+      console.log(`${ts} ${bar} ${bold(brightGreen(event.name))}`);
+      if (oneLiner) {
+        console.log(`   ${dim("out")}  ${oneLiner}`);
+      }
       break;
     }
 
     case "done":
       process.stdout.write("\n");
-      console.log(`${prefix} ${cyan("◼ done")}`);
+      console.log(`${ts} ${bold(brightCyan("◼ done"))}\n`);
       break;
 
     case "error":
       process.stdout.write("\n");
-      console.log(`${prefix} ${red("✗ error")} ${event.message}`);
+      console.log(`${ts} ${bold(brightRed("✗ error"))} ${event.message}`);
       break;
   }
 }
+
+// 亮色系列（比普通色更鲜艳，适合深色背景终端）
+const brightYellow = (s: string) => `\x1b[93m${s}\x1b[0m`;
+const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
+const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
+const brightRed    = (s: string) => `\x1b[91m${s}\x1b[0m`;
+
