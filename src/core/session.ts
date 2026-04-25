@@ -564,6 +564,13 @@ export class Session {
         fs.mkdirSync(path.dirname(notesPath), { recursive: true });
         fs.appendFileSync(notesPath, entry, "utf-8");
         console.log("[compressForCode] 写入完成");
+
+        // 写入后触发增量索引（fire-and-forget）
+        import("../memory/qmd.js").then(({ updateStore }) => {
+          updateStore("code_notes", this.agentId).catch((e) =>
+            console.warn("[compressForCode] code_notes index update failed:", e)
+          );
+        }).catch(() => {});
       }
     } catch (e) {
       console.warn("[compressForCode] 存档失败:", e);
