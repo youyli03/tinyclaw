@@ -6,7 +6,7 @@ import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { searchMemory } from "../memory/qmd.js";
-import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary } from "../memory/summarizer.js";
+import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary, distillCodeTurnToNotes } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
@@ -1392,6 +1392,27 @@ export async function runAgent(
       }
     } catch (err) {
       console.warn("[agent] PLAN.md 执行日志追加失败:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // ── Code 模式：每轮结束后自动将本轮交互提炼到 NOTES.md ────────────────────
+  if (isCodeMode && !isSlave && (opts.slaveDepth ?? 0) === 0 && session.codeWorkdir) {
+    const msgs = session.getMessages();
+    let lastUser: (typeof msgs)[number] | undefined;
+    let lastAssistant: (typeof msgs)[number] | undefined;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]!;
+      if (!lastAssistant && m.role === "assistant") {
+        const calls = (m as { role: "assistant"; tool_calls?: unknown[] }).tool_calls;
+        if (!calls || calls.length === 0) lastAssistant = m;
+      }
+      if (!lastUser && m.role === "user") lastUser = m;
+      if (lastUser && lastAssistant) break;
+    }
+    if (lastUser && lastAssistant) {
+      distillCodeTurnToNotes(lastUser, lastAssistant, session.agentId, session.codeWorkdir).catch((err) =>
+        console.warn("[agent] code notes distill failed:", err instanceof Error ? err.message : err)
+      );
     }
   }
 

@@ -336,6 +336,60 @@ const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
 用 1-3 句中文提炼本轮对话的核心内容：用户的意图、AI 的主要行动或结论。
 要求：简洁、精准，不要加前缀（如"本轮"、"摘要："等），直接输出内容。`;
 
+const CODE_DISTILL_SYSTEM = `你是一个代码项目记忆助手。
+根据以下代码会话的最新一轮交互(用户消息 + AI 回复)，提炼出值得写入项目长期记忆的要点。
+重点关注：里程碑进度、发现的关键约束、非显然的根因、完成的重要改动。
+如果本轮没有值得记录的内容（如只是闲聊、询问、未完成操作），直接输出空字符串（不要输出任何内容）。
+若有内容，用 1-5 句中文要点（可以是短语），每行一条，直接输出，不要加前缀和标题。`;
+
+/**
+ * Code 模式:将单轮交互提炼为项目 NOTES.md 要点，fire-and-forget。
+ * @param userMsg    本轮 user 消息
+ * @param assistantMsg 本轮 assistant 回复
+ * @param agentId    agent ID
+ * @param codeWorkdir 当前代码工作目录（用于生成 project slug）
+ */
+export async function distillCodeTurnToNotes(
+  userMsg: ChatMessage,
+  assistantMsg: ChatMessage,
+  agentId: string,
+  codeWorkdir: string,
+): Promise<void> {
+  const client = llmRegistry.get("summarizer");
+
+  const userText = formatMsgForSummary(userMsg);
+  const assistantText = formatMsgForSummary(assistantMsg);
+  if (!userText && !assistantText) return;
+
+  const turnText = [userText, assistantText].filter(Boolean).join("\n\n");
+
+  const result = await client.chat([
+    { role: "system", content: CODE_DISTILL_SYSTEM },
+    { role: "user", content: turnText.slice(0, 6000) },
+  ], { isUserInitiated: false });
+
+  const notes = result.content.trim();
+  if (!notes) return; // LLM 认为本轮无值得记录的内容
+
+  try {
+    const { pathToProjectSlug } = await import("../tools/memory.js");
+    const { agentManager } = await import("../core/agent-manager.js");
+    const { mkdirSync, appendFileSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    const slug = pathToProjectSlug(codeWorkdir);
+    const notesPath = agentManager.codeProjectNotesPath(agentId, slug);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const entry = `
+## 自动提炼 [${dateStr}]
+
+${notes}
+`;
+    mkdirSync(dirname(notesPath), { recursive: true });
+    appendFileSync(notesPath, entry, "utf-8");
+  } catch { /* 存档失败不阻断主流程 */ }
+}
+
+
 /**
  * 将单轮 user+assistant 交互提炼为 diary 片段并持久化。
  * fire-and-forget 使用，调用方不 await，失败时只打 warn 日志。
