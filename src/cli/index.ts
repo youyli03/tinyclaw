@@ -208,6 +208,8 @@ function outputCompletions(words: string[]): void {
     candidates = ["list", "show", "enable", "disable", "trigger", "set"];
   } else if (cmd === "agent" && sub === "access") {
     candidates = ["show", "set", "add", "clear"];
+  } else if (cmd === "synchro" && !sub) {
+    candidates = ["list"];
   } else {
     candidates = [];
   }

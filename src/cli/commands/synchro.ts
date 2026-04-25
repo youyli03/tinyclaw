@@ -18,8 +18,9 @@ import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { IPC_SOCKET_PATH, type IpcResponse, type ActivityEvent } from "../../ipc/protocol.js";
 import { bold, dim, cyan, red, yellow, green } from "../ui.js";
+import { listSessions } from "../../ipc/client.js";
 
-export const subcommands = ["help"] as const;
+export const subcommands = ["list", "help"] as const;
 export const description = "实时跟踪指定 session 的 AI 活动(LLM chunk + 工具调用)";
 export const usage = "synchro <sessionId 或后缀>";
 
@@ -45,6 +46,28 @@ ${bold("输出:")}
 export async function run(args: string[]): Promise<void> {
   if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
     printHelp();
+    return;
+  }
+
+  // `synchro list` — 打印所有 session 及其 ID（方便复制后缀）
+  if (args[0] === "list") {
+    if (!existsSync(IPC_SOCKET_PATH)) {
+      console.error(red("tinyclaw 服务未运行，请先执行 tinyclaw start"));
+      process.exit(1);
+    }
+    const sessions = await listSessions();
+    if (sessions.length === 0) {
+      console.log(dim("（没有活跃 session）"));
+      return;
+    }
+    console.log(`\n${bold("活跃 session 列表：")}\n`);
+    for (const s of sessions) {
+      const suffix = dim(`(后缀: ${s.sessionId.slice(-8)})`);
+      const tag = s.running ? yellow("● 运行中") : dim("○ 空闲");
+      console.log(`  ${tag}  ${s.sessionId}  ${suffix}`);
+
+    }
+    console.log();
     return;
   }
 
