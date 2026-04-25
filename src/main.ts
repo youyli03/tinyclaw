@@ -861,15 +861,26 @@ async function main(): Promise<void> {
                   onAskUser: resumeOnAskUser,
                   onNotify: resumeOnNotify,
                   ...(marker.restartTaskId ? { agentTaskIdOverride: marker.restartTaskId } : {}),
+                  onChunk: (delta: string) => {
+                    broadcastActivity(codeSession.sessionId, { kind: "chunk", delta });
+                  },
+                  onToolCall: (name: string, args: Record<string, unknown>) => {
+                    broadcastActivity(codeSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+                  },
+                  onToolResult: (name: string, result: string) => {
+                    broadcastActivity(codeSession.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+                  },
                 });
                 codeSession.currentRunPromise = resumePromise;
                 resumePromise
                   .then((result) => {
+                    broadcastActivity(codeSession.sessionId, { kind: "done" });
                     if (result.content) {
                       void connector!.send(marker.peerId, marker.msgType, result.content).catch(() => {});
                     }
                   })
                   .catch((err: unknown) => {
+                    broadcastActivity(codeSession.sessionId, { kind: "error", message: String(err) });
                     console.error("[restart_tool] resume runAgent error:", err);
                   })
                   .finally(() => {
