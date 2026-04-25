@@ -566,6 +566,8 @@ async function main(): Promise<void> {
       : opts;
 
     const runPromise = runAgent(session, messageContent, finalOpts);
+    // 广播用户输入（包含语音转录后的 resolvedContent）
+    broadcastActivity(session.sessionId, { kind: "user_input", message: resolvedContent.slice(0, 500) });
     session.currentRunPromise = runPromise;
 
     void runPromise

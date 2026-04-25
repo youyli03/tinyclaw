@@ -208,7 +208,7 @@ function printEvent(
 
     case "chunk":
       if (noChunk) return;
-      process.stdout.write(event.delta);
+      process.stdout.write(dim(event.delta));
       chunkState.setInChunk(!event.delta.endsWith("\n"));
       break;
 
@@ -217,7 +217,7 @@ function printEvent(
       if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${brightYellow("▶")} ${bold(brightYellow(event.name))}`);
       for (const line of argsLines) {
-        console.log(`   ${brightBlue("·")} ${line}`);
+        console.log(`   ${dim("·")} ${line}`);
       }
       break;
     }
@@ -229,7 +229,7 @@ function printEvent(
       console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
       const lines = resultDisplay.split("\n").slice(0, 8);
       for (const l of lines) {
-        if (l.trim()) console.log(`   ${dim("·")} ${dim(l)}`);
+        if (l.trim()) console.log(`   ${dim("·")} ${l}`);
       }
       break;
     }
