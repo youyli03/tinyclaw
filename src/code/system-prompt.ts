@@ -314,5 +314,5 @@ Plan 模式分为两个严格隔离的阶段：
 **发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
 - 跨 session 有价値的约束（如"此进程不能自行 kill"）
 - 非显而易见的根因
-${envSection}${visionSection}${feedbackSection}${codeHookText ? "\n\n" + codeHookText : ""}${existingPlanSection}`;
+${envSection}${visionSection}${feedbackSection}${codeHookText ? `\n\n## 行为钩子（来自 provider 配置）\n\n${codeHookText}` : ""}${existingPlanSection}`;
 }

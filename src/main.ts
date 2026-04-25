@@ -81,7 +81,34 @@ function getSession(sessionId: string): Session {
 
 // ── 主函数 ────────────────────────────────────────────────────────────────────
 
+/** 加载 ~/.tinyclaw/env 文件（每行 KEY=VALUE），注入 process.env */
+function loadDotEnv(): void {
+  const envPath = path.join(os.homedir(), ".tinyclaw", "env");
+  if (!fs.existsSync(envPath)) return;
+  try {
+    const lines = fs.readFileSync(envPath, "utf-8").split("\n");
+    let count = 0;
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      const val = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      if (key && !(key in process.env)) {
+        process.env[key] = val;
+        count++;
+      }
+    }
+    if (count > 0) console.log(`[tinyclaw] Loaded ${count} env var(s) from ~/.tinyclaw/env`);
+  } catch (e) {
+    console.warn(`[tinyclaw] Failed to load ~/.tinyclaw/env:`, e);
+  }
+}
+
 async function main(): Promise<void> {
+  // 0. 加载用户自定义环境变量
+  loadDotEnv();
   // 1. 验证配置（fail-fast）
   const cfg = loadConfig();
   console.log("[tinyclaw] Config loaded");
