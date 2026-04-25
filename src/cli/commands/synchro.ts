@@ -2,44 +2,43 @@
  * tinyclaw synchro — 实时跟踪指定 session 的 AI 活动
  *
  * 用法:
- *   synchro <sessionId 或后 12 位>
+ *   synchro <sessionId 或后缀>   订阅并实时输出
+ *   synchro list                 列出所有活跃 session
  *
- * 持续打印目标 session 的:
- *   - LLM 流式输出(灰色)
- *   - 工具调用(黄色,含参数摘要)
- *   - 工具结果(绿色,截断显示)
- *   - done / error 事件
- *
- * Ctrl-C 退出。
+ * Flags:
+ *   --no-chunk    隐藏 LLM chunk 流式输出，只显示工具调用/结果
  */
 
 import { connect, type Socket } from "net";
-import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { IPC_SOCKET_PATH, type IpcResponse, type ActivityEvent } from "../../ipc/protocol.js";
-import { bold, dim, cyan, red, yellow, green } from "../ui.js";
+import { bold, dim, red, yellow } from "../ui.js";
 import { listSessions } from "../../ipc/client.js";
 
 export const subcommands = ["list", "help"] as const;
 export const description = "实时跟踪指定 session 的 AI 活动(LLM chunk + 工具调用)";
-export const usage = "synchro <sessionId 或后缀>";
+export const usage = "synchro <sessionId 或后缀> [--no-chunk]";
 
 function printHelp(): void {
   console.log(`
 ${bold("tinyclaw synchro")}  —  实时跟踪 session 活动
 
 ${bold("用法:")}
-  synchro <sessionId>          完整 session ID
-  synchro <suffix>             session ID 的末尾子串(支持后 12 位短 ID)
+  synchro list                   列出所有活跃 session（含最后一条消息）
+  synchro <sessionId>            完整 session ID
+  synchro <suffix>               session ID 的末尾子串（如后 8 位）
 
-${bold("输出:")}
-  灰色    LLM 流式 chunk
-  黄色    工具调用(工具名 + 参数摘要)
-  绿色    工具结果(前 300 字符)
-  蓝色    done 事件
-  红色    error 事件
+${bold("Flags:")}
+  --no-chunk                     隐藏 LLM chunk，只显示工具调用 / 结果
 
-按 ${bold("Ctrl-C")} 退出。
+${bold("输出色彩:")}
+  白色    LLM 流式 chunk
+  亮黄    ▶ 工具调用（含参数展开）
+  亮绿    ◀ 工具结果（含前 5 行）
+  亮青    ◼ done
+  亮红    ✗ error
+
+按 ${bold("Ctrl-C")} 退出（服务重启时自动重连）。
 `);
 }
 
@@ -49,7 +48,7 @@ export async function run(args: string[]): Promise<void> {
     return;
   }
 
-  // `synchro list` — 打印所有 session 及其 ID（方便复制后缀）
+  // `synchro list` — 打印所有 session 及最后一条消息
   if (args[0] === "list") {
     if (!existsSync(IPC_SOCKET_PATH)) {
       console.error(red("tinyclaw 服务未运行，请先执行 tinyclaw start"));
@@ -62,33 +61,48 @@ export async function run(args: string[]): Promise<void> {
     }
     console.log(`\n${bold("活跃 session 列表：")}\n`);
     for (const s of sessions) {
-      const suffix = dim(`(后缀: ${s.sessionId.slice(-8)})`);
-      const tag = s.running ? yellow("● 运行中") : dim("○ 空闲");
-      console.log(`  ${tag}  ${s.sessionId}  ${suffix}`);
-
+      const suffix  = brightCyan(s.sessionId.slice(-8));
+      const tag     = s.running ? yellow("● 运行中") : dim("○ 空闲");
+      const lastMsg = s.lastUserMessage
+        ? dim(`  "${s.lastUserMessage.slice(0, 60).replace(/\n/g, "↵")}"`)
+        : "";
+      console.log(`  ${tag}  ${s.sessionId}`);
+      console.log(`         ${dim("后缀:")} ${suffix}${lastMsg}`);
     }
     console.log();
     return;
   }
 
-  const idOrSuffix = args[0]!;
+  // 解析 flags
+  const noChunk = args.includes("--no-chunk");
+  const idOrSuffix = args.find(a => !a.startsWith("--"))!;
+
+  if (!idOrSuffix) { printHelp(); return; }
 
   if (!existsSync(IPC_SOCKET_PATH)) {
     console.error(red("tinyclaw 服务未运行，请先执行 tinyclaw start"));
     process.exit(1);
   }
 
-  // 并发 tool_call / tool_result 可能交错，用 pendingLine 暂存未换行的状态
-  let inChunk = false; // 当前是否处于 chunk 流式输出中（未换行）
+  let inChunk = false;
 
-  function connectAndSubscribe(idOrSuffix: string): Promise<void> {
-    return new Promise<void>((resolve) => {
+  function connectAndSubscribe(): Promise<"reconnect" | "exit"> {
+    return new Promise<"reconnect" | "exit">((resolve) => {
       let buf = "";
       let subscribed = false;
+      let sigintRegistered = false;
 
       const socket: Socket = connect(IPC_SOCKET_PATH, () => {
         socket.write(JSON.stringify({ type: "subscribe", idOrSuffix }) + "\n");
       });
+
+      if (!sigintRegistered) {
+        sigintRegistered = true;
+        process.on("SIGINT", () => {
+          socket.destroy();
+          process.exit(0);
+        });
+      }
 
       socket.on("data", (data) => {
         buf += data.toString("utf-8");
@@ -103,87 +117,98 @@ export async function run(args: string[]): Promise<void> {
           if (resp.type === "subscribed") {
             subscribed = true;
             console.log(dim(`✅ 已订阅 session: ${resp.sessionId}`));
-            console.log(dim("按 Ctrl-C 退出\n"));
+            console.log(dim(`按 Ctrl-C 退出${noChunk ? "  (--no-chunk 模式: 不显示 chunk)" : ""}\n`));
           } else if (resp.type === "error") {
             if (!subscribed) {
-              // subscribe 失败 → 等待后重试（服务刚重启时 session 尚未恢复）
               socket.destroy();
-              resolve(); // 触发外层重连
+              resolve("reconnect");
             } else {
               console.error(red(`\n错误: ${resp.message}`));
               socket.destroy();
-              process.exit(1);
+              resolve("exit");
             }
           } else if (resp.type === "activity") {
-            printEvent(resp.sessionId, resp.event, { inChunk: () => inChunk, setInChunk: (v) => { inChunk = v; } });
+            printEvent(resp.event, noChunk, { inChunk: () => inChunk, setInChunk: (v) => { inChunk = v; } });
           }
         }
       });
 
-      socket.on("error", (err) => {
-        if (!subscribed) {
-          resolve(); // 触发重连
-        } else {
-          console.error(red(`\n连接错误: ${err.message}`));
-          process.exit(1);
-        }
+      socket.on("error", () => {
+        resolve("reconnect");
       });
 
       socket.on("close", () => {
         if (subscribed) {
-          // 服务重启 → 自动重连
           if (inChunk) { process.stdout.write("\n"); inChunk = false; }
-          console.log(dim("\n[服务重启，正在重连...]"));
-          socket.destroy();
-          resolve(); // 触发重连
-        } else {
-          resolve();
         }
-      });
-
-      // Ctrl-C 优雅退出
-      process.on("SIGINT", () => {
-        socket.destroy();
-        process.exit(0);
+        resolve("reconnect");
       });
     });
   }
 
-  // 自动重连循环
+  // 自动重连循环（带倒计时）
   while (true) {
+    // 等待 sock 文件就绪
     if (!existsSync(IPC_SOCKET_PATH)) {
-      process.stdout.write(dim("."));
-      await new Promise(r => setTimeout(r, 1000));
+      await waitWithCountdown("服务启动", 10, 500, () => existsSync(IPC_SOCKET_PATH));
       continue;
     }
-    await connectAndSubscribe(idOrSuffix);
-    // 等待 sock 文件出现（服务重启期间）
-    let waited = 0;
-    while (!existsSync(IPC_SOCKET_PATH) && waited < 10000) {
-      await new Promise(r => setTimeout(r, 500));
-      waited += 500;
+
+    const result = await connectAndSubscribe();
+    if (result === "exit") break;
+
+    // 断线后等待重连
+    const sockWait = !existsSync(IPC_SOCKET_PATH);
+    if (sockWait) {
+      const ok = await waitWithCountdown("等待重连", 15, 500, () => existsSync(IPC_SOCKET_PATH));
+      if (!ok) {
+        console.log(red("重连超时，退出。"));
+        break;
+      }
     }
     // 等待 session 恢复（服务刚重启时 session 还未加载）
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 900));
+    console.log(dim("[重连中...]"));
   }
 }
 
-function printEvent(sessionId: string, event: ActivityEvent, chunkState: { inChunk: () => boolean; setInChunk: (v: boolean) => void }): void {
+/**
+ * 等待条件满足，期间每秒打印 "label N 秒..." 倒计时。
+ * @returns 是否在超时前满足条件
+ */
+async function waitWithCountdown(label: string, maxSecs: number, pollMs: number, cond: () => boolean): Promise<boolean> {
+  let elapsed = 0;
+  const max = maxSecs * 1000;
+  while (elapsed < max) {
+    if (cond()) return true;
+    const remaining = Math.ceil((max - elapsed) / 1000);
+    process.stdout.write(`\r${dim(`${label}... ${remaining}s`)}`);
+    await new Promise(r => setTimeout(r, pollMs));
+    elapsed += pollMs;
+  }
+  process.stdout.write("\n");
+  return cond();
+}
+
+function printEvent(
+  event: ActivityEvent,
+  noChunk: boolean,
+  chunkState: { inChunk: () => boolean; setInChunk: (v: boolean) => void }
+): void {
   const ts = dim(new Date().toLocaleTimeString());
 
   switch (event.kind) {
     case "chunk":
+      if (noChunk) return;
       process.stdout.write(event.delta);
       chunkState.setInChunk(!event.delta.endsWith("\n"));
       break;
 
     case "tool_call": {
-      // 格式化参数 JSON 为紧凑多字段摘要
-      const argsDisplay = formatArgs(event.argsSummary, 200);
-      const bar = brightYellow("▶");
+      const argsLines = formatArgs(event.argsSummary, 200);
       if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
-      console.log(`${ts} ${bar} ${bold(brightYellow(event.name))}`);
-      for (const line of argsDisplay) {
+      console.log(`${ts} ${brightYellow("▶")} ${bold(brightYellow(event.name))}`);
+      for (const line of argsLines) {
         console.log(`   ${dim("·")} ${line}`);
       }
       break;
@@ -193,9 +218,7 @@ function printEvent(sessionId: string, event: ActivityEvent, chunkState: { inChu
       const resultDisplay = event.resultSummary.length > 400
         ? event.resultSummary.slice(0, 400) + "…"
         : event.resultSummary;
-      const bar = brightGreen("◀");
-      console.log(`${ts} ${bar} ${bold(brightGreen(event.name))}`);
-      // 结果可能是多行，直接缩进输出前 5 行
+      console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
       const lines = resultDisplay.split("\n").slice(0, 5);
       for (const l of lines) {
         if (l.trim()) console.log(`   ${dim("·")} ${l}`);
@@ -215,7 +238,7 @@ function printEvent(sessionId: string, event: ActivityEvent, chunkState: { inChu
   }
 }
 
-// 亮色系列（比普通色更鲜艳，适合深色背景终端）
+// 亮色系列（适合深色背景终端）
 const brightYellow = (s: string) => `\x1b[93m${s}\x1b[0m`;
 const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
 const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
@@ -228,7 +251,6 @@ const brightRed    = (s: string) => `\x1b[91m${s}\x1b[0m`;
 function formatArgs(raw: string, maxLen: number): string[] {
   let parsed: Record<string, unknown>;
   try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch {
-    // 不是合法 JSON，直接截断返回
     return [raw.length > maxLen ? raw.slice(0, maxLen) + "…" : raw];
   }
 
@@ -236,7 +258,6 @@ function formatArgs(raw: string, maxLen: number): string[] {
   for (const [k, v] of Object.entries(parsed)) {
     let valStr: string;
     if (typeof v === "string") {
-      // 字符串：保留换行前缀，截断超长部分
       const firstLine = v.split("\n")[0] ?? v;
       const hasMore = v.includes("\n");
       valStr = firstLine.length > 120 ? firstLine.slice(0, 120) + "…" : firstLine;
@@ -244,7 +265,6 @@ function formatArgs(raw: string, maxLen: number): string[] {
     } else if (v === null || typeof v !== "object") {
       valStr = String(v);
     } else {
-      // 对象/数组：紧凑 JSON，超长截断
       const compact = JSON.stringify(v);
       valStr = compact.length > 120 ? compact.slice(0, 120) + "…" : compact;
     }
@@ -252,4 +272,3 @@ function formatArgs(raw: string, maxLen: number): string[] {
   }
   return lines.length ? lines : [raw.slice(0, maxLen)];
 }
-
