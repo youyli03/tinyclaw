@@ -316,7 +316,8 @@ DEFAULT_RSS_FEEDS: list[dict] = [
     {"name": "HN RSS",         "url": "https://hnrss.org/frontpage",                      "topics": ["*"]},
     # ── AI / LLM 专项 ────────────────────────────────────────────────────────
     {"name": "VentureBeat AI",   "url": "https://feeds.feedburner.com/venturebeat/SZYF",           "topics": ["*"]},
-    {"name": "AI News",          "url": "https://www.artificialintelligence-news.com/feed/",        "topics": ["*"]},
+    {"name": "AI News",          "url": "https://www.artificialintelligence-news.com/feed/",        "topics": ["*"], "skip": True},
+    {"name": "Analytics Vidhya","url": "https://www.analyticsvidhya.com/feed/",                     "topics": ["*"]},
     {"name": "LessWrong",        "url": "https://www.lesswrong.com/feed.xml",                       "topics": ["*"]},
     {"name": "HuggingFace Blog", "url": "https://huggingface.co/blog/feed.xml",                     "topics": ["*"]},
     {"name": "The Sequence AI",  "url": "https://thesequence.substack.com/feed",                    "topics": ["*"]},
@@ -325,9 +326,9 @@ DEFAULT_RSS_FEEDS: list[dict] = [
     {"name": "Simon Willison",   "url": "https://simonwillison.net/atom/everything/",               "topics": ["*"]},
     {"name": "Import AI",        "url": "https://jack-clark.net/feed/",                             "topics": ["*"]},
     # ── 中文科技媒体 ──────────────────────────────────────────────────────────
-    {"name": "36kr",           "url": "https://36kr.com/feed",         "topics": ["*"]},
+    {"name": "36kr",           "url": "https://36kr.com/feed",         "topics": ["*"], "retry": 2},
     {"name": "InfoQ CN",       "url": "https://www.infoq.cn/feed",     "topics": ["*"]},
-    {"name": "虎嗅",            "url": "https://www.huxiu.com/rss/0.xml","topics": ["*"]},
+    {"name": "虎嗅",            "url": "https://www.huxiu.com/rss/0.xml","topics": ["*"], "skip": True},
     {"name": "少数派",          "url": "https://sspai.com/feed",        "topics": ["*"]},
     {"name": "爱范儿",          "url": "https://www.ifanr.com/feed",    "topics": ["*"]},
     {"name": "Solidot",        "url": "https://www.solidot.org/index.rss","topics": ["*"]},
@@ -393,27 +394,35 @@ def _fetch_rss(topics: list[str], since_hours: int, max_items: int) -> list[dict
         return None
 
     def _fetch_one_feed(feed: dict) -> list[dict]:
-        """抓取单个 RSS 源，返回匹配的条目列表（出错时返回空列表；SSL/网络错误自动重试一次）。"""
+        """抓取单个 RSS 源,返回匹配的条目列表(出错时返回空列表;支持 skip/timeout/retry 配置)。"""
         import time
-        import urllib.error
         ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+        if feed.get("skip"):
+            return []
+
+        feed_timeout: int = feed.get("timeout", 8)
+        max_retries: int = feed.get("retry", 1)
 
         def _do_fetch() -> bytes:
             headers = {"User-Agent": "Mozilla/5.0 (compatible; tinyclaw-news/0.1)"}
             req = urllib.request.Request(feed["url"], headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=feed_timeout) as resp:
                 return resp.read()
 
-        try:
+        xml_data: bytes | None = None
+        last_err: Exception | None = None
+        for attempt in range(max_retries + 1):
             try:
                 xml_data = _do_fetch()
-            except (urllib.error.URLError, OSError):
-                # 偶发 SSL EOF / 连接重置 → 等待 1 秒后重试一次
-                time.sleep(1)
-                xml_data = _do_fetch()
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < max_retries:
+                    time.sleep(1)
 
-        except Exception as e:
-            sys.stderr.write(f"[news_fetch] RSS {feed['name']} 抓取失败：{e}\n")
+        if xml_data is None:
+            sys.stderr.write(f"[news_fetch] RSS {feed['name']} 抓取失败:{last_err}\n")
             return []
 
         try:
