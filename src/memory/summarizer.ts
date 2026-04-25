@@ -371,6 +371,7 @@ export async function distillCodeTurnToNotes(
   const notes = result.content.trim();
   if (!notes) return; // LLM 认为本轮无值得记录的内容
 
+  console.log("[distillCodeTurnToNotes] 开始写入 code notes...");
   try {
     const { pathToProjectSlug } = await import("../tools/memory.js");
     const { agentManager } = await import("../core/agent-manager.js");
@@ -378,15 +379,16 @@ export async function distillCodeTurnToNotes(
     const { dirname } = await import("node:path");
     const slug = pathToProjectSlug(codeWorkdir);
     const notesPath = agentManager.codeProjectNotesPath(agentId, slug);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const entry = `
-## 自动提炼 [${dateStr}]
-
-${notes}
-`;
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toTimeString().slice(0, 8); // HH:MM:SS
+    const entry = `\n### 自动提炼 [${dateStr} ${timeStr}]\n\n${notes}\n`;
     mkdirSync(dirname(notesPath), { recursive: true });
     appendFileSync(notesPath, entry, "utf-8");
-  } catch { /* 存档失败不阻断主流程 */ }
+    console.log(`[distillCodeTurnToNotes] 完成写入: ${notesPath}`);
+  } catch (e) {
+    console.warn("[distillCodeTurnToNotes] 存档失败:", e);
+  }
 }
 
 

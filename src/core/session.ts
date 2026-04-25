@@ -556,12 +556,18 @@ export class Session {
         const { pathToProjectSlug } = await import("../tools/memory.js");
         const slug = pathToProjectSlug(this.codeWorkdir);
         const notesPath = agentManager.codeProjectNotesPath(this.agentId, slug);
-        const dateStr = new Date().toISOString().slice(0, 10);
-        const entry = `\n## 压缩摘要 [${dateStr}]\n\n${summaryText}\n`;
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const timeStr = now.toTimeString().slice(0, 8);
+        const entry = `\n### 压缩摘要 [${dateStr} ${timeStr}]\n\n${summaryText}\n`;
+        console.log(`[compressForCode] 开始写入压缩摘要: ${notesPath}`);
         fs.mkdirSync(path.dirname(notesPath), { recursive: true });
         fs.appendFileSync(notesPath, entry, "utf-8");
+        console.log("[compressForCode] 写入完成");
       }
-    } catch { /* 存档失败不阻断主流程 */ }
+    } catch (e) {
+      console.warn("[compressForCode] 存档失败:", e);
+    }
 
     return true;
   }
