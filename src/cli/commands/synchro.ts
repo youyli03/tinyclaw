@@ -199,6 +199,13 @@ function printEvent(
   const ts = dim(new Date().toLocaleTimeString());
 
   switch (event.kind) {
+    case "user_input": {
+      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
+      const preview = event.message.length > 120 ? event.message.slice(0, 120) + "…" : event.message;
+      console.log(`${ts} ${brightMagenta("❯")} ${bold(brightMagenta("user"))}  ${preview}`);
+      break;
+    }
+
     case "chunk":
       if (noChunk) return;
       process.stdout.write(event.delta);
@@ -243,7 +250,8 @@ function printEvent(
 const brightYellow = (s: string) => `\x1b[93m${s}\x1b[0m`;
 const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
 const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
-const brightRed    = (s: string) => `\x1b[91m${s}\x1b[0m`;
+const brightRed     = (s: string) => `\x1b[91m${s}\x1b[0m`;
+const brightMagenta = (s: string) => `\x1b[95m${s}\x1b[0m`;
 
 /**
  * 将 JSON 参数字符串转为可读多行摘要。
@@ -305,5 +313,7 @@ function detectLang(content: string): string {
   if (/^(def |import |class |async def |from )/.test(first)) return "python";
   if (/^(package |func |import )/.test(first)) return "go";
   if (/^#!|^\$/.test(first)) return "bash";
+  if (/^(#include|#define|#pragma|void |int |char |struct |typedef )/.test(first)) return "c";
+  if (/^(#include<|template<|namespace |std::)/.test(first)) return "cpp";
   return "plaintext";
 }

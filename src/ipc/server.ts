@@ -441,6 +441,8 @@ async function handleRequest(
 
   let fullContent = "";
   session.running = true;
+  // 广播用户输入
+  broadcastActivity(session.sessionId, { kind: "user_input", message: message.slice(0, 500) });
   const runPromise = runAgent(session, message, {
     onChunk: (delta) => {
       fullContent += delta;

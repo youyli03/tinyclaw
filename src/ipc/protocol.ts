@@ -118,6 +118,7 @@ export type IpcClientMessage =
  * synchro 订阅事件：描述 session 内发生的一次动作。
  */
 export type ActivityEvent =
+  | { kind: "user_input"; message: string }
   | { kind: "chunk"; delta: string }
   | { kind: "tool_call"; name: string; argsSummary: string }
   | { kind: "tool_result"; name: string; resultSummary: string }
