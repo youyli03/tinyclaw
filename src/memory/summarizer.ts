@@ -377,15 +377,24 @@ export async function distillCodeTurnToNotes(
     const { agentManager } = await import("../core/agent-manager.js");
     const { mkdirSync, appendFileSync } = await import("node:fs");
     const { dirname } = await import("node:path");
-    const slug = pathToProjectSlug(codeWorkdir);
-    const notesPath = agentManager.codeProjectNotesPath(agentId, slug);
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toTimeString().slice(0, 8); // HH:MM:SS
-    const entry = `\n### 自动提炼 [${dateStr} ${timeStr}]\n\n${notes}\n`;
+    const header = `### ${dateStr} ${timeStr}  [workdir: ${codeWorkdir}]`;
+    const entry = `\n${header}\n\n${notes}\n`;
+
+    // 1. 写到 projects/slug/YYYY-MM.md（按项目归档）
+    const slug = pathToProjectSlug(codeWorkdir);
+    const notesPath = agentManager.codeProjectNotesPath(agentId, slug);
     mkdirSync(dirname(notesPath), { recursive: true });
     appendFileSync(notesPath, entry, "utf-8");
-    console.log(`[distillCodeTurnToNotes] 完成写入: ${notesPath}`);
+    console.log(`[distillCodeTurnToNotes] 项目归档写入: ${notesPath}`);
+
+    // 2. 写到 sessions/YYYY-MM/YYYY-MM-DD.md（按日期归档，不依赖 workdir）
+    const sessionDailyPath = agentManager.codeSessionDailyPath(agentId);
+    mkdirSync(dirname(sessionDailyPath), { recursive: true });
+    appendFileSync(sessionDailyPath, entry, "utf-8");
+    console.log(`[distillCodeTurnToNotes] 按日归档写入: ${sessionDailyPath}`);
   } catch (e) {
     console.warn("[distillCodeTurnToNotes] 存档失败:", e);
   }

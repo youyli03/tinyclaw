@@ -347,6 +347,19 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, agentId, "code", "projects");
   }
 
+  /** Code session 增量日志根目录 (~/.tinyclaw/agents/<id>/code/sessions/) */
+  codeSessionsDir(agentId: string): string {
+    return path.join(AGENTS_ROOT, agentId, "code", "sessions");
+  }
+
+  /** 当天 code session 日志路径（格式：sessions/YYYY-MM/YYYY-MM-DD.md） */
+  codeSessionDailyPath(agentId: string, date?: Date): string {
+    const d = date ?? new Date();
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const day = `${month}-${String(d.getDate()).padStart(2, "0")}`;
+    return path.join(this.codeSessionsDir(agentId), month, `${day}.md`);
+  }
+
   /** 指定项目当月的记忆文件路径（格式：<project>/<YYYY-MM>.md） */
   codeProjectNotesPath(agentId: string, project: string, date?: Date): string {
     const d = date ?? new Date();

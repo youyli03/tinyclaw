@@ -35,7 +35,7 @@ const CODE_NOTES_COLLECTION = "code_notes";
 const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "/cards/", "mem.md", "active.md", "memory.md"];
 
 type MemoryQueryKind = "preference_query" | "active_context_query" | "decision_query" | "profile_query" | "general_query";
-type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆";
+type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆" | "会话记录";
 type SearchCandidate = SearchResult & { blendedScore: number; decayedScore: number; memorySource: MemorySource };
 
 function classifyMemoryQuery(query: string): MemoryQueryKind {
@@ -183,6 +183,7 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
       [ACTIVE_COLLECTION]: { path: path.dirname(agentManager.activePath(agentId)), pattern: "ACTIVE.md" },
       [CARDS_COLLECTION]: { path: agentManager.cardsDir(agentId), pattern: "**/*.md" },
       [CODE_NOTES_COLLECTION]: { path: codeProjectsDir, pattern: "**/*.md" },
+      ["code_sessions"]: { path: path.join(os.homedir(), ".tinyclaw", "agents", agentId, "code", "sessions"), pattern: "**/*.md" },
     };
 
     const memStoresCfg = loadMemStoresConfig();
@@ -264,7 +265,7 @@ function formatMemorySections(results: SearchCandidate[]): string {
     groups.set(r.memorySource, existing);
   }
 
-  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记", "项目记忆"];
+  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记", "项目记忆", "会话记录"];
   const sections: string[] = [];
   for (const source of orderedSources) {
     const group = groups.get(source);
@@ -319,6 +320,9 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
   const codeNotesResults = await hybridSearchCollection(s, CODE_NOTES_COLLECTION, query, limit, "项目记忆");
   candidates.push(...codeNotesResults.slice(0, limit));
 
+  const codeSessionResults = await hybridSearchCollection(s, "code_sessions", query, limit, "会话记录");
+  candidates.push(...codeSessionResults.slice(0, limit));
+
   if (candidates.length === 0) return "";
   const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
   if (reranked.length === 0) return "";
@@ -342,7 +346,7 @@ export async function rebuildMemoryIndex(
   const s = await getQMDStore(agentId);
   if (!s) return null;
   const updateResult = await s.update({
-    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION],
+    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION, "code_sessions"],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
   const embedResult = await s.embed(onEmbedProgress ? { onProgress: onEmbedProgress } : undefined);
