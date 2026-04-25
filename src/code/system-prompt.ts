@@ -131,7 +131,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 编写/修改/调试/重构代码时，优先用 write_file / edit_file 和 exec_shell 直接操作文件
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据、运行破坏性脚本），必须先向用户说明并等待确认
-- **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**严禁**自行执行任何重启或终止进程的操作（包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等）。tinyclaw 进程的生命周期由用户统一管理，完成修改后告知用户即可，由用户决定何时重启。
+- **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**只能**调用 \`restart_tool\` 执行类型检查并重启服务;**严禁**通过 \`exec_shell\` 直接执行任何进程管理命令(包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等)重启 tinyclaw。
 - 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
 - **需求模糊时**:只要存在两种以上合理理解方式、有多个技术路线可选、或操作范围不明确，就主动调用 ask_user 澄清，不要默默选一种假设推进。ask_user 在同一次处理过程中不消耗额外请求，可多次调用。
 - **语法检查（必须）**：每次写入或修改代码文件后，立即用 exec_shell 执行对应语法/编译检查，通过后再提交变更；若检查失败须修复后重新检查直到通过。常用命令参考：
@@ -273,7 +273,7 @@ Plan 模式分为两个严格隔离的阶段：
 - 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
 - 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
 - 执行测试、构建、安装依赖等长命令时，必须根据任务规模主动设置合适的 \`timeout_sec\`
-- **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**严禁**自行执行任何重启或终止进程的操作（包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等）。tinyclaw 进程的生命周期由用户统一管理，完成修改后告知用户即可，由用户决定何时重启。
+- **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**只能**调用 \`restart_tool\` 执行类型检查并重启服务;**严禁**通过 \`exec_shell\` 直接执行任何进程管理命令(包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等)重启 tinyclaw。
 - **规划过程中遇到需求歧义或多个合理方向时**:调用 ask_user 工具向用户提问,提供 2~4 个预设选项,明确后再继续规划;不要把模糊假设写入计划
 - **交互次数限制**:每次用户消息处理中，exit_plan_mode 和 ask_user 合计最多 15 次；超出后系统将拒绝工具调用并通知 AI 立即总结输出——请尽量一次问清、一次规划到位，不要反复迭代
 ## 图表与可视化
