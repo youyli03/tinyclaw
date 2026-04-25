@@ -276,11 +276,9 @@ function formatArgs(raw: string, _maxLen: number): string[] {
         const hl = tryHighlight(firstLine, "bash");
         valStr = hl + (v.includes("\n") ? dim(" [↵…]") : "");
       } else if (["content", "code", "new_str", "old_str"].includes(k)) {
-        const srcLines = v.split("\n").slice(0, 6);
-        const lang = detectLang(v);
-        const highlighted = srcLines.map((l: string) => tryHighlight(l, lang));
-        valStr = "\n" + highlighted.map((l: string) => `        ${l}`).join("\n");
-        if (v.split("\n").length > 6) valStr += `\n        ${dim("…更多行")}`;
+        const srcLines = v.split("\n").slice(0, 4);
+        valStr = "\n" + srcLines.map((l: string) => `        ${dim(l)}`).join("\n");
+        if (v.split("\n").length > 4) valStr += `\n        ${dim("\u2026")}`;
       } else {
         const firstLine = v.split("\n")[0] ?? v;
         const hasMore = v.includes("\n");
