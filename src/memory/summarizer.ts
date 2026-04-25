@@ -395,6 +395,15 @@ export async function distillCodeTurnToNotes(
     mkdirSync(dirname(sessionDailyPath), { recursive: true });
     appendFileSync(sessionDailyPath, entry, "utf-8");
     console.log(`[distillCodeTurnToNotes] 按日归档写入: ${sessionDailyPath}`);
+
+    // 写入后立即触发增量索引（fire-and-forget）
+    const { updateStore } = await import("../memory/qmd.js");
+    updateStore("code_notes", agentId).catch((e) =>
+      console.warn("[distillCodeTurnToNotes] code_notes index update failed:", e)
+    );
+    updateStore("code_sessions", agentId).catch((e) =>
+      console.warn("[distillCodeTurnToNotes] code_sessions index update failed:", e)
+    );
   } catch (e) {
     console.warn("[distillCodeTurnToNotes] 存档失败:", e);
   }

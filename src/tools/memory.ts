@@ -362,6 +362,12 @@ registerTool({
     const ts = new Date().toISOString().slice(0, 10);
     const entry = `\n### ${ts}\n${content}\n`;
     fs.appendFileSync(notesPath, entry, "utf-8");
+    // 写入后立即触发增量索引（fire-and-forget）
+    import("../memory/qmd.js").then(({ updateStore }) => {
+      updateStore("code_notes", agentId).catch((e) => {
+        console.warn("[code_note] post-write index update failed:", e);
+      });
+    }).catch(() => {});
     return `已追加到项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
   },
 });

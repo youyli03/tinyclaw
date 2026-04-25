@@ -39,6 +39,7 @@ import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
+import { startNewsWatcher, stopNewsWatcher } from "./memory/news-watcher.js";
 import { tinyclawSubmitter } from "./core/tinyclaw-submitter.js";
 import { skillWatcher } from "./skills/watcher.js";
 import { mcpManager } from "./mcp/client.js";
@@ -732,6 +733,9 @@ async function main(): Promise<void> {
   // 7. 启动内置每日记忆维护调度器
   memoryMaintenance.start();
 
+  // 启动 news 目录 watcher（主动触发增量索引，替代懒触发）
+  startNewsWatcher();
+
   // 8. 启动内置 ~/.tinyclaw 配置仓库自动提交调度器
   tinyclawSubmitter.start();
 
@@ -754,6 +758,7 @@ async function main(): Promise<void> {
     loopTriggerManager.stop();
     memoryMaintenance.stop();
     tinyclawSubmitter.stop();
+    stopNewsWatcher();
     stopCollector();
     stopDashboard();
     if (connector) await connector.stop();

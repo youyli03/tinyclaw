@@ -128,9 +128,7 @@ if (enabledStores.length === 0) {
         return `错误：未知的 store "${store}"，可选：${storeNames.join(", ")}`;
       }
 
-      // 先处理待更新标记
-      await flushPendingUpdates(agentId);
-
+      // 直接搜索（索引已由 news-watcher 主动维护，无需懒触发）
       const result = await searchStore(store, query, agentId, limit);
       if (result === null) {
         return "向量记忆功能未启用（memory.enabled = false），无法搜索。";
