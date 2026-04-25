@@ -1396,22 +1396,28 @@ export async function runAgent(
     }
   }
 
-  // ── Code 模式：每轮结束后自动将本轮交互提炼到 NOTES.md ────────────────────
+  // ── Code 模式:每轮结束后自动将本轮交互提炼到 NOTES.md ────────────────────
   if (isCodeMode && !isSlave && (opts.slaveDepth ?? 0) === 0 && session.codeWorkdir) {
     const msgs = session.getMessages();
-    let lastUser: (typeof msgs)[number] | undefined;
-    let lastAssistant: (typeof msgs)[number] | undefined;
+    let lastUserIdx = -1;
+    let lastAssistantIdx = -1;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i]!;
-      if (!lastAssistant && m.role === "assistant") {
+      if (lastAssistantIdx < 0 && m.role === "assistant") {
         const calls = (m as { role: "assistant"; tool_calls?: unknown[] }).tool_calls;
-        if (!calls || calls.length === 0) lastAssistant = m;
+        if (!calls || calls.length === 0) lastAssistantIdx = i;
       }
-      if (!lastUser && m.role === "user") lastUser = m;
-      if (lastUser && lastAssistant) break;
+      if (lastUserIdx < 0 && m.role === "user") lastUserIdx = i;
+      if (lastUserIdx >= 0 && lastAssistantIdx >= 0) break;
     }
-    if (lastUser && lastAssistant) {
-      distillCodeTurnToNotes(lastUser, lastAssistant, session.agentId, session.codeWorkdir).catch((err) =>
+    if (lastUserIdx >= 0 && lastAssistantIdx >= 0) {
+      // 传入完整消息切片(含中间 tool_calls/tool 结果),让 summarizer 能看到真实文件路径
+      const turnMessages = msgs.slice(lastUserIdx, lastAssistantIdx + 1);
+      distillCodeTurnToNotes(
+        msgs[lastUserIdx]!, msgs[lastAssistantIdx]!,
+        session.agentId, session.codeWorkdir,
+        turnMessages,
+      ).catch((err) =>
         console.warn("[agent] code notes distill failed:", err instanceof Error ? err.message : err)
       );
     }

@@ -377,18 +377,27 @@ export async function distillCodeTurnToNotes(
   assistantMsg: ChatMessage,
   agentId: string,
   codeWorkdir: string,
+  /** 从 userMsg 到 assistantMsg 之间的完整工具调用链消息(含中间 assistant + tool 消息) */
+  turnMessages?: ChatMessage[],
 ): Promise<void> {
   const client = llmRegistry.get("summarizer");
 
-  const userText = formatMsgForSummary(userMsg);
-  const assistantText = formatMsgForSummary(assistantMsg);
-  if (!userText && !assistantText) return;
-
-  const turnText = [userText, assistantText].filter(Boolean).join("\n\n");
+  // 若传入完整消息链则展开(让 summarizer 看到真实文件路径),否则退化为只看首尾
+  let turnText: string;
+  if (turnMessages && turnMessages.length > 0) {
+    const parts = turnMessages.map(formatMsgForSummary).filter(Boolean);
+    turnText = parts.join("\n\n");
+  } else {
+    const userText = formatMsgForSummary(userMsg);
+    const assistantText = formatMsgForSummary(assistantMsg);
+    if (!userText && !assistantText) return;
+    turnText = [userText, assistantText].filter(Boolean).join("\n\n");
+  }
+  if (!turnText.trim()) return;
 
   const result = await client.chat([
     { role: "system", content: CODE_DISTILL_SYSTEM },
-    { role: "user", content: turnText.slice(0, 6000) },
+    { role: "user", content: turnText.slice(0, 10000) },
   ], { isUserInitiated: false });
 
   const notes = result.content.trim();
