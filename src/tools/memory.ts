@@ -294,12 +294,18 @@ registerTool({
     }
 
     const project = String(args["project"]).trim();
-    const notesPath = agentManager.codeProjectNotesPath(agentId, project);
-    if (!fs.existsSync(notesPath)) {
-      return `项目 "${project}" 暂无记忆（${notesPath} 不存在），可通过 code_note 创建。`;
+    const noteFiles = agentManager.codeProjectNotesList(agentId, project);
+    if (noteFiles.length === 0) {
+      return `项目 "${project}" 暂无记忆,可通过 code_note 创建。`;
     }
-    const content = fs.readFileSync(notesPath, "utf-8").trim();
-    return content || `项目 "${project}" 的 NOTES.md 为空。`;
+    const recent = noteFiles.slice(-3);
+    const parts: string[] = [];
+    for (const f of recent) {
+      const month = f.split("/").pop()!.replace(".md", "");
+      parts.push(`# ${month}\n${fs.readFileSync(f, "utf-8").trim()}`);
+    }
+    const combined = parts.join("\n\n---\n\n").slice(0, 8000);
+    return combined || `项目 "${project}" 的记忆为空。`;
   },
 });
 
@@ -349,14 +355,14 @@ registerTool({
     fs.mkdirSync(path.dirname(notesPath), { recursive: true });
 
     if (mode === "overwrite") {
-      fs.writeFileSync(notesPath, content + "\n", "utf-8");
-      return `已覆写项目 "${project}" 的 NOTES.md（${content.length} 字节）`;
+      const ts0 = new Date().toISOString().slice(0, 10);
+      fs.writeFileSync(notesPath, `<!-- overwrite ${ts0} -->\n${content}\n`, "utf-8");
+      return `已覆写项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
     }
-    // append：加时间戳行
     const ts = new Date().toISOString().slice(0, 10);
-    const entry = `\n<!-- ${ts} -->\n${content}\n`;
+    const entry = `\n### ${ts}\n${content}\n`;
     fs.appendFileSync(notesPath, entry, "utf-8");
-    return `已追加到项目 "${project}" 的 NOTES.md（${content.length} 字节）：${notesPath}`;
+    return `已追加到项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
   },
 });
 

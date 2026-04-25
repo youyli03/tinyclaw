@@ -182,7 +182,7 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
       [MEMORY_COLLECTION]: { path: agentMemDir, pattern: "**/*.md" },
       [ACTIVE_COLLECTION]: { path: path.dirname(agentManager.activePath(agentId)), pattern: "ACTIVE.md" },
       [CARDS_COLLECTION]: { path: agentManager.cardsDir(agentId), pattern: "**/*.md" },
-      [CODE_NOTES_COLLECTION]: { path: codeProjectsDir, pattern: "**/NOTES.md" },
+      [CODE_NOTES_COLLECTION]: { path: codeProjectsDir, pattern: "**/*.md" },
     };
 
     const memStoresCfg = loadMemStoresConfig();

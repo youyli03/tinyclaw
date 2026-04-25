@@ -347,9 +347,22 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, agentId, "code", "projects");
   }
 
-  /** 指定项目的 NOTES.md 路径 */
-  codeProjectNotesPath(agentId: string, project: string): string {
-    return path.join(this.codeProjectsDir(agentId), project, "NOTES.md");
+  /** 指定项目当月的记忆文件路径（格式：<project>/<YYYY-MM>.md） */
+  codeProjectNotesPath(agentId: string, project: string, date?: Date): string {
+    const d = date ?? new Date();
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    return path.join(this.codeProjectsDir(agentId), project, `${month}.md`);
+  }
+
+  /** 列出指定项目下所有月份记忆文件，按文件名排序（旧→新） */
+  codeProjectNotesList(agentId: string, project: string): string[] {
+    const dir = path.join(this.codeProjectsDir(agentId), project);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((f) => /^\d{4}-\d{2}\.md$/.test(f))
+      .sort()
+      .map((f) => path.join(dir, f));
   }
 
   /** project-aliases.json 路径（hostname/IP → 项目 slug 映射） */
