@@ -178,27 +178,27 @@ function printEvent(sessionId: string, event: ActivityEvent, chunkState: { inChu
       break;
 
     case "tool_call": {
-      const argsDisplay = event.argsSummary.length > 160
-        ? event.argsSummary.slice(0, 160) + "…"
-        : event.argsSummary;
+      // 格式化参数 JSON 为紧凑多字段摘要
+      const argsDisplay = formatArgs(event.argsSummary, 200);
       const bar = brightYellow("▶");
       if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${bar} ${bold(brightYellow(event.name))}`);
-      if (argsDisplay.trim()) {
-        console.log(`   ${dim("args")} ${argsDisplay}`);
+      for (const line of argsDisplay) {
+        console.log(`   ${dim("·")} ${line}`);
       }
       break;
     }
 
     case "tool_result": {
-      const resultDisplay = event.resultSummary.length > 300
-        ? event.resultSummary.slice(0, 300) + "…"
+      const resultDisplay = event.resultSummary.length > 400
+        ? event.resultSummary.slice(0, 400) + "…"
         : event.resultSummary;
-      const oneLiner = resultDisplay.replace(/\n/g, " ↵ ").trim();
       const bar = brightGreen("◀");
       console.log(`${ts} ${bar} ${bold(brightGreen(event.name))}`);
-      if (oneLiner) {
-        console.log(`   ${dim("out")}  ${oneLiner}`);
+      // 结果可能是多行，直接缩进输出前 5 行
+      const lines = resultDisplay.split("\n").slice(0, 5);
+      for (const l of lines) {
+        if (l.trim()) console.log(`   ${dim("·")} ${l}`);
       }
       break;
     }
@@ -220,4 +220,36 @@ const brightYellow = (s: string) => `\x1b[93m${s}\x1b[0m`;
 const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
 const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
 const brightRed    = (s: string) => `\x1b[91m${s}\x1b[0m`;
+
+/**
+ * 将 JSON 参数字符串转为可读多行摘要。
+ * 每个顶级字段单独一行，长字符串截断，嵌套对象折叠。
+ */
+function formatArgs(raw: string, maxLen: number): string[] {
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch {
+    // 不是合法 JSON，直接截断返回
+    return [raw.length > maxLen ? raw.slice(0, maxLen) + "…" : raw];
+  }
+
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(parsed)) {
+    let valStr: string;
+    if (typeof v === "string") {
+      // 字符串：保留换行前缀，截断超长部分
+      const firstLine = v.split("\n")[0] ?? v;
+      const hasMore = v.includes("\n");
+      valStr = firstLine.length > 120 ? firstLine.slice(0, 120) + "…" : firstLine;
+      if (hasMore) valStr += dim(" [↵…]");
+    } else if (v === null || typeof v !== "object") {
+      valStr = String(v);
+    } else {
+      // 对象/数组：紧凑 JSON，超长截断
+      const compact = JSON.stringify(v);
+      valStr = compact.length > 120 ? compact.slice(0, 120) + "…" : compact;
+    }
+    lines.push(`${dim(k + ":")} ${valStr}`);
+  }
+  return lines.length ? lines : [raw.slice(0, maxLen)];
+}
 
