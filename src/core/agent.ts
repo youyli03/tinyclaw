@@ -901,13 +901,10 @@ export async function runAgent(
     Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
     // 非 copilot provider:写真实 token 用量到 dashboard DB
     try {
+      // 从实际使用的 client.model 取 provider(而非 config 里配置的 backend model)
+      // 这样 cron/overrideClient 场景下也能正确识别 deepseek/openrouter 等非 copilot 模型
       const _usageProvider = (() => {
-        try {
-          const backends = loadConfig().llm.backends;
-          const backendKey = isCodeMode ? "code" : "daily";
-          const model = (backends as Record<string, { model?: string }>)[backendKey]?.model ?? "";
-          return model.split("/")[0];
-        } catch { return ""; }
+        try { return client.model?.split("/")[0] ?? ""; } catch { return ""; }
       })();
       if (_usageProvider && _usageProvider !== "copilot" && lastUsage.completionTokens > 0) {
         const LLM_CAT = "llm", LLM_KEY = "output_tokens";

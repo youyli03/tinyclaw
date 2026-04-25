@@ -94,7 +94,10 @@ if (enabledStores.length === 0) {
           `在本地知识库（MemStore）中做语义向量搜索。\n\n` +
           `**可用的知识库：**\n${storeTitles}\n\n` +
           `适用场景：查询历史新闻、笔记、文档等本地存档内容。` +
-          `首次调用前若有新数据写入，会自动触发增量索引更新。`,
+          `首次调用前若有新数据写入，会自动触发增量索引更新。\n\n` +
+          `⚠️ 此工具只能搜索**已存档**的历史内容。若需**抓取最新新闻**,` +
+          `请先用 \`mcp_list_servers\` 查看 news server,再用 \`mcp_enable_server\` 启用,` +
+          `然后调用 \`mcp_news_fetch_and_store\` 抓取最新内容。`,
         parameters: {
           type: "object",
           properties: {
