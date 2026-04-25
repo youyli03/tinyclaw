@@ -217,7 +217,7 @@ function printEvent(
       if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
       console.log(`${ts} ${brightYellow("▶")} ${bold(brightYellow(event.name))}`);
       for (const line of argsLines) {
-        console.log(`   ${dim("·")} ${line}`);
+        console.log(`   ${brightBlue("·")} ${line}`);
       }
       break;
     }
@@ -229,7 +229,7 @@ function printEvent(
       console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
       const lines = resultDisplay.split("\n").slice(0, 8);
       for (const l of lines) {
-        if (l.trim()) console.log(`   ${dim("·")} ${l}`);
+        if (l.trim()) console.log(`   ${brightWhite("·")} ${l}`);
       }
       break;
     }
@@ -252,6 +252,8 @@ const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
 const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
 const brightRed     = (s: string) => `\x1b[91m${s}\x1b[0m`;
 const brightMagenta = (s: string) => `\x1b[95m${s}\x1b[0m`;
+const brightBlue    = (s: string) => `\x1b[94m${s}\x1b[0m`;
+const brightWhite   = (s: string) => `\x1b[97m${s}\x1b[0m`;
 
 /**
  * 将 JSON 参数字符串转为可读多行摘要。
