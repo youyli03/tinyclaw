@@ -103,8 +103,11 @@ export async function run(_args: string[]): Promise<void> {
 
   // ── Channels ─────────────────────────────────────────────────────────────────
   console.log(`\n${bold("Channels")}`);
-  if (cfg.channels.qqbot) {
-    console.log(`  QQBot：${green("已配置")}  ${dim(`appId: ${cfg.channels.qqbot.appId}`)}`);
+  const qqbotsEntries = Object.entries(cfg.channels.qqbots ?? {});
+  if (qqbotsEntries.length > 0) {
+    for (const [id, bot] of qqbotsEntries) {
+      console.log(`  QQBot[${id}]：${green("已配置")}  ${dim(`appId: ${bot.appId}`)}`);
+    }
   } else {
     console.log(`  QQBot：${yellow("未配置")}`);
   }

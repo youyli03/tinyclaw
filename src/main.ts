@@ -131,12 +131,17 @@ async function main(): Promise<void> {
   void skillWatcher.start(agentManager.listAgentIds());
 
   // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
-  let connector: QQBotConnector | null = null;
+  const qqbotsMap = cfg.channels.qqbots ?? {};
+  const connectors: QQBotConnector[] = [];
+  for (const [botId, botCfg] of Object.entries(qqbotsMap)) {
+    const c = new QQBotConnector(botId, botCfg);
+    connectors.push(c);
+  }
 
-  if (cfg.channels.qqbot) {
-    connector = new QQBotConnector();
+  // connector 指向第一个（主）bot，供单 connector 场景（IPC、cron、restart_tool 等）使用
+  const connector: QQBotConnector | null = connectors[0] ?? null;
+  if (connector) {
     _activeConnector = connector;
-    // 注册 connector 到自动提交调度器（通知目标从 config.submitter.notify 读取）
     tinyclawSubmitter.setConnector(connector);
   } else {
     console.log("[tinyclaw] QQBot not configured, running in IPC-only mode");
@@ -145,9 +150,11 @@ async function main(): Promise<void> {
 
   // ── QQBot 消息处理 ──────────────────────────────────────────────────────
 
-  async function handleMessage(msg: InboundMessage): Promise<string> {
-    // connector 在此函数被注册前已检查非 null，此 guard 仅用于 TS 类型收窄
-    if (!connector) return "";
+  // 为每个 bot 构建独立的消息处理闭包
+  function makeHandleMessage(activeConnector: QQBotConnector): (msg: InboundMessage) => Promise<string> {
+    return async function handleMessage(msg: InboundMessage): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-shadow
+    const connector = activeConnector;
     const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
     const session = getSession(sessionId);
 
@@ -680,12 +687,13 @@ async function main(): Promise<void> {
 
     // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
     return "";
+    };
   }
 
   // ── 注册处理器并启动 ───────────────────────────────────────────────────
 
-  if (connector) {
-    connector.onMessage(handleMessage);
+  for (const c of connectors) {
+    c.onMessage(makeHandleMessage(c));
   }
 
   // 4. 启动 IPC server（供 CLI chat 命令通过 Unix socket 接入）
@@ -937,7 +945,12 @@ async function main(): Promise<void> {
       }
     }
 
-    await connector.start(); // 阻塞直到 abort
+    // 额外 bot 非阻塞启动（start 内部走 WebSocket，自动重连）
+    for (const c of connectors.slice(1)) {
+      void c.start().catch((err: unknown) => console.error("[qqbot] extra bot start error:", err));
+    }
+    // 主 bot 阻塞直到 abort
+    await connector.start();
   } else {
     // IPC-only 模式：无限等待信号
     console.log("[tinyclaw] Running in IPC-only mode (no QQBot). Send SIGTERM to stop.");

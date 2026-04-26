@@ -224,7 +224,7 @@ const QQBotSchema = z.object({
 });
 
 const ChannelsSchema = z.object({
-  qqbot: QQBotSchema.optional(),
+  qqbots: z.record(z.string(), QQBotSchema).default({}),
 });
 
 // ── 向量记忆 ─────────────────────────────────────────────────────────────────

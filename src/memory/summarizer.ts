@@ -290,10 +290,23 @@ export async function summarizeAndCompressCode(
     }
 
     // 已完成轮次工具链剥离：
-    // 对 toKeep 中每个已完成的用户轮次（存在最终 assistant 无 tool_calls），
-    // 只保留 user + final_assistant，丢弃中间所有 tool_calls/tool 结果消息。
-    // 未完成轮次（当前仍在工具调用链中）原样保留，保证 API tool_call_id 引用完整。
-    toKeep = stripCompletedToolCalls(toKeep as ChatMessage[]) as typeof toKeep;
+    // 只对旧轮次（除最后一个 user 轮次）做 strip；最后一个 user 轮次无论是否完成都完整保留，
+    // 保证 AI 能看到最近的工具调用上下文（含中断情况下未完成的工具链）。
+    {
+      // 找最后一个 user 消息的起始位置
+      let lastUserStart = -1;
+      for (let k = toKeep.length - 1; k >= 0; k--) {
+        if (toKeep[k]!.role === "user") { lastUserStart = k; break; }
+      }
+      if (lastUserStart <= 0) {
+        // 只有一个（或零个）user 轮次，直接保留全部，不做 strip
+      } else {
+        const olderTurns = toKeep.slice(0, lastUserStart);
+        const lastTurn = toKeep.slice(lastUserStart);
+        const strippedOlder = stripCompletedToolCalls(olderTurns as ChatMessage[]) as typeof toKeep;
+        toKeep = [...strippedOlder, ...lastTurn];
+      }
+    }
 
     if (toSummarize.length === 0) {
       const stripped = [...systemMessages, ...toKeep];
@@ -304,7 +317,44 @@ export async function summarizeAndCompressCode(
         console.log(`[summarizeAndCompressCode] strip-only 无效果，尝试紧急压缩（keepTurns ${keepTurns} → ${keepTurns - 1}）`);
         continue;
       }
-      // keepTurns 已降至 1 仍无可压缩内容：真正无法进一步压缩
+      // keepTurns 已降至 1 仍无可压缩内容:强制从前往后截断 tool 结果，目标 40% 原始体积
+      {
+        const estimateCharsForce = (msgs: ChatMessage[]): number =>
+          msgs.reduce((sum, m) => {
+            const c = m.content;
+            if (typeof c === "string") return sum + c.length;
+            if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+            return sum;
+          }, 0);
+        const originalTotalChars = estimateCharsForce(messages);
+        const target = Math.floor(originalTotalChars * 0.40);
+        const systemChars = estimateCharsForce(systemMessages);
+        const targetKeepChars = Math.max(target - systemChars, 200);
+        const allNonSys: ChatMessage[] = [...toKeep];
+        const beforeChars = estimateCharsForce(allNonSys);
+        if (beforeChars > targetKeepChars) {
+          let overBudget = beforeChars - targetKeepChars;
+          const MIN_TOOL_RESULT = 80;
+          for (let ti = 0; ti < allNonSys.length && overBudget > 0; ti++) {
+            const m = allNonSys[ti]!;
+            if (m.role === "tool" && typeof m.content === "string") {
+              const orig = m.content;
+              const canTrim = Math.max(0, orig.length - MIN_TOOL_RESULT);
+              if (canTrim > 0) {
+                const trimAmt = Math.min(canTrim, overBudget);
+                allNonSys[ti] = { ...m, content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已强制截断]" };
+                overBudget -= trimAmt;
+              }
+            }
+          }
+          const afterChars = estimateCharsForce(allNonSys);
+          if (afterChars < beforeChars) {
+            console.log(`[summarizeAndCompressCode] 强制截断单轮超大上下文: ${beforeChars} → ${afterChars} chars (target ${targetKeepChars})`);
+            return [...systemMessages, ...allNonSys];
+          }
+        }
+      }
+      // 真正无法压缩（无 tool 结果可截断）
       return messages;
     }
 
@@ -329,14 +379,59 @@ export async function summarizeAndCompressCode(
       { role: "user", content: historyText },
     ], { isUserInitiated: false });
 
-    // 组装压缩后的消息：system + 摘要 + 最近 keepTurns 轮原始消息
+    // 组装压缩后的消息:system + 摘要 + 最近 keepTurns 轮原始消息
+    let compressedKeep: ChatMessage[] = [...toKeep];
+
+    // 第二阶段:若 LLM 摘要 + toKeep 之和仍超过原始的 40%,
+    // 找最后一个 user 轮次，只截断该轮次里的 role=tool 消息（从最老到最新），直到达到目标大小。
+    {
+      const estimateChars2 = (msgs: ChatMessage[]): number =>
+        msgs.reduce((sum, m) => {
+          const c = m.content;
+          if (typeof c === "string") return sum + c.length;
+          if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+          return sum;
+        }, 0);
+
+      const originalTotalChars = estimateChars2(messages);
+      const target = Math.floor(originalTotalChars * 0.40);
+      const systemChars = estimateChars2(systemMessages);
+      const summaryChars = result.content.length + 20;
+      const targetKeepChars = Math.max(target - systemChars - summaryChars, 200);
+
+      const currentKeepChars = estimateChars2(compressedKeep);
+      if (currentKeepChars > targetKeepChars) {
+        // 找最后一个 user 轮次的起始位置，只截断该轮次里的 tool 消息
+        let lastUserStart = -1;
+        for (let k = compressedKeep.length - 1; k >= 0; k--) {
+          if (compressedKeep[k]!.role === "user") { lastUserStart = k; break; }
+        }
+        const truncateFrom = lastUserStart >= 0 ? lastUserStart : 0;
+        let overBudget = currentKeepChars - targetKeepChars;
+        const MIN_TOOL_RESULT = 80;
+        for (let ti = truncateFrom; ti < compressedKeep.length && overBudget > 0; ti++) {
+          const m = compressedKeep[ti]!;
+          if (m.role === "tool" && typeof m.content === "string") {
+            const orig = m.content;
+            const canTrim = Math.max(0, orig.length - MIN_TOOL_RESULT);
+            if (canTrim > 0) {
+              const trimAmt = Math.min(canTrim, overBudget);
+              compressedKeep[ti] = { ...m, content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已截断]" };
+              overBudget -= trimAmt;
+            }
+          }
+        }
+        console.log(`[summarizeAndCompressCode] 二阶段截断(最后一轮 tool 消息): ${currentKeepChars} → ${estimateChars2(compressedKeep)} chars (target ${targetKeepChars})`);
+      }
+    }
+
     const compressed: ChatMessage[] = [
       ...systemMessages,
       {
         role: "assistant",
         content: `[编码会话历史摘要]\n${result.content}`,
       },
-      ...toKeep,
+      ...compressedKeep,
     ];
 
     return compressed;

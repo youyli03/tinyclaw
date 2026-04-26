@@ -544,7 +544,16 @@ export class Session {
   async compressForCode(): Promise<boolean> {
     const compressed = await summarizeAndCompressCode(this.messages);
     // 如果返回原始消息（无足够旧内容可压缩），跳过更新
-    if (compressed === this.messages || compressed.length >= this.messages.length) {
+    const estimateChars = (msgs: typeof this.messages): number =>
+      msgs.reduce((sum, m) => {
+        const c = m.content;
+        if (typeof c === "string") return sum + c.length;
+        if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs: number, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+        return sum;
+      }, 0);
+    const originalChars = estimateChars(this.messages);
+    const compressedChars = estimateChars(compressed);
+    if (compressed === this.messages || (compressed.length >= this.messages.length && compressedChars >= originalChars * 0.95)) {
       return false;
     }
     this.messages = compressed;

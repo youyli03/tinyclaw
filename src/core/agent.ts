@@ -12,7 +12,7 @@ import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
-import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey, queryMetrics } from "../web/backend/db.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { agentManager } from "./agent-manager.js";
@@ -921,12 +921,13 @@ export async function runAgent(
           console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`);
           const compressed = await session.compressForCode();
           if (compressed) {
-            console.log(`${logPrefix} ✅ 压缩完成，消息数：${session.getMessages().length}`);
-            void opts.onNotify?.("⚠️ 上下文已接近上限，已自动压缩历史记录以继续执行。");
+            const msgCount = session.getMessages().length;
+            console.log(`${logPrefix} ✅ 压缩完成,消息数:${msgCount}`);
+            void opts.onNotify?.(`⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，已自动压缩/截断历史工具结果以继续执行（当前消息数:${msgCount}）。`);
           } else {
-            console.log(`${logPrefix} ⚠️ 压缩无效果（轮次不足或已最小化），上下文可能继续增长`);
-          }
-        } else if (usageRatio >= 0.75) {
+            console.log(`${logPrefix} ⚠️ 压缩无效果(轮次不足或已最小化),上下文可能继续增长`);
+            void opts.onNotify?.(`⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，压缩无效果，请考虑开启新会话。`);
+          }        } else if (usageRatio >= 0.75) {
           console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
           await session.compressForCode();
         }
@@ -1338,6 +1339,13 @@ export async function runAgent(
     }
   }
 
+  // Code 模式：无论是否被用户中断，run 结束时都尝试压缩，防止下次运行时 context 超限
+  if (isCodeMode && !isSlave) {
+    await session.compressForCode().catch((e) =>
+      console.warn("[agent] post-run code compress failed:", e instanceof Error ? e.message : e)
+    );
+  }
+
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily");
   const fmtK = (n: number) => n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n);
@@ -1423,15 +1431,16 @@ export async function runAgent(
     }
   }
 
-  // 写本次 runAgent 汇总 output_tokens 到 dashboard DB
+  // 写本次 runAgent 汇总 output_tokens 到 dashboard DB（仅非 copilot 模型）
   try {
-    const _usageProvider = (() => {
-      try { return client.model?.split("/")[0] ?? ""; } catch { return ""; }
-    })();
-    if (_usageProvider && _usageProvider !== "copilot" && totalCompletionTokens > 0) {
+    const _isNotCopilot = !('isCopilot' in client) || !client.isCopilot;
+    if (_isNotCopilot && totalCompletionTokens > 0) {
       const LLM_CAT = "llm", LLM_KEY = "output_tokens";
-      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 用量");
-      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: totalCompletionTokens, note: client.model });
+      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 累计用量");
+      // 取上次累计值，累加本次消耗
+      const prevRows = queryMetrics({ category: LLM_CAT, key: LLM_KEY, days: 36500 }); // 取全量最后一条
+      const prevTotal = prevRows.length > 0 ? (prevRows[prevRows.length - 1]!.value ?? 0) : 0;
+      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: prevTotal + totalCompletionTokens, note: client.model });
     }
   } catch { /* 写 db 失败不影响主流程 */ }
 

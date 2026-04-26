@@ -709,6 +709,11 @@ export class LLMClient {
     return this.backend.model;
   }
 
+
+  /** 是否为 GitHub Copilot provider（按次计费，不计 token 用量） */
+  get isCopilot(): boolean {
+    return this.backend.isCopilotProvider === true;
+  }
   /** 该模型是否支持 OpenAI function calling（tool_calls） */
   get supportsToolCalls(): boolean {
     return this.backend.supportsToolCalls ?? true;
