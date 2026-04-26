@@ -206,13 +206,13 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
         // eslint-disable-next-line no-constant-condition
         while (true) {
           try {
-            await doSend(token, type, peerId, chunk, replyToId);
+            await doSend(token, appId, type, peerId, chunk, replyToId);
             break;
           } catch (err) {
             if (isTokenError(err)) {
-              clearTokenCache();
+              clearTokenCache(appId);
               token = await getAccessToken(appId, clientSecret);
-              await doSend(token, type, peerId, chunk, replyToId);
+              await doSend(token, appId, type, peerId, chunk, replyToId);
               break;
             } else if (isTimeoutError(err)) {
               console.warn(`[qqbot] 发送超时，${backoffMs / 1000}s 后重试...`);
@@ -249,7 +249,7 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
           break;
         } catch (err) {
           if (isTokenError(err)) {
-            clearTokenCache();
+            clearTokenCache(appId);
             token = await getAccessToken(appId, clientSecret);
             await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
             break;
@@ -263,7 +263,7 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
             const fallbackText = extractTextContent(text);
             if (fallbackText) {
               try {
-                await doSend(token, type, peerId, fallbackText, replyToId);
+                await doSend(token, appId, type, peerId, fallbackText, replyToId);
               } catch (fallbackErr) {
                 console.error("[qqbot] 媒体降级发文本也失败:", fallbackErr);
               }
@@ -357,6 +357,7 @@ async function doSendMedia(
 
 async function doSend(
   token: string,
+  appId: string,
   type: InboundMessage["type"],
   peerId: string,
   content: string,
@@ -366,25 +367,25 @@ async function doSend(
     if (replyToId) {
       const { allowed } = checkLimit(replyToId);
       if (allowed) {
-        await sendC2CMessage(token, peerId, content, replyToId);
+        await sendC2CMessage(token, appId, peerId, content, replyToId);
       } else {
-        await sendProactiveC2CMessage(token, peerId, content);
+        await sendProactiveC2CMessage(token, appId, peerId, content);
       }
     } else {
-      await sendProactiveC2CMessage(token, peerId, content);
+      await sendProactiveC2CMessage(token, appId, peerId, content);
     }
   } else if (type === "group") {
     if (replyToId) {
       const { allowed } = checkLimit(replyToId);
       if (allowed) {
-        await sendGroupMessage(token, peerId, content, replyToId);
+        await sendGroupMessage(token, appId, peerId, content, replyToId);
       } else {
-        await sendProactiveGroupMessage(token, peerId, content);
+        await sendProactiveGroupMessage(token, appId, peerId, content);
       }
     } else {
-      await sendProactiveGroupMessage(token, peerId, content);
+      await sendProactiveGroupMessage(token, appId, peerId, content);
     }
   } else if (type === "guild") {
-    await sendChannelMessage(token, peerId, content, replyToId);
+    await sendChannelMessage(token, appId, peerId, content, replyToId);
   }
 }

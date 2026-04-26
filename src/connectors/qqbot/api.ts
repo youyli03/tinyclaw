@@ -8,13 +8,13 @@ import { withCA } from "../../utils/tls.js";
 const API_BASE = "https://api.sgroup.qq.com";
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 
-let cachedToken: { token: string; expiresAt: number; appId: string } | null = null;
-let tokenFetchPromise: Promise<string> | null = null;
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+const tokenFetchPromises = new Map<string, Promise<string>>();
 
-let markdownSupport = true;
+const markdownSupportMap = new Map<string, boolean>();
 
-export function initMarkdownSupport(enabled: boolean): void {
-  markdownSupport = enabled;
+export function initMarkdownSupport(appId: string, enabled: boolean): void {
+  markdownSupportMap.set(appId, enabled);
 }
 
 /** 每个 msg_id 对应的下一个 msg_seq 值（从 1 开始递增），用于避免去重错误 */
@@ -28,36 +28,36 @@ function nextMsgSeq(msgId: string): number {
 
 function buildBody(
   content: string,
-  extras?: Record<string, unknown>
+  extras?: Record<string, unknown>,
+  appId?: string
 ): Record<string, unknown> {
-  const base = markdownSupport
+  const mdSupport = appId !== undefined ? (markdownSupportMap.get(appId) ?? true) : true;
+  const base = mdSupport
     ? { markdown: { content }, msg_type: 2 }
     : { content, msg_type: 0 };
   return extras ? { ...base, ...extras } : base;
 }
 
-export function clearTokenCache(): void {
-  cachedToken = null;
-  tokenFetchPromise = null;
+export function clearTokenCache(appId?: string): void {
+  if (appId) {
+    tokenCache.delete(appId);
+    tokenFetchPromises.delete(appId);
+  } else {
+    tokenCache.clear();
+    tokenFetchPromises.clear();
+  }
 }
 
 export async function getAccessToken(appId: string, clientSecret: string): Promise<string> {
-  if (
-    cachedToken &&
-    Date.now() < cachedToken.expiresAt - 5 * 60 * 1000 &&
-    cachedToken.appId === appId
-  ) {
-    return cachedToken.token;
+  const cached = tokenCache.get(appId);
+  if (cached && Date.now() < cached.expiresAt - 5 * 60 * 1000) {
+    return cached.token;
   }
 
-  if (cachedToken && cachedToken.appId !== appId) {
-    cachedToken = null;
-    tokenFetchPromise = null;
-  }
+  const inflight = tokenFetchPromises.get(appId);
+  if (inflight) return inflight;
 
-  if (tokenFetchPromise) return tokenFetchPromise;
-
-  tokenFetchPromise = (async () => {
+  const fetchPromise = (async () => {
     const resp = await fetch(TOKEN_URL, withCA({
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -66,16 +66,16 @@ export async function getAccessToken(appId: string, clientSecret: string): Promi
     }));
     if (!resp.ok) throw new Error(`Token fetch failed: ${resp.status}`);
     const data = await resp.json() as { access_token: string; expires_in: number };
-    cachedToken = {
+    tokenCache.set(appId, {
       token: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
-      appId,
-    };
-    tokenFetchPromise = null;
-    return cachedToken.token;
+    });
+    tokenFetchPromises.delete(appId);
+    return data.access_token;
   })();
 
-  return tokenFetchPromise;
+  tokenFetchPromises.set(appId, fetchPromise);
+  return fetchPromise;
 }
 
 export async function getGatewayUrl(token: string): Promise<string> {
@@ -110,28 +110,31 @@ async function post(path: string, token: string, body: unknown): Promise<unknown
 /** C2C（私聊）被动回复 */
 export async function sendC2CMessage(
   token: string,
+  appId: string,
   userOpenid: string,
   content: string,
   msgId: string
 ): Promise<void> {
   const msg_seq = nextMsgSeq(msgId);
-  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }));
+  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }, appId));
 }
 
 /** 群消息被动回复 */
 export async function sendGroupMessage(
   token: string,
+  appId: string,
   groupOpenid: string,
   content: string,
   msgId: string
 ): Promise<void> {
   const msg_seq = nextMsgSeq(msgId);
-  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }));
+  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }, appId));
 }
 
 /** 频道消息回复 */
 export async function sendChannelMessage(
   token: string,
+  appId: string,
   channelId: string,
   content: string,
   msgId?: string
@@ -145,23 +148,25 @@ export async function sendChannelMessage(
 /** C2C 主动消息（不依赖 msgId，需申请权限） */
 export async function sendProactiveC2CMessage(
   token: string,
+  appId: string,
   userOpenid: string,
   content: string,
   eventId?: string
 ): Promise<void> {
   await post(`/v2/users/${userOpenid}/messages`, token,
-    buildBody(content, eventId ? { event_id: eventId } : undefined));
+    buildBody(content, eventId ? { event_id: eventId } : undefined, appId));
 }
 
 /** 群主动消息（不依赖 msgId，需申请权限） */
 export async function sendProactiveGroupMessage(
   token: string,
+  appId: string,
   groupOpenid: string,
   content: string,
   eventId?: string
 ): Promise<void> {
   await post(`/v2/groups/${groupOpenid}/messages`, token,
-    buildBody(content, eventId ? { event_id: eventId } : undefined));
+    buildBody(content, eventId ? { event_id: eventId } : undefined, appId));
 }
 
 // ── 富媒体发送 ─────────────────────────────────────────────────────────────

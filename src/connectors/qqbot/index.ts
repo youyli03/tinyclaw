@@ -45,16 +45,13 @@ interface PendingInput {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-/** peerId → 待确认的 MFA 请求 */
-const pendingMFAMap = new Map<string, PendingMFA>();
-/** peerId → 等待用户原始输入(由后台 runtime 经 IPC 请求) */
-const pendingInputMap = new Map<string, PendingInput>();
-
 export class QQBotConnector implements Connector {
   private handler: ((msg: InboundMessage) => Promise<string>) | null = null;
   private abortController: AbortController | null = null;
   private readonly botId: string;
   private readonly botCfg: QQBotConfig;
+  private readonly pendingMFAMap = new Map<string, PendingMFA>();
+  private readonly pendingInputMap = new Map<string, PendingInput>();
 
   /** 连接就绪时调用(可在 connector.start() 前设置) */
   onReady?: () => void;
@@ -75,7 +72,7 @@ export class QQBotConnector implements Connector {
 
     const resolvedSecret = resolveSecret(this.botCfg.clientSecret);
 
-    initMarkdownSupport(this.botCfg.markdownSupport);
+    initMarkdownSupport(this.botCfg.appId, this.botCfg.markdownSupport);
     this.abortController = new AbortController();
 
     await startGateway({
@@ -86,10 +83,10 @@ export class QQBotConnector implements Connector {
         if (!this.handler) return "";
 
         // 如果此 peerId 有待预 MFA 确认,将消息内容视为验证回复
-        const pending = pendingMFAMap.get(msg.peerId);
+        const pending = this.pendingMFAMap.get(msg.peerId);
         if (pending) {
           const text = msg.content.trim();
-          pendingMFAMap.delete(msg.peerId);
+          this.pendingMFAMap.delete(msg.peerId);
           clearTimeout(pending.timer ?? undefined);
           if (pending.verifyCode) {
             // TOTP 模式:验证数字码
@@ -118,15 +115,15 @@ export class QQBotConnector implements Connector {
               return "✗ 已取消,操作未执行";
             }
             // 无法识别——提示重试
-            pendingMFAMap.set(msg.peerId, pending);
+            this.pendingMFAMap.set(msg.peerId, pending);
             return "请回复 **确认** 或 **取消**";
           }
         }
 
-        const pendingInput = pendingInputMap.get(msg.peerId);
+        const pendingInput = this.pendingInputMap.get(msg.peerId);
         if (pendingInput) {
           const text = msg.content.trim();
-          pendingInputMap.delete(msg.peerId);
+          this.pendingInputMap.delete(msg.peerId);
           clearTimeout(pendingInput.timer ?? undefined);
           pendingInput.resolve(text);
           void this.send(msg.peerId, msg.type, "已收到,处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
@@ -168,12 +165,12 @@ export class QQBotConnector implements Connector {
     return new Promise<string>((resolve, reject) => {
       const timer = timeoutMs > 0
         ? setTimeout(() => {
-            pendingInputMap.delete(peerId);
+            this.pendingInputMap.delete(peerId);
             reject(new MFAError("等待用户输入超时,操作已取消"));
             void this.send(peerId, type, "⏰ 等待输入超时,操作已自动取消").catch((e: unknown) => console.error("[qqbot] send error:", e));
           }, timeoutMs)
         : null;
-      pendingInputMap.set(peerId, { resolve, reject, timer });
+      this.pendingInputMap.set(peerId, { resolve, reject, timer });
       void this.send(peerId, type, prompt).catch((e: unknown) => console.error("[qqbot] send error:", e));
     });
   }
@@ -190,12 +187,12 @@ export class QQBotConnector implements Connector {
       // timeoutMs === 0 表示不超时,永久等待用户确认
       const timer = timeoutMs > 0
         ? setTimeout(() => {
-            pendingMFAMap.delete(peerId);
+            this.pendingMFAMap.delete(peerId);
             reject(new MFAError("MFA 确认超时,操作已取消"));
             void this.send(peerId, type, "⏰ MFA 超时,操作已自动取消").catch((e: unknown) => console.error("[qqbot] send error:", e));
           }, timeoutMs)
         : null;
-      pendingMFAMap.set(peerId, { resolve, reject, timer, ...(verifyCode ? { verifyCode } : {}) });
+      this.pendingMFAMap.set(peerId, { resolve, reject, timer, ...(verifyCode ? { verifyCode } : {}) });
       void this.send(peerId, type, warningMessage).catch((e: unknown) => console.error("[qqbot] send error:", e));
     });
   }

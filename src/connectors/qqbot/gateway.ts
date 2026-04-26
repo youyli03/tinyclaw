@@ -79,9 +79,13 @@ interface SessionState {
   appId: string;
 }
 
+function getSessionPath(appId: string): string {
+  return getDataFile("qqbot", `session-${appId}.json`);
+}
+
 function loadSession(appId: string): SessionState | null {
   try {
-    const p = getDataFile("qqbot", "session.json");
+    const p = getSessionPath(appId);
     const raw = fs.readFileSync(p, "utf-8");
     const s = JSON.parse(raw) as SessionState;
     if (s.appId !== appId) return null;
@@ -93,16 +97,15 @@ function loadSession(appId: string): SessionState | null {
 
 function saveSession(s: SessionState): void {
   try {
-    const p = getDataFile("qqbot", "session.json");
-    // 用 path.dirname 而非 realpathSync（目录不存在时 realpathSync 会抛异常）
+    const p = getSessionPath(s.appId);
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify(s, null, 2));
   } catch { /* non-critical */ }
 }
 
-function clearSession(): void {
+function clearSession(appId: string): void {
   try {
-    const p = getDataFile("qqbot", "session.json");
+    const p = getSessionPath(appId);
     fs.rmSync(p, { force: true });
   } catch { /* non-critical */ }
 }
@@ -213,7 +216,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       cleanup();
 
       if (shouldRefreshToken) {
-        clearTokenCache();
+        clearTokenCache(appId);
         shouldRefreshToken = false;
       }
 
@@ -346,7 +349,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               const canResume = d as boolean;
               log?.error(`[qqbot] Invalid session, can resume: ${canResume}`);
               if (!canResume) {
-                sessionId = null; lastSeq = null; clearSession();
+                sessionId = null; lastSeq = null; clearSession(appId);
                 if (intentLevelIndex < INTENT_LEVELS.length - 1) {
                   intentLevelIndex++;
                   log?.info(`[qqbot] Downgrading to: ${INTENT_LEVELS[intentLevelIndex]!.description}`);
@@ -372,7 +375,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
         if (code === 4004) { shouldRefreshToken = true; }
         if (code === 4006 || code === 4007 || code === 4009 || (code >= 4900 && code <= 4913)) {
-          sessionId = null; lastSeq = null; clearSession(); shouldRefreshToken = true;
+          sessionId = null; lastSeq = null; clearSession(appId); shouldRefreshToken = true;
         }
 
         const dur = Date.now() - lastConnectTime;
