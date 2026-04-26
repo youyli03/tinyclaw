@@ -159,6 +159,10 @@ class LLMRegistry {
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
       });
       this.clients.set(name, client);
+      // DeepSeek 等非 Copilot provider：手动读取 config 中的 maxContextWindow
+      if (role.maxContextWindow && role.maxContextWindow > 0) {
+        this.contextWindows.set(name, role.maxContextWindow);
+      }
       return client;
     }
     throw new Error(`未知 provider "${provider}"（来自模型 symbol "${role.model}"）`);
