@@ -1,10 +1,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath } from "./path-guard.js";
 import { loadConfig } from "../config/loader.js";
+
+const _require = createRequire(import.meta.url);
 
 function expandHome(p: string): string {
   if (p === "~" || p.startsWith("~/")) {
@@ -344,16 +347,14 @@ async function extractFileText(resolved: string): Promise<string> {
   const ext = path.extname(resolved).toLowerCase();
 
   if (ext === ".pdf") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
+    const pdfParse = _require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
     const buf = fs.readFileSync(resolved);
     const data = await pdfParse(buf);
     return data.text;
   }
 
   if (ext === ".docx") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mammoth = require("mammoth") as {
+    const mammoth = _require("mammoth") as {
       extractRawText: (opts: { path: string }) => Promise<{ value: string }>;
     };
     const result = await mammoth.extractRawText({ path: resolved });
@@ -361,8 +362,7 @@ async function extractFileText(resolved: string): Promise<string> {
   }
 
   if (ext === ".xlsx" || ext === ".xls") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const XLSX = require("xlsx") as typeof import("xlsx");
+    const XLSX = _require("xlsx") as typeof import("xlsx");
     const wb = XLSX.readFile(resolved);
     return wb.SheetNames
       .map((name) => {
