@@ -132,10 +132,12 @@ async function main(): Promise<void> {
 
   // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
   const qqbotsMap = cfg.channels.qqbots ?? {};
+  const connectorsMap = new Map<string, QQBotConnector>();
   const connectors: QQBotConnector[] = [];
   for (const [botId, botCfg] of Object.entries(qqbotsMap)) {
     const c = new QQBotConnector(botId, botCfg);
     connectors.push(c);
+    connectorsMap.set(botId, c);
   }
 
   // connector 指向第一个（主）bot，供单 connector 场景（IPC、cron、restart_tool 等）使用
@@ -787,7 +789,7 @@ async function main(): Promise<void> {
   loopTriggerManager.start({
     getSession,
     runAgent,
-    connector,
+    connectors: connectorsMap,
   });
 
   // 7. 启动内置每日记忆维护调度器

@@ -60,6 +60,11 @@ const TriggerConfigSchema = z.object({
   steps: z.array(ToolStepSchema).optional(),
   /** 注入 session 的 user message（steps 输出作为前缀拼在其前面） */
   message: z.string().optional(),
+  /**
+   * 推送消息使用的 bot id（对应 config.toml 中 [channels.qqbots.<botId>] 的键名）。
+   * 不填则使用第一个 connector（main bot）。
+   */
+  botId: z.string().optional(),
 });
 
 export type TriggerConfig = z.infer<typeof TriggerConfigSchema>;
@@ -95,7 +100,7 @@ export class LoopTriggerManager {
 
   private getSession: ((sessionId: string) => Session) | null = null;
   private runAgent: typeof RunAgentFn | null = null;
-  private connector: { send(peerId: string, type: string, content: string): Promise<void> } | null = null;
+  private connectors: Map<string, { send(peerId: string, type: string, content: string): Promise<void> }> = new Map();
   private loopsDir: string = path.join(os.homedir(), ".tinyclaw", "loops");
 
   /** 启动所有启用的触发器 */
@@ -103,11 +108,11 @@ export class LoopTriggerManager {
     loopsDir?: string;
     getSession: (sessionId: string) => Session;
     runAgent: typeof RunAgentFn;
-    connector: { send(peerId: string, type: string, content: string): Promise<void> } | null;
+    connectors: Map<string, { send(peerId: string, type: string, content: string): Promise<void> }>;
   }): void {
     this.getSession = opts.getSession;
     this.runAgent = opts.runAgent;
-    this.connector = opts.connector;
+    this.connectors = opts.connectors;
     if (opts.loopsDir) this.loopsDir = opts.loopsDir;
 
     this.stopped.clear();
@@ -296,7 +301,7 @@ export class LoopTriggerManager {
       }
 
       // 构建 notifyFn（从 bindTo 解析 peerId）
-      const notifyFn = this.buildNotifyFn(cfg.bindTo);
+      const notifyFn = this.buildNotifyFn(cfg.bindTo, cfg.botId);
 
       // allowExit=true 时：退出信号标志 + onLoopExit 回调
       let exitSignaled = false;
@@ -365,13 +370,15 @@ export class LoopTriggerManager {
     }
   }
 
-  private buildNotifyFn(bindTo: string): ((msg: string) => Promise<void>) | undefined {
-    if (!this.connector) return undefined;
+  private buildNotifyFn(bindTo: string, botId?: string): ((msg: string) => Promise<void>) | undefined {
+    if (this.connectors.size === 0) return undefined;
     // 解析 qqbot:c2c:<peerId> 或 qqbot:group:<peerId>
     const m = bindTo.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
     if (!m) return undefined;
     const [, type, peerId] = m;
-    const connector = this.connector;
+    // 按 botId 路由；找不到则 fallback 第一个 connector
+    const connector = (botId ? this.connectors.get(botId) : undefined) ?? [...this.connectors.values()][0];
+    if (!connector) return undefined;
     return async (msg: string) => {
       await connector.send(peerId!, type!, msg);
     };
