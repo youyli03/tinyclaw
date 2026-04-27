@@ -65,6 +65,13 @@ const TriggerConfigSchema = z.object({
    * 不填则使用第一个 connector（main bot）。
    */
   botId: z.string().optional(),
+  /**
+   * 推送策略:
+   * - "always": 每次 tick 结束后将 LLM 完整回复推送给用户
+   * - "llm":    由 LLM 决定——输出含 [NOTIFY]...[/NOTIFY] 块时推送，其余静默
+   * - "never":  不主动推送(依赖 notify_user / send_report 工具，默认)
+   */
+  notify: z.enum(["always", "llm", "never"]).default("never"),
 });
 
 export type TriggerConfig = z.infer<typeof TriggerConfigSchema>;
@@ -87,6 +94,18 @@ function currentTimeRangeIndex(cfg: TriggerConfig): number {
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** 提取 [NOTIFY]...[/NOTIFY] 块内容 */
+function extractNotifyBlocks(text: string): string[] {
+  const results: string[] = [];
+  const re = /\[NOTIFY\]([\s\S]*?)\[\/NOTIFY\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const c = m[1]!.trim();
+    if (c) results.push(c);
+  }
+  return results;
 }
 
 // ── LoopTriggerManager ─────────────────────────────────────────────────────
@@ -349,13 +368,25 @@ export class LoopTriggerManager {
       ] as import("openai/resources/chat/completions").ChatCompletionTool[] | undefined;
       const customToolsFinal = customTools?.length ? customTools : undefined;
 
-      await this.runAgent(session, content, {
+      const { content: finalContent } = await this.runAgent(session, content, {
         skipAddUserMessage: true,
         skipMemorySearch: true,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onLoopExit ? { onLoopExit } : {}),
         ...(customToolsFinal ? { customTools: customToolsFinal } : {}),
       });
+
+      // ── 根据 notify 策略推送 LLM 最终回复 ──────────────────────────────
+      if (notifyFn && finalContent.trim()) {
+        if (cfg.notify === "always") {
+          await notifyFn(finalContent.trim());
+        } else if (cfg.notify === "llm") {
+          const blocks = extractNotifyBlocks(finalContent);
+          for (const block of blocks) {
+            await notifyFn(block);
+          }
+        }
+      }
 
       if (exitSignaled) {
         console.log(`[loop-trigger] id=${cfg.id} AI 调用了 loop_exit，本窗口任务完成`);
