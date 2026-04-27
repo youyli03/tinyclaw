@@ -349,7 +349,14 @@ export class LoopTriggerManager {
       const exitHint = cfg.allowExit
         ? "\n\n---\n你可以调用 loop_exit 工具退出本次监控窗口。退出条件见上面的任务描述。"
         : "";
-      const content = prefix + message + exitHint;
+      // notify=llm/always 时注入格式说明
+      const notifyHint =
+        cfg.notify === "llm"
+          ? "\n\n---\n如需将内容推送给用户，请用 [NOTIFY]...[/NOTIFY] 块包裹。不需要推送时直接回复，不要加该标签。"
+          : cfg.notify === "always"
+            ? "\n\n---\n你的回复将直接推送给用户，请保持简洁。"
+            : "";
+      const content = prefix + message + exitHint + notifyHint;
       if (!content.trim()) {
         console.warn(`[loop-trigger] id=${cfg.id} 合并后内容为空，跳过`);
         return false;
