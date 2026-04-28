@@ -15,6 +15,7 @@ import { registerTool, type ToolContext } from "./registry.js";
 import { Session } from "../core/session.js";
 import { skillRegistry, type SkillEntry } from "../skills/registry.js";
 import { slaveManager } from "../core/slave-manager.js";
+import { broadcastActivity } from "../ipc/server.js";
 
 // ── 兼容旧调用方的 re-export ─────────────────────────────────────────────
 
@@ -128,7 +129,15 @@ registerTool({
     let result: string;
     try {
       const runResult = await Promise.race([
-        ctx.slaveRunFn(slaveSession, task, { systemPromptSuffix }),
+        ctx.slaveRunFn(slaveSession, task, {
+          systemPromptSuffix,
+          onToolCall: (name: string, args: Record<string, unknown>) => {
+            broadcastActivity(slaveSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+          },
+          onToolResult: (name: string, res: string) => {
+            broadcastActivity(slaveSession.sessionId, { kind: "tool_result", name, resultSummary: res.slice(0, 300) });
+          },
+        }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("skill_run timeout (300s)")), TIMEOUT_MS)
         ),

@@ -2,6 +2,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { Session } from "../core/session.js";
 import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
 import { sanitizeToolResult } from "./sanitize.js";
+import type { ActivityEntry } from "../ipc/server.js";
 
 /** 跨 session 通信：单个 session 的信息（由 sessionGetFn 返回） */
 export interface SessionInfo {
@@ -11,6 +12,8 @@ export interface SessionInfo {
   running: boolean;
   /** 是否为 loop session（有 [loop] enabled=true 配置） */
   isLoop: boolean;
+  /** 最近操作记录，最新在前，最多 10 条（tool_call / tool_result / error） */
+  recentActivity: ActivityEntry[];
 }
 
 /** 工具执行上下文（由 runAgent 提供） */

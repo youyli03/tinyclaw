@@ -117,12 +117,14 @@ class CronScheduler {
 
   /** 取消并重新调度单个 job（add/enable/remove 后调用） */
   reschedule(jobId: string): void {
-    // 先取消旧 timer
-    const old = this.timers.get(jobId);
-    if (old !== undefined) {
-      clearTimeout(old as ReturnType<typeof setTimeout>);
-      clearInterval(old as ReturnType<typeof setInterval>);
-      this.timers.delete(jobId);
+    // 先取消旧 timer（包括 daily 多时段的 jobId_HH:MM 格式 key）
+    for (const key of [...this.timers.keys()]) {
+      if (key === jobId || key.startsWith(`${jobId}_`)) {
+        const old = this.timers.get(key)!;
+        clearTimeout(old as ReturnType<typeof setTimeout>);
+        clearInterval(old as ReturnType<typeof setInterval>);
+        this.timers.delete(key);
+      }
     }
     // 重新从 store 读取（可能已更新或删除）
     const jobs = loadJobs();
@@ -179,17 +181,31 @@ class CronScheduler {
   }
 
   private scheduleDaily(job: CronJob): void {
-    if (!job.timeOfDay) return;
-    const ms = msUntilTimeOfDay(job.timeOfDay);
+    // 支持多时段 timesOfDay，fallback 到单时段 timeOfDay
+    const times: string[] =
+      job.timesOfDay && job.timesOfDay.length > 0
+        ? job.timesOfDay
+        : job.timeOfDay
+          ? [job.timeOfDay]
+          : [];
+    if (times.length === 0) return;
+
+    for (const t of times) {
+      this.armDailyTime(job, t);
+    }
+  }
+
+  private armDailyTime(job: CronJob, hhmm: string): void {
+    const key = `${job.id}_${hhmm}`;
+    const ms = msUntilTimeOfDay(hhmm);
     const arm = () => {
       void this.fire(job).then(() => {
-        // 触发后 arm 明日
-        const handle = setTimeout(() => arm(), msUntilTimeOfDay(job.timeOfDay!));
-        this.timers.set(job.id, handle);
+        const handle = setTimeout(() => arm(), msUntilTimeOfDay(hhmm));
+        this.timers.set(key, handle);
       });
     };
     const handle = setTimeout(arm, ms);
-    this.timers.set(job.id, handle);
+    this.timers.set(key, handle);
   }
 
   private async fire(job: CronJob): Promise<void> {

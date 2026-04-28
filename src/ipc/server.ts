@@ -26,8 +26,39 @@ import "../commands/builtin.js";
 /** sessionId → 所有订阅者的 send 函数 */
 const subscriberMap = new Map<string, Set<(event: ActivityEvent) => void>>();
 
+/** 最近操作记录的单条条目（tool_call / tool_result / error） */
+export interface ActivityEntry {
+  ts: number;
+  event:
+    | { kind: "tool_call"; name: string; argsSummary: string }
+    | { kind: "tool_result"; name: string; resultSummary: string }
+    | { kind: "error"; message: string };
+}
+
+/** sessionId → 最近 10 条操作记录（最新在前） */
+const activityLogMap = new Map<string, ActivityEntry[]>();
+
+const ACTIVITY_LOG_MAX = 10;
+
+/** 获取指定 session 最近操作记录（最新在前，最多 10 条） */
+export function getActivityLog(sessionId: string): ActivityEntry[] {
+  return activityLogMap.get(sessionId) ?? [];
+}
+
 /** 广播 ActivityEvent 给所有订阅该 session 的客户端 */
 export function broadcastActivity(sessionId: string, event: ActivityEvent) {
+  // 记录 tool_call / tool_result / error 到 activity log（最新在前）
+  if (
+    event.kind === "tool_call" ||
+    event.kind === "tool_result" ||
+    event.kind === "error"
+  ) {
+    let log = activityLogMap.get(sessionId);
+    if (!log) { log = []; activityLogMap.set(sessionId, log); }
+    log.unshift({ ts: Date.now(), event });
+    if (log.length > ACTIVITY_LOG_MAX) log.pop();
+  }
+
   const subs = subscriberMap.get(sessionId);
   if (subs) {
     for (const fn of subs) {

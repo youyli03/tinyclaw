@@ -34,7 +34,7 @@ import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/at
 import { transcribeAudio } from "./connectors/qqbot/transcribe.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
-import { startIpcServer, broadcastActivity } from "./ipc/server.js";
+import { startIpcServer, broadcastActivity, getActivityLog } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
@@ -713,6 +713,7 @@ ${message}`;
         agentId: targetAgentId,
         running: session.running,
         isLoop: agentManager.readSessionLoop(sid) !== null || loopTriggerManager.isBound(sid),
+        recentActivity: getActivityLog(sid),
       });
     }
     return result;

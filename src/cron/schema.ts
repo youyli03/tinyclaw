@@ -72,7 +72,10 @@ export const CronJobSchema = z.object({
   /** "every": 间隔秒数 */
   intervalSecs: z.number().int().positive().optional(),
   /** "daily": "HH:MM" 本地时间，每天触发一次 */
+  /** "daily": "HH:MM" 本地时间,每天触发一次(单时段;多时段请用 timesOfDay) */
   timeOfDay: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  /** "daily": 多个触发时间点,格式 ["HH:MM", ...](优先于 timeOfDay) */
+  timesOfDay: z.array(z.string().regex(/^\d{2}:\d{2}$/)).optional(),
   /**
    * "every" 模式专用：限制触发时段（段外跳过，不触发）
    * - start/end: "HH:MM" 本地时间

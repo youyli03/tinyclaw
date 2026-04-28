@@ -24,7 +24,8 @@ registerTool({
         "- sessionId：会话标识符\n" +
         "- agentId：绑定的 Agent ID\n" +
         "- running：当前是否正在执行任务\n" +
-        "- isLoop：是否为 loop session（有定时任务配置）\n\n" +
+        "- isLoop：是否为 loop session（有定时任务配置）\n" +
+        "- recentActivity:最近10条操作记录（最新在前），每条含ts（时间戳）和event（tool_call/tool_result/error）\n\n" +
         "权限说明：需要在 access.toml 中配置 can_access（发送方）和 allow_from（接收方）双向授权。",
       parameters: {
         type: "object",

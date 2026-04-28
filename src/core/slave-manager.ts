@@ -60,7 +60,13 @@ export type SlaveProgressNotifyFn = (slaveId: string, state: SlaveState) => Prom
 export type SlaveRunFn = (
   session: Session,
   content: string,
-  opts?: { systemPrompt?: string; systemPromptSuffix?: string; skipPreamble?: boolean }
+  opts?: {
+    systemPrompt?: string;
+    systemPromptSuffix?: string;
+    skipPreamble?: boolean;
+    onToolCall?: (name: string, args: Record<string, unknown>) => void;
+    onToolResult?: (name: string, result: string) => void;
+  }
 ) => Promise<{ content: string; toolsUsed: string[] }>;
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────

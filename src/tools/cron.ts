@@ -46,7 +46,8 @@ registerTool({
           type:          { type: "string",  enum: ["once", "every", "daily", "manual"], description: "调度类型（once/every/daily/manual）" },
           runAt:         { type: "string",  description: "[once] ISO 8601 触发时间" },
           intervalSecs:  { type: "number",  description: "[every] 间隔秒数" },
-          timeOfDay:     { type: "string",  description: "[daily] 触发时间，格式 HH:MM（本地时间）" },
+          timeOfDay:     { type: "string",  description: "[daily] 单个触发时间,格式 HH:MM(本地时间);多时段请用 timesOfDay" },
+          timesOfDay:    { type: "array", items: { type: "string" }, description: "[daily] 多个触发时间点,格式 [\"HH:MM\", ...],优先于 timeOfDay。例:[\"09:00\",\"12:00\",\"20:00\"]" },
           timeRange:     { type: "object",  description: "[every] 限制触发时段；格式 {start:\"HH:MM\", end:\"HH:MM\", weekdays?:[0-6]}，0=周日...6=周六，不填=每天。段外跳过不触发" },
           agentId:       { type: "string",  description: "使用的 agent（默认 default）。注意：在交互式会话中，实际使用的 agentId 由调用方 agent 决定，此参数仅在 CLI 等无 agent 上下文的场景下生效。" },
           notify:        { type: "string",  enum: ["always","on_change","on_error","never","llm"], description: "通知策略（默认 always）。llm=由LLM决定，输出含[NOTIFY]块时才推送" },
@@ -94,7 +95,10 @@ registerTool({
       type,
       runAt: args["runAt"] ? String(args["runAt"]) : undefined,
       intervalSecs: args["intervalSecs"] ? Number(args["intervalSecs"]) : undefined,
-      timeOfDay: args["timeOfDay"] ? String(args["timeOfDay"]) : undefined,
+      timeOfDay: args["timesOfDay"] ? undefined : (args["timeOfDay"] ? String(args["timeOfDay"]) : undefined),
+      timesOfDay: Array.isArray(args["timesOfDay"]) && args["timesOfDay"].length > 0
+        ? (args["timesOfDay"] as string[])
+        : args["timeOfDay"] ? undefined : undefined,
       timeRange: args["timeRange"] ? (args["timeRange"] as { start: string; end: string; weekdays?: number[] }) : undefined,
       output: {
         sessionId,
@@ -135,7 +139,7 @@ registerTool({
         id: j.id,
         enabled: j.enabled,
         type: j.type,
-        schedule: j.type === "once" ? j.runAt : j.type === "every" ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}` : j.type === "daily" ? `每天 ${j.timeOfDay}` : "手动触发",
+        schedule: j.type === "once" ? j.runAt : j.type === "every" ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}` : j.type === "daily" ? `每天 ${(j.timesOfDay && j.timesOfDay.length > 0 ? j.timesOfDay : j.timeOfDay ? [j.timeOfDay] : []).join(", ")}` : "手动触发",
         message: j.message.slice(0, 60),
         model: j.model ?? "daily（默认）",
         lastRunAt: j.lastRunAt,
