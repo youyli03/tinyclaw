@@ -39,6 +39,7 @@ const MAX_DIFF_CHARS = 8000;
 const ALLOW_PREFIXES = [
   "agents/",       // agent 配置/技能/记忆（workspace 在黑名单里排除）
   "cron/jobs/",    // cron 任务配置
+  "user-data/",    // 用户脚本/笔记(seen.json 由 DENY_PATTERNS 排除)
   "config.toml",
   "mcp.toml",
   "memstores.toml",
@@ -70,6 +71,7 @@ const DENY_PATTERNS = [
   /\/auth\//,
   /\.key$/,
   /secrets\.toml$/,
+  /\/seen\.json$/,    // user-data 运行时状态,不版本化
 ];
 
 // ── 通知目标配置 ──────────────────────────────────────────────────────────────
