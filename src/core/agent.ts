@@ -40,6 +40,7 @@ import "../tools/run-code-subagent.js";
 import "../tools/memory.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
+import "../tools/web-search.js";
 import "../tools/restart.js";
 import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
@@ -1001,7 +1002,8 @@ export async function runAgent(
 
     // tool call 伴随的文本内容（如"好的，我来查一下"）也发给用户
     if (content && content.trim() && opts.onNotify) {
-      void opts.onNotify(content.trim());
+      const accompanied = content.startsWith("<img") ? content : `💬 [AI]\n${content.trim()}`;
+      void opts.onNotify(accompanied);
     }
 
     // ── 工具执行（支持批量并发）────────────────────────────────────────────
