@@ -424,7 +424,8 @@ export class LoopTriggerManager {
     const connector = (botId ? this.connectors.get(botId) : undefined) ?? [...this.connectors.values()][0];
     if (!connector) return undefined;
     return async (msg: string) => {
-      const prefixed = msg.startsWith("<img") ? msg : `🔔 [监控] ${msg}`;
+      const prefixed = msg.startsWith("<img") ? msg : `🔔 [监控]
+${msg}`;
       await connector.send(peerId!, type!, prefixed);
     };
   }

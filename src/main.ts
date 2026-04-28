@@ -542,7 +542,8 @@ async function main(): Promise<void> {
       onSlaveComplete,
       onProgressNotify,
       onNotify: async (message: string) => {
-        const prefixed = message.startsWith("<img") ? message : `⏳ [进度] ${message}`;
+        const prefixed = message.startsWith("<img") ? message : `⏳ [进度]
+${message}`;
         await connector.send(msg.peerId, msg.type, prefixed).catch((err) => {
           console.error("[notify_user] send error:", err);
         });
