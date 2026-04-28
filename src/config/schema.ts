@@ -335,6 +335,20 @@ const MemorySchema = z.object({
    * 内置每日维护的触发时间（本地时间 HH:MM，默认 "04:00"）。
    */
   dailyMaintenanceTime: z.string().regex(/^\d{2}:\d{2}$/).default("04:00"),
+
+  // ── RKLLM NPU Embedding ────────────────────────────────────────────────────
+  /**
+   * 是否用 RKLLM NPU HTTP 服务替代本地 node-llama-cpp 做 embedding。
+   * 适用于 RK3588 等有 RKLLM 加速的板子,可大幅降低 CPU 占用。
+   * 启用前需先运行 ~/rkllm-embed-server/start.sh。
+   */
+  rkllmEmbed: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** HTTP 服务端口,默认 11434 */
+      port: z.number().int().positive().default(11434),
+    })
+    .default({}),
 });
 
 // ── 工具配置 ─────────────────────────────────────────────────────────────────

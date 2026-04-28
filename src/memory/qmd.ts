@@ -19,6 +19,7 @@ import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult
 import { loadConfig, loadMemStoresConfig } from "../config/loader.js";
 import { agentManager } from "../core/agent-manager.js";
 import { CARD_TYPES, type MemoryCardType } from "./cards.js";
+import { makeRkllmEmbedLlm } from "./rkllm-embed.js";
 
 const DECAY_HALF_LIFE_DAYS = 30;
 const DECAY_LAMBDA = Math.LN2 / DECAY_HALF_LIFE_DAYS;
@@ -174,6 +175,15 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
 
     process.env["NODE_LLAMA_CPP_GPU"] = "false";
     process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
+
+    // 若启用 RKLLM NPU embedding，注入 HTTP embed 实现
+    if (cfg.memory.rkllmEmbed.enabled) {
+      const rkllmLlm = makeRkllmEmbedLlm(cfg.memory.rkllmEmbed.port);
+      // setDefaultLlamaCpp 未在 @tobilu/qmd 主入口导出，直接用动态 import 访问 dist/llm.js
+      const llmMod = await import("@tobilu/qmd/dist/llm.js" as string);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (llmMod as any).setDefaultLlamaCpp(rkllmLlm);
+    }
 
     const { createStore } = await import("@tobilu/qmd");
     const codeProjectsDir = agentManager.codeProjectsDir(agentId);
