@@ -290,7 +290,8 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
 
   const notifyFn = bridge && job.output.peerId
     ? async (message: string) => {
-        await bridge.send(job.output.peerId!, job.output.msgType, message);
+        const prefixed = message.startsWith("<img") ? message : `📅 [定时] ${message}`;
+        await bridge.send(job.output.peerId!, job.output.msgType, prefixed);
       }
     : undefined;
 
@@ -338,7 +339,8 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
     const blocks = extractNotifyBlocks(resultText);
     for (const block of blocks) {
       try {
-        await bridge.send(job.output.peerId, job.output.msgType, block);
+        const prefixed = block.startsWith("<img") ? block : `📅 [定时] ${block}`;
+        await bridge.send(job.output.peerId, job.output.msgType, prefixed);
       } catch (err) {
         console.error(`[cron] llm notify 推送失败 job=${job.id}:`, err);
       }
@@ -352,7 +354,8 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
 
   if (shouldNotify && bridge && job.output.peerId && job.output.sessionId) {
     try {
-      await bridge.send(job.output.peerId, job.output.msgType, resultText);
+      const prefixed = resultText.startsWith("<img") ? resultText : `📅 [定时] ${resultText}`;
+      await bridge.send(job.output.peerId, job.output.msgType, prefixed);
     } catch (err) {
       console.error(`[cron] 推送结果失败 job=${job.id}:`, err);
     }

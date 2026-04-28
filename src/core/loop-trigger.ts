@@ -356,7 +356,9 @@ export class LoopTriggerManager {
           : cfg.notify === "always"
             ? "\n\n---\n你的回复将直接推送给用户，请保持简洁。"
             : "";
-      const content = prefix + message + exitHint + notifyHint;
+      // notifyHint 不存入 session 历史（不拼入 content），改为 systemPromptSuffix 临时注入，
+      // 避免 [NOTIFY] 格式指令持久化到 .jsonl，污染后续普通聊天上下文。
+      const content = prefix + message + exitHint;
       if (!content.trim()) {
         console.warn(`[loop-trigger] id=${cfg.id} 合并后内容为空，跳过`);
         return false;
@@ -378,10 +380,14 @@ export class LoopTriggerManager {
       const { content: finalContent } = await this.runAgent(session, content, {
         skipAddUserMessage: true,
         skipMemorySearch: true,
+        ...(notifyHint ? { systemPromptSuffix: notifyHint } : {}),
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onLoopExit ? { onLoopExit } : {}),
         ...(customToolsFinal ? { customTools: customToolsFinal } : {}),
       });
+
+      // loop 完成后，去掉 assistant 消息中的 [NOTIFY] 标签（保留内容），避免污染后续聊天历史
+      session.stripLoopTagsFromLastAssistantMessage();
 
       // ── 根据 notify 策略推送 LLM 最终回复 ──────────────────────────────
       if (notifyFn && finalContent.trim()) {
@@ -418,7 +424,8 @@ export class LoopTriggerManager {
     const connector = (botId ? this.connectors.get(botId) : undefined) ?? [...this.connectors.values()][0];
     if (!connector) return undefined;
     return async (msg: string) => {
-      await connector.send(peerId!, type!, msg);
+      const prefixed = msg.startsWith("<img") ? msg : `🔔 [监控] ${msg}`;
+      await connector.send(peerId!, type!, prefixed);
     };
   }
 
