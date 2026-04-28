@@ -6,6 +6,7 @@ import { llmRegistry } from "../llm/registry.js";
 import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode, microCompactMessages } from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
+import { InboundMessageBus } from "./inbound-bus.js";
 
 /** Plan 模式审批结果 */
 export type PlanApprovalResult = {
@@ -60,6 +61,13 @@ export class Session {
   readonly sessionId: string;
   /** 当前会话绑定的 Agent ID（未绑定时为 "default"） */
   readonly agentId: string;
+
+  /**
+   * 入站消息总线：所有需要等待用户回复的操作（MFA、plan approval、ask_master、ask_user、
+   * async slave ask_user）均注册到此 Bus，handleMessage 通过 bus.dispatch() 路由消息。
+   */
+  readonly inboundBus: InboundMessageBus = new InboundMessageBus();
+
   /**
    * 内部消息数组。元素可能带有运行时字段 `_loopTaskRef`（loop task 文件路径），
    * 该字段仅存于内存；持久化时写为 `loop_task_ref`，传给 LLM 时通过 getMessagesForLLM() 折叠。
@@ -257,6 +265,59 @@ export class Session {
     const msg: ChatMessage & { _loopTaskRef?: string } = { role: "user", content, _loopTaskRef: taskFilePath };
     this.messages.push(msg);
     this._appendMsgToJsonl(msg);
+  }
+
+  /**
+   * 去掉最后一条 assistant 消息中的 [NOTIFY]...[/NOTIFY] 标签（保留标签内的内容）。
+   * 在 loop trigger 每次 runAgent 完成后调用，防止 [NOTIFY] 标签被持久化到 .jsonl，
+   * 污染后续普通聊天历史（LLM 会模仿历史格式，误以为要用 [NOTIFY] 块回复）。
+   */
+  stripLoopTagsFromLastAssistantMessage(): void {
+    // 找最后一条 assistant 消息
+    let lastAssistantIdx = -1;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]!.role === "assistant") {
+        lastAssistantIdx = i;
+        break;
+      }
+    }
+    if (lastAssistantIdx < 0) return;
+    const msg = this.messages[lastAssistantIdx]!;
+    if (typeof msg.content !== "string") return;
+    const stripped = msg.content
+      .replace(/\[NOTIFY\]([\s\S]*?)\[\/NOTIFY\]/g, "$1")
+      .trim();
+    if (stripped === msg.content.trim()) return; // 无变化
+    // 更新内存
+    (msg as { role: string; content: string }).content = stripped;
+    // 追加一行修正记录到 .jsonl（覆盖式追加——JSONL 按行读取，reload 时最后一条会被重新 push，
+    // 但本方法在 runAgent 之后调用，.jsonl 已追加了原始内容，故在末尾再追加一行 "replace" 标记）
+    // 实际上更简单：直接重写整个 .jsonl 最后 N 行会比较复杂；
+    // 采用"追加覆盖"方式：读文件、找最后匹配的 assistant 行替换、写回。
+    if (!this._persistReady) return;
+    try {
+      const filePath = Session.getJsonlPath(this.sessionId, this.mode === "code" ? "code" : "chat");
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const lines = raw.split("\n");
+      // 从末尾往前找最后一条 role=assistant 的行并替换其 content
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i]!.trim();
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line) as Record<string, unknown>;
+          if (obj["role"] === "assistant" && typeof obj["content"] === "string" && (obj["content"] as string).includes("[NOTIFY]")) {
+            obj["content"] = stripped;
+            lines[i] = JSON.stringify(obj);
+            fs.writeFileSync(filePath, lines.join("\n"), "utf-8");
+            break;
+          }
+        } catch {
+          // 非 JSON 行跳过
+        }
+      }
+    } catch (err) {
+      console.error("[session] stripLoopTagsFromLastAssistantMessage failed:", err);
+    }
   }
 
   addUserMessage(content: string | ContentPart[]): void {
@@ -610,19 +671,30 @@ export class Session {
    * resolve(true) = 确认，resolve(false) = 取消，reject = 超时。
    */
   waitForApproval(timeoutSecs: number): Promise<boolean> {
-    // 清除上一个未完成的 pendingApproval（理论上不应存在）
     if (this.pendingApproval) {
       this.pendingApproval.reject(new Error("新的 MFA 请求覆盖了未完成的请求"));
       this.pendingApproval = null;
     }
 
     return new Promise<boolean>((resolve, reject) => {
+      const unregister = this.inboundBus.register({
+        id: `${this.sessionId}:mfa:${Date.now()}`,
+        label: "MFA 确认",
+        match: () => true,
+        handle: (content) => {
+          unregister();
+          this.pendingApproval = null;
+          resolve(content.trim() === "确认");
+        },
+      });
       this.pendingApproval = {
         resolve: (approved) => {
+          unregister();
           this.pendingApproval = null;
           resolve(approved);
         },
         reject: (err) => {
+          unregister();
           this.pendingApproval = null;
           reject(err);
         },
@@ -630,8 +702,7 @@ export class Session {
     });
   }
 
-  /** 中止等待中的 MFA 确认（用于 runAgent() 被打断时清理） */
-  abortPendingApproval(): void {
+    abortPendingApproval(): void {
     if (this.pendingApproval) {
       this.pendingApproval.reject(new Error("会话被中断，MFA 操作已取消"));
       this.pendingApproval = null;
@@ -653,13 +724,33 @@ export class Session {
     }
 
     return new Promise<PlanApprovalResult>((resolve, reject) => {
+      const unregister = this.inboundBus.register({
+        id: `${this.sessionId}:plan:${Date.now()}`,
+        label: "Plan 审批",
+        match: () => true,
+        handle: (content) => {
+          unregister();
+          const trimmed = content.trim();
+          const n = parseInt(trimmed, 10);
+          this.pendingPlanApproval = null;
+          if (!isNaN(n) && n >= 1 && n <= actions.length) {
+            const selectedAction = actions[n - 1]!;
+            const isLastAction = n === actions.length;
+            resolve({ approved: !isLastAction, selectedAction });
+          } else {
+            resolve({ approved: false, feedback: trimmed });
+          }
+        },
+      });
       this.pendingPlanApproval = {
         actions,
         resolve: (result) => {
+          unregister();
           this.pendingPlanApproval = null;
           resolve(result);
         },
         reject: (err) => {
+          unregister();
           this.pendingPlanApproval = null;
           reject(err);
         },
@@ -667,8 +758,7 @@ export class Session {
     });
   }
 
-  /** 中止等待中的 Plan 审批（用于软中断时清理） */
-  abortPendingPlanApproval(): void {
+    abortPendingPlanApproval(): void {
     if (this.pendingPlanApproval) {
       this.pendingPlanApproval.reject(new Error("会话被中断，Plan 审批已取消"));
       this.pendingPlanApproval = null;
@@ -693,14 +783,39 @@ export class Session {
     }
 
     return new Promise<AskUserResult>((resolve, reject) => {
+      const unregister = this.inboundBus.register({
+        id: `${this.sessionId}:askuser:${Date.now()}`,
+        label: "ask_user",
+        match: () => true,
+        handle: (content, extras) => {
+          unregister();
+          const trimmed = content.trim();
+          const n = parseInt(trimmed, 10);
+          const imagePaths = extras.imagePaths;
+          this.pendingAskUser = null;
+          if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
+            resolve({ answer: optionLabels[n - 1]!, isFreeform: false, ...(imagePaths?.length ? { imagePaths } : {}) });
+          } else if (allowFreeform) {
+            resolve({ answer: trimmed, isFreeform: true, ...(imagePaths?.length ? { imagePaths } : {}) });
+          } else {
+            // 不允许自由输入：重新注册等待（先 unregister 已调用，需重新 push）
+            unregister(); // no-op since already called, but safe
+            const hint = optionLabels.map((l, i) => `${i + 1}. ${l}`).join("\n");
+            // reject with a special error to let the caller know it needs to re-prompt
+            reject(new Error(`INVALID_CHOICE:请输入选项编号(1~${optionLabels.length}):\n${hint}`));
+          }
+        },
+      });
       this.pendingAskUser = {
         optionLabels,
         allowFreeform,
         resolve: (result) => {
+          unregister();
           this.pendingAskUser = null;
           resolve(result);
         },
         reject: (err) => {
+          unregister();
           this.pendingAskUser = null;
           reject(err);
         },
@@ -708,8 +823,7 @@ export class Session {
     });
   }
 
-  /** 中止等待中的 ask_user（用于软中断时清理） */
-  abortPendingAskUser(): void {
+    abortPendingAskUser(): void {
     if (this.pendingAskUser) {
       this.pendingAskUser.reject(new Error("会话被中断，提问已取消"));
       this.pendingAskUser = null;

@@ -80,21 +80,17 @@ export interface ToolContext {
     allowFreeform?: boolean,
   ) => Promise<{ answer: string; isFreeform: boolean; imagePaths?: string[] }>;
   /**
-   * ask_master 回调（由 code_assist 注入给 daily subagent）。
-   * daily subagent 遇到不确定时调用，同步阻塞直到用户通过 master 回复。
-   * 若有 planPath，调用方应先将 plan.md 渲染为图片后附在消息中。
+   * ask_master 回调(由 code_assist 注入给 daily subagent)。
+   * daily subagent 遇到不确定时调用,同步阻塞直到用户通过 master 回复。
+   * 若有 planPath,调用方应先将 plan.md 渲染为图片后附在消息中。
    */
   onAskMaster?: (question: string, context: string, planPath?: string) => Promise<string>;
   /**
-   * code subagent 调用函数（由 code_assist 注入给 daily subagent）。
-   * daily subagent 调用此函数向 code subagent 发送指令，同步等待执行结果。
+   * code subagent 调用函数(由 code_assist 注入给 daily subagent)。
+   * daily subagent 调用此函数向 code subagent 发送指令,同步等待执行结果。
    */
   codeRunFn?: (instruction: string) => Promise<string>;
-  /**
-   * 跨 session 通信：向目标 session 注入一条消息（由 main.ts 注入）。
-   * 内部完成双向 access.toml 权限检查，等待目标 session 空闲后调用 runAgent。
-   * CLI/cron 模式下未注入，工具调用时返回错误提示。
-   */
+
   sessionSendFn?: (
     targetSessionId: string,
     message: string,

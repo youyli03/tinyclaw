@@ -45,6 +45,7 @@ import { skillWatcher } from "./skills/watcher.js";
 import { mcpManager } from "./mcp/client.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
+import { InboundMessageBus, type InboundExtras } from "./core/inbound-bus.js";
 import { parseCommand, executeCommand } from "./commands/registry.js";
 import "./commands/builtin.js";
 import "./tools/db-write.js";
@@ -194,47 +195,19 @@ async function main(): Promise<void> {
     }
 
     // ── Plan 审批：检测 plan 子模式下等待用户选择操作的消息 ─────────────
-    if (session.pendingPlanApproval) {
-      const trimmed = resolvedContent.trim();
-      const actions = session.pendingPlanApproval.actions;
-      const n = parseInt(trimmed, 10);
+    // 收集图片附件路径（供 InboundMessageBus 使用）
+    const imagePaths = earlyDownloaded
+      .filter((d) => d.contentType.startsWith("image/") && d.localPath)
+      .map((d) => d.localPath);
+    const inboundExtras: import("./core/inbound-bus.js").InboundExtras = {
+      rawContent: resolvedContent,
+      imagePaths,
+    };
 
-      if (!isNaN(n) && n >= 1 && n <= actions.length) {
-        // 数字选项：最后一项（exit_only 惯例）视为取消
-        const selectedAction = actions[n - 1]!;
-        const isLastAction = n === actions.length;
-        session.pendingPlanApproval.resolve({
-          approved: !isLastAction,
-          selectedAction,
-        });
-      } else {
-        // 自由文本 → feedback，AI 将修改计划后重新提交
-        session.pendingPlanApproval.resolve({ approved: false, feedback: trimmed });
-      }
-      void connector.send(msg.peerId, msg.type, "已收到，处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
-      return "";
-    }
-
-    // ── Interface A：检测 MFA 确认消息 ──────────────────────────────────
-    if (session.pendingApproval) {
-      const trimmed = resolvedContent.trim();
-      if (trimmed === "确认") {
-        session.pendingApproval.resolve(true);
-        // "已收到，执行中..." 由 onMFARequest 的调用方在 resolve 后发送
-        void connector.send(msg.peerId, msg.type, "已收到，执行中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
-      } else {
-        // 任何非"确认"的回复视为取消
-        session.pendingApproval.resolve(false);
-      }
-      return "";
-    }
-
-    // ── ask_master 拦截：daily subagent 等待用户回复时转发给它 ─────────────
-    if (session.pendingSlaveQuestion) {
-      const { resolve } = session.pendingSlaveQuestion;
-      session.pendingSlaveQuestion = null;
-      resolve(resolvedContent.trim());
-      void connector.send(msg.peerId, msg.type, "已收到，已转发给 AI 继续处理...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
+    // ── InboundMessageBus 分发：将消息路由给注册的等待者 ──────────────────
+    // 覆盖：MFA pendingApproval、plan approval、ask_master、ask_user（含 async slave）
+    // 严格 FIFO：按注册时间顺序，找到第一个 match() 的 Waiter 并调用其 handle()
+    if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
       return "";
     }
 
@@ -252,41 +225,6 @@ async function main(): Promise<void> {
     }
 
     
-    // ── ask_user 拦截：AI 通过 ask_user 工具等待用户选择/输入时 ─────────
-    if (session.pendingAskUser) {
-      const trimmed = resolvedContent.trim();
-      const { optionLabels, allowFreeform } = session.pendingAskUser;
-      const n = parseInt(trimmed, 10);
-
-      // 收集用户回复中的图片附件
-      const imagePaths = earlyDownloaded
-        .filter((d) => d.contentType.startsWith("image/") && d.localPath)
-        .map((d) => d.localPath);
-
-      if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
-        // 用户输入数字,映射到预设选项
-        session.pendingAskUser.resolve({
-          answer: optionLabels[n - 1]!,
-          isFreeform: false,
-          ...(imagePaths.length > 0 ? { imagePaths } : {}),
-        });
-      } else if (allowFreeform) {
-        // 自由输入
-        session.pendingAskUser.resolve({
-          answer: trimmed,
-          isFreeform: true,
-          ...(imagePaths.length > 0 ? { imagePaths } : {}),
-        });
-      } else {
-        // 不允许自由输入,提示用户重新选择
-        const hint = optionLabels.map((l, i) => `${i + 1}. ${l}`).join("\n");
-        void connector.send(msg.peerId, msg.type, `请输入选项编号(1~${optionLabels.length}):\n${hint}`, msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
-        return "";
-      }
-      void connector.send(msg.peerId, msg.type, "已收到,处理中...", msg.messageId).catch((e: unknown) => console.error("[qqbot] send error:", e));
-      return "";
-    }
-
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
     if (session.running) {
       session.abortRequested = true;
@@ -535,7 +473,21 @@ async function main(): Promise<void> {
         await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
       }
 
-      return session.waitForAskUser(optionLabels, allowFreeform);
+      // 等待用户回复，INVALID_CHOICE 时重新提示并循环
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          return await session.waitForAskUser(optionLabels, allowFreeform);
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith("INVALID_CHOICE:")) {
+            const hint = e.message.slice("INVALID_CHOICE:".length);
+            await connector.send(msg.peerId, msg.type, hint).catch(() => {});
+            // continue loop
+          } else {
+            throw e;
+          }
+        }
+      }
     };
 
     const opts: AgentRunOptions = {

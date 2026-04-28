@@ -112,9 +112,23 @@ export function createAskMasterCallback(
 
     await onNotify(lines.join("\n"));
 
-    // 阻塞等待用户通过 main.ts 回复
+    // 阻塞等待用户通过 main.ts 回复（通过 InboundMessageBus 路由）
     return new Promise<string>((resolve) => {
-      masterSession.pendingSlaveQuestion = { question, resolve };
+      const unregister = masterSession.inboundBus.register({
+        id: `${masterSession.sessionId}:askmaster:${Date.now()}`,
+        label: "ask_master",
+        match: () => true,
+        handle: (content) => {
+          unregister();
+          masterSession.pendingSlaveQuestion = null;
+          resolve(content.trim());
+        },
+      });
+      masterSession.pendingSlaveQuestion = { question, resolve: (answer) => {
+        unregister();
+        masterSession.pendingSlaveQuestion = null;
+        resolve(answer);
+      }};
     });
   };
 }

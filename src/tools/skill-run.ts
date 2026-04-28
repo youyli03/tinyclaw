@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import { registerTool, type ToolContext } from "./registry.js";
 import { Session } from "../core/session.js";
 import { skillRegistry, type SkillEntry } from "../skills/registry.js";
+import { slaveManager } from "../core/slave-manager.js";
 
 // ── 兼容旧调用方的 re-export ─────────────────────────────────────────────
 
@@ -101,6 +102,28 @@ registerTool({
       agentId: ctx.masterSession.agentId,
     });
 
+    const asyncMode = Boolean(rawArgs["async"]);
+
+    if (asyncMode) {
+      // ── 异步模式：后台 fork，完成后通过 onNotify 推送结果 ─────────────
+      const slaveId = slaveManager.fork(
+        task,
+        ctx.masterSession,
+        0,
+        ctx.slaveRunFn,
+        async (notif) => {
+          const icon = notif.status === "done" ? "✅" : "❌";
+          const finishMsg = `${icon} skill \`${skillName}\` 执行完成\n\n${notif.result}`;
+          if (ctx.onNotify) await ctx.onNotify(finishMsg);
+        },
+        undefined,
+        undefined,
+        "inject",
+        { systemPromptSuffix },
+      );
+      return `⏳ skill \`${skillName}\` 已在后台启动（slave: ${slaveId}），完成后自动通知。`;
+    }
+
     const TIMEOUT_MS = 300_000; // 300s
     let result: string;
     try {
@@ -110,14 +133,14 @@ registerTool({
           setTimeout(() => reject(new Error("skill_run timeout (300s)")), TIMEOUT_MS)
         ),
       ]);
-      result = runResult.content?.trim() || "（skill 执行完成，无输出）";
+      result = runResult.content?.trim() || "(skill 执行完成,无输出)";
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return `❌ skill "${skillName}" 执行失败：${msg}`;
+      return `❌ skill "${skillName}" 执行失败:${msg}`;
     }
 
 
-    // 清理 skill 临时 session JSONL，并裁剪同前缀旧文件
+    // 清理 skill 临时 session JSONL,并裁剪同前缀旧文件
     slaveSession.deleteJsonl();
     Session.pruneOldByPrefix(`skill_${skillName}_`, 1);
     return `✅ skill \`${skillName}\` 执行完成\n\n${result}`;

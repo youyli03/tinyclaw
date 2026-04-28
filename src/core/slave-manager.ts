@@ -111,6 +111,7 @@ class SlaveManager {
     reportIntervalSecs?: number,
     onProgressNotify?: SlaveProgressNotifyFn,
     resultMode: "inject" | "wait" = "inject",
+    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean },
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
 
@@ -157,7 +158,7 @@ class SlaveManager {
     // 后台运行（fire-and-forget）
     // wait 模式：Slave 完成后不触发 onComplete，Master 通过 agent_wait 主动拉取
     const effectiveOnComplete = resultMode === "wait" ? undefined : onComplete;
-    void this._run(slaveId, slaveSession, task, runFn, effectiveOnComplete, reportIntervalSecs, onProgressNotify);
+    void this._run(slaveId, slaveSession, task, runFn, effectiveOnComplete, reportIntervalSecs, onProgressNotify, false, extraRunOpts);
 
     return slaveId;
   }
@@ -393,6 +394,7 @@ class SlaveManager {
     reportIntervalSecs?: number,
     onProgressNotify?: SlaveProgressNotifyFn,
     skipPreamble?: boolean,
+    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean },
   ): Promise<void> {
     const state = this.states.get(slaveId)!;
 
@@ -410,7 +412,9 @@ class SlaveManager {
     try {
       const runOpts = skipPreamble
         ? { skipPreamble: true }
-        : { systemPromptSuffix: SLAVE_SYSTEM_PROMPT };
+        : { systemPromptSuffix: extraRunOpts?.systemPromptSuffix
+              ? `${SLAVE_SYSTEM_PROMPT}\n\n${extraRunOpts.systemPromptSuffix}`
+              : SLAVE_SYSTEM_PROMPT };
       const result = await runFn(session, task, runOpts);
 
       // 更新完成状态
