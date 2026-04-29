@@ -204,26 +204,26 @@ async function main(): Promise<void> {
       imagePaths,
     };
 
-    // ── InboundMessageBus 分发：将消息路由给注册的等待者 ──────────────────
-    // 覆盖：MFA pendingApproval、plan approval、ask_master、ask_user（含 async slave）
-    // 严格 FIFO：按注册时间顺序，找到第一个 match() 的 Waiter 并调用其 handle()
-    if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
-      return "";
-    }
-
-    // ── 斜杠命令拦截：以 "/" 开头的消息直接执行，不中断当前运行的 agent ─
+    // ── 斜杠命令拦截:以 "/" 开头的消息优先执行,不走 inboundBus ────────
+    // /status 等查询命令在 plan/ask_user 等待期间也应直接响应
     const parsedCmd = parseCommand(msg.content);
     if (parsedCmd) {
       const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
       if (result) {
         await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
       }
-      // /retry 命令设置了 pendingRetry：fall-through，继续构建 opts 并重新调用 runAgent
+      // /retry 命令设置了 pendingRetry:fall-through,继续构建 opts 并重新调用 runAgent
       if (!session.pendingRetry) {
         return "";
       }
     }
 
+    // ── InboundMessageBus 分发:将消息路由给注册的等待者 ──────────────────
+    // 覆盖:MFA pendingApproval、plan approval、ask_master、ask_user(含 async slave)
+    // 严格 FIFO:按注册时间顺序,找到第一个 match() 的 Waiter 并调用其 handle()
+    if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
+      return "";
+    }
     
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
     if (session.running) {
