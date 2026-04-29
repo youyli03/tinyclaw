@@ -117,7 +117,7 @@ registerCommand({
     try {
       const config = loadConfig();
       // config 直接读取 model symbol，避免 init 未完整时报错
-      const modelSymbol = config.llm.backends[backendName]?.model ?? config.llm.backends.daily.model;
+      const modelSymbol = (isCodeMode ? config.llm.backends.code?.model : undefined) ?? config.llm.backends.daily.model;
       const { provider, modelId } = parseModelSymbol(modelSymbol);
 
       if (provider === "copilot") {
