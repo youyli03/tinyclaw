@@ -8,7 +8,7 @@
 
 import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
-import { llmRegistry } from "../llm/registry.js";
+import { llmRegistry, parseModelSymbol } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { getCachedCopilotInfo, getCopilotRateLimit, getCopilotUserQuota, lookupMultiplier } from "../llm/copilot.js";
 import * as fs from "node:fs";
@@ -113,77 +113,102 @@ registerCommand({
       }
     }
 
-    // ── Copilot 信息 ─────────────────────────────────────────────────────────
+    // ── 后端信息(按 provider 动态显示) ───────────────────────────
     try {
       const config = loadConfig();
-      const copilotCfg = config.providers?.copilot;
-      if (copilotCfg?.githubToken) {
-        const modelName = llmRegistry.get(backendName).model;
-        const multiplier = lookupMultiplier(modelName);
+      const modelSymbol = llmRegistry.get(backendName).model;
+      const { provider, modelId } = parseModelSymbol(modelSymbol);
 
-        // 格式化 multiplier
-        let multiplierStr: string;
-        if (multiplier === undefined) multiplierStr = "-";
-        else if (multiplier === 0) multiplierStr = "免费（不计配额）";
-        else multiplierStr = `${multiplier}×`;
+      if (provider === "copilot") {
+        const copilotCfg = config.providers?.copilot;
+        if (copilotCfg?.githubToken) {
+          const multiplier = lookupMultiplier(modelId);
+          let multiplierStr: string;
+          if (multiplier === undefined) multiplierStr = "-";
+          else if (multiplier === 0) multiplierStr = "免费(不计配额)";
+          else multiplierStr = `${multiplier}×`;
 
-        // 从缓存读取 Copilot token 信息（不触发新网络请求）
-        const info = getCachedCopilotInfo(copilotCfg.githubToken);
-
-        // 配额信息：
-        //  1. 优先：copilot_internal/user 的 quota_snapshots（Pro/Pro+ 实时 premium 配额）
-        //  2. 回退：补全 API 响应头 x-ratelimit-*（部分账户类型）
-        //  3. 最后：token 响应体 limited_user_quotas（免费计划）
-        let quotaStr = "N/A";
-        const userQuota = await getCopilotUserQuota(copilotCfg.githubToken);
-        const pi = userQuota.premium_interactions;
-        if (pi) {
-          if (pi.unlimited) {
-            quotaStr = "无限制";
+          const info = getCachedCopilotInfo(copilotCfg.githubToken);
+          let quotaStr = "N/A";
+          const userQuota = await getCopilotUserQuota(copilotCfg.githubToken);
+          const pi = userQuota.premium_interactions;
+          if (pi) {
+            if (pi.unlimited) {
+              quotaStr = "无限制";
+            } else {
+              const resetSuffix = userQuota.quota_reset_date ? `,${userQuota.quota_reset_date} 重置` : "";
+              const overageSuffix = pi.overage_permitted && pi.overage_count > 0
+                ? `(超额 ${pi.overage_count})`
+                : "";
+              quotaStr = `${pi.remaining} / ${pi.entitlement} premium 请求${overageSuffix}${resetSuffix}`;
+            }
           } else {
-            const resetSuffix = userQuota.quota_reset_date ? `，${userQuota.quota_reset_date} 重置` : "";
-            const overageSuffix = pi.overage_permitted && pi.overage_count > 0
-              ? `（超额 ${pi.overage_count}）`
-              : "";
-            quotaStr = `${pi.remaining} / ${pi.entitlement} premium 请求${overageSuffix}${resetSuffix}`;
-          }
-        } else {
-          const rl = getCopilotRateLimit(copilotCfg.githubToken);
-          if (rl) {
-            const ageMin = Math.round((Date.now() - rl.capturedAt) / 60_000);
-            const ageSuffix = ageMin < 1 ? "" : `（${ageMin} 分钟前）`;
-            quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
-          } else if (info.quotas) {
-            const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
-              | Record<string, unknown>
-              | undefined;
-            if (chatQuota) {
-              const remaining = chatQuota["remaining"];
-              const limit = chatQuota["monthly_limit"];
-              if (typeof remaining === "number" && typeof limit === "number") {
-                quotaStr = `${remaining} / ${limit}`;
-              } else if (typeof remaining === "number") {
-                quotaStr = String(remaining);
+            const rl = getCopilotRateLimit(copilotCfg.githubToken);
+            if (rl) {
+              const ageMin = Math.round((Date.now() - rl.capturedAt) / 60_000);
+              const ageSuffix = ageMin < 1 ? "" : `(${ageMin} 分钟前)`;
+              quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
+            } else if (info.quotas) {
+              const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
+                | Record<string, unknown>
+                | undefined;
+              if (chatQuota) {
+                const remaining = chatQuota["remaining"];
+                const limit = chatQuota["monthly_limit"];
+                if (typeof remaining === "number" && typeof limit === "number") {
+                  quotaStr = `${remaining} / ${limit}`;
+                } else if (typeof remaining === "number") {
+                  quotaStr = String(remaining);
+                }
               }
             }
           }
+
+          const skuStr = info.sku ?? (info.tokenCached ? "(SKU 未知)" : "(未初始化)");
+          let modelDisplayName = `\`${modelId}\``;
+          if (isCodeMode && !config.llm.backends.code) {
+            modelDisplayName += "(与 Chat 共用 daily 模型,可在 [llm.backends.code] 独立配置)";
+          }
+          lines.push(
+            "",
+            `Copilot:\`${modelId}\` · ${multiplierStr} premium/请求 · 剩余配额:${quotaStr} · 计划:${skuStr}`,
+          );
         }
-
-        const skuStr = info.sku ?? (info.tokenCached ? "（SKU 未知）" : "（未初始化）");
-
-        // Code 模式独立模型提示
-        let modelDisplayName = `\`${modelName}\``;
-        if (isCodeMode && !config.llm.backends.code) {
-          modelDisplayName += "（与 Chat 共用 daily 模型，可在 [llm.backends.code] 独立配置）";
+      } else if (provider === "deepseek") {
+        const dsCfg = config.providers?.deepseek;
+        if (dsCfg?.apiKey) {
+          let balanceLine = `DeepSeek:\`${modelId}\` · 余额获取中...`;
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 5000);
+            const resp = await fetch("https://api.deepseek.com/user/balance", {
+              headers: { Authorization: `Bearer ${dsCfg.apiKey}` },
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            const data = await resp.json() as {
+              is_available: boolean;
+              balance_infos: Array<{ currency: string; total_balance: string; granted_balance: string; topped_up_balance: string }>;
+            };
+            const bi = data.balance_infos?.[0];
+            if (bi) {
+              const total = parseFloat(bi.total_balance).toFixed(4);
+              const granted = parseFloat(bi.granted_balance).toFixed(4);
+              const toppedUp = parseFloat(bi.topped_up_balance).toFixed(4);
+              balanceLine = `DeepSeek:\`${modelId}\` · 余额 ¥${total}（赠金 ¥${granted} + 充值 ¥${toppedUp}）`;
+            } else {
+              balanceLine = `DeepSeek:\`${modelId}\` · 余额获取失败`;
+            }
+          } catch {
+            balanceLine = `DeepSeek:\`${modelId}\` · 余额获取失败`;
+          }
+          lines.push("", balanceLine);
         }
-
-        lines.push(
-          "",
-          `Copilot：${modelDisplayName} · ${multiplierStr} premium/请求 · 剩余配额：${quotaStr} · 计划：${skuStr}`,
-        );
+      } else {
+        lines.push("", `模型:\`${modelSymbol}\``);
       }
     } catch {
-      // Copilot 未配置或初始化失败，忽略
+      // 后端未配置或初始化失败,忽略
     }
 
     return lines.join("\n");
