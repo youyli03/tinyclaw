@@ -19,8 +19,8 @@ import {
   bold, dim, green, yellow, cyan, red, magenta, section,
 } from "../ui.js";
 
-type BackendName = "daily" | "code" | "summarizer";
-const BACKEND_NAMES: BackendName[] = ["daily", "code", "summarizer"];
+type BackendName = "daily" | "code" | "summarizer" | "vision";
+const BACKEND_NAMES: BackendName[] = ["daily", "code", "summarizer", "vision"];
 
 // ── 子命令实现 ────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ async function cmdShow(): Promise<void> {
     const role =
       name === "daily"       ? cfg.llm.backends.daily
       : name === "code"      ? cfg.llm.backends.code
+      : name === "vision"    ? cfg.llm.backends.vision
       : cfg.llm.backends.summarizer;
 
     if (!role) {
@@ -257,6 +258,7 @@ async function cmdSet(args: string[]): Promise<void> {
   const currentRole =
     backendName === "daily"       ? cfg.llm.backends.daily
     : backendName === "code"      ? cfg.llm.backends.code
+    : backendName === "vision"    ? cfg.llm.backends.vision
     : cfg.llm.backends.summarizer;
 
   const currentSymbol = currentRole?.model ?? "(未配置)";
@@ -415,7 +417,7 @@ function printSubHelp(sub: string): void {
       console.log(`
 ${bold("tinyclaw model show")}
 
-  显示 daily / code / summarizer 三个后端当前配置的模型 symbol。
+  显示 daily / code / summarizer / vision 各后端当前配置的模型 symbol。
   无需额外参数。
 `);
       break;
