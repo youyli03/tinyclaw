@@ -116,7 +116,8 @@ registerCommand({
     // ── 后端信息(按 provider 动态显示) ───────────────────────────
     try {
       const config = loadConfig();
-      const modelSymbol = llmRegistry.get(backendName).model;
+      // config 直接读取 model symbol，避免 init 未完整时报错
+      const modelSymbol = config.llm.backends[backendName]?.model ?? config.llm.backends.daily.model;
       const { provider, modelId } = parseModelSymbol(modelSymbol);
 
       if (provider === "copilot") {
