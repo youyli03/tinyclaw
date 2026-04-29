@@ -46,6 +46,46 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
 
 // 注册内置工具的 per-agentId 黑/白名单过滤回调（模块加载时执行一次）
 // 读取 ~/.tinyclaw/agents/<id>/tools.toml，对非 mcp_ 工具应用黑/白名单过滤
+
+/**
+ * 当主模型不支持视觉时，用 vision 后端对图片做单轮描述，返回文字描述。
+ * 解析失败时返回 null。
+ */
+async function describeImageWithVisionFallback(
+  imgPath: string,
+  visionClient: import("../llm/registry.js").AnyLLMClient
+): Promise<string | null> {
+  try {
+    const fs = await import("fs");
+    const path = await import("path");
+    const os = await import("os");
+    const resolved = path.resolve(imgPath.replace(/^~/, os.homedir()));
+    if (!fs.existsSync(resolved)) return null;
+    const ext = path.extname(resolved).toLowerCase().slice(1);
+    const mime =
+      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+      ext === "png" ? "image/png" :
+      ext === "gif" ? "image/gif" :
+      ext === "webp" ? "image/webp" :
+      "image/png";
+    const buf = fs.readFileSync(resolved);
+    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+    let description = "";
+    await visionClient.streamChat(
+      [{ role: "user", content: [
+        { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
+        { type: "text", text: "请详细描述图片内容，包括主要元素、文字和图表信息。用中文回答。" }
+      ] }],
+      (chunk) => { description += chunk; },
+      {}
+    );
+    return description.trim() || null;
+  } catch (e) {
+    console.error("[visionFallback] 描述失败:", e);
+    return null;
+  }
+}
+
 setBuiltinAgentFilter((toolName: string, agentId: string): boolean => {
   const cfg = agentManager.readToolsConfig(agentId);
   if (!cfg) return true; // 文件不存在 → 不限制
@@ -595,6 +635,7 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
+  const visionClient = !client.supportsVision ? llmRegistry.getVisionClient() : undefined;
 
   // ── Premium 白名单守卫 ─────────────────────────────────────────────────────
   // slave session 继承 master 的鉴权上下文，不单独做白名单检查
@@ -737,8 +778,24 @@ export async function runAgent(
     // 4. 添加用户消息（若模型支持视觉且消息含图片，转为 ContentPart[] 格式）
     if (!opts.skipAddUserMessage) {
       const sanitizedContent = sanitizeUserInput(userContent);
-      const msgContent = client.supportsVision ? buildVisionContent(sanitizedContent) : sanitizedContent;
-      session.addUserMessage(msgContent);
+      if (client.supportsVision) {
+        session.addUserMessage(buildVisionContent(sanitizedContent));
+      } else {
+        // 主模型不支持视觉:保留原始文字内容，若有 visionClient 则额外追加图片描述
+        session.addUserMessage(sanitizedContent);
+        if (visionClient) {
+          const visionContent = buildVisionContent(sanitizedContent);
+          const imageParts = Array.isArray(visionContent)
+            ? visionContent.filter((p: import("../llm/client.js").ContentPart) => p.type === "image_path")
+            : [];
+          for (const imgPart of imageParts) {
+            if (imgPart.type === "image_path") {
+              const desc = await describeImageWithVisionFallback(imgPart.path, visionClient);
+              if (desc) session.addUserMessage(`[图片描述 ${imgPart.path}]:\n${desc}`);
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1088,7 +1145,7 @@ export async function runAgent(
     };
 
     /** 将 (call, result) 列表按顺序写入 session */
-    const flushResults = (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
+    const flushResults = async (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
       for (const { call, result } of pairs) {
         if (!textMode) {
           // read_image tool 返回 data URL 时，改用路径引用存储，避免 base64 写入 JSONL
@@ -1098,6 +1155,10 @@ export async function runAgent(
             session.addToolResultMessage(call.callId, origPath ? `[图片已加载: ${origPath}]` : result);
             if (origPath) {
               session.addUserMessage([{ type: "image_path", path: origPath }]);
+              if (visionClient) {
+                const desc = await describeImageWithVisionFallback(origPath, visionClient);
+                if (desc) session.addUserMessage(`[图片描述 ${origPath}]:\n${desc}`);
+              }
             }
           } else {
             session.addToolResultMessage(call.callId, result);
@@ -1118,11 +1179,11 @@ export async function runAgent(
       if (batch.length === 1) {
         // 单个工具无需 Promise.all 开销
         const result = await runOneTool(batch[0]!);
-        flushResults([{ call: batch[0]!, result }]);
+        await flushResults([{ call: batch[0]!, result }]);
       } else {
         // 并发执行，结果按原始顺序收集
         const results = await Promise.all(batch.map(c => runOneTool(c)));
-        flushResults(batch.map((call, i) => ({ call, result: results[i]! })));
+        await flushResults(batch.map((call, i) => ({ call, result: results[i]! })));
       }
     };
 
@@ -1223,7 +1284,7 @@ export async function runAgent(
               if (SERIAL_TOOLS.has(later.name) && later.name !== "restart_tool") {
                 await flushConcurrentBatch();
                 const r = await runOneTool(later);
-                flushResults([{ call: later, result: r }]);
+                await flushResults([{ call: later, result: r }]);
               } else if (!SERIAL_TOOLS.has(later.name)) {
                 concurrentBatch.push(later);
               }
@@ -1232,16 +1293,22 @@ export async function runAgent(
           }
         }
         const result = await runOneTool(call);
-        flushResults([{ call, result }]);
+        await flushResults([{ call, result }]);
         // ask_user 执行后,同轮剩余工具全部 skip,等用户回复后 LLM 再决定
         if (call.name === "ask_user") {
           // 若用户回复携带图片，在 tool_result 之后注入 image_path 供 LLM 查看
           try {
             const parsed = JSON.parse(result) as { image_paths?: string[] };
-            if (parsed.image_paths && parsed.image_paths.length > 0 && client.supportsVision) {
+            if (parsed.image_paths && parsed.image_paths.length > 0) {
               const imgParts: import("../llm/client.js").ContentPart[] =
                 parsed.image_paths.map((p) => ({ type: "image_path" as const, path: p }));
               session.addUserMessage(imgParts);
+              if (!client.supportsVision && visionClient) {
+                for (const p of parsed.image_paths) {
+                  const desc = await describeImageWithVisionFallback(p, visionClient);
+                  if (desc) session.addUserMessage(`[图片描述 ${p}]:\n${desc}`);
+                }
+              }
             }
           } catch { /* ignore */ }
           for (const remaining of validToolCalls.slice(validToolCalls.indexOf(call) + 1)) {

@@ -4,7 +4,7 @@ import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
 
-export type BackendName = "daily" | "summarizer" | "code";
+export type BackendName = "daily" | "summarizer" | "code" | "vision";
 
 /** LLMClient 或兼容实现（如 AutoFreeClient）的联合类型 */
 export type AnyLLMClient = LLMClient | AutoFreeClient;
@@ -48,6 +48,7 @@ class LLMRegistry {
       ["daily", backends.daily],
       ["summarizer", backends.summarizer],
       ["code", backends.code],
+      ["vision", backends.vision],
     ];
 
     for (const [name, role] of entries) {
@@ -95,6 +96,7 @@ class LLMRegistry {
     const role: BackendRole | undefined =
       name === "daily" ? backends.daily
       : name === "code" ? backends.code
+      : name === "vision" ? backends.vision
       : backends.summarizer;
 
     if (!role) {
@@ -184,6 +186,19 @@ class LLMRegistry {
   }
 
   /** 清除所有缓存的 client（用于配置热重载） */
+  /**
+   * 获取图片识别后端（未配置时返回 undefined）。
+   */
+  getVisionClient(): AnyLLMClient | undefined {
+    try {
+      const config = loadConfig();
+      if (!config.llm.backends.vision) return undefined;
+      return this.get("vision");
+    } catch {
+      return undefined;
+    }
+  }
+
   _reset(): void {
     this.clients.clear();
     this.contextWindows.clear();

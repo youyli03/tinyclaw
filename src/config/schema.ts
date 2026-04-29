@@ -104,6 +104,19 @@ const LLMBackendsSchema = z.object({
   code: BackendRoleSchema.optional(),
   /** 摘要压缩后端（未配置时回退到 daily） */
   summarizer: BackendRoleSchema.optional(),
+  /**
+   * 图片识别专用后端（可选）。
+   * 当主模型 supportsVision=false 时，用此后端对图片做单轮描述，
+   * 描述结果以文字注入 LLM 上下文；image_path 仍保留供后续 read_image 调用。
+   *
+   * 配置示例:
+   * ```toml
+   * [llm.backends.vision]
+   * model = "copilot/gpt-4o"
+   * supportsVision = true
+   * ```
+   */
+  vision: BackendRoleSchema.optional(),
 });
 
 /**
