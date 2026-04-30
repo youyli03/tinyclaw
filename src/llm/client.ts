@@ -238,6 +238,8 @@ export interface ResolvedBackend {
    * 非 Copilot 后端不设此字段，不发送 X-Initiator。
    */
   isCopilotProvider?: boolean;
+  /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型） */
+  disableThinking?: boolean;
   /**
    * WebSocket Responses API 端点 URL（wss://...）。
    * 设置后，streamChat() 优先使用 WebSocket，失败时自动降级为 HTTP Chat Completions。
@@ -759,6 +761,7 @@ export class LLMClient {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         messages: resolved as any,
         ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
+        ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(canUseTools
           ? {
@@ -893,6 +896,7 @@ export class LLMClient {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           messages: resolvedForStream as any,
           ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
+        ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           ...(canUseTools
             ? {

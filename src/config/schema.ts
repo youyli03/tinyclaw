@@ -94,6 +94,8 @@ const BackendRoleSchema = z.object({
    * 注意：设置超过模型实际支持值可能导致 400 错误。
    */
   maxContextWindow: z.number().int().positive().optional(),
+  /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
+  disableThinking: z.boolean().optional(),
 });
 export type BackendRole = z.infer<typeof BackendRoleSchema>;
 

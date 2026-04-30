@@ -159,6 +159,7 @@ class LLMRegistry {
         maxTokens: role.maxTokens ?? dsCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : dsCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.disableThinking ? { disableThinking: true } : {}),
       });
       this.clients.set(name, client);
       // DeepSeek 等非 Copilot provider：手动读取 config 中的 maxContextWindow
