@@ -824,7 +824,7 @@ export async function runAgent(
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
     // 非 code 模式不暴露 restart_tool；code 模式排除 agent fork 系列
-    const tools = [
+    const rawTools = [
       ...getAllToolSpecs(session.agentId).filter((t) => {
         if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
         if (!isCodeMode && t.function.name === "restart_tool") return false;
@@ -832,6 +832,14 @@ export async function runAgent(
       }),
       ...(opts.customTools ?? []),
     ];
+    // DeepSeek 等模型要求工具名唯一,customTools 可能与 getAllToolSpecs 重复,去重保留最后出现的
+    const seenToolNames = new Set<string>();
+    const tools = rawTools.filter((t) => {
+      const name = t.function.name;
+      if (seenToolNames.has(name)) return false;
+      seenToolNames.add(name);
+      return true;
+    });
 
     // ── 轮间压缩（chat 模式）：tool result 可能使 session 在循环中间超限 → 提前压缩避免 408 ──
     // round 0 不需要检查（pre-flight 已处理），从 round 1 起才有 tool results 写入
