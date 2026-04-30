@@ -843,6 +843,16 @@ export async function runAgent(
 
     // ── 轮间压缩（chat 模式）：tool result 可能使 session 在循环中间超限 → 提前压缩避免 408 ──
     // round 0 不需要检查（pre-flight 已处理），从 round 1 起才有 tool results 写入
+    // Code 模式轮间压缩:95% 时提前触发,防止下一轮 LLM 调用时直接超限
+    if (round > 0 && isCodeMode && !session.abortRequested && codeContextWindow > 0) {
+      const estimatedNow = session.lastPromptTokens > 0
+        ? session.lastPromptTokens
+        : session.estimatedTokens();
+      if (estimatedNow / codeContextWindow >= 0.95) {
+        console.log(`${logPrefix} ⚠️ Code 轮间检测到上下文达 ${Math.round(estimatedNow / codeContextWindow * 100)}%(round ${round}),执行压缩`);
+        await session.compressForCode();
+      }
+    }
     if (round > 0 && !isCodeMode && !session.abortRequested
         && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
       console.log(`${logPrefix} ℹ️ Chat session 轮间检测到上下文超限（round ${round}），执行压缩`);
