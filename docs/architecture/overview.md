@@ -249,7 +249,9 @@ is_chat_default → versatile+picker → powerful+picker → any picker → 第�
 - 每轮对话追加写入 `~/.tinyclaw/memory/sessions/YYYY-MM-DD.md`
 - 新对话开始前自动 `qmd.search(userInput)` 注入相关历史记忆
 - token 超 80% 阈值 → summarizer LLM 生成摘要 → 归档进 QMD → 无缝开新 session
-- 默认 embedding 后端:`RKLLM NPU HTTP embed`(`rkllm-embed-server`,1024 dim,NPU 加速);可选本地 GGUF(Qwen3-Embedding-0.6B,~640MB)
+- Embedding 后端（二选一）：
+  - **RKLLM NPU HTTP embed**（推荐，RK3588 板子）：`rkllmEmbed.enabled = true`，1024 dim，启动 `~/rkllm-embed-server/start.sh`
+  - **本地 GGUF**（默认，CPU）：`rkllmEmbed.enabled = false`（默认），`embedModel = "hf:..."` 指定模型（~380MB）
 
 ### Microsoft MFA
 

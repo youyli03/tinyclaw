@@ -354,15 +354,16 @@ runAgent() 恢复
 
 ### Embed 架构
 
-tinyclaw 使用 **RKLLM NPU HTTP embed** 替代本地 LlamaCpp 做向量化:
+tinyclaw 支持两种 embed 后端（`config.toml` `[memory]` 节切换）：
 
-| 项目 | 说明 |
-|------|------|
-| 模型 | `Qwen3-Embedding-0.6B`(rkllm 量化,w8a8) |
-| 向量维度 | **1024 dim** |
-| 接口 | `POST http://127.0.0.1:11434/embed`(单条) / `/embed_batch`(批量) |
-| Tokenize 估算 | `chars / 1.8`,约 900 tokens ≈ 1620 chars/chunk |
-| CPU 占用 | 几乎为零,全部由 RK3588 NPU 承担 |
+| 后端 | 配置 | 维度 | 说明 |
+|------|------|------|------|
+| **RKLLM NPU HTTP** | `rkllmEmbed.enabled = true` | **1024 dim** | RK3588 NPU 加速，CPU 占用近零；需先启动 `~/rkllm-embed-server/start.sh` |
+| **本地 GGUF（CPU）** | `rkllmEmbed.enabled = false`（默认）| 取决于模型 | 通用环境；`embedModel` 指定 HuggingFace URI（默认 embeddinggemma-300M） |
+
+> ⚠️ 切换后端后，向量维度改变，必须执行 `tinyclaw memory index` 重建索引。
+
+**RKLLM HTTP embed 接口**:`POST /embed`（单条）/ `/embed_batch`（批量），端口默认 11434。Tokenize 估算：`chars / 1.8` ≈ 900 tokens/chunk。
 
 实现:`src/memory/rkllm-embed.ts` → `makeRkllmEmbedLlm(port)` 返回符合 QMD LLM interface 的对象;`qmd.ts` 在 `createStore()` 后覆盖 `store.internal.llm`,绕过 QMD 内部 LlamaCpp 自动初始化。
 

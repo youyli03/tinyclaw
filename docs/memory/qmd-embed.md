@@ -7,11 +7,22 @@
 
 ## 一、背景
 
+tinyclaw QMD 向量索引支持两种 embed 后端（通过 `config.toml` 的 `[memory]` 节切换）：
+
+| 后端 | 配置 | 维度 | 适用场景 |
+|------|------|------|---------|
+| **RKLLM NPU HTTP embed** | `rkllmEmbed.enabled = true` | 1024 dim | RK3588 板子，CPU 占用近零 |
+| **本地 GGUF（CPU）** | `rkllmEmbed.enabled = false`（默认） | 取决于模型（~384/768 dim） | 无 NPU 的通用环境 |
+
+两种后端的向量维度不同，**切换后必须执行 `tinyclaw memory index` 重建索引**，否则会出现 `Dimension mismatch`。
+
+### 为什么需要 per-store 覆盖？
+
 `@tobilu/qmd` 内部在 `createStore()` 时会自动 `new LlamaCpp()` 并赋给 `store.internal.llm`，
 因此调用 `setDefaultLlamaCpp()` 对已创建的 store **无效**。
 
 tinyclaw 的解决方案：**在 `createStore()` 完成后，直接覆盖 `store.internal.llm`**，
-注入一个符合 QMD LLM interface 的 RKLLM HTTP embed 对象，彻底绕过本地 GGUF 初始化。
+注入 RKLLM HTTP embed 对象，彻底绕过本地 GGUF 初始化。本地 GGUF 路径（`rkllmEmbed.enabled = false`）则直接由 QMD 内置的 LlamaCpp 处理，无需覆盖。
 
 ---
 
