@@ -342,7 +342,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
             case 7: // Server-requested reconnect
               log?.info("[qqbot] Server requested reconnect");
-              cleanup(); scheduleReconnect();
+              cleanup(); scheduleReconnect(0);
               break;
 
             case 9: { // Invalid session
