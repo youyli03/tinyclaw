@@ -118,8 +118,37 @@ const store = await createStore({ dbPath, collections });
 每次 `getQMDStore(agentId)` 调用都确保 RKLLM embed 已注入。
 
 ---
+## 四、存储位置（重要约束）
 
-## 四、memstores.toml
+> ⚠️ **QMD 索引与摘要文件全部存储在 `~/.tinyclaw/` 下，与 tinyclaw 仓库目录完全隔离，不会进入 git 仓库。**
+
+```
+~/.tinyclaw/
+  memstores.toml                  自定义额外知识库配置（如 Obsidian notes）
+  agents/
+    <agentId>/
+      memory/
+        index.sqlite              向量索引数据库（SQLite vec0，维度取决于 embed 后端）
+        2026-05-01.md             当日压缩摘要（由 summarizer 写入）
+        ...
+      cards/                      MemoryCard 持久化目录
+      code/
+        projects/                 代码项目跨 session 记忆（NOTES.md）
+        sessions/                 code session 摘要
+  sessions/
+    qqbot_c2c_<openid>.jsonl      各 session JSONL 持久化文件
+    ...
+```
+
+- `index.sqlite` 路径：`~/.tinyclaw/agents/<agentId>/memory/index.sqlite`
+- 此文件**不属于任何 git 仓库**，不会被提交或覆盖
+- 多 Agent 各自有独立的 `index.sqlite`，互不干扰
+- 摘要 `.md` 文件也存于 `memory/` 下，同样不进仓库
+
+---
+
+
+## 五、memstores.toml
 
 文件位置：`~/.tinyclaw/memstores.toml`
 
@@ -158,7 +187,7 @@ enabled = false
 
 ---
 
-## 五、索引重建（memory_rebuild IPC）
+## 六、索引重建（memory_rebuild IPC）
 
 ### 触发方式
 
@@ -185,7 +214,7 @@ tinyclaw memory index   # CLI → 通过 IPC 在服务进程内执行
 
 ---
 
-## 六、常见问题
+## 七、常见问题
 
 ### Dimension mismatch
 
