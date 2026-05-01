@@ -556,3 +556,47 @@ export async function sendOneshot(opts: OneshotOptions): Promise<string> {
     }));
   });
 }
+
+/**
+ * 通过 IPC 触发服务进程内执行记忆索引重建（避免 CLI 与服务进程并发持锁）。
+ * @param agentId 目标 Agent，默认 "default"
+ * @returns 重建结果（文件数、chunk 数）
+ */
+export async function rebuildMemoryViaIPC(agentId = "default"): Promise<{ chunksEmbedded: number; files: number }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = { type: "memory_rebuild", agentId };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        if (resp.type === "memory_rebuilt") {
+          settle(() => resolve({ chunksEmbedded: resp.chunksEmbedded, files: resp.files }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed before rebuild completed"))));
+  });
+}

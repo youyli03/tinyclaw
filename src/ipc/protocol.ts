@@ -71,7 +71,12 @@ export type IpcRequest =
    * 服务端持续推送 activity 帧,直到 socket 断开。
    * idOrSuffix 可为完整 sessionId 或其末尾子串。
    */
-  | { type: "subscribe"; idOrSuffix: string };
+  | { type: "subscribe"; idOrSuffix: string }
+  /**
+   * 触发指定 Agent 的记忆索引重建（在服务进程内执行，避免与 CLI 并发 SQLite 锁冲突）。
+   * agentId 缺省时默认 "default"。
+   */
+  | { type: "memory_rebuild"; agentId?: string };
 
 export type IpcResponse =
   | { type: "chunk"; delta: string }
@@ -98,6 +103,8 @@ export type IpcResponse =
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */
   | { type: "session_aborted"; sessionId: string; found: boolean }
+  /** memory_rebuild 完成响应 */
+  | { type: "memory_rebuilt"; agentId: string; chunksEmbedded: number; files: number }
   /**
    * subscribe 的活动事件推送。
    * 每当目标 session 有 chunk/tool_call/tool_result/done/error 时发送一帧。

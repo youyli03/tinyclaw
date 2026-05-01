@@ -157,6 +157,34 @@ function expandHome(p: string): string {
   return p;
 }
 
+/**
+ * 初始化全局 embed LLM（幂等，CLI/服务/cron 任意路径均可调用）。
+ * - 若 config.toml 中启用 rkllmEmbed，注入 RKLLM HTTP embed（1024 维）
+ * - 否则仅设置 QMD_EMBED_MODEL 环境变量，使用 GGUF 模型（768 维）
+ *
+ * 只执行一次；多次调用无副作用。未来切换 embed 模型只需改 config.toml。
+ */
+let _embedLlmInitialized = false;
+export async function initEmbedLlm(): Promise<void> {
+  if (_embedLlmInitialized) return;
+  _embedLlmInitialized = true;
+
+  const cfg = loadConfig();
+  process.env["NODE_LLAMA_CPP_GPU"] = "false";
+  process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
+
+  if (cfg.memory.rkllmEmbed.enabled) {
+    const rkllmLlm = makeRkllmEmbedLlm(cfg.memory.rkllmEmbed.port);
+    // setDefaultLlamaCpp 未在 @tobilu/qmd 主入口导出,直接用动态 import 访问 dist/llm.js
+    const llmMod = await import("@tobilu/qmd/dist/llm.js" as string);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (llmMod as any).setDefaultLlamaCpp(rkllmLlm);
+    console.log("[qmd] embed LLM set to rkllm HTTP (1024 dim)");
+  } else {
+    console.log("[qmd] embed LLM set to GGUF:", cfg.memory.embedModel);
+  }
+}
+
 async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
   const cfg = loadConfig();
   if (!cfg.memory.enabled) return null;
@@ -173,16 +201,52 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
     const agentMemDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory");
     fs.mkdirSync(agentMemDir, { recursive: true });
 
-    process.env["NODE_LLAMA_CPP_GPU"] = "false";
-    process.env["QMD_EMBED_MODEL"] = cfg.memory.embedModel;
+    // 统一 embed LLM 初始化（幂等）
+    await initEmbedLlm();
 
-    // 若启用 RKLLM NPU embedding，注入 HTTP embed 实现
-    if (cfg.memory.rkllmEmbed.enabled) {
-      const rkllmLlm = makeRkllmEmbedLlm(cfg.memory.rkllmEmbed.port);
-      // setDefaultLlamaCpp 未在 @tobilu/qmd 主入口导出，直接用动态 import 访问 dist/llm.js
-      const llmMod = await import("@tobilu/qmd/dist/llm.js" as string);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (llmMod as any).setDefaultLlamaCpp(rkllmLlm);
+    // 检查 sqlite 向量表维度与当前 embed 模型是否一致；不一致则先 DROP vectors_vec，确保重建后维度正确
+    const dbPath = path.join(agentMemDir, "index.sqlite");
+    if (fs.existsSync(dbPath)) {
+      try {
+        const cfg2 = loadConfig();
+        let actualDim: number | null = null;
+        if (cfg2.memory.rkllmEmbed.enabled) {
+          // 直接 HTTP 请求 rkllm embed server 获取实际维度
+          const res = await fetch(`http://127.0.0.1:${cfg2.memory.rkllmEmbed.port}/embed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "probe" }),
+            signal: AbortSignal.timeout(5000),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as { embedding: number[] };
+            actualDim = data.embedding.length;
+          }
+        }
+        if (actualDim !== null) {
+          // 读 sqlite_master 获取已存储的 vec0 dim（使用 better-sqlite3，无需 vec0 扩展）
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { default: BetterSqlite3 } = await import("better-sqlite3") as any;
+          const db = new BetterSqlite3(dbPath, { readonly: true });
+          const row = db.prepare("SELECT sql FROM sqlite_master WHERE name='vectors_vec'").get() as { sql?: string } | undefined;
+          db.close();
+          if (row?.sql) {
+            const m = /float\[(\d+)\]/.exec(row.sql);
+            if (m && Number(m[1]) !== actualDim) {
+              // vec0 是虚拟表，better-sqlite3 不加载 sqlite-vec 扩展，无法用 DROP TABLE
+              // 直接删除 sqlite 文件，让 createStore 重建（最可靠）
+              console.log(`[qmd] embed dim mismatch: stored=${m[1]} actual=${actualDim}, removing sqlite for full rebuild`);
+              fs.unlinkSync(dbPath);
+              const shmPath = dbPath + "-shm";
+              const walPath = dbPath + "-wal";
+              if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+              if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[qmd] dim check skipped:", e);
+      }
     }
 
     const { createStore } = await import("@tobilu/qmd");
@@ -208,6 +272,16 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
       dbPath: path.join(agentMemDir, "index.sqlite"),
       config: { collections },
     });
+
+    // createStore() 内部会 new LlamaCpp() 并赋给 internal.llm，
+    // getLlm(store) = store.llm ?? getDefaultLlamaCpp()，故 setDefaultLlamaCpp 无效。
+    // 若启用 rkllmEmbed，直接覆盖 per-store llm，使 generateEmbeddings 走 HTTP embed（1024 维）。
+    const cfg3 = loadConfig();
+    if (cfg3.memory.rkllmEmbed.enabled) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (s as unknown as { internal: { llm: unknown } }).internal.llm = makeRkllmEmbedLlm(cfg3.memory.rkllmEmbed.port);
+      console.log("[qmd] per-store llm overridden with rkllm HTTP embed (1024 dim)");
+    }
 
     storeMap.set(agentId, s);
     return s;
@@ -354,8 +428,21 @@ export async function rebuildMemoryIndex(
   onUpdateProgress?: (info: UpdateProgress) => void,
   onEmbedProgress?: (info: EmbedProgress) => void
 ): Promise<{ update: UpdateResult; embed: EmbedResult } | null> {
+  // 先关闭并清除缓存的 store，确保 getQMDStore 重新初始化（含 embed dim 检查）
+  const existing = storeMap.get(agentId);
+  if (existing) {
+    await existing.close().catch(() => {});
+    storeMap.delete(agentId);
+  }
   const s = await getQMDStore(agentId);
   if (!s) return null;
+
+  // 清空所有已有的 embedding（content_vectors + vectors_vec）
+  // 确保 embed 时会重新向量化所有文档，使用最新的 embed 模型（避免 dim 不一致）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // 清空所有已有的 embedding(content_vectors + vectors_vec)，强制按当前 embed 模型重建
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (s as any).internal.clearAllEmbeddings();
   const updateResult = await s.update({
     collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION, "code_sessions"],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
@@ -388,5 +475,9 @@ export async function updateStore(name: string, agentId = "default"): Promise<vo
   const s = await getQMDStore(agentId);
   if (!s) return;
   await s.update({ collections: [name] });
+  // debug: print which llm will be used for embed
+  const llmMod = await import("@tobilu/qmd/dist/llm.js" as string) as any;
+  const currentLlm = llmMod.getDefaultLlamaCpp();
+  console.log("[qmd] updateStore embed llm type:", typeof currentLlm, "keys:", Object.keys(currentLlm).slice(0, 5).join(","), "__rkllm:", currentLlm.__rkllm);
   await s.embed();
 }

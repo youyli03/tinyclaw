@@ -18,6 +18,7 @@ import { llmRegistry } from "../llm/registry.js";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { agentManager } from "../core/agent-manager.js";
 import { loopTriggerManager } from "../core/loop-trigger.js";
+import { memoryMaintenance } from "../core/memory-maintenance.js";
 import type { QQBotConnector } from "../connectors/qqbot/index.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { parseCommand, executeCommand } from "../commands/registry.js";
@@ -398,6 +399,19 @@ async function handleRequest(
     } finally {
       if (slotHeld) releaseLLMSlot();
     }
+    return;
+  }
+
+  // ── memory_rebuild 请求:委托服务进程在内部执行向量索引重建 ──────────────
+  if (req.type === "memory_rebuild") {
+    const { agentId = "default" } = req as { type: "memory_rebuild"; agentId?: string };
+    memoryMaintenance.runOne(agentId)
+      .then(() => {
+        send({ type: "memory_rebuilt", agentId, chunksEmbedded: -1, files: -1 });
+      })
+      .catch((err: unknown) => {
+        send({ type: "error", message: `memory_rebuild failed: ${err instanceof Error ? err.message : String(err)}` });
+      });
     return;
   }
 

@@ -15,7 +15,12 @@
   const _warn = console.warn.bind(console);
   const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
   console.log   = (...a) => _log(`[${ts()}]`, ...a);
-  console.error = (...a) => _err(`[${ts()}]`, ...a);
+  console.error = (...a) => {
+    _err(`[${ts()}]`, ...a);
+    if (a.some(x => String(x).includes("longer than the context"))) {
+      _err("[ERR STACK]", new Error().stack?.split("\n").slice(2, 6).join(" | "));
+    }
+  };
   console.warn  = (...a) => _warn(`[${ts()}]`, ...a);
 }
 
@@ -39,6 +44,7 @@ import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
+import { initEmbedLlm } from "./memory/qmd.js";
 import { startNewsWatcher, stopNewsWatcher } from "./memory/news-watcher.js";
 import { tinyclawSubmitter } from "./core/tinyclaw-submitter.js";
 import { skillWatcher } from "./skills/watcher.js";
@@ -748,6 +754,8 @@ ${message}`;
   });
 
   // 7. 启动内置每日记忆维护调度器
+  // 提前初始化 embed LLM，确保 QMD 使用正确的向量模型（避免 GGUF session 先于 rkllm 初始化）
+  await initEmbedLlm();
   memoryMaintenance.start();
 
   // 启动 news 目录 watcher（主动触发增量索引，替代懒触发）

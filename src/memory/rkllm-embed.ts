@@ -24,6 +24,7 @@ export function makeRkllmEmbedLlm(port = 11434): any {
   const base = `http://127.0.0.1:${port}`;
 
   return {
+    __rkllm: true as const,
     async embed(text: string): Promise<{ embedding: number[]; model: string } | null> {
       const res = await fetch(`${base}/embed`, {
         method: "POST",
@@ -69,5 +70,16 @@ export function makeRkllmEmbedLlm(port = 11434): any {
     },
 
     async dispose(): Promise<void> {},
+
+    /**
+     * tokenize: qmd 用于按 token 数切分文档。
+     * rkllm-embed 服务不提供 tokenizer 接口，此处用字符数做近似估算：
+     * 中英混合约 3 chars/token，返回长度等于估算 token 数的 Uint32Array，
+     * 满足 qmd 只检查 .length 的需求。
+     */
+    async tokenize(text: string): Promise<Uint32Array> {
+      const approxTokens = Math.max(1, Math.ceil(text.length / 3));
+      return new Uint32Array(approxTokens);
+    },
   };
 }

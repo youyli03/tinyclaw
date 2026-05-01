@@ -12,8 +12,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { bold, dim, green, red, cyan, yellow, section } from "../ui.js";
-import { listSessions, memorizeSession } from "../../ipc/client.js";
-import { searchMemory, updateMemoryIndex, rebuildMemoryIndex, type UpdateProgress, type EmbedProgress } from "../../memory/qmd.js";
+import { listSessions, memorizeSession, rebuildMemoryViaIPC } from "../../ipc/client.js";
+import { searchMemory, updateMemoryIndex, rebuildMemoryIndex, initEmbedLlm, type UpdateProgress, type EmbedProgress } from "../../memory/qmd.js";
 import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 import { memoryMaintenance } from "../../core/memory-maintenance.js";
@@ -168,6 +168,19 @@ async function cmdIndex(args: string[]): Promise<void> {
   }
   console.log(`\n${dim(`重建向量索引... agent: ${agentId}`)}\n`);
   const t0 = Date.now();
+
+  // 优先通过 IPC 让服务进程重建（避免并发 SQLite 锁冲突）
+  try {
+    process.stdout.write(dim("正在通过服务进程重建索引...") + "\n");
+    const ipcResult = await rebuildMemoryViaIPC(agentId);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(`\n✅ 索引重建完成 (via IPC) — ${ipcResult.files} 文件 · ${ipcResult.chunksEmbedded} chunks · ${elapsed}s`);
+    return;
+  } catch {
+    process.stdout.write(dim("服务进程未运行，直接本地重建...") + "\n");
+    // 先初始化 embed LLM（确保与服务进程使用同一 embed 维度）
+    await initEmbedLlm();
+  }
 
   // 阶段 1：扫描文件
   process.stdout.write(`${dim("阶段 1/2  扫描文件...")}\n`);
