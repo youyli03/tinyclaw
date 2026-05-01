@@ -199,7 +199,7 @@ tinyclaw/
 ### LLM 多后端
 
 - 统一 OpenAI-compatible 接口（`LLMClient`）
-- 三个命名后端：`daily`（对话）/ `code`（代码任务）/ `summarizer`（摘要压缩）
+- 三个命名后端:`daily`(对话)/ `code`(代码任务)/ `summarizer`(摘要压缩)/ `vision`(视觉模型,可选)
 - 配置格式：`[providers.*]` 管理凭证，`[llm.backends.*]` 的 `model` 字段使用 `"provider/model-id"` symbol
   - `"copilot/auto"` → 自动选择 Copilot 默认模型
   - `"copilot/claude-sonnet-4.5"` → 指定具体模型
@@ -343,10 +343,36 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 
 Session 持久化到 `~/.tinyclaw/qqbot/session.json`，重启后自动 Resume，appId 变更自动失效。
 
+**多 QQBot 实例支持：**
+
+除单 bot 配置 `[channels.qqbot]` 外，支持 `[channels.qqbots.<id>]` map 同时运行多个 bot：
+
+```toml
+[channels.qqbots.main]
+appId        = "102xxxxx"
+clientSecret = "secret1"
+agentId      = "default"   # 绑定的 Agent
+
+[channels.qqbots.work]
+appId        = "103xxxxx"
+clientSecret = "secret2"
+agentId      = "work"      # 各 bot 可绑定不同 Agent
+```
+
+每个 bot 有独立的 token/gateway/session 状态，通过 `botId` 路由，互不干扰。
+
+**InboundMessageBus（消息路由层）：**
+
+`src/connectors/inbound-bus.ts` 是统一入站消息路由器：
+- 接收所有 bot 的 `InboundMessage`，根据 `agentId` 路由到对应 Session
+- 斜杠命令（`/code`、`/plan`、`/status` 等）在此层拦截，**优先于** LLM runAgent 处理
+- plan / ask_user 等待期间，`/status` 等命令仍可即时响应
+
+
 ### Cron 定时任务
 
 - 数据存储：`~/.tinyclaw/cron/jobs/` （每个 job 独立 `<id>.json` 文件）
-- 支持三种调度：`once`（ISO 8601 一次性）/ `every`（固定间隔秒数）/ `daily`（每天 HH:MM）
+- 支持三种调度：`once`（ISO 8601 一次性）/ `every`（固定间隔秒数）/ `daily`（每天 HH:MM）；`daily` 同时支持 `timesOfDay`（数组，一天多个时间点）
 - 触发后启动独立 Agent 会话执行任务，结果通过 `Connector.send()` 主动推送
 - 通知策略：`always`（每次）/ `on_change`（仅结果变化时）/ `on_error`（仅出错时）/ `never`
 - 支持跨 run 对话历史（`stateful = true`）
@@ -502,6 +528,15 @@ model   = "o4-mini"
 baseUrl = "https://api.openai.com/v1"
 apiKey  = "sk-..."
 model   = "gpt-4o-mini"
+
+# 可选:图片识别专用后端(fallback,用于 read_image 等视觉工具)
+# [llm.backends.vision]
+# baseUrl = "https://api.openai.com/v1"
+# apiKey  = "sk-..."
+# model   = "gpt-4o-mini"
+
+# DeepSeek 等支持思维链的模型可关闭 thinking(减少 token 消耗)
+# disableThinking = true   # 在对应后端节下添加
 
 # ── LLM 后端（方案 B：GitHub Copilot 订阅） ──────────────────────────────────
 # 需先运行 `gh auth login`，或通过首次启动的 Device Flow 完成授权
