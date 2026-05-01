@@ -15,6 +15,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { executeTool, getTool, type ToolContext } from "../tools/registry.js";
 import type { Session } from "./session.js";
@@ -65,6 +66,12 @@ const TriggerConfigSchema = z.object({
    * 不填则使用第一个 connector（main bot）。
    */
   botId: z.string().optional(),
+  /**
+   * 启动前预检脚本路径（可选）。
+   * 每次 tick 前执行该脚本，退出码=0 才继续，非0则静默跳过整个 tick（不执行 steps、不调用 LLM）。
+   * 示例：设置为 is_trading_day.py，节假日自动不触发。
+   */
+  preCheckScript: z.string().optional(),
   /**
    * 推送策略:
    * - "always": 每次 tick 结束后将 LLM 完整回复推送给用户
@@ -296,6 +303,17 @@ export class LoopTriggerManager {
     if (!cfg.steps?.length && !message) {
       console.warn(`[loop-trigger] id=${cfg.id} 无 steps 也无 message，跳过`);
       return false;
+    }
+
+    // ── preCheckScript：退出码非0则静默跳过整个 tick ──────────────────────
+    if (cfg.preCheckScript) {
+      const scriptPath = cfg.preCheckScript;
+      const result = spawnSync(process.execPath, [scriptPath], { timeout: 10000 });
+      if (result.status !== 0) {
+        console.log(`[loop-trigger] id=${cfg.id} preCheckScript 返回 ${result.status ?? "null"}，跳过本次 tick`);
+        return false;
+      }
+      console.log(`[loop-trigger] id=${cfg.id} preCheckScript 通过`);
     }
 
     this.running.add(cfg.id);
