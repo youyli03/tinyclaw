@@ -444,7 +444,7 @@ export async function rebuildMemoryIndex(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (s as any).internal.clearAllEmbeddings();
   const updateResult = await s.update({
-    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION, "code_sessions"],
+    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION, "code_sessions", ...loadMemStoresConfig().stores.filter((st) => st.enabled).map((st) => st.name)],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
   const embedResult = await s.embed(onEmbedProgress ? { onProgress: onEmbedProgress } : undefined);
