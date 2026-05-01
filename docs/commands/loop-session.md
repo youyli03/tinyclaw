@@ -183,3 +183,43 @@ tinyclaw chat loop trigger <sessionId>
 - **任务文件不存在**：跳过并打印警告，不报错
 - **常驻 Session**：loop session 复用同一个 Session 实例，记忆持续积累，Agent 可主动更新 MEM.md
 - **配置变更生效**：修改 `.toml` 后需重启服务（`tinyclaw restart`）才生效；`taskFile` 内容可实时修改，下次 tick 时读取最新内容
+
+---
+
+## preCheckScript 预检脚本
+
+Loop session 支持 `preCheckScript` 字段：在每次 tick 执行 `runAgent()` 之前，先运行指定脚本。若脚本退出码**非 0**，则静默跳过本次 tick（不调用 LLM，不触发通知）。
+
+### 配置方式
+
+在 `~/.tinyclaw/sessions/<sessionId>.toml` 的 `[loop]` 节添加：
+
+```toml
+[loop]
+enabled         = true
+tickSeconds     = 300
+taskFile        = "/path/to/TASK.md"
+preCheckScript  = "/home/lyy/scripts/check_market_open.sh"
+```
+
+### 典型用途
+
+- **市场时段过滤**：股市行情监控只在交易时段触发
+  ```bash
+  #!/bin/bash
+  # 仅工作日 9:30~15:00 返回 0
+  HOUR=$(date +%H%M)
+  DOW=$(date +%u)   # 1=Mon..7=Sun
+  [[ $DOW -le 5 && $HOUR -ge 0930 && $HOUR -lt 1500 ]] && exit 0 || exit 1
+  ```
+
+- **依赖服务检查**：embed server / 外部 API 可用时才触发
+- **条件检查**：某文件存在 / 某变量达到阈值时触发
+
+### 行为
+
+| 退出码 | 行为 |
+|--------|------|
+| 0 | 正常执行本次 tick |
+| 非 0 | 静默跳过，打印日志，等待下一个 tick |
+| 脚本不存在 / 超时 | 同非 0，静默跳过 |

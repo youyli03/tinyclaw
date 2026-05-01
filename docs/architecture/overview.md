@@ -59,7 +59,10 @@ tinyclaw/
 │   │   ├── copilot.ts        # GitHub Copilot：token 换取 + 模型发现 + LLMClient 构建
 │   │   └── copilotSetup.ts   # RFC 8628 Device Flow OAuth + ~/.tinyclaw/.github_token 持久化
 │   ├── memory/
-│   │   ├── qmd.ts            # @tobilu/qmd SDK 封装（search / updateIndex，按 agentId 隔离命名空间）
+│   │   ├── qmd.ts            # @tobilu/qmd SDK 封装（search / updateIndex / rebuildMemoryIndex，按 agentId 隔离命名空间）
+│   │   ├── rkllm-embed.ts    # RKLLM NPU HTTP Embed 客户端（makeRkllmEmbedLlm，替代本地 LlamaCpp，1024 dim）
+│   │   ├── cards.ts          # MemoryCard 结构定义与持久化（11 种类型：preference/constraint/profile 等）
+│   │   ├── news-watcher.ts   # 监听 .update-pending 标记文件，自动触发增量索引
 │   │   ├── store.ts          # 摘要 → agents/<id>/memory/YYYY-MM-DD.md
 │   │   └── summarizer.ts     # chat: 全量压缩；code: 滑动窗口压缩（保留最近 8 条）
 │   ├── auth/
@@ -246,7 +249,7 @@ is_chat_default → versatile+picker → powerful+picker → any picker → 第�
 - 每轮对话追加写入 `~/.tinyclaw/memory/sessions/YYYY-MM-DD.md`
 - 新对话开始前自动 `qmd.search(userInput)` 注入相关历史记忆
 - token 超 80% 阈值 → summarizer LLM 生成摘要 → 归档进 QMD → 无缝开新 session
-- 默认 embedding 模型：`Qwen3-Embedding-0.6B`（中文优化，~640MB，首次自动下载）
+- 默认 embedding 后端:`RKLLM NPU HTTP embed`(`rkllm-embed-server`,1024 dim,NPU 加速);可选本地 GGUF(Qwen3-Embedding-0.6B,~640MB)
 
 ### Microsoft MFA
 
@@ -526,11 +529,12 @@ appId        = "102xxxxx"
 clientSecret = "your-client-secret"
 
 # ── 向量记忆 ───────────────────────────────────────────────────────────────────
-# embedModel 首次运行自动下载（~640MB）
-# 支持 Qwen3-Embedding-0.6B（中文优化）或 embeddinggemma-300M（英文，更小）
+# 使用 RKLLM NPU embed(推荐,RK3588 板子):先启动 ~/rkllm-embed-server/start.sh
+# 可选:自定义额外知识库(如 Obsidian notes),见 ~/.tinyclaw/memstores.toml
 
 [memory]
-embedModel     = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
+rkllmEmbed.enabled = true
+rkllmEmbed.port    = 11434
 tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
 ```
 
@@ -543,6 +547,7 @@ tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
 | `chat` | `sessionId`, `message` | 向会话发送消息（流式回复） |
 | `list` | — | 获取所有内存中的会话快照 |
 | `new` | `agentId?` | 创建新终端会话 |
+| `memory_rebuild` | `agentId?` | 在服务进程内重建 QMD 向量索引(读取 memstores.toml,使用 RKLLM embed) |
 
 | 响应类型 | 字段 | 说明 |
 |---|---|---|

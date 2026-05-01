@@ -122,7 +122,7 @@ runAgent(session, userContent, opts)
 │    searchMemory(userContent)
 │    ├─ memory.enabled = false → 返回 ""，跳过
 │    └─ memory.enabled = true
-│         Qwen3-Embedding 对 userContent 向量化
+│         RKLLM NPU HTTP embed（1024 dim）对 userContent 向量化
 │         在 index.sqlite 中检索 top-5，minScore=0.3
 │         有结果 → 追加 system message "## 相关历史记忆\n[score%] 标题\n内容..."
 │         无结果 → 跳过
@@ -350,38 +350,81 @@ runAgent() 恢复
 
 ---
 
-## 七、向量记忆（QMD）详细说明
+## 七、向量记忆(QMD)详细说明
+
+### Embed 架构
+
+tinyclaw 使用 **RKLLM NPU HTTP embed** 替代本地 LlamaCpp 做向量化:
+
+| 项目 | 说明 |
+|------|------|
+| 模型 | `Qwen3-Embedding-0.6B`(rkllm 量化,w8a8) |
+| 向量维度 | **1024 dim** |
+| 接口 | `POST http://127.0.0.1:11434/embed`(单条) / `/embed_batch`(批量) |
+| Tokenize 估算 | `chars / 1.8`,约 900 tokens ≈ 1620 chars/chunk |
+| CPU 占用 | 几乎为零,全部由 RK3588 NPU 承担 |
+
+实现:`src/memory/rkllm-embed.ts` → `makeRkllmEmbedLlm(port)` 返回符合 QMD LLM interface 的对象;`qmd.ts` 在 `createStore()` 后覆盖 `store.internal.llm`,绕过 QMD 内部 LlamaCpp 自动初始化。
 
 ### 存储结构
 
 ```
-~/.tinyclaw/memory/
-  index.sqlite          向量索引数据库（SQLite + embeddings）
-  2026-03-15.md         当日压缩摘要（压缩触发时追加）
-  2026-03-14.md
-  ...
+~/.tinyclaw/
+  memstores.toml          自定义额外知识库配置(如 Obsidian notes)
+  agents/
+    default/
+      memory/
+        index.sqlite      向量索引数据库(SQLite vec0,1024 dim)
+        2026-05-01.md     当日压缩摘要
+        ...
 ~/.tinyclaw/sessions/
-  qqbot_c2c_<openid>.jsonl    各 session 的 JSONL 持久化文件
-  cli_<uuid>.jsonl
+  qqbot_c2c_<openid>.jsonl
   ...
 ```
 
+#### memstores.toml 格式
+
+```toml
+[[stores]]
+name    = "notes"
+title   = "个人笔记(Obsidian Vault)"
+path    = "~/.tinyclaw/user-data/notes/vault"
+pattern = "**/*.md"
+enabled = true
+```
+
+每个 store 对应一个独立 QMD collection,`search_store` 工具的 `store` 参数枚举从此文件动态生成。
+
 ### 写入时机
 
-仅在 `summarizeAndCompress()` 中触发一次：`persistSummary(summaryText)` 将摘要追加到当日 `.md` 文件，异步触发 `updateMemoryIndex()`。
+仅在 `summarizeAndCompress()` 中触发一次:`persistSummary(summaryText)` 将摘要追加到当日 `.md` 文件,异步触发 `updateMemoryIndex()`。
 
-> 不再有每轮写入（无 `persistLastTurn()`），避免高频磁盘 I/O。
+> 不再有每轮写入(无 `persistLastTurn()`),避免高频磁盘 I/O。
 
 ### 检索时机
 
-每次 `runAgent()` 步骤 2：以本轮用户输入为查询向量，检索最相关的历史摘要片段注入上下文。即使 session 是全新的，或历史已被压缩，过去细节仍可被召回。
+每次 `runAgent()` 步骤 2:以本轮用户输入为查询向量,检索最相关的历史摘要片段注入上下文。即使 session 是全新的,或历史已被压缩,过去细节仍可被召回。
 
-由于 QMD 注入的 system messages 以 `"## 相关历史记忆"` 开头，压缩时会被正确过滤，不保留到压缩后的 messages[]。
+由于 QMD 注入的 system messages 以 `"## 相关历史记忆"` 开头,压缩时会被正确过滤,不保留到压缩后的 messages[]。
+
+### 索引重建(memory_rebuild)
+
+当向量索引维度发生变化(如切换 embed 模型)时,需重建索引:
+
+```bash
+tinyclaw memory index     # CLI 触发(通过 IPC 在服务进程内执行)
+```
+
+IPC `memory_rebuild` 流程:
+1. 关闭并清理旧 store 缓存(`storeMap.delete(agentId)`)
+2. 清空所有 embeddings(`clearAllEmbeddings(db)`)
+3. 重新初始化 store(覆盖 `store.internal.llm` 为 RKLLM embed)
+4. 遍历 `memstores.toml` 中的 store,动态追加 collections
+5. 对所有 `.md` 文件重新向量化
 
 ### 开关
 
-`memory.enabled = false`（默认）时全部跳过，不下载模型，不读写磁盘。开启需首次下载 ~380MB embedding 模型。
-
+`memory.enabled = false`(默认)时全部跳过,不连接 NPU embed server,不读写磁盘。开启后需先启动 `~/rkllm-embed-server/start.sh`,并在 `config.toml` 设置 `[memory] rkllmEmbed.enabled = true`。
 ---
 
 ## 八、关键参数一览
