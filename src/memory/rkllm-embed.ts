@@ -78,7 +78,8 @@ export function makeRkllmEmbedLlm(port = 11434): any {
      * 满足 qmd 只检查 .length 的需求。
      */
     async tokenize(text: string): Promise<Uint32Array> {
-      const approxTokens = Math.max(1, Math.ceil(text.length / 3));
+      // 1 char = 1 token (conservative, RKLLM ~1.6-1.8 chars/token for Chinese)
+      const approxTokens = Math.max(1, text.length);
       return new Uint32Array(approxTokens);
     },
   };
