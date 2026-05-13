@@ -116,7 +116,7 @@ class SkillWatcher {
       let subdirs: string[];
       try {
         subdirs = fs.readdirSync(skillsDir, { withFileTypes: true })
-          .filter((d) => d.isDirectory())
+          .filter((d) => d.isDirectory() && !d.name.endsWith(".disabled"))
           .map((d) => d.name);
       } catch {
         return cur;
