@@ -245,13 +245,13 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         try {
-          await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
+          await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId, segment.filename);
           break;
         } catch (err) {
           if (isTokenError(err)) {
             clearTokenCache(appId);
             token = await getAccessToken(appId, clientSecret);
-            await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId);
+            await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId, segment.filename);
             break;
           } else if (isTimeoutError(err)) {
             console.warn(`[qqbot] 媒体发送超时，${backoffMs / 1000}s 后重试...`);
@@ -310,12 +310,19 @@ async function doSendMedia(
   peerId: string,
   mediaType: "img" | "audio" | "video" | "file",
   pathOrUrl: string,
-  msgId?: string
+  msgId?: string,
+  filename?: string
 ): Promise<void> {
-  let source: { url?: string; fileData?: string };
+  // 自动从路径提取文件名
+  const resolvedFilename = filename ?? (
+    !pathOrUrl.startsWith("http://") && !pathOrUrl.startsWith("https://")
+      ? path.basename(pathOrUrl)
+      : undefined
+  );
+  let source: { url?: string; fileData?: string; filename?: string };
 
   if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
-    source = { url: pathOrUrl };
+    source = { url: pathOrUrl, ...(resolvedFilename ? { filename: resolvedFilename } : {}) };
   } else {
     if (!fs.existsSync(pathOrUrl)) {
       throw new Error(`媒体文件不存在: ${pathOrUrl}`);
@@ -339,7 +346,7 @@ async function doSendMedia(
         throw new Error(`文件过大 (${stat.size} bytes): ${uploadPath}`);
       }
       const data = fs.readFileSync(uploadPath);
-      source = { fileData: data.toString("base64") };
+      source = { fileData: data.toString("base64"), ...(resolvedFilename ? { filename: resolvedFilename } : {}) };
     } finally {
       // 清理临时 JPEG 文件
       if (tempJpg) {

@@ -35,6 +35,8 @@ const CronOutputSchema = z.object({
   peerId: z.string().nullable().default(null),
   /** 消息类型 */
   msgType: z.enum(["c2c", "group", "guild", "dm"]).default("c2c"),
+  /** 指定使用哪个 QQBot connector (config.toml channels.qqbots 中的 key，如 "main"/"chat")，不填则用默认 connector */
+  botId: z.string().nullable().optional(),
   /**
    * 通知策略:
    * - always    — 每次完成都推送

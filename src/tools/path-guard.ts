@@ -26,6 +26,84 @@ export const DANGEROUS_FILES: string[] = [
   ".ssh/authorized_keys",
 ];
 
+// ── exec_shell 危险写操作检测 ─────────────────────────────────────────────────
+
+/**
+ * 危险系统路径前缀列表。
+ * exec_shell 命令若写入/覆盖这些路径下的文件，将被拦截。
+ */
+export const DANGEROUS_SYSTEM_PATHS: string[] = [
+  "/etc/ufw",
+  "/etc/iptables",
+  "/etc/network",
+  "/etc/systemd",
+  "/etc/hosts",
+  "/etc/resolv.conf",
+  "/etc/fstab",
+  "/etc/crontab",
+  "/etc/sudoers",
+  "/etc/ssh",
+  "/etc/apt",
+  "/etc/docker",
+];
+
+export type ExecCheckResult =
+  | { blocked: false }
+  | { blocked: true; mode: "overwrite" | "append"; path: string };
+
+/**
+ * 检测 exec_shell 命令是否对危险系统路径进行写入/覆盖。
+ *
+ * 检测模式：
+ * - 覆盖：`tee <path>`、`> <path>`、`cat/echo ... > <path>`、`cp <src> <path>`、`mv <src> <path>`、`sed -i ... <path>`
+ * - 追加：`tee -a <path>`、`>> <path>`
+ */
+export function checkExecCommand(cmd: string): ExecCheckResult {
+  // 提取所有 (path, isAppend) 候选
+  const candidates: Array<{ filePath: string; isAppend: boolean }> = [];
+
+  // 1. tee [-a] <path>
+  for (const m of cmd.matchAll(/\btee\s+(-a\s+)?([^\s|&;><"']+)/g)) {
+    if (m[2]) candidates.push({ filePath: m[2], isAppend: !!m[1] });
+  }
+
+  // 2. >> <path>  (追加重定向)
+  for (const m of cmd.matchAll(/>>[ \t]*([^\s|&;><"']+)/g)) {
+    if (m[1]) candidates.push({ filePath: m[1], isAppend: true });
+  }
+
+  // 3. > <path>  (覆盖重定向，排除 >>)
+  for (const m of cmd.matchAll(/(?<!>)>[ \t]*([^\s|&;><"']+)/g)) {
+    if (m[1]) candidates.push({ filePath: m[1], isAppend: false });
+  }
+
+  // 4. cp <src> <dest>
+  for (const m of cmd.matchAll(/\bcp\s+(?:-[rRfp]+\s+)*\S+\s+([^\s|&;><"']+)/g)) {
+    if (m[1]) candidates.push({ filePath: m[1], isAppend: false });
+  }
+
+  // 5. mv <src> <dest>
+  for (const m of cmd.matchAll(/\bmv\s+(?:-[f]+\s+)*\S+\s+([^\s|&;><"']+)/g)) {
+    if (m[1]) candidates.push({ filePath: m[1], isAppend: false });
+  }
+
+  // 6. sed -i ... <path>
+  for (const m of cmd.matchAll(/\bsed\s+(?:[^|&;]*\s)?-i\S*\s+(?:'[^']*'\s+|"[^"]*"\s+|\S+\s+)?([^\s|&;><"']+)/g)) {
+    if (m[1]) candidates.push({ filePath: m[1], isAppend: false });
+  }
+
+  for (const { filePath, isAppend } of candidates) {
+    const isDangerous = DANGEROUS_SYSTEM_PATHS.some(
+      (p) => filePath === p || filePath.startsWith(p + "/"),
+    );
+    if (isDangerous) {
+      return { blocked: true, mode: isAppend ? "append" : "overwrite", path: filePath };
+    }
+  }
+
+  return { blocked: false };
+}
+
 // ── 路径写入检查 ──────────────────────────────────────────────────────────────
 
 /**

@@ -426,8 +426,9 @@ export async function sendQQBotMessage(opts: {
   msgType: InboundMessage["type"];
   text: string;
   replyToId?: string;
+  botId?: string;
 }): Promise<void> {
-  const { peerId, msgType, text, replyToId } = opts;
+  const { peerId, msgType, text, replyToId, botId } = opts;
   return new Promise<void>((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
@@ -435,7 +436,7 @@ export async function sendQQBotMessage(opts: {
     const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
 
     socket.on("connect", () => {
-      const req: IpcRequest = { type: "qqbot_send", peerId, msgType, text, ...(replyToId ? { replyToId } : {}) };
+      const req: IpcRequest = { type: "qqbot_send", peerId, msgType, text, ...(replyToId ? { replyToId } : {}), ...(botId ? { botId } : {}) };
       socket.write(JSON.stringify(req) + "\n");
     });
     socket.on("data", (data) => {

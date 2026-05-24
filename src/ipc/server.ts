@@ -70,8 +70,13 @@ export function broadcastActivity(sessionId: string, event: ActivityEvent) {
 
 export function startIpcServer(
   sessions: Map<string, Session>,
-  connector: QQBotConnector | null
+  connector: QQBotConnector | null,
+  connectors?: Map<string, QQBotConnector>
 ): Server {
+  function resolveConnector(botId?: string): QQBotConnector | null {
+    if (botId && connectors?.has(botId)) return connectors.get(botId)!;
+    return connector;
+  }
   // 清理上次遗留的 socket 文件
   if (existsSync(IPC_SOCKET_PATH)) {
     try { unlinkSync(IPC_SOCKET_PATH); } catch { /* ignore */ }
@@ -111,7 +116,7 @@ export function startIpcServer(
           }
           continue;
         }
-        void handleRequest(line, socket, sessions, connector, (pMFA) => { pendingMFA = pMFA; });
+        void handleRequest(line, socket, sessions, connector, (pMFA) => { pendingMFA = pMFA; }, resolveConnector);
       }
     });
 
@@ -136,7 +141,8 @@ async function handleRequest(
   socket: import("net").Socket,
   sessions: Map<string, Session>,
   connector: QQBotConnector | null,
-  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } | null) => void
+  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } | null) => void,
+  resolveConnector: (botId?: string) => QQBotConnector | null = () => connector
 ): Promise<void> {
   const send = (resp: IpcResponse): void => {
     if (!socket.destroyed) socket.write(JSON.stringify(resp) + "\n");
@@ -163,19 +169,21 @@ async function handleRequest(
   }
 
   if (req.type === "qqbot_send") {
-    if (!connector) {
-      send({ type: "error", message: "QQBot connector 未运行" });
-      return;
-    }
-    const { peerId, msgType, text, replyToId } = req as {
+    const { peerId, msgType, text, replyToId, botId } = req as {
       type: "qqbot_send";
       peerId: string;
       msgType: InboundMessage["type"];
       text: string;
       replyToId?: string;
+      botId?: string;
     };
+    const targetConnector = resolveConnector(botId);
+    if (!targetConnector) {
+      send({ type: "error", message: "QQBot connector 未运行" });
+      return;
+    }
     try {
-      await connector.send(peerId, msgType, text, replyToId);
+      await targetConnector.send(peerId, msgType, text, replyToId);
       send({ type: "qqbot_sent" });
     } catch (err) {
       send({ type: "error", message: err instanceof Error ? err.message : String(err) });

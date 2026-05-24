@@ -31,7 +31,7 @@ function buildBody(
   extras?: Record<string, unknown>,
   appId?: string
 ): Record<string, unknown> {
-  const mdSupport = appId !== undefined ? (markdownSupportMap.get(appId) ?? true) : true;
+  const mdSupport = appId !== undefined ? (markdownSupportMap.get(appId) ?? false) : false;
   const base = mdSupport
     ? { markdown: { content }, msg_type: 2 }
     : { content, msg_type: 0 };
@@ -184,6 +184,8 @@ interface MediaSource {
   url?: string;
   /** base64 编码的文件内容（与 url 二选一） */
   fileData?: string;
+  /** 文件名(type=file 时建议传入,QQ 客户端用于显示) */
+  filename?: string;
 }
 
 /** C2C 私聊媒体消息（srv_send_msg=true，上传即发送） */
@@ -201,6 +203,7 @@ export async function sendC2CMedia(
   };
   if (source.url) body["url"] = source.url;
   if (source.fileData) body["file_data"] = source.fileData;
+  if (source.filename) body["file_name"] = source.filename;
   if (msgId) body["msg_id"] = msgId;
   if (eventId) body["event_id"] = eventId;
   await post(`/v2/users/${userOpenid}/files`, token, body);
@@ -221,6 +224,7 @@ export async function sendGroupMedia(
   };
   if (source.url) body["url"] = source.url;
   if (source.fileData) body["file_data"] = source.fileData;
+  if (source.filename) body["file_name"] = source.filename;
   if (msgId) body["msg_id"] = msgId;
   if (eventId) body["event_id"] = eventId;
   await post(`/v2/groups/${groupOpenid}/files`, token, body);

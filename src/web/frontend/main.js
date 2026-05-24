@@ -269,7 +269,7 @@ function drawSparkline(id, data, color) {
 const app = createApp({
   setup() {
     // ── Hash 路由:刷新后恢复 tab 与日报状态（兼容所有手机浏览器）──────────
-    const VALID_PAGES = ['overview', 'metrics', 'reports', 'cron'];
+    const VALID_PAGES = ['overview', 'metrics', 'notes', 'cron'];
     function parseURL() {
       const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
@@ -277,10 +277,7 @@ const app = createApp({
     }
     function pushURL(pg, type, date) {
       let p = '/' + pg;
-      if (pg === 'reports' && type) {
-        p += '/' + type;
-        if (date) p += '/' + date;
-      }
+      if (pg === 'notes' && type) p += '/' + encodeURIComponent(type);
       if (location.pathname !== p) history.pushState({}, '', p);
     }
     const _init = parseURL();
@@ -643,52 +640,92 @@ const app = createApp({
       } catch (e) { console.warn(`loadOneMetricChart ${category}/${key} failed`, e); }
     }
 
-    // ── 日报页 ───────────────────────────────────────────────────────────────
+    // ── 日报页（已废弃，保留空占位避免引用报错） ─────────────────────────────
     const reportTypes = ref([]);
     const reportDates = ref([]);
     const rType = ref('');
     const rDate = ref('');
     const reportHtml = ref('');
+    async function fetchReportTypes() {}
+    async function selectReportType() {}
+    async function selectReportDate() {}
 
-    async function fetchReportTypes() {
+    // ── 笔记页 ───────────────────────────────────────────────────────────────
+    const notesTree = ref([]);
+    const notesSelectedPath = ref('');
+    const notesSelectedName = ref('');
+    const notesPath = ref('');            // 面包屑显示当前路径
+    const notesMarkdownHtml = ref('');
+    const notesPdfUrl = ref('');
+    const notesLoading = ref(false);
+    const notesFullscreen = ref(false);
+    const notesQuery = ref('');
+    const notesSearchResults = ref(null); // null = 未搜索
+    let notesSearchTimer = null;
+
+    async function fetchNotesTree() {
       try {
-        const data = await fetch('/api/reports').then(r => r.json());
-        reportTypes.value = data.types || [];
-        if (reportTypes.value.length && !rType.value) {
-          await selectReportType(reportTypes.value[0].type);
-        }
-      } catch (e) { console.warn('fetchReportTypes failed', e); }
+        const data = await fetch('/api/notes/tree').then(r => r.json());
+        notesTree.value = data.tree || [];
+      } catch (e) { console.warn('fetchNotesTree failed', e); }
     }
 
-    async function selectReportType(type, skipHash = false) {
-      rType.value = type;
-      rDate.value = '';
-      reportHtml.value = '';
-      if (!skipHash) {
-        pushURL('reports', type, '');
-      }
+    async function openNotesFile(filePath, fileName) {
+      notesSelectedPath.value = filePath;
+      notesSelectedName.value = fileName || filePath.split('/').pop();
+      notesPath.value = filePath;
+      notesMarkdownHtml.value = '';
+      notesPdfUrl.value = '';
+      notesLoading.value = true;
+      // 全屏时关闭树
       try {
-        const data = await fetch(`/api/reports?type=${encodeURIComponent(type)}`).then(r => r.json());
-        reportDates.value = data.dates || [];
-        if (reportDates.value.length) {
-          await selectReportDate(reportDates.value[0], skipHash);
+        const ext = filePath.toLowerCase().split('.').pop();
+        if (ext === 'pdf') {
+          notesPdfUrl.value = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
+        } else {
+          const data = await fetch(`/api/notes/file?path=${encodeURIComponent(filePath)}`).then(r => r.json());
+          const md = data.content || '';
+          notesMarkdownHtml.value = window.marked ? window.marked.parse(md) : `<pre>${md}</pre>`;
         }
-      } catch (e) { console.warn('fetchReportDates failed', e); }
+      } catch (e) {
+        notesMarkdownHtml.value = '<p style="color:var(--red)">加载失败</p>';
+      } finally {
+        notesLoading.value = false;
+      }
+      // 手机端切到预览视图
+      notesMobileView.value = 'preview';
     }
 
-    async function selectReportDate(date, skipHash = false) {
-      rDate.value = date;
-      reportHtml.value = '';
-      if (!skipHash) {
-        pushURL('reports', rType.value, date);
+    function onTreeDirOpen(path) {
+      notesPath.value = path;
+    }
+
+    function onNotesSearch() {
+      clearTimeout(notesSearchTimer);
+      if (!notesQuery.value.trim()) {
+        notesSearchResults.value = null;
+        return;
       }
-      try {
-        const data = await fetch(
-          `/api/reports?type=${encodeURIComponent(rType.value)}&date=${encodeURIComponent(date)}`
-        ).then(r => r.json());
-        const md = data.content || '';
-        reportHtml.value = window.marked ? window.marked.parse(md) : `<pre>${md}</pre>`;
-      } catch (e) { console.warn('selectReportDate failed', e); }
+      notesSearchTimer = setTimeout(async () => {
+        try {
+          const data = await fetch(`/api/notes/search?q=${encodeURIComponent(notesQuery.value)}`).then(r => r.json());
+          notesSearchResults.value = data.results || [];
+        } catch { notesSearchResults.value = []; }
+      }, 350);
+    }
+
+    function clearNotesSearch() {
+      notesQuery.value = '';
+      notesSearchResults.value = null;
+    }
+
+    // 手机端视图状态
+    const notesMobileView = ref('tree'); // 'tree' | 'preview'
+    const isMobile = ref(window.innerWidth <= 768);
+    window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; });
+    function notesMobileBack() {
+      notesMobileView.value = 'tree';
+      notesFullscreen.value = false;
     }
 
     // ── Cron 展开日志 ────────────────────────────────────────────────────────
@@ -702,7 +739,7 @@ const app = createApp({
     // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
       // 更新地址栏
-      pushURL(newPage, newPage === 'reports' ? rType.value : '', newPage === 'reports' ? rDate.value : '');
+      pushURL(newPage, '', '');
       if (newPage === 'overview') {
         await nextTick();
         await drawOverviewCharts();
@@ -713,8 +750,8 @@ const app = createApp({
         await nextTick(); // 等 v-show → display:block 生效，canvas 才有尺寸
         await loadAllMetricCharts();
       }
-      if (newPage === 'reports') {
-        await fetchReportTypes();
+      if (newPage === 'notes') {
+        if (!notesTree.value.length) await fetchNotesTree();
       }
     });
 
@@ -729,23 +766,11 @@ const app = createApp({
 
     // ── popstate：浏览器前进/后退时同步状态 ──────────────────────────────────
     function applyURL() {
-      const { pg, type, date } = parseURL();
+      const { pg } = parseURL();
       page.value = pg;
-      if (pg === 'reports' && type) {
-        // 如果 rType 已匹配则只切日期，否则重新加载
-        if (rType.value === type && date && date !== rDate.value) {
-          selectReportDate(date, true);
-        } else if (rType.value !== type) {
-          // 先设 rType 再异步加载，传 skipHash=true 避免再次写 hash
-          rType.value = type;
-          selectReportType(type, true).then(() => {
-            if (date && date !== rDate.value) selectReportDate(date, true);
-          });
-        }
-      }
     }
     function navTo(pg) {
-      pushURL(pg, pg === 'reports' ? rType.value : '', pg === 'reports' ? rDate.value : '');
+      pushURL(pg, '', '');
       page.value = pg;
     }
     window.addEventListener('popstate', applyURL);
@@ -767,16 +792,8 @@ const app = createApp({
         // 已在上面渲染
       } else if (_init.pg === 'metrics') {
         await loadAllMetricCharts(); // display:block，可以安全绘图
-      } else if (_init.pg === 'reports') {
-        await fetchReportTypes();
-        // fetchReportTypes 内部会 selectReportType -> selectReportDate 自动加载第一条
-        // 若 hash 里有指定 type/date，等 fetchReportTypes 完成后再精确跳转
-        if (_init.type && rType.value !== _init.type) {
-          await selectReportType(_init.type, true);
-        }
-        if (_init.date && rDate.value !== _init.date) {
-          await selectReportDate(_init.date, true);
-        }
+      } else if (_init.pg === 'notes') {
+        await fetchNotesTree();
       } else if (_init.pg === 'cron') {
         // cron 页无特殊初始化
       } else {
@@ -810,13 +827,16 @@ const app = createApp({
       page, navTo, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, mDays,
-      reportTypes, reportDates, rType, rDate, reportHtml,
       expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
       navigateToMetric, loadAllMetricCharts, toggleReport,
-      selectReportType, selectReportDate,
+      notesTree, notesSelectedPath, notesSelectedName, notesPath, notesMarkdownHtml,
+      notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults,
+      notesMobileView, notesMobileBack, isMobile,
+      fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch,
     };
   },
 });
 
+app.component('notes-tree-node', NotesTreeNode);
 app.mount('#app');

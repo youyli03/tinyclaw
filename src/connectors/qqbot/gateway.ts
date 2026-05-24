@@ -202,7 +202,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     const d = delay ?? RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)] ?? RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]!;
     reconnectAttempts++;
-    log?.info(`[qqbot] Reconnecting in ${d}ms (attempt ${reconnectAttempts})`);
+    log?.debug?.(`[qqbot] Reconnecting in ${d}ms (attempt ${reconnectAttempts})`);
     reconnectTimer = setTimeout(() => { reconnectTimer = null; if (!isAborted) connect(); }, d);
   };
 
@@ -222,14 +222,14 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
       const token = await getAccessToken(appId, clientSecret);
       const gatewayUrl = await getGatewayUrl(token);
-      log?.info(`[qqbot] Connecting to ${gatewayUrl}`);
+      log?.debug?.(`[qqbot] Connecting to ${gatewayUrl}`);
 
       const ws = new WebSocket(gatewayUrl);
       currentWs = ws;
       handleFnRef = onMessage;
 
       ws.on("open", () => {
-        log?.info("[qqbot] WebSocket connected");
+        log?.debug?.("[qqbot] WebSocket connected");
         isConnecting = false;
         reconnectAttempts = 0;
         lastConnectTime = Date.now();
@@ -261,7 +261,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               }, hb);
 
               if (sessionId && lastSeq !== null) {
-                log?.info(`[qqbot] Resuming session ${sessionId}`);
+                log?.debug?.(`[qqbot] Resuming session ${sessionId}`);
                 ws.send(JSON.stringify({ op: 6, d: { token: `QQBot ${token}`, session_id: sessionId, seq: lastSeq } }));
               } else {
                 const lvlIdx = lastSuccessfulIntentLevel >= 0 ? lastSuccessfulIntentLevel : intentLevelIndex;
@@ -281,7 +281,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                 saveSession({ sessionId, lastSeq, intentLevelIndex, appId });
                 onReady?.();
               } else if (t === "RESUMED") {
-                log?.info("[qqbot] Session resumed");
+                log?.debug?.("[qqbot] Session resumed");
                 if (sessionId) saveSession({ sessionId, lastSeq, intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel), appId });
                 onReady?.(); // RESUMED 也视为就绪,触发 restart_tool 续接等逻辑
               } else if (t === "C2C_MESSAGE_CREATE") {
@@ -367,7 +367,11 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       });
 
       ws.on("close", (code) => {
-        log?.info(`[qqbot] WebSocket closed: ${code}`);
+        if (code === 1005 || code === 1000) {
+          log?.debug?.(`[qqbot] WebSocket closed: ${code}`);
+        } else {
+          log?.info(`[qqbot] WebSocket closed: ${code}`);
+        }
         isConnecting = false;
 
         if (code === 4914) { log?.error("[qqbot] Bot offline/sandbox-only. Not reconnecting."); return; }

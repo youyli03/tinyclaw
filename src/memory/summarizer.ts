@@ -3,7 +3,7 @@ import { loadConfig } from "../config/loader.js";
 import { persistSummary } from "./store.js";
 import type { ChatMessage, OpenAIToolCall } from "../llm/client.js";
 
-const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给定的对话历史压缩为结构化摘要（不超过 4000 token），
+const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给定的对话历史压缩为结构化摘要（不超过 20000 token），
 以便在新的对话中无缝续接，不丢失重要的用户意图和对话脉络。
 
 摘要须包含以下章节（若某章节无内容可跳过，不要输出空章节）：
@@ -19,7 +19,7 @@ const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给
 使用中文，直接输出摘要内容，不要使用"摘要："等前缀。`;
 
 /** Code 模式专属摘要提示词，重点保留技术上下文 */
-const CODE_SUMMARIZE_SYSTEM = `你是一个代码会话摘要助手。你的任务是将给定的编码会话历史压缩为技术摘要（不超过 2000 token），
+const CODE_SUMMARIZE_SYSTEM = `你是一个代码会话摘要助手。你的任务是将给定的编码会话历史压缩为技术摘要（不超过 20000 token），
 以便在新的 code session 中无缝续接，不丢失任何关键的技术上下文。
 
 摘要须包含以下章节（若某章节无内容可跳过，不要输出空章节）：
@@ -54,18 +54,31 @@ const CODE_SUMMARIZE_THRESHOLD = 0.60;
  * @param m 待格式化的消息
  * @returns 可读文本行，空消息返回空字符串（调用方应 filter(Boolean)）
  */
+/**
+ * 将消息文本中的媒体标签替换为纯文本描述,避免摘要注入后 LLM 重复触发发送。
+ * 例如 <file src="..." name="foo.pdf"/> → [附件: foo.pdf（已发送）]
+ */
+function stripMediaTags(text: string): string {
+  return text
+    .replace(/<file\b[^>]*\bname="([^"]*)"[^>]*\/?>/gi, '[附件: $1（已发送）]')
+    .replace(/<file\b[^>]*\/?>/gi, '[附件（已发送）]')
+    .replace(/<img\b[^>]*\/?>/gi, '[图片（已发送）]')
+    .replace(/<audio\b[^>]*\/?>/gi, '[音频（已发送）]')
+    .replace(/<video\b[^>]*\/?>/gi, '[视频（已发送）]');
+}
+
 function formatMsgForSummary(m: ChatMessage): string {
   if (m.role === "assistant") {
     const calls = (m as { role: "assistant"; content: unknown; tool_calls?: OpenAIToolCall[] }).tool_calls;
     if (calls && calls.length > 0) {
-      // 展开工具调用：显示工具名 + 参数摘要（单个参数值超过 200 字符时截断）
+      // 展开工具调用:显示工具名 + 参数摘要(单个参数值超过 200 字符时截断)
       const callsDesc = calls.map((tc) => {
         let argsStr: string;
         try {
           const parsed = JSON.parse(tc.function.arguments) as Record<string, unknown>;
           const entries = Object.entries(parsed).map(([k, v]) => {
             const vs = typeof v === "string" ? v : JSON.stringify(v);
-            return `${k}: ${vs.length > 200 ? vs.slice(0, 200) + "…" : vs}`;
+            return `${k}: ${vs.length > 200 ? vs.slice(0, 200) + "..." : vs}`;
           });
           argsStr = entries.join(", ");
         } catch {
@@ -73,20 +86,20 @@ function formatMsgForSummary(m: ChatMessage): string {
         }
         return `${tc.function.name}(${argsStr})`;
       }).join("; ");
-      // 若 content 非空（思考链/前言文本），一并保留
-      const textContent = typeof m.content === "string" ? m.content.trim() : "";
-      return `[助手调用工具]：${callsDesc}${textContent ? `\n${textContent}` : ""}`;
+      // 若 content 非空(思考链/前言文本),一并保留并剥离媒体标签
+      const textContent = stripMediaTags(typeof m.content === "string" ? m.content.trim() : "");
+      return `[助手调用工具]:${callsDesc}${textContent ? `\n${textContent}` : ""}`;
     }
     const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    return content.trim() ? `[助手]：${content}` : "";
+    return content.trim() ? `[助手]:${stripMediaTags(content)}` : "";
   }
   if (m.role === "tool") {
     const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    return `[工具结果]：${content}`;
+    return `[工具结果]:${stripMediaTags(content)}`;
   }
   if (m.role === "user") {
     const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    return `[用户]：${content}`;
+    return `[用户]:${stripMediaTags(content)}`;
   }
   return "";
 }
@@ -368,8 +381,8 @@ export async function summarizeAndCompressCode(
     const historyText = toSummarize
       .map((m) => {
         const text = formatMsgForSummary(m);
-        // 截断超长的单条消息（避免摘要输入过大）
-        return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长，已截断]" : text;
+
+        return text;
       })
       .filter(Boolean)
       .join("\n\n");
@@ -642,7 +655,7 @@ export async function summarizeAndCompress(
       const loopRef = (m as { _loopTaskRef?: string })._loopTaskRef;
       if (loopRef) return `[用户-Loop任务触发 @ ${loopRef}]`;
       const text = formatMsgForSummary(m);
-      return text.length > 8000 ? text.slice(0, 8000) + "\n[内容过长,已截断]" : text;
+      return text;
     })
     .filter(Boolean)
     .join("\n\n");

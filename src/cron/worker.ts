@@ -40,7 +40,7 @@ async function handleRun(requestId: string, jobId: string): Promise<void> {
     }
 
     console.log(`[cron-worker] request=${requestId} job=${jobId} route=${classifyJob(job)}`);
-    await runJob(job, new ChatRuntimeBridge());
+    await runJob(job, new ChatRuntimeBridge(job.output?.botId ?? undefined));
     send({ type: "job_done", requestId });
   } catch (err) {
     send({

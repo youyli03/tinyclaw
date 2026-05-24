@@ -23,7 +23,7 @@
         <div class="nav-section-label">主要</div>
         <div class="nav-item" :class="{active: page==='overview'}" @click="page='overview'">概览</div>
         <div class="nav-item" :class="{active: page==='metrics'}"  @click="page='metrics'">指标</div>
-        <div class="nav-item" :class="{active: page==='reports'}"  @click="page='reports'">日报</div>
+        <div class="nav-item" :class="{active: page==='notes'}"    @click="page='notes'">笔记</div>
       </div>
       <div class="nav-section" style="margin-top:16px">
         <div class="nav-section-label">系统</div>
@@ -190,50 +190,91 @@
       <div class="empty-state" v-else>暂无已注册指标，使用 tinyclaw db add 添加</div>
     </div>
 
-    <!-- 日报页 -->
-    <div v-show="page==='reports'">
-      <div class="page-header">
-        <div class="page-title">日报 <span class="page-title-sub">/ 归档</span></div>
-      </div>
-      <div class="report-tabs" v-if="reportTypes.length">
-        <div
-          class="report-tab"
-          v-for="t in reportTypes"
-          :key="t.type"
-          :class="{active: rType===t.type}"
-          @click="selectReportType(t.type)">
-          {{ t.type }}
-          <span class="report-tab-count">{{ t.count }}</span>
+    <!-- 笔记页 -->
+    <div v-show="page==='notes'">
+      <div class="page-header" style="margin-bottom:12px">
+        <div class="page-title">
+          笔记
+          <span class="page-title-sub" v-if="notesPath">/ {{ notesPath }}</span>
         </div>
       </div>
-      <div class="report-body" v-if="rType">
-        <div class="report-date-list">
-          <div
-            class="report-date-item"
-            v-for="d in reportDates"
-            :key="d"
-            :class="{active: rDate===d}"
-            @click="selectReportDate(d)">
-            {{ d }}
-          </div>
-          <div v-if="!reportDates.length" class="empty-state" style="padding:24px 0">暂无记录</div>
-        </div>
-        <div class="report-content" v-if="rDate">
-          <div class="report-header">
-            <div class="report-header-title">
-              <span>{{ rDate }}</span>
-              <span class="report-header-badge">{{ rType }}</span>
+
+      <!-- 搜索栏 -->
+      <div class="notes-search-bar">
+        <input
+          v-model="notesQuery"
+          @input="onNotesSearch"
+          type="text"
+          placeholder="🔍  搜索文件名或内容..."
+          class="notes-search-input"
+        />
+        <span v-if="notesQuery && notesSearchResults !== null" style="font-size:12px;color:var(--t3);flex-shrink:0">
+          {{ notesSearchResults.length }} 个结果
+        </span>
+        <button v-if="notesQuery" @click="clearNotesSearch" class="notes-search-clear">✕</button>
+      </div>
+
+      <!-- PC：左树 + 右预览 -->
+      <div class="notes-layout">
+        <!-- 左侧文件树 / 搜索结果 -->
+        <div class="notes-tree-panel" v-show="notesMobileView==='tree' || !isMobile">
+          <!-- 搜索结果模式 -->          <div v-if="notesQuery && notesSearchResults !== null">
+            <div v-if="!notesSearchResults.length" class="empty-state" style="padding:24px 0">无匹配结果</div>
+            <div
+              v-for="r in notesSearchResults" :key="r.path"
+              class="notes-file-item"
+              :class="{active: notesSelectedPath === r.path}"
+              @click="openNotesFile(r.path, r.name)"
+            >
+              <span class="notes-file-icon">{{ r.ext==='.pdf' ? '📄' : '📝' }}</span>
+              <span class="notes-file-name">{{ r.name }}</span>
+              <span class="notes-file-dir">{{ r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/')) : '' }}</span>
             </div>
           </div>
-          <div class="report-md" v-html="reportHtml"></div>
-          <div class="empty-state" v-if="!reportHtml && rDate" style="padding:40px 0">加载中...</div>
+          <!-- 正常目录树模式 -->
+          <div v-else>
+            <div v-if="!notesTree.length" class="empty-state" style="padding:24px 0">加载中...</div>
+            <notes-tree-node
+              v-for="node in notesTree"
+              :key="node.path"
+              :node="node"
+              :selected-path="notesSelectedPath"
+              @open-file="openNotesFile"
+              @open-dir="onTreeDirOpen"
+            ></notes-tree-node>
+          </div>
+        </div>
+
+        <!-- 右侧预览 -->
+        <div class="notes-preview-panel" :class="{fullscreen: notesFullscreen}" v-show="notesMobileView==='preview' || !isMobile">
+          <div v-if="notesSelectedPath" class="notes-preview-header">
+            <div class="notes-preview-title">
+              <span>{{ notesSelectedName }}</span>
+              <span class="notes-preview-path">{{ notesSelectedPath }}</span>
+            </div>
+            <button class="notes-fullscreen-btn" @click="notesFullscreen=!notesFullscreen" :title="notesFullscreen?'退出全屏':'全屏'">
+              {{ notesFullscreen ? '⊠' : '⛶' }}
+            </button>
+          </div>
+          <div v-if="notesMobileView==='preview' && isMobile" style="padding:10px 14px 0">
+              <button class="btn btn-secondary" style="font-size:12px;padding:6px 12px" @click="notesMobileBack()">← 返回</button>
+            </div>
+          <div v-if="notesLoading" class="empty-state" style="padding:40px 0"><span class="loading"></span>加载中...</div>
+          <div v-else-if="notesPdfUrl" class="notes-pdf-hint">
+            <div style="font-size:32px;margin-bottom:12px">📄</div>
+            <div style="font-size:14px;font-weight:600;color:var(--t1);margin-bottom:6px">{{ notesSelectedName }}</div>
+            <a :href="notesPdfUrl" target="_blank" class="btn btn-primary" style="font-size:13px;padding:8px 20px;text-decoration:none">在新标签页打开 PDF</a>
+          </div>
+          <div v-else-if="notesMarkdownHtml" class="notes-md report-md" v-html="notesMarkdownHtml"></div>
+          <div v-else class="empty-state" style="padding:60px 0">
+            <div style="font-size:32px;margin-bottom:12px">📓</div>
+            <div style="color:var(--t2)">点击左侧文件预览</div>
+          </div>
         </div>
       </div>
-      <div class="empty-state" style="margin-top:60px" v-if="!reportTypes.length">
-        <div style="font-size:32px;margin-bottom:12px">📋</div>
-        <div style="color:var(--t2);font-size:14px">暂无日报</div>
-        <div style="color:var(--t3);font-size:12px;margin-top:6px">AI 使用 write_report tool 写入后显示</div>
-      </div>
+
+      <!-- 手机端：三级导航（目录 → 文件列表 → 预览） -->
+      <!-- 通过 notesMobileView 控制：'tree' | 'preview' -->
     </div>
 
 <!-- Cron 任务页 -->
@@ -281,9 +322,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       指标
     </div>
-    <div class="tab-item" :class="{active: page==='reports'}" @click="page='reports'">
+    <div class="tab-item" :class="{active: page==='notes'}" @click="page='notes'">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      日报
+      笔记
     </div>
     <div class="tab-item" :class="{active: page==='cron'}" @click="page='cron'">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -296,6 +337,38 @@
 <script src="/chart.umd.min.js"></script>
 <script src="/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="/marked.min.js"></script>
+<script>
+// 笔记树节点递归组件
+const NotesTreeNode = {
+  name: 'notes-tree-node',
+  props: ['node', 'selectedPath'],
+  emits: ['open-file', 'open-dir'],
+  data() { return { expanded: false }; },
+  template: `
+    <div>
+      <div v-if="node.type==='dir'" class="notes-tree-dir" :class="{expanded}" @click="expanded=!expanded">
+        <span class="notes-tree-arrow">{{ expanded ? '▾' : '▸' }}</span>
+        <span class="notes-tree-icon">📁</span>
+        <span class="notes-tree-label">{{ node.name }}</span>
+        <span class="notes-tree-count">{{ node.count }}</span>
+      </div>
+      <div v-if="node.type==='dir' && expanded" class="notes-tree-children">
+        <notes-tree-node
+          v-for="child in node.children" :key="child.path"
+          :node="child" :selected-path="selectedPath"
+          @open-file="(p,n) => $emit('open-file', p, n)"
+          @open-dir="$emit('open-dir', $event)"
+        ></notes-tree-node>
+      </div>
+      <div v-if="node.type==='file'" class="notes-file-item" :class="{active: selectedPath===node.path}"
+           @click="$emit('open-file', node.path, node.name)">
+        <span class="notes-file-icon">{{ node.ext==='.pdf' ? '📄' : '📝' }}</span>
+        <span class="notes-file-name">{{ node.name }}</span>
+      </div>
+    </div>
+  `,
+};
+</script>
 <script src="/main.js"></script>
 </body>
 </html>

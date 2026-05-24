@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
-import { checkWritePath } from "./path-guard.js";
+import { checkWritePath, checkExecCommand } from "./path-guard.js";
 import { loadConfig } from "../config/loader.js";
 
 const _require = createRequire(import.meta.url);
@@ -48,6 +48,26 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
   const parsedTimeoutSec = parseExecTimeoutSec(args["timeout_sec"]);
+
+  // ── 危险系统路径写操作检测 ────────────────────────────────────────────────
+  const execCheck = checkExecCommand(command);
+  if (execCheck.blocked) {
+    if (execCheck.mode === "overwrite") {
+      return `[安全拦截] 不允许直接覆盖系统配置文件 "${execCheck.path}"。请改用 write_file 工具申请授权，或让用户手动操作。`;
+    }
+    if (ctx?.onAskUser) {
+      const { answer } = await ctx.onAskUser(
+        `⚠️ AI 请求追加写入系统文件 "${execCheck.path}"，是否允许？此操作可能影响系统网络/安全配置。`,
+        [{ label: "允许" }, { label: "拒绝", recommended: true }],
+      );
+      if (answer !== "允许") {
+        return `已拒绝：不允许追加写入系统文件 "${execCheck.path}"`;
+      }
+    } else {
+      return `[安全拦截] 追加写入系统文件 "${execCheck.path}" 需用户确认，但当前无交互回调，已自动拒绝。`;
+    }
+  }
+
   if (typeof parsedTimeoutSec === "string") return parsedTimeoutSec;
   const timeoutSec = parsedTimeoutSec;
   const timeoutMs = timeoutSec * 1000;

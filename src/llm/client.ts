@@ -387,7 +387,7 @@ const IMAGE_COMPRESSED_MAX_BYTES = 4 * 1024 * 1024; // 4 MB — 压缩后仍超�
  * 所有图片 base64 合计超过此值时自动压缩大图，防止请求体超过 API 限制（~500 KB）。
  * 保留约 300 KB 留给 JSON 骨架 + 消息文本，图片总 base64 不超过 200 KB。
  */
-const IMAGE_TOTAL_BASE64_BUDGET = 200 * 1024;
+const IMAGE_TOTAL_BASE64_BUDGET = 600 * 1024;
 /** 总 budget 超限时，压缩此阈值以上的图片（file size） */
 const IMAGE_BUDGET_COMPRESS_THRESHOLD = 50 * 1024; // 50 KB
 // 缓存：同一图片在一次会话中只压缩一次（key = path, value = data URL or null）
@@ -403,7 +403,7 @@ function tryCompressImage(imgPath: string): Buffer | null {
   try {
     const result = spawnSync(
       "convert",
-      [imgPath, "-resize", "1024x1024>", "-quality", "75", "-strip", "jpeg:-"],
+      [imgPath, "-quality", "85", "-strip", "jpeg:-"],
       { maxBuffer: IMAGE_COMPRESSED_MAX_BYTES + 1024 * 1024 },
     );
     if (result.status === 0 && result.stdout && result.stdout.length > 0) {
@@ -454,7 +454,7 @@ function pathToDataUrl(imgPath: string): string | null {
 }
 
 /** budget 模式：强制压缩（用于总大小超限时），结果独立缓存 */
-function pathToDataUrlCompressed(imgPath: string): string | null {
+export function pathToDataUrlCompressed(imgPath: string): string | null {
   if (compressedDataUrlCache.has(imgPath)) return compressedDataUrlCache.get(imgPath)!;
   if (!existsSync(imgPath)) { compressedDataUrlCache.set(imgPath, null); return null; }
   try {
@@ -482,7 +482,7 @@ function pathToDataUrlCompressed(imgPath: string): string | null {
 
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
  *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
-function resolveMessagesForApi(messages: LLMChatMessage[]): LLMChatMessage[] {
+function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true): LLMChatMessage[] {
   // 找出最后一条含 image_path 的消息索引（该轮图片正常传输，历史图片丢弃）
   let lastImageMsgIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -533,6 +533,10 @@ function resolveMessagesForApi(messages: LLMChatMessage[]): LLMChatMessage[] {
     if (parts.length === 0) return m;
     const resolved = parts.map((p) => {
       if (p.type === "image_path") {
+        // 非视觉后端直接降级为文本,避免 API 报 400
+        if (!supportsVision) {
+          return { type: "text" as const, text: `[图片: ${p.path}（当前模型不支持视觉）]` };
+        }
         // 历史图片（非最后一条含图消息）直接丢弃，替换为文本提示
         if (idx !== lastImageMsgIdx) {
           return { type: "text" as const, text: `[历史图片: ${p.path}（如需查看请用 read_image tool）]` };
@@ -540,6 +544,9 @@ function resolveMessagesForApi(messages: LLMChatMessage[]): LLMChatMessage[] {
         const url = getUrl(p.path);
         if (url) return { type: "image_url" as const, image_url: { url, detail: "auto" as const } };
         return { type: "text" as const, text: `[图片已不可用: ${p.path}]` };
+      }
+      if (p.type === "image_url" && !supportsVision) {
+        return { type: "text" as const, text: `[图片（当前模型不支持视觉）]` };
       }
       return p;
     });
@@ -663,7 +670,7 @@ export class LLMClient {
     const canUseTools = this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
     // Resolve images to base64 (same as HTTP path)
-    const resolved = resolveMessagesForApi(messages);
+    const resolved = resolveMessagesForApi(messages, this.supportsVision);
     const { instructions, input } = chatMessagesToResponsesInput(resolved);
     const tools = canUseTools ? toolsToResponsesFormat(opts.tools!) : [];
 
@@ -754,7 +761,7 @@ export class LLMClient {
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
-    const resolved = resolveMessagesForApi(messages);
+    const resolved = resolveMessagesForApi(messages, this.supportsVision);
     const resolvedCall = withRetry(() => this.client.chat.completions.create(
       {
         model: this.backend.model,
@@ -839,7 +846,7 @@ export class LLMClient {
     const idleMsAfterFirstChunk = opts.disableIdleAfterFirstChunk ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
-    const resolvedForStream = resolveMessagesForApi(messages);
+    const resolvedForStream = resolveMessagesForApi(messages, this.supportsVision);
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 

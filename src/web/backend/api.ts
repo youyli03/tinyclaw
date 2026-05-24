@@ -8,10 +8,62 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import * as fs from "node:fs";
+import * as nodePath from "node:path";
+import * as os from "node:os";
+import { execSync } from "node:child_process";
 import { sampleStats } from "./collector.js";
 import { queryMetrics, querySnapshots, listMetricKeys } from "./db.js";
 import { loadJobs, readLogs } from "../../cron/store.js";
-import { listReportTypes, listReportDates, readReport } from "./reports.js";
+
+// ── Notes 工具 ────────────────────────────────────────────────────────────────
+const NOTES_ROOT = nodePath.join(os.homedir(), ".tinyclaw", "notes");
+
+interface TreeNode {
+  name: string;
+  path: string;     // 相对于 NOTES_ROOT 的路径
+  type: "dir" | "file";
+  ext?: string;
+  count?: number;   // 目录：含子目录的总文件数
+  children?: TreeNode[];
+}
+
+function buildTree(absDir: string, relBase: string): TreeNode[] {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(absDir, { withFileTypes: true }); }
+  catch { return []; }
+  const result: TreeNode[] = [];
+  for (const e of entries) {
+    // 跳过隐藏目录/文件（如 .obsidian、.git）
+    if (e.name.startsWith(".")) continue;
+    const relPath = relBase ? `${relBase}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      const children = buildTree(nodePath.join(absDir, e.name), relPath);
+      const count = countFiles(children);
+      result.push({ name: e.name, path: relPath, type: "dir", count, children });
+    } else if (e.isFile()) {
+      const ext = nodePath.extname(e.name).toLowerCase();
+      if ([".md", ".pdf", ".txt"].includes(ext)) {
+        result.push({ name: e.name, path: relPath, type: "file", ext });
+      }
+    }
+  }
+  // 目录在前，文件在后，各自按名字排序
+  result.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name, "zh");
+  });
+  return result;
+}
+
+function countFiles(nodes: TreeNode[]): number {
+  let n = 0;
+  for (const node of nodes) {
+    if (node.type === "file") n++;
+    else if (node.children) n += countFiles(node.children);
+  }
+  return n;
+}
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
   const body = JSON.stringify(data);
@@ -117,41 +169,70 @@ export async function handleApi(
     }
 
 
-    // GET /api/reports          — 列出所有类型及各类型最新日期
-    // GET /api/reports?type=    — 列出某类型所有日期
-    // GET /api/reports?type=&date= — 读取具体一篇日报内容
-    if (pathname === "/api/reports") {
-      const type = url.searchParams.get("type") ?? "";
-      const date = url.searchParams.get("date") ?? "";
+    // ── GET /api/notes/tree ───────────────────────────────────────────────────
+    if (pathname === "/api/notes/tree") {
+      const tree = buildTree(NOTES_ROOT, "");
+      json(res, { tree });
+      return true;
+    }
 
-      if (!type) {
-        // 列出所有类型 + 每个类型最新日期
-        const types = listReportTypes();
-        const result = types.map(t => {
-          const dates = listReportDates(t);
-          return { type: t, count: dates.length, latest: dates[0] ?? null };
+    // ── GET /api/notes/file?path=xxx ─────────────────────────────────────────
+    if (pathname === "/api/notes/file") {
+      const relPath = url.searchParams.get("path") ?? "";
+      if (!relPath) { err(res, "缺少 path 参数"); return true; }
+      // 防路径穿越
+      const abs = nodePath.resolve(NOTES_ROOT, relPath);
+      if (!abs.startsWith(NOTES_ROOT + nodePath.sep) && abs !== NOTES_ROOT) {
+        err(res, "非法路径", 403); return true;
+      }
+      if (!fs.existsSync(abs)) { err(res, "文件不存在", 404); return true; }
+      const ext = nodePath.extname(abs).toLowerCase();
+      if (ext === ".pdf") {
+        const buf = fs.readFileSync(abs);
+        res.writeHead(200, {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
+          "Content-Length": String(buf.length),
+          "Access-Control-Allow-Origin": "*",
         });
-        json(res, { types: result });
-        return true;
+        res.end(buf);
+      } else {
+        const content = fs.readFileSync(abs, "utf-8");
+        json(res, { path: relPath, content });
       }
+      return true;
+    }
 
-      if (type && !date) {
-        // 列出某类型所有日期
-        const dates = listReportDates(type);
-        json(res, { type, dates });
-        return true;
-      }
-
-      if (type && date) {
-        // 读取具体日报内容
-        const content = readReport(type, date);
-        if (content === null) {
-          err(res, `日报不存在: ${type}/${date}`, 404);
-        } else {
-          json(res, { type, date, content });
-        }
-        return true;
-      }
+    // ── GET /api/notes/search?q=xxx ──────────────────────────────────────────
+    if (pathname === "/api/notes/search") {
+      const q = (url.searchParams.get("q") ?? "").trim();
+      if (!q) { json(res, { results: [] }); return true; }
+      let results: Array<{ path: string; name: string; ext: string }> = [];
+      try {
+        // 先搜文件名
+        const nameOut = execSync(
+          `find "${NOTES_ROOT}" -not -path '*/.*' \\( -name "*.md" -o -name "*.pdf" \\) | grep -i "${q.replace(/"/g, '')}" | head -30`,
+          { encoding: "utf-8", timeout: 5000 }
+        ).trim();
+        const namePaths = nameOut ? nameOut.split("\n") : [];
+        // 再 grep 内容（仅 md）
+        let contentPaths: string[] = [];
+        try {
+          const grepOut = execSync(
+            `grep -r -l -i --include="*.md" "${q.replace(/"/g, '').replace(/'/g, '')}" "${NOTES_ROOT}" 2>/dev/null | head -20`,
+            { encoding: "utf-8", timeout: 5000 }
+          ).trim();
+          contentPaths = grepOut ? grepOut.split("\n") : [];
+        } catch { /* 无匹配 */ }
+        const allAbs = [...new Set([...namePaths, ...contentPaths])].filter(Boolean);
+        results = allAbs.map(a => ({
+          path: nodePath.relative(NOTES_ROOT, a),
+          name: nodePath.basename(a),
+          ext: nodePath.extname(a).toLowerCase(),
+        }));
+      } catch { /* grep 失败 */ }
+      json(res, { results });
+      return true;
     }
 
     err(res, "未知 API 路径", 404);

@@ -1,6 +1,6 @@
 import { Session } from "./session.js";
 import { llmRegistry, buildFallbackClient } from "../llm/registry.js";
-import { LLMConnectionError } from "../llm/client.js";
+import { LLMConnectionError, pathToDataUrlCompressed } from "../llm/client.js";
 import { APIError } from "openai";
 import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
@@ -69,8 +69,13 @@ async function describeImageWithVisionFallback(
       ext === "webp" ? "image/webp" :
       "image/png";
     const buf = fs.readFileSync(resolved);
-    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-    let description = "";
+    // 压缩图片再发给 visionClient，避免大图超出 API 限制（原始截图通常 2-3 MB）
+    const dataUrl = pathToDataUrlCompressed(resolved) ?? `data:${mime};base64,${buf.toString("base64")}`;
+    const VISION_MAX_BASE64 = 1 * 1024 * 1024; // 1 MB
+    if (dataUrl.length > VISION_MAX_BASE64) {
+      console.warn(`[visionFallback] 图片 base64 仍超限(${(dataUrl.length / 1024).toFixed(0)} KB),跳过描述`);
+      return null;
+    }    let description = "";
     await visionClient.streamChat(
       [{ role: "user", content: [
         { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
@@ -268,7 +273,7 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - 提供 2~5 个预设选项(含 label,可加 description 说明和 recommended 推荐标记)
 - 默认允许用户自由输入（不局限于预设选项）
 - 不要用此工具询问**可以自行通过读文件/执行命令确认**的事项
-- **ask_user 在同一次处理过程中不消耗额外请求**,遇到分支、歧义或需要用户决策时可放心多次调用;无需强行把所有问题合并为一次
+- **ask_user 每次只能调用一次**,同一轮 LLM 输出中若有多个 ask_user 调用,只有第一个会被执行,其余会被跳过;遇到分支、歧义时必须把所有问题合并为一次 ask_user 调用
 
 ## 后台任务（agent_fork）
 
@@ -730,9 +735,20 @@ export async function runAgent(
     // system prompt 刷新后更新回滚点
     preRunLength = session.getMessages().length;
 
-    // 2. 搜索相关历史记忆，注入为 system 消息（code 模式跳过，null = 未启用，"" = 无结果）
-    // 记忆搜索：已改为由 AI 主动调用 memory_search 工具按需查询
-    // 不再自动注入 system 消息，避免 chat/code 每轮消耗大量 token
+    // 2. 搜索相关历史记忆,注入为 system 消息(code 模式 / slave 跳过)
+    // 触发条件:非 code 模式 + 非 slave + 用户消息纯文本 > 15 字;结果截断至 1000 字符
+    if (!isCodeMode && !isSlave) {
+      const _rawText = userContent;
+      if (_rawText.replace(/\s/g, "").length > 15) {
+        try {
+          const _memResult = await searchMemory(_rawText.slice(0, 200), session.agentId, 5);
+          if (_memResult && _memResult.trim()) {
+            const _truncated = _memResult.length > 1000 ? _memResult.slice(0, 1000) + "…" : _memResult;
+            session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
+          }
+        } catch { /* 静默跳过,不阻断主流程 */ }
+      }
+    }
 
     // 2.3 Skill Reminder:每轮注入可用技能列表（chat 模式 + 非 slave）
     if (!isCodeMode && !isSlave) {
@@ -1095,6 +1111,8 @@ export async function runAgent(
     // 并发分批：遇到必须串行的工具时，先 flush 前面积累的并发批次，
     // 再串行执行该工具，然后继续下一批。
     // ─────────────────────────────────────────────────────────────────────────
+    /** 同一轮 LLM 输出中只允许一次 ask_user（强制串行单次）*/
+    let hasAskedUser = false;
     const SERIAL_TOOLS = new Set([
       "ask_user", "ask_master", "notify_user", "send_report", "render_diagram",
       "code_assist", "code_assist_run",
@@ -1103,6 +1121,7 @@ export async function runAgent(
       "create_skill",
       "session_send",
       "restart_tool",  // 触发 process.exit，必须串行且需提前写 tool result
+      "read_image",    // 读图后需注入 image_path/vision描述，必须串行避免穿插在 tool_result 之间
     ]);
 
     /**
@@ -1172,7 +1191,10 @@ export async function runAgent(
             const origPath = String((call.args as Record<string, unknown>)["path"] ?? "");
             session.addToolResultMessage(call.callId, origPath ? `[图片已加载: ${origPath}]` : result);
             if (origPath) {
-              session.addUserMessage([{ type: "image_path", path: origPath }]);
+              // 仅当主模型支持视觉时才注入 image_path，避免将图片传给不支持视觉的模型（如 deepseek）
+              if (client.supportsVision) {
+                session.addUserMessage([{ type: "image_path", path: origPath }]);
+              }
               if (visionClient) {
                 const desc = await describeImageWithVisionFallback(origPath, visionClient);
                 if (desc) session.addUserMessage(`[图片描述 ${origPath}]:\n${desc}`);
@@ -1180,6 +1202,25 @@ export async function runAgent(
             }
           } else {
             session.addToolResultMessage(call.callId, result);
+          }
+          // MCP tool 返回了图片（如截图），直接注入视觉上下文
+          if (result.includes("__MCP_IMAGE__:")) {
+            const lines = result.split("\n");
+            const imgPaths: string[] = [];
+            for (const line of lines) {
+              if (line.startsWith("__MCP_IMAGE__:")) {
+                imgPaths.push(line.slice("__MCP_IMAGE__:".length).trim());
+              }
+            }
+            for (const imgPath of imgPaths) {
+              if (client.supportsVision) {
+                session.addUserMessage([{ type: "image_path" as const, path: imgPath }]);
+              }
+              if (visionClient) {
+                const desc = await describeImageWithVisionFallback(imgPath, visionClient);
+                if (desc) session.addUserMessage(`[图片描述 ${imgPath}]:\n${desc}`);
+              }
+            }
           }
         } else {
           session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
@@ -1310,6 +1351,15 @@ export async function runAgent(
             await flushConcurrentBatch();
           }
         }
+        // ask_user 同一轮只允许一次
+        if (call.name === "ask_user" && hasAskedUser) {
+          const skipMsg = "skipped: only one ask_user allowed per turn";
+          if (!textMode) session.addToolResultMessage(call.callId, skipMsg);
+          else session.addSystemMessage(`[tool_result:${call.name}]\n${skipMsg}`);
+          continue;
+        }
+        if (call.name === "ask_user") hasAskedUser = true;
+
         const result = await runOneTool(call);
         await flushResults([{ call, result }]);
         // ask_user 执行后,同轮剩余工具全部 skip,等用户回复后 LLM 再决定

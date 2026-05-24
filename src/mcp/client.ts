@@ -290,10 +290,25 @@ class MCPClientManager {
               return `Error: ${errText}`;
             }
             if (Array.isArray(result.content)) {
-              return result.content
-                .filter((c) => c.type === "text")
-                .map((c) => (c as { type: "text"; text: string }).text)
-                .join("\n");
+              const parts: string[] = [];
+              for (const c of result.content) {
+                if (c.type === "text") {
+                  parts.push((c as { type: "text"; text: string }).text);
+                } else if (c.type === "image") {
+                  // MCP 图片内容：base64 → 临时文件 → 路径标记供 agent 注入视觉上下文
+                  const imgC = c as { type: "image"; data: string; mimeType?: string };
+                  const ext = imgC.mimeType === "image/jpeg" ? "jpg" : "png";
+                  const tmpPath = `/tmp/mcp_img_${Date.now()}.${ext}`;
+                  try {
+                    const { writeFileSync } = await import("fs");
+                    writeFileSync(tmpPath, Buffer.from(imgC.data, "base64"));
+                    parts.push(`__MCP_IMAGE__:${tmpPath}`);
+                  } catch {
+                    // 写入失败则跳过
+                  }
+                }
+              }
+              return parts.join("\n");
             }
             return String(result.content);
           } catch (err) {

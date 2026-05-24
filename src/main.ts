@@ -74,6 +74,22 @@ let _sessionGetFn: import("./tools/registry.js").ToolContext["sessionGetFn"] | n
 
 const sessions = new Map<string, Session>();
 
+// ── 消息 Debounce 合并(非命令/非等待者消息在 5s 内自动合并)──────────────
+
+const MESSAGE_DEBOUNCE_MS = 10000;
+
+interface MergedPendingItem {
+  msg: InboundMessage;
+  resolvedContent: string;
+  earlyDownloaded: import("./connectors/qqbot/attachments.js").DownloadedAttachment[];
+}
+interface MergedPendingBuffer {
+  items: MergedPendingItem[];
+  timer: ReturnType<typeof setTimeout>;
+  flush: () => Promise<void>;
+}
+const pendingBuffers = new Map<string, MergedPendingBuffer>();
+
 function getSession(sessionId: string): Session {
   let s = sessions.get(sessionId);
   if (!s) {
@@ -231,6 +247,71 @@ async function main(): Promise<void> {
       return "";
     }
     
+    // ── Debounce:非命令/非 inboundBus 消息缓冲 5s 后合并送入 runAgent ────
+    {
+      const item: MergedPendingItem = { msg, resolvedContent, earlyDownloaded };
+      const existing = pendingBuffers.get(sessionId);
+
+      if (existing) {
+        // 追加消息，重置 timer
+        // 如果 runAgent 已注册了 inboundBus 等待者（askUser/exitPlan），优先 dispatch
+        if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
+          clearTimeout(existing.timer);
+          pendingBuffers.delete(sessionId);
+          // 合并先前缓冲的消息再送入 runAgent
+          if (existing.items.length > 0) {
+            const bText = existing.items.map((i) => i.resolvedContent).join('\n');
+            const bDl = existing.items.flatMap((i) => i.earlyDownloaded);
+            const bLast = existing.items[existing.items.length - 1]!;
+            void handleMessageCore(connector, session, { ...bLast.msg, content: bText }, bText, bDl);
+          }
+          return '';
+        }
+        clearTimeout(existing.timer);
+        existing.items.push(item);
+        existing.timer = setTimeout(() => void existing.flush(), MESSAGE_DEBOUNCE_MS);
+        console.log(`[debounce] 追加第 ${existing.items.length} 条 → sessionId=${sessionId}`);
+        return "";
+      } else {
+        return await new Promise<string>((resolve) => {
+          const newBuf: MergedPendingBuffer = {
+            items: [item],
+            timer: null as unknown as ReturnType<typeof setTimeout>,
+            flush: async () => {
+              pendingBuffers.delete(sessionId);
+              const mergedText = newBuf.items.map((i) => i.resolvedContent).join("\n");
+              const mergedDownloaded = newBuf.items.flatMap((i) => i.earlyDownloaded);
+              const lastItem = newBuf.items[newBuf.items.length - 1];
+              const lastMsg = lastItem!.msg;
+              if (newBuf.items.length > 1) {
+                console.log(`[debounce] flush 合并 ${newBuf.items.length} 条 → sessionId=${sessionId}`);
+              }
+              // flush 时再次尝试 dispatch，拦截 askUser/exitPlan
+              if (session.inboundBus.dispatch(mergedText, { rawContent: mergedText, imagePaths: [] })) {
+                resolve('');
+                return;
+              }
+              resolve(await handleMessageCore(
+                connector, session, { ...lastMsg, content: mergedText }, mergedText, mergedDownloaded
+              ));
+            },
+          };
+          newBuf.timer = setTimeout(() => void newBuf.flush(), MESSAGE_DEBOUNCE_MS);
+          pendingBuffers.set(sessionId, newBuf);
+        });
+      }
+    }
+    };
+  }
+
+
+  async function handleMessageCore(
+    connector: QQBotConnector,
+    session: Session,
+    msg: InboundMessage,
+    resolvedContent: string,
+    earlyDownloaded: import("./connectors/qqbot/attachments.js").DownloadedAttachment[]
+  ): Promise<string> {
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
     if (session.running) {
       session.abortRequested = true;
@@ -649,8 +730,8 @@ ${message}`;
 
     // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
     return "";
-    };
   }
+
 
   // ── 注册处理器并启动 ───────────────────────────────────────────────────
 
@@ -659,7 +740,7 @@ ${message}`;
   }
 
   // 4. 启动 IPC server（供 CLI chat 命令通过 Unix socket 接入）
-  const ipcServer = startIpcServer(sessions, connector);
+  const ipcServer = startIpcServer(sessions, connector, connectorsMap);
   console.log("[tinyclaw] IPC server listening");
 
   // 5. 启动 Cron 调度器
