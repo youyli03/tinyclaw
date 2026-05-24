@@ -763,6 +763,7 @@ const app = createApp({
         await Vue.nextTick();
         const container = document.querySelector('.notes-pdf-mobile');
         if (container) container.innerHTML = '';
+        const rAF = () => new Promise(r => requestAnimationFrame(r));
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const scale = Math.min(window.devicePixelRatio || 2, 2);
@@ -776,6 +777,7 @@ const app = createApp({
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
           if (container) container.appendChild(canvas);
           pdfProgress.value = { cur: i, total: pdf.numPages };
+          await rAF(); // 让浏览器有机会重绘，显示已渲染的页
         }
         pdfPages.value = ['done'];
       } catch (e) {
