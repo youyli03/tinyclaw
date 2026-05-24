@@ -123,6 +123,12 @@ body {
   flex: 1;
   padding: 28px 28px 40px;
   min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#main > div {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* ── 页面头部 ── */
@@ -791,6 +797,11 @@ body {
   padding: 4px 8px;
 }
 
+/* 笔记页容器 */
+[v-show] {
+  box-sizing: border-box;
+}
+
 /* PC 双栏布局 */
 .notes-layout {
   display: flex;
@@ -798,6 +809,7 @@ body {
   align-items: flex-start;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 /* 文件树面板 */
