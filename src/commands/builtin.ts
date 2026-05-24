@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { waitForOtherSessions } from "../tools/restart.js";
 
 // ── /help ─────────────────────────────────────────────────────────────────────
 
@@ -421,6 +422,9 @@ registerCommand({
     }
 
     // 延迟退出，给当前 HTTP 响应/消息推送留出时间
+    // 等待其他正在运行的 session 完成后再重启
+    await waitForOtherSessions(session.sessionId);
+
     setTimeout(() => process.exit(75), 600);
 
     return "⏳ 类型检查通过，正在重启服务，稍后恢复...";

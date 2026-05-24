@@ -60,6 +60,7 @@ import "./tools/loop-exit.js";
 import "./tools/loop-control.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
+import { setActiveSessionsRef } from "./tools/restart.js";
 
 // ── 模块级引用（供 Fatal 处理器广播通知）────────────────────────────────────
 
@@ -172,6 +173,7 @@ async function main(): Promise<void> {
     console.log("[tinyclaw] QQBot not configured, running in IPC-only mode");
   }
   _activeSessions = sessions;
+  setActiveSessionsRef(sessions);
 
   // ── QQBot 消息处理 ──────────────────────────────────────────────────────
 
@@ -890,6 +892,8 @@ ${message}`;
           restartCallId?: string;
           /** restart_tool 写入的字段：原 run 的 X-Agent-Task-Id，重启后用于续接原任务 */
           restartTaskId?: string;
+          /** 多 session 同时 restart_tool: 排队的其他 session 续接信息 */
+          additionalSessions?: import("./tools/restart.js").RestartQueueItem[];
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
@@ -982,6 +986,47 @@ ${message}`;
                   });
               } else {
                 console.log(`[restart_tool] codeSession "${marker.codeSessionId}" not found after restart, skip resume`);
+              }
+
+              // ── 续接排队中的其他 session ──────────────────────────────────
+              for (const extra of marker.additionalSessions ?? []) {
+                if (!extra.sessionId) continue;
+                const extraSession = getSession(extra.sessionId);
+                if (!extraSession) continue;
+                if (extra.callId) {
+                  extraSession.updateToolResult(extra.callId, "✅ 重启完成,继续执行之前的任务。");
+                }
+                if (extra.peerId) {
+                  void connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], "✅ 重启完成,继续执行之前的任务。").catch(() => {});
+                }
+                extraSession.running = true;
+                const extraPromise = runAgent(extraSession, "", {
+                  skipAddUserMessage: true,
+                  continueAsAgentRound: true,
+                  ...(extra.peerId ? { onNotify: async (msg: string) => {
+                    await connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], msg).catch(() => {});
+                  }} : {}),
+                  ...(extra.taskId ? { agentTaskIdOverride: extra.taskId } : {}),
+                  onChunk: (delta: string) => { broadcastActivity(extraSession.sessionId, { kind: "chunk", delta }); },
+                  onToolCall: (name: string, args: Record<string, unknown>) => { broadcastActivity(extraSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) }); },
+                  onToolResult: (name: string, result: string) => { broadcastActivity(extraSession.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) }); },
+                });
+                extraSession.currentRunPromise = extraPromise;
+                extraPromise
+                  .then((result) => {
+                    broadcastActivity(extraSession.sessionId, { kind: "done" });
+                    if (result.content && extra.peerId) {
+                      void connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], result.content).catch(() => {});
+                    }
+                  })
+                  .catch((err: unknown) => {
+                    broadcastActivity(extraSession.sessionId, { kind: "error", message: String(err) });
+                    console.error("[restart_tool] extra session resume error:", err);
+                  })
+                  .finally(() => {
+                    extraSession.running = false;
+                    extraSession.currentRunPromise = null;
+                  });
               }
             }, 1000);
           }
