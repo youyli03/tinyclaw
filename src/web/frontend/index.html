@@ -260,10 +260,8 @@
               <button class="btn btn-secondary" style="font-size:12px;padding:6px 12px" @click="notesMobileBack()">← 返回</button>
             </div>
           <div v-if="notesLoading" class="empty-state" style="padding:40px 0"><span class="loading"></span>加载中...</div>
-          <div v-else-if="notesPdfUrl" class="notes-pdf-hint">
-            <div style="font-size:32px;margin-bottom:12px">📄</div>
-            <div style="font-size:14px;font-weight:600;color:var(--t1);margin-bottom:6px">{{ notesSelectedName }}</div>
-            <a :href="notesPdfUrl" target="_blank" class="btn btn-primary" style="font-size:13px;padding:8px 20px;text-decoration:none">在新标签页打开 PDF</a>
+          <div v-else-if="notesPdfUrl" class="notes-pdf-embed">
+            <iframe :src="notesPdfUrl" frameborder="0" class="notes-pdf-iframe"></iframe>
           </div>
           <div v-else-if="notesMarkdownHtml" class="notes-md report-md" v-html="notesMarkdownHtml"></div>
           <div v-else class="empty-state" style="padding:60px 0">
