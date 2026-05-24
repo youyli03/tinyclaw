@@ -248,17 +248,15 @@
         <!-- 右侧预览 -->
         <div class="notes-preview-panel" :class="{fullscreen: notesFullscreen}" v-show="notesMobileView==='preview' || !isMobile">
           <div v-if="notesSelectedPath" class="notes-preview-header">
+            <button v-if="isMobile" class="btn btn-secondary" style="font-size:12px;padding:4px 10px;margin-right:8px" @click="notesMobileBack()">← 返回</button>
             <div class="notes-preview-title">
               <span>{{ notesSelectedName }}</span>
-              <span class="notes-preview-path">{{ notesSelectedPath }}</span>
+              <span class="notes-preview-path" v-if="!isMobile">{{ notesSelectedPath }}</span>
             </div>
-            <button class="notes-fullscreen-btn" @click="notesFullscreen=!notesFullscreen" :title="notesFullscreen?'退出全屏':'全屏'">
+            <button class="notes-fullscreen-btn" v-if="!isMobile" @click="notesFullscreen=!notesFullscreen" :title="notesFullscreen?'退出全屏':'全屏'">
               {{ notesFullscreen ? '⊠' : '⛶' }}
             </button>
           </div>
-          <div v-if="notesMobileView==='preview' && isMobile" style="padding:10px 14px 0">
-              <button class="btn btn-secondary" style="font-size:12px;padding:6px 12px" @click="notesMobileBack()">← 返回</button>
-            </div>
           <div v-if="notesLoading" class="empty-state" style="padding:40px 0"><span class="loading"></span>加载中...</div>
           <!-- PC: 原生 iframe -->
           <div v-else-if="notesPdfUrl && !isMobile" class="notes-pdf-embed">
