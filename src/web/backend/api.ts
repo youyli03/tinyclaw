@@ -190,14 +190,35 @@ export async function handleApi(
       if (!fs.existsSync(abs)) { err(res, "文件不存在", 404); return true; }
       const ext = nodePath.extname(abs).toLowerCase();
       if (ext === ".pdf") {
-        const buf = fs.readFileSync(abs);
-        res.writeHead(200, {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
-          "Content-Length": String(buf.length),
-          "Access-Control-Allow-Origin": "*",
-        });
-        res.end(buf);
+        const stat = fs.statSync(abs);
+        const total = stat.size;
+        const rangeHeader = req.headers.range as string | undefined;
+        if (rangeHeader && typeof rangeHeader === "string") {
+          // 支持 Range 请求（大 PDF 分段加载）
+          const [startStr, endStr] = rangeHeader!.replace("bytes=", "").split("-");
+          const start = parseInt(startStr ?? "0", 10);
+          const end = (endStr && endStr !== "") ? parseInt(endStr, 10) : Math.min(start + 1024 * 1024 - 1, total - 1);
+          const chunkLen = end - start + 1;
+          res.writeHead(206, {
+            "Content-Type": "application/pdf",
+            "Content-Range": `bytes ${start}-${end}/${total}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": String(chunkLen),
+            "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
+            "Access-Control-Allow-Origin": "*",
+          });
+          const stream = fs.createReadStream(abs, { start, end });
+          stream.pipe(res);
+        } else {
+          res.writeHead(200, {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
+            "Content-Length": String(total),
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+          });
+          fs.createReadStream(abs).pipe(res);
+        }
       } else {
         const content = fs.readFileSync(abs, "utf-8");
         json(res, { path: relPath, content });

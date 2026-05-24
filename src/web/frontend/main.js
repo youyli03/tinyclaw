@@ -588,9 +588,9 @@ const app = createApp({
         const ck = `${category}/${key}`;
         const lastTs = metricLastTs[ck];
 
-        // 增量模式：图表已存在 + 有记录 ts + mDays 未变
         const existChart = charts[chartId];
         const useIncremental = incremental && lastTs != null && existChart != null;
+        console.log('[metric]', ck, 'incremental:', incremental, 'lastTs:', lastTs, 'existChart:', !!existChart, 'useIncremental:', useIncremental);
         let url = `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`;
         if (useIncremental) url += `&since=${lastTs}`;
 
