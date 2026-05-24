@@ -238,7 +238,7 @@ export async function handleApi(
         let dirPaths: string[] = [];
         try {
           const dirOut = execSync(
-            `find "${NOTES_ROOT}" -not -path '*/.*' -type d | grep -i "${safeQ}" | head -20`,
+            `find "${NOTES_ROOT}" -mindepth 1 -maxdepth 6 -type d -not -name ".*" | grep -i "${safeQ}" | head -20`,
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
           dirPaths = dirOut ? dirOut.split("\n") : [];
@@ -247,7 +247,7 @@ export async function handleApi(
         let nameOut = "";
         try {
           nameOut = execSync(
-            `find "${NOTES_ROOT}" -not -path '*/.*' -type f \( -name "*.md" -o -name "*.pdf" \) | grep -i "${safeQ}" | head -30`,
+            `find "${NOTES_ROOT}" -not -name '.*' -type f \( -name "*.md" -o -name "*.pdf" \) | grep -i "${safeQ}" | head -30`,
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
         } catch { /* 无匹配 */ }
