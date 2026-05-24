@@ -991,8 +991,18 @@ body {
   }
   /* 手机上通过 v-show + notesMobileView 控制显隐 */
   .notes-tree-panel {
+    width: 100%;
+    flex: none;
     max-height: none;
+    height: auto;
+    min-height: calc(100vh - 120px);
     border-radius: var(--radius);
+    font-size: 15px;
+  }
+  .notes-tree-dir,
+  .notes-file-item {
+    padding: 10px 16px;
+    font-size: 15px;
   }
   .notes-preview-panel {
     max-height: none;
