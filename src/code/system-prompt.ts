@@ -27,7 +27,7 @@ export function buildCodeSystemPrompt(
   currentProvider?: string,
 ): string {
   const workspacePath = workdir ?? agentManager.workspaceDir(agentId);
-  const agentDir = join(workspacePath, "..");
+  const agentDir = agentManager.agentDir(agentId);
   // PLAN.md 按 session 隔离（有 sessionId 时用新路径，否则退回旧路径兼容）
   const planPath = sessionId
     ? agentManager.codePlanPath(agentId, sessionId)

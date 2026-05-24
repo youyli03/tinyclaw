@@ -671,6 +671,7 @@ const app = createApp({
     const notesFullscreen = ref(false);
     const notesQuery = ref('');
     const notesSearchResults = ref(null); // null = 未搜索
+    const notesExpandedPaths = ref(new Set()); // 搜索展开时强制展开的目录集合
     let notesSearchTimer = null;
 
     async function fetchNotesTree() {
@@ -732,6 +733,20 @@ const app = createApp({
     }
 
     function clearNotesSearch() {
+      notesQuery.value = '';
+      notesSearchResults.value = null;
+    }
+
+    // 搜索结果点击文件夹：展开树至该节点
+    function openNotesFolder(dirPath) {
+      // 把该目录及所有祖先路径都加入 expandedPaths
+      const parts = dirPath.split('/');
+      const paths = new Set(notesExpandedPaths.value);
+      for (let i = 1; i <= parts.length; i++) {
+        paths.add(parts.slice(0, i).join('/'));
+      }
+      notesExpandedPaths.value = paths;
+      // 清空搜索词，切回树视图
       notesQuery.value = '';
       notesSearchResults.value = null;
     }
@@ -938,9 +953,9 @@ const app = createApp({
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
       navigateToMetric, loadAllMetricCharts, toggleReport,
       notesTree, notesSelectedPath, notesSelectedName, notesPath, notesMarkdownHtml,
-      notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults,
+      notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults, notesExpandedPaths,
       notesMobileView, notesMobileBack, isMobile, pdfPages, pdfProgress,
-      fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch,
+      fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch, openNotesFolder,
     };
   },
 });

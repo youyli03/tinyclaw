@@ -220,16 +220,27 @@
         <div class="notes-tree-panel" v-show="notesMobileView==='tree' || !isMobile">
           <!-- 搜索结果模式 -->          <div v-if="notesQuery && notesSearchResults !== null">
             <div v-if="!notesSearchResults.length" class="empty-state" style="padding:24px 0">无匹配结果</div>
-            <div
-              v-for="r in notesSearchResults" :key="r.path"
-              class="notes-file-item"
-              :class="{active: notesSelectedPath === r.path}"
-              @click="openNotesFile(r.path, r.name)"
-            >
-              <span class="notes-file-icon">{{ r.ext==='.pdf' ? '📄' : '📝' }}</span>
-              <span class="notes-file-name">{{ r.name }}</span>
-              <span class="notes-file-dir">{{ r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/')) : '' }}</span>
-            </div>
+            <template v-for="r in notesSearchResults" :key="r.path">
+              <!-- 文件夹 -->
+              <div v-if="r.type==='dir'"
+                class="notes-file-item notes-search-dir"
+                @click="openNotesFolder(r.path)"
+              >
+                <span class="notes-file-icon">📁</span>
+                <span class="notes-file-name">{{ r.name }}</span>
+                <span class="notes-file-dir">{{ r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/')) : '/' }}</span>
+              </div>
+              <!-- 文件 -->
+              <div v-else
+                class="notes-file-item"
+                :class="{active: notesSelectedPath === r.path}"
+                @click="openNotesFile(r.path, r.name)"
+              >
+                <span class="notes-file-icon">{{ r.ext==='.pdf' ? '📄' : '📝' }}</span>
+                <span class="notes-file-name">{{ r.name }}</span>
+                <span class="notes-file-dir">{{ r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/')) : '' }}</span>
+              </div>
+            </template>
           </div>
           <!-- 正常目录树模式 -->
           <div v-else>
@@ -239,6 +250,7 @@
               :key="node.path"
               :node="node"
               :selected-path="notesSelectedPath"
+              :expanded-paths="notesExpandedPaths"
               @open-file="openNotesFile"
               @open-dir="onTreeDirOpen"
             ></notes-tree-node>
@@ -350,12 +362,28 @@
 // 笔记树节点递归组件
 const NotesTreeNode = {
   name: 'notes-tree-node',
-  props: ['node', 'selectedPath'],
+  props: ['node', 'selectedPath', 'expandedPaths'],
   emits: ['open-file', 'open-dir'],
-  data() { return { expanded: false }; },
+  data() { return { manualExpanded: false }; },
+  computed: {
+    expanded() {
+      // 外部强制展开（搜索跳转）优先
+      if (this.expandedPaths && this.expandedPaths.has(this.node.path)) return true;
+      return this.manualExpanded;
+    },
+  },
+  methods: {
+    toggleDir() {
+      if (this.expandedPaths && this.expandedPaths.has(this.node.path)) {
+        // 已被外部展开，点击时变为手动折叠：从 expandedPaths 移除
+        this.expandedPaths.delete(this.node.path);
+      }
+      this.manualExpanded = !this.manualExpanded;
+    },
+  },
   template: `
     <div>
-      <div v-if="node.type==='dir'" class="notes-tree-dir" :class="{expanded}" @click="expanded=!expanded">
+      <div v-if="node.type==='dir'" class="notes-tree-dir" :class="{expanded}" @click="toggleDir">
         <span class="notes-tree-arrow">{{ expanded ? '▾' : '▸' }}</span>
         <span class="notes-tree-icon">📁</span>
         <span class="notes-tree-label">{{ node.name }}</span>
@@ -364,7 +392,7 @@ const NotesTreeNode = {
       <div v-if="node.type==='dir' && expanded" class="notes-tree-children">
         <notes-tree-node
           v-for="child in node.children" :key="child.path"
-          :node="child" :selected-path="selectedPath"
+          :node="child" :selected-path="selectedPath" :expanded-paths="expandedPaths"
           @open-file="(p,n) => $emit('open-file', p, n)"
           @open-dir="$emit('open-dir', $event)"
         ></notes-tree-node>

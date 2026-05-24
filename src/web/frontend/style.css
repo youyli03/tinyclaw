@@ -876,6 +876,13 @@ body {
   font-weight: 500;
   border-left-color: var(--accent);
 }
+.notes-search-dir {
+  opacity: 0.85;
+  font-style: italic;
+}
+.notes-search-dir:hover {
+  opacity: 1;
+}
 .notes-file-icon { flex-shrink: 0; }
 .notes-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notes-file-dir { font-size: 11px; color: var(--t3); flex-shrink: 0; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

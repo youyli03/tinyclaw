@@ -231,30 +231,52 @@ export async function handleApi(
     if (pathname === "/api/notes/search") {
       const q = (url.searchParams.get("q") ?? "").trim();
       if (!q) { json(res, { results: [] }); return true; }
-      let results: Array<{ path: string; name: string; ext: string }> = [];
+      const safeQ = q.replace(/"/g, '').replace(/'/g, '');
+      let results: Array<{ path: string; name: string; ext: string; type: string }> = [];
       try {
-        // 先搜文件名
-        const nameOut = execSync(
-          `find "${NOTES_ROOT}" -not -path '*/.*' \\( -name "*.md" -o -name "*.pdf" \\) | grep -i "${q.replace(/"/g, '')}" | head -30`,
-          { encoding: "utf-8", timeout: 5000 }
-        ).trim();
+        // 搜文件夹名
+        let dirPaths: string[] = [];
+        try {
+          const dirOut = execSync(
+            `find "${NOTES_ROOT}" -not -path '*/.*' -type d | grep -i "${safeQ}" | head -20`,
+            { encoding: "utf-8", timeout: 5000 }
+          ).trim();
+          dirPaths = dirOut ? dirOut.split("\n") : [];
+        } catch { /* 无匹配 */ }
+        // 搜文件名
+        let nameOut = "";
+        try {
+          nameOut = execSync(
+            `find "${NOTES_ROOT}" -not -path '*/.*' -type f \( -name "*.md" -o -name "*.pdf" \) | grep -i "${safeQ}" | head -30`,
+            { encoding: "utf-8", timeout: 5000 }
+          ).trim();
+        } catch { /* 无匹配 */ }
         const namePaths = nameOut ? nameOut.split("\n") : [];
-        // 再 grep 内容（仅 md）
+        // grep 内容(仅 md)
         let contentPaths: string[] = [];
         try {
           const grepOut = execSync(
-            `grep -r -l -i --include="*.md" "${q.replace(/"/g, '').replace(/'/g, '')}" "${NOTES_ROOT}" 2>/dev/null | head -20`,
+            `grep -r -l -i --include="*.md" "${safeQ}" "${NOTES_ROOT}" 2>/dev/null | head -20`,
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
           contentPaths = grepOut ? grepOut.split("\n") : [];
         } catch { /* 无匹配 */ }
-        const allAbs = [...new Set([...namePaths, ...contentPaths])].filter(Boolean);
-        results = allAbs.map(a => ({
+        // 文件夹结果
+        const dirResults = [...new Set(dirPaths)].filter(Boolean).map(a => ({
+          path: nodePath.relative(NOTES_ROOT, a),
+          name: nodePath.basename(a),
+          ext: '',
+          type: 'dir' as const,
+        }));
+        // 文件结果
+        const fileResults = [...new Set([...namePaths, ...contentPaths])].filter(Boolean).map(a => ({
           path: nodePath.relative(NOTES_ROOT, a),
           name: nodePath.basename(a),
           ext: nodePath.extname(a).toLowerCase(),
+          type: 'file' as const,
         }));
-      } catch { /* grep 失败 */ }
+        results = [...dirResults, ...fileResults];
+      } catch { /* 失败 */ }
       json(res, { results });
       return true;
     }
