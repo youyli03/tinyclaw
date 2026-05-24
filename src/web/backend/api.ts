@@ -238,7 +238,7 @@ export async function handleApi(
         let dirPaths: string[] = [];
         try {
           const dirOut = execSync(
-            `find "${NOTES_ROOT}" -mindepth 1 -maxdepth 6 -type d -not -name ".*" | grep -i "${safeQ}" | head -20`,
+            `find "${NOTES_ROOT}" -mindepth 1 -maxdepth 6 -type d -not -name ".*" -iname "*${safeQ}*" | head -20`,
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
           dirPaths = dirOut ? dirOut.split("\n") : [];
