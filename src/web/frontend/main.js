@@ -565,7 +565,10 @@ const app = createApp({
       mDays.value = '1';
       page.value = 'metrics';
       await nextTick();
-      await loadAllMetricCharts();
+      const nmInited = metricKeys.value.some(k => metricLastTs[k.category + '/' + k.key] != null);
+      for (const k of metricKeys.value) {
+        await loadOneMetricChart(k.category, k.key, nmInited);
+      }
     }
 
     // 加载所有指标图（每个指标独立一张图）
@@ -586,7 +589,8 @@ const app = createApp({
         const lastTs = metricLastTs[ck];
 
         // 增量模式：图表已存在 + 有记录 ts + mDays 未变
-        const useIncremental = incremental && charts[chartId] && lastTs != null;
+        const existChart = charts[chartId];
+        const useIncremental = incremental && lastTs != null && existChart != null;
         let url = `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`;
         if (useIncremental) url += `&since=${lastTs}`;
 
@@ -596,7 +600,7 @@ const app = createApp({
         if (useIncremental) {
           // 增量：只 push 新数据进已有图表
           if (rows.length > 0) {
-            const chart = charts[chartId];
+            const chart = existChart;
             const ds = chart.data.datasets[0];
             for (const r of rows) ds.data.push({ x: r.ts * 1000, y: r.value });
             metricLastTs[ck] = rows[rows.length - 1].ts;
