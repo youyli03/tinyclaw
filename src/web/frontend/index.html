@@ -249,9 +249,9 @@
         <div class="notes-preview-panel" :class="{fullscreen: notesFullscreen}" v-show="notesMobileView==='preview' || !isMobile">
           <div v-if="notesSelectedPath" class="notes-preview-header">
             <button v-if="isMobile" class="btn btn-secondary" style="font-size:12px;padding:4px 10px;margin-right:8px" @click="notesMobileBack()">← 返回</button>
-            <div class="notes-preview-title">
+            <div class="notes-preview-title" v-if="!isMobile">
               <span>{{ notesSelectedName }}</span>
-              <span class="notes-preview-path" v-if="!isMobile">{{ notesSelectedPath }}</span>
+              <span class="notes-preview-path">{{ notesSelectedPath }}</span>
             </div>
             <button class="notes-fullscreen-btn" v-if="!isMobile" @click="notesFullscreen=!notesFullscreen" :title="notesFullscreen?'退出全屏':'全屏'">
               {{ notesFullscreen ? '⊠' : '⛶' }}
