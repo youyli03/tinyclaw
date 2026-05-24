@@ -273,18 +273,18 @@ const app = createApp({
     function parseURL() {
       const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
-      // notes 页：剩余段为文件路径
-      const notesFile = pg === 'notes' && parts.length > 1
-        ? parts.slice(1).map(decodeURIComponent).join('/') : '';
+      const sp = new URLSearchParams(location.search);
+      const notesFile = sp.get('path') || '';
       return { pg, notesFile };
     }
     function pushURL(pg, notesFilePath) {
       let p = '/' + pg;
+      let search = '';
       if (pg === 'notes' && notesFilePath) {
-        // 路径段分别编码（保留 /）
-        p += '/' + notesFilePath.split('/').map(encodeURIComponent).join('/');
+        search = '?path=' + encodeURIComponent(notesFilePath);
       }
-      if (location.pathname !== p) history.pushState({}, '', p);
+      if (location.pathname !== p || location.search !== search)
+        history.pushState({}, '', p + search);
     }
     const _init = parseURL();
     const page = ref(_init.pg);
