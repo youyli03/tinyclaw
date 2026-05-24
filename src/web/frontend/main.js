@@ -273,11 +273,17 @@ const app = createApp({
     function parseURL() {
       const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
-      return { pg, type: parts[1] || '', date: parts[2] || '' };
+      // notes 页：剩余段为文件路径
+      const notesFile = pg === 'notes' && parts.length > 1
+        ? parts.slice(1).map(decodeURIComponent).join('/') : '';
+      return { pg, notesFile };
     }
-    function pushURL(pg, type, date) {
+    function pushURL(pg, notesFilePath) {
       let p = '/' + pg;
-      if (pg === 'notes' && type) p += '/' + encodeURIComponent(type);
+      if (pg === 'notes' && notesFilePath) {
+        // 路径段分别编码（保留 /）
+        p += '/' + notesFilePath.split('/').map(encodeURIComponent).join('/');
+      }
       if (location.pathname !== p) history.pushState({}, '', p);
     }
     const _init = parseURL();
@@ -698,6 +704,8 @@ const app = createApp({
       }
       // 手机端切到预览视图
       notesMobileView.value = 'preview';
+      // 更新浏览器 URL（保证刷新后能恢复）
+      pushURL('notes', filePath);
     }
 
     function onTreeDirOpen(path) {
@@ -743,7 +751,7 @@ const app = createApp({
     // 页面切换时绘图 + 同步 pathname
     watch(page, async (newPage) => {
       // 更新地址栏
-      pushURL(newPage, '', '');
+      pushURL(newPage, '');
       if (newPage === 'overview') {
         await nextTick();
         const ovInited = Object.keys(overviewLastTs).length > 0;
@@ -774,11 +782,14 @@ const app = createApp({
 
     // ── popstate：浏览器前进/后退时同步状态 ──────────────────────────────────
     function applyURL() {
-      const { pg } = parseURL();
+      const { pg, notesFile } = parseURL();
       page.value = pg;
+      if (pg === 'notes' && notesFile) {
+        openNotesFile(notesFile, notesFile.split('/').pop());
+      }
     }
     function navTo(pg) {
-      pushURL(pg, '', '');
+      pushURL(pg, '');
       page.value = pg;
     }
     window.addEventListener('popstate', applyURL);
@@ -802,6 +813,9 @@ const app = createApp({
         await loadAllMetricCharts(); // display:block，可以安全绘图
       } else if (_init.pg === 'notes') {
         await fetchNotesTree();
+        if (_init.notesFile) {
+          await openNotesFile(_init.notesFile, _init.notesFile.split('/').pop());
+        }
       } else if (_init.pg === 'cron') {
         // cron 页无特殊初始化
       } else {
