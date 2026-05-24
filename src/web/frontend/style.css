@@ -812,7 +812,7 @@ body {
 .notes-layout {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -823,6 +823,7 @@ body {
   flex: 0 0 260px;
   width: 260px;
   overflow-x: auto;
+  height: fit-content;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
