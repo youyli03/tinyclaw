@@ -793,14 +793,17 @@ body {
 
 /* PC 双栏布局 */
 .notes-layout {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  display: flex;
   gap: 16px;
-  align-items: start;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
 }
 
 /* 文件树面板 */
 .notes-tree-panel {
+  flex: 0 0 260px;
+  width: 260px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -854,6 +857,8 @@ body {
 
 /* 预览面板 */
 .notes-preview-panel {
+  flex: 1;
+  min-width: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -955,7 +960,7 @@ body {
 /* 手机端笔记：单栏，树和预览切换 */
 @media (max-width: 768px) {
   .notes-layout {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     gap: 0;
   }
   /* 手机上通过 v-show + notesMobileView 控制显隐 */
