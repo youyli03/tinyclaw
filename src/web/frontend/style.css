@@ -958,6 +958,11 @@ body {
   border: none;
   display: block;
 }
+.notes-pdf-mobile {
+  overflow-y: auto;
+  padding: 8px;
+  background: #555;
+}
 
 /* Markdown 预览（复用 .report-md 样式，加 .notes-md 作为别名） */
 .notes-md { font-size: 15px; line-height: 1.9; color: var(--t1); padding: 24px 28px 32px; word-break: break-word; }

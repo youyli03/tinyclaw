@@ -35,6 +35,7 @@ const MIME: Record<string, string> = {
   ".ico":  "image/x-icon",
   ".svg":  "image/svg+xml",
   ".webp": "image/webp",
+  ".mjs":  "application/javascript; charset=utf-8",
 };
 
 // ── cookie 解析 ───────────────────────────────────────────────────────────────

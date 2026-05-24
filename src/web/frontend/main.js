@@ -691,7 +691,12 @@ const app = createApp({
       try {
         const ext = filePath.toLowerCase().split('.').pop();
         if (ext === 'pdf') {
-          notesPdfUrl.value = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
+          if (isMobile.value) {
+            notesPdfUrl.value = '';
+            renderPdfMobile(filePath);
+          } else {
+            notesPdfUrl.value = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
+          }
         } else {
           const data = await fetch(`/api/notes/file?path=${encodeURIComponent(filePath)}`).then(r => r.json());
           const md = data.content || '';
@@ -733,11 +738,50 @@ const app = createApp({
 
     // 手机端视图状态
     const notesMobileView = ref('tree'); // 'tree' | 'preview'
+    const pdfPages = ref([]); // [{canvas, pageNum}] for mobile PDF.js render
     const isMobile = ref(window.innerWidth <= 768);
     window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; });
     function notesMobileBack() {
       notesMobileView.value = 'tree';
       notesFullscreen.value = false;
+    }
+
+    async function renderPdfMobile(filePath) {
+      pdfPages.value = [];
+      notesLoading.value = true;
+      try {
+        const url = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
+        const pdfjsLib = await import('/pdfjs/pdf.mjs');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+        const loadingTask = pdfjsLib.getDocument(url);
+        const pdf = await loadingTask.promise;
+        notesLoading.value = false;
+        const pages = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const vp = page.getViewport({ scale: window.devicePixelRatio || 1.5 });
+          const canvas = document.createElement('canvas');
+          canvas.width = vp.width;
+          canvas.height = vp.height;
+          canvas.style.width = '100%';
+          canvas.style.display = 'block';
+          canvas.style.marginBottom = '8px';
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+          pages.push(canvas);
+        }
+        pdfPages.value = pages;
+        // 等 Vue 更新后插入 canvas
+        await Vue.nextTick();
+        const container = document.querySelector('.notes-pdf-mobile');
+        if (container) {
+          container.innerHTML = '';
+          pages.forEach(cvs => container.appendChild(cvs));
+        }
+      } catch (e) {
+        notesLoading.value = false;
+        notesMarkdownHtml.value = '<p style="color:var(--red)">PDF 加载失败: ' + e.message + '</p>';
+      }
     }
 
     // ── Cron 展开日志 ────────────────────────────────────────────────────────
@@ -854,7 +898,7 @@ const app = createApp({
       navigateToMetric, loadAllMetricCharts, toggleReport,
       notesTree, notesSelectedPath, notesSelectedName, notesPath, notesMarkdownHtml,
       notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults,
-      notesMobileView, notesMobileBack, isMobile,
+      notesMobileView, notesMobileBack, isMobile, pdfPages,
       fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch,
     };
   },
