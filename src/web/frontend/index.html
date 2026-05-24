@@ -265,7 +265,14 @@
             <iframe :src="notesPdfUrl" frameborder="0" class="notes-pdf-iframe"></iframe>
           </div>
           <!-- 手机: PDF.js canvas -->
-          <div v-else-if="isMobile && pdfPages.length" class="notes-pdf-mobile" ref="pdfMobileContainer">
+          <div v-else-if="isMobile && pdfPages.length" class="notes-pdf-mobile">
+            <!-- 进度条 -->
+            <div v-if="pdfProgress.total > 0 && pdfProgress.cur < pdfProgress.total"
+                 class="pdf-progress-bar">
+              <div class="pdf-progress-inner"
+                   :style="{width: (pdfProgress.cur/pdfProgress.total*100)+'%'}"></div>
+              <span class="pdf-progress-text">{{ pdfProgress.cur }} / {{ pdfProgress.total }} 页</span>
+            </div>
             <!-- canvas 由 js 动态插入 -->
           </div>
           <div v-else-if="notesMarkdownHtml" class="notes-md report-md" v-html="notesMarkdownHtml"></div>
