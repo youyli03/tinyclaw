@@ -192,30 +192,31 @@ export async function handleApi(
       if (ext === ".pdf") {
         const stat = fs.statSync(abs);
         const total = stat.size;
-        const rangeHeader = req.headers.range as string | undefined;
-        if (rangeHeader && typeof rangeHeader === "string") {
-          // 支持 Range 请求（大 PDF 分段加载）
-          const [startStr, endStr] = rangeHeader!.replace("bytes=", "").split("-");
-          const start = parseInt(startStr ?? "0", 10);
-          const end = (endStr && endStr !== "") ? parseInt(endStr, 10) : Math.min(start + 1024 * 1024 - 1, total - 1);
+        const rangeHeader = req.headers.range;
+        const fname = encodeURIComponent(nodePath.basename(abs));
+        if (rangeHeader) {
+          const m = String(rangeHeader).match(/bytes=(\d*)-(\d*)/);
+          const start = (m && m[1]) ? parseInt(m[1], 10) : 0;
+          const end = (m && m[2]) ? parseInt(m[2], 10) : total - 1;
           const chunkLen = end - start + 1;
           res.writeHead(206, {
             "Content-Type": "application/pdf",
             "Content-Range": `bytes ${start}-${end}/${total}`,
             "Accept-Ranges": "bytes",
             "Content-Length": String(chunkLen),
-            "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
+            "Content-Disposition": `inline; filename="${fname}"`,
             "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
           });
-          const stream = fs.createReadStream(abs, { start, end });
-          stream.pipe(res);
+          fs.createReadStream(abs, { start, end }).pipe(res);
         } else {
           res.writeHead(200, {
             "Content-Type": "application/pdf",
-            "Content-Disposition": `inline; filename="${encodeURIComponent(nodePath.basename(abs))}"`,
+            "Content-Disposition": `inline; filename="${fname}"`,
             "Content-Length": String(total),
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
           });
           fs.createReadStream(abs).pipe(res);
         }
