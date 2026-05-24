@@ -999,10 +999,12 @@ body {
     min-height: 80vh;
     height: 80vh;
   }
-  .notes-pdf-embed,
+  .notes-pdf-embed {
+    height: calc(100vh - 120px);
+    min-height: 0;
+  }
   .notes-pdf-iframe {
     height: 100%;
-    min-height: 70vh;
   }
   .notes-md { padding: 16px 16px 24px; }
   .notes-fullscreen-btn { display: none; }
