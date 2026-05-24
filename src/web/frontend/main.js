@@ -757,15 +757,32 @@ const app = createApp({
         pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
         const pdf = await pdfjsLib.getDocument(url).promise;
         notesLoading.value = false;
-        pdfProgress.value = { cur: 0, total: pdf.numPages };
-        // 确保容器可见（pdfPages 不为空才显示容器）
+        const total = pdf.numPages;
+        pdfProgress.value = { cur: 0, total };
         pdfPages.value = ['loading'];
         await Vue.nextTick();
-        const container = document.querySelector('.notes-pdf-mobile');
-        if (container) container.innerHTML = '';
-        const rAF = () => new Promise(r => requestAnimationFrame(r));
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
+        const container = document.querySelector('.notes-pdf-mobile-pages');
+        if (!container) return;
+        container.innerHTML = '';
+
+        // 为每页创建占位 div
+        const placeholders = [];
+        for (let i = 0; i < total; i++) {
+          const ph = document.createElement('div');
+          ph.style.width = '100%';
+          ph.style.minHeight = '400px';
+          ph.style.marginBottom = '6px';
+          ph.dataset.page = String(i + 1);
+          ph.dataset.rendered = '0';
+          container.appendChild(ph);
+          placeholders.push(ph);
+        }
+
+        const rendered = new Set();
+        const renderPage = async (pageNum, ph) => {
+          if (rendered.has(pageNum)) return;
+          rendered.add(pageNum);
+          const page = await pdf.getPage(pageNum);
           const scale = Math.min(window.devicePixelRatio || 2, 2);
           const vp = page.getViewport({ scale });
           const canvas = document.createElement('canvas');
@@ -773,13 +790,34 @@ const app = createApp({
           canvas.height = vp.height;
           canvas.style.width = '100%';
           canvas.style.display = 'block';
-          canvas.style.marginBottom = '6px';
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-          if (container) container.appendChild(canvas);
-          pdfProgress.value = { cur: i, total: pdf.numPages };
-          await rAF(); // 让浏览器有机会重绘，显示已渲染的页
+          ph.innerHTML = '';
+          ph.style.minHeight = '';
+          ph.appendChild(canvas);
+          pdfProgress.value = { cur: rendered.size, total };
+        };
+
+        // 先渲染前2页
+        for (let i = 0; i < Math.min(2, total); i++) {
+          await renderPage(i + 1, placeholders[i]);
         }
-        pdfPages.value = ['done'];
+
+        // IntersectionObserver 懒加载剩余页
+        const obs = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              const ph = entry.target;
+              const pageNum = parseInt(ph.dataset.page);
+              renderPage(pageNum, ph);
+              obs.unobserve(ph);
+            }
+          });
+        }, { rootMargin: '400px' });
+
+        for (let i = 2; i < total; i++) {
+          obs.observe(placeholders[i]);
+        }
+
       } catch (e) {
         notesLoading.value = false;
         pdfPages.value = [];

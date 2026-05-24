@@ -963,6 +963,10 @@ body {
   padding: 8px;
   background: #555;
   position: relative;
+  height: calc(100vh - 100px);
+}
+.notes-pdf-mobile-pages {
+  /* 占位容器 */
 }
 .pdf-progress-bar {
   position: sticky;
