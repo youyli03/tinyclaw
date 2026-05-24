@@ -126,10 +126,7 @@ body {
   box-sizing: border-box;
   overflow: hidden;
 }
-#main > div {
-  width: 100%;
-  box-sizing: border-box;
-}
+
 
 /* ── 页面头部 ── */
 .page-header {
@@ -798,8 +795,11 @@ body {
 }
 
 /* 笔记页容器 */
-[v-show] {
+.notes-page {
+  width: 100%;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 /* PC 双栏布局 */
