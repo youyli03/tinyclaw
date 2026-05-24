@@ -767,6 +767,8 @@ body {
   align-items: center;
   gap: 8px;
   margin-bottom: 14px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .notes-search-input {
   flex: 1;
@@ -792,7 +794,7 @@ body {
 /* PC 双栏布局 */
 .notes-layout {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -860,6 +862,8 @@ body {
   max-height: calc(100vh - 160px);
   overflow-y: auto;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 .notes-preview-panel.fullscreen {
   position: fixed;
@@ -965,4 +969,18 @@ body {
   }
   .notes-md { padding: 16px 16px 24px; }
   .notes-fullscreen-btn { display: none; }
+}
+
+/* 笔记预览面板空状态撑满 */
+.notes-preview-panel > .empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+.notes-preview-panel > .notes-md,
+.notes-preview-panel > .notes-pdf-embed {
+  flex: 1;
 }
