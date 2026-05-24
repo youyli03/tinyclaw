@@ -131,6 +131,8 @@ body {
   padding: 28px 28px 40px;
   min-width: 0;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 
@@ -806,6 +808,7 @@ body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  height: calc(100vh - 56px); /* 56px = #main padding-top 28px * 2 估算 */
 }
 
 /* PC 双栏布局 */
@@ -816,6 +819,8 @@ body {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
 }
 
 /* 文件树面板 */
@@ -823,7 +828,7 @@ body {
   flex: 0 0 260px;
   width: 260px;
   overflow-x: auto;
-  height: fit-content;
+  overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -884,8 +889,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  min-height: 400px;
-  max-height: calc(100vh - 160px);
+  min-height: 0;
   overflow-y: auto;
   position: relative;
   display: flex;
