@@ -118,7 +118,9 @@ export async function handleApi(
       // 特殊处理：system 系统快照
       if (category === "system") {
         const hours = Math.min(days * 24, 168); // 最多 7 天
-        const rows = querySnapshots(hours);
+        const sinceParam2 = url.searchParams.get("since");
+        const sinceTs = sinceParam2 ? parseInt(sinceParam2, 10) : undefined;
+        const rows = querySnapshots(hours, sinceTs);
         json(res, { category, key, rows });
         return true;
       }

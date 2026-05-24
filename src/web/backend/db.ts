@@ -214,9 +214,10 @@ export function insertSnapshot(row: Omit<SystemSnapshotRow, "ts"> & { ts?: numbe
 }
 
 /** 查询最近 N 小时的系统快照 */
-export function querySnapshots(hours = 24): SystemSnapshotRow[] {
+export function querySnapshots(hours = 24, sinceTs?: number): SystemSnapshotRow[] {
   const db = openDB();
-  const since = Math.floor(Date.now() / 1000) - hours * 3600;
+  const windowSince = Math.floor(Date.now() / 1000) - hours * 3600;
+  const since = sinceTs != null ? Math.max(sinceTs, windowSince) : windowSince;
   return db
     .prepare("SELECT * FROM system_snapshots WHERE ts >= ? ORDER BY ts ASC")
     .all(since) as SystemSnapshotRow[];
