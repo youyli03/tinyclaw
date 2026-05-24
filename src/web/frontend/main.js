@@ -742,13 +742,17 @@ const app = createApp({
       pushURL(newPage, '', '');
       if (newPage === 'overview') {
         await nextTick();
-        await drawOverviewCharts();
+        const ovInited = Object.keys(overviewLastTs).length > 0;
+        await drawOverviewCharts(ovInited);
         drawSparklines();
       }
       if (newPage === 'metrics') {
         if (!metricKeys.value.length) await fetchMetricKeys();
-        await nextTick(); // 等 v-show → display:block 生效，canvas 才有尺寸
-        await loadAllMetricCharts();
+        await nextTick();
+        const mInited = metricKeys.value.some(k => metricLastTs[k.category + '/' + k.key] != null);
+        for (const k of metricKeys.value) {
+          await loadOneMetricChart(k.category, k.key, mInited);
+        }
       }
       if (newPage === 'notes') {
         if (!notesTree.value.length) await fetchNotesTree();
