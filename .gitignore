@@ -56,3 +56,4 @@ workspace/
 coverage/
 .nyc_output/
 mcp-servers/news/lib/__pycache__/
+__pycache__/
