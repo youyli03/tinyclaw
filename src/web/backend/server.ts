@@ -75,6 +75,8 @@ function checkAuth(
 
   // 静态资源（JS/CSS 等）不鉴权，防止登录页本身加载失败
   if (ext && ext !== ".html") return false;
+  // API 不鉴权
+  if (parsedUrl.pathname.startsWith("/api/")) return false;
 
   // 检查 cookie
   const cookies = parseCookies(req);
