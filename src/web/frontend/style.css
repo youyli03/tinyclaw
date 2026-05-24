@@ -822,6 +822,7 @@ body {
 .notes-tree-panel {
   flex: 0 0 260px;
   width: 260px;
+  overflow-x: auto;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -877,6 +878,7 @@ body {
 .notes-preview-panel {
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
