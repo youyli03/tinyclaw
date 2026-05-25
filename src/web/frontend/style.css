@@ -843,9 +843,7 @@ body {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  height: calc(100vh - 216px);
 }
 
 /* 文件树面板 */
@@ -853,6 +851,7 @@ body {
   flex: 0 0 260px;
   width: 260px;
   overflow: hidden;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--card);
@@ -915,8 +914,8 @@ body {
 .notes-preview-panel {
   flex: 1;
   min-width: 0;
-  min-height: 0;
-  overflow-x: auto;
+  height: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--border);
