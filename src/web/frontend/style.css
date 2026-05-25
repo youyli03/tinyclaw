@@ -777,9 +777,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
-  width: 100%;
+  padding: 12px 16px 10px;
   box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
 }
 .notes-search-input {
   flex: 1;
@@ -829,7 +829,7 @@ body {
   flex: 0 0 260px;
   width: 260px;
   overflow-x: auto;
-  overflow-y: auto;
+  overflow-y: hidden;
   height: 100%;
   background: var(--card);
   border: 1px solid var(--border);
@@ -838,6 +838,7 @@ body {
   padding: 8px 0;
 }
 
+.notes-tree-panel:hover { overflow-y: auto; }
 /* 目录节点 */
 .notes-tree-dir {
   display: flex;
