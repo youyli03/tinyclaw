@@ -37,11 +37,12 @@ function buildTree(absDir: string, relBase: string): TreeNode[] {
     // 跳过隐藏目录/文件（如 .obsidian、.git）
     if (e.name.startsWith(".")) continue;
     const relPath = relBase ? `${relBase}/${e.name}` : e.name;
-    if (e.isDirectory()) {
+    const resolvedIsDir = e.isDirectory() || (e.isSymbolicLink() && (() => { try { return fs.statSync(nodePath.join(absDir, e.name)).isDirectory(); } catch { return false; } })());
+    if (resolvedIsDir) {
       const children = buildTree(nodePath.join(absDir, e.name), relPath);
       const count = countFiles(children);
       result.push({ name: e.name, path: relPath, type: "dir", count, children });
-    } else if (e.isFile()) {
+    } else if (e.isFile() || e.isSymbolicLink()) {
       const ext = nodePath.extname(e.name).toLowerCase();
       if ([".md", ".pdf", ".txt"].includes(ext)) {
         result.push({ name: e.name, path: relPath, type: "file", ext });
