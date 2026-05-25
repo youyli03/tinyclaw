@@ -158,6 +158,8 @@ async function main(): Promise<void> {
   const qqbotsMap = cfg.channels.qqbots ?? {};
   const connectorsMap = new Map<string, QQBotConnector>();
   const connectors: QQBotConnector[] = [];
+  // 记录 sessionId → connector，用于 session_send 精确路由
+  const sessionConnectorMap = new Map<string, QQBotConnector>();
   for (const [botId, botCfg] of Object.entries(qqbotsMap)) {
     const c = new QQBotConnector(botId, botCfg);
     connectors.push(c);
@@ -184,6 +186,8 @@ async function main(): Promise<void> {
     const connector = activeConnector;
     const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
     const session = getSession(sessionId);
+    // 记录该 session 归属的 connector，供 session_send 路由使用
+    sessionConnectorMap.set(sessionId, activeConnector);
 
     // ── 附件预处理（语音转文字）——必须在所有早期 return 分支之前执行 ──────
     // plan 审批、ask_user、MFA 等分支均需能接收语音消息作为输入。
@@ -787,10 +791,31 @@ ${message}`;
 
     // 注入消息，走完整 runAgent 路径
     const nowStr = new Date().toLocaleString();
-    await runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
+
+    // 尝试从 targetSessionId 解析 qqbot peerId，构建 onNotify 推送回调
+    let targetOnNotify: ((msg: string) => Promise<void>) | undefined;
+    const targetSessionMatch = targetSessionId.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
+    if (targetSessionMatch) {
+      const [, targetType, targetPeerId] = targetSessionMatch;
+      const targetConnector = sessionConnectorMap.get(targetSessionId) ?? connectors[0] ?? null;
+      if (targetConnector) {
+        targetOnNotify = async (notifMsg: string) => {
+          await targetConnector.send(targetPeerId!, targetType! as import("./connectors/base.js").InboundMessage["type"], notifMsg).catch(() => {});
+        };
+      }
+    }
+
+    const { content: finalContent } = await runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
       sessionSendFn,
       sessionGetFn,
+      ...(targetOnNotify ? { onNotify: targetOnNotify } : {}),
     });
+
+    // 将 AI 最终回复推给目标用户
+    if (targetOnNotify && finalContent?.trim()) {
+      await targetOnNotify(finalContent.trim());
+    }
+
     return `消息已成功注入 session "${targetSessionId}"`;
   };
 

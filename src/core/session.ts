@@ -791,13 +791,18 @@ export class Session {
           unregister();
           // rawContent 用于编号解析(避免被附件标签干扰),content 是已拼入附件标签的完整内容
           const rawTrimmed = (extras.rawContent ?? content).trim();
-          const n = parseInt(rawTrimmed, 10);
+          // 支持 "N 附加说明" 格式:先按非数字分割取前半,若是合法选项编号则选中并附加后半内容
+          const numMatch = rawTrimmed.match(/^(\d+)([^\d].*)?$/s);
+          const n = numMatch ? parseInt(numMatch[1]!, 10) : NaN;
+          const extraText = numMatch?.[2]?.trim() ?? "";
           const imagePaths = extras.imagePaths;
           this.pendingAskUser = null;
           // answer 使用 enrichedContent(含附件标签),若无附件则与 rawTrimmed 一致
           const answer = content.trim();
           if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
-            resolve({ answer: optionLabels[n - 1]!, isFreeform: false, ...(imagePaths?.length ? { imagePaths } : {}) });
+            const chosenLabel = optionLabels[n - 1]!;
+            const combined = extraText ? `${chosenLabel}\n${extraText}` : chosenLabel;
+            resolve({ answer: combined, isFreeform: extraText.length > 0, ...(imagePaths?.length ? { imagePaths } : {}) });
           } else if (allowFreeform) {
             resolve({ answer, isFreeform: true, ...(imagePaths?.length ? { imagePaths } : {}) });
           } else {

@@ -174,6 +174,7 @@ async function runPipelineJob(
   session: Session,
   onMFARequest: (msg: string, verify?: (code: string) => boolean) => Promise<boolean>,
   notifyFn: ((message: string) => Promise<void>) | undefined,
+  onAskUserFn: ((question: string, options?: Array<{ label: string; description?: string; recommended?: boolean }>, allowFreeform?: boolean) => Promise<{ answer: string; isFreeform: boolean }>) | undefined,
   overrideClient: AnyLLMClient | undefined,
   systemPrompt: string,
 ): Promise<string> {
@@ -227,6 +228,7 @@ async function runPipelineJob(
         onMFARequest,
         systemPrompt: systemPrompt,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
+        ...(onAskUserFn ? { onAskUser: onAskUserFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
         // slaveDepth: 1 禁止 msg step 里的 LLM 调用 agent_fork，防止 Cron Pipeline 无限递归
         // Pipeline 中需要 fork 请改用 type:"tool", name:"agent_fork" 的 tool step 显式触发
@@ -296,6 +298,35 @@ ${message}`;
       }
     : undefined;
 
+  // ask_user 回调:将问题推送到 job 绑定的 connector,等待用户回复(超时 5 分钟)
+  const onAskUserFn = bridge && job.output.peerId && bridge.requestUserInput
+    ? async (
+        question: string,
+        options?: Array<{ label: string; description?: string; recommended?: boolean }>,
+        allowFreeform?: boolean,
+      ): Promise<{ answer: string; isFreeform: boolean }> => {
+        let prompt = `❓ ${question}`;
+        if (options && options.length > 0) {
+          prompt += "\n" + options.map((o, i) => `${i + 1}. ${o.label}${o.description ? " — " + o.description : ""}${o.recommended ? " ✅" : ""}`).join("\n");
+        }
+        const raw = await bridge.requestUserInput!(
+          job.output.peerId!,
+          job.output.msgType,
+          prompt,
+          300_000, // 5 分钟超时
+        );
+        const trimmed = raw.trim();
+        const n = parseInt(trimmed, 10);
+        if (options && options.length > 0 && !isNaN(n) && n >= 1 && n <= options.length) {
+          return { answer: options[n - 1]!.label, isFreeform: false };
+        }
+        if (allowFreeform !== false) {
+          return { answer: trimmed, isFreeform: true };
+        }
+        throw new Error(`INVALID_CHOICE:${trimmed}`);
+      }
+    : undefined;
+
   // notify=llm 时在 system prompt 追加 [NOTIFY] 约定说明
   const systemPrompt = job.output.notify === "llm"
     ? CRON_AGENT_SYSTEM + CRON_LLM_NOTIFY_SUFFIX
@@ -305,13 +336,14 @@ ${message}`;
     if (isPipeline) {
       // ── Pipeline 模式 ──────────────────────────────────────────────────────
       console.log(`[cron] job=${job.id} 以 Pipeline 模式运行（${job.steps!.length} 步）`);
-      resultText = await runPipelineJob(job, session, onMFARequest, notifyFn, overrideClient, systemPrompt);
+      resultText = await runPipelineJob(job, session, onMFARequest, notifyFn, onAskUserFn, overrideClient, systemPrompt);
     } else {
       // ── 单步模式（向后兼容）────────────────────────────────────────────────
       const result = await runAgent(session, job.message, {
         onMFARequest,
         systemPrompt: systemPrompt,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
+        ...(onAskUserFn ? { onAskUser: onAskUserFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
       });
       resultText = result.content;

@@ -51,6 +51,13 @@ function buildTree(absDir: string, relBase: string): TreeNode[] {
   // 目录在前，文件在后，各自按名字排序
   result.sort((a, b) => {
     if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    if (a.type === "file") {
+      // 文件名以 YYYY-MM-DD 开头时降序(最新在前),否则升序
+      const dateRe = /^\d{4}-\d{2}-\d{2}/;
+      const aHasDate = dateRe.test(a.name), bHasDate = dateRe.test(b.name);
+      if (aHasDate && bHasDate) return b.name.localeCompare(a.name, "zh");
+      return a.name.localeCompare(b.name, "zh");
+    }
     return a.name.localeCompare(b.name, "zh");
   });
   return result;
