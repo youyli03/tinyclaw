@@ -781,10 +781,13 @@ body {
   box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  width: 100%;
 }
 .notes-tree-search .notes-search-input {
+  flex: 1;
   font-size: 13px;
   padding: 6px 10px;
+  min-width: 0;
 }
 .notes-search-input {
   flex: 1;
