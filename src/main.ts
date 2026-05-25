@@ -223,9 +223,12 @@ async function main(): Promise<void> {
     const imagePaths = earlyDownloaded
       .filter((d) => d.contentType.startsWith("image/") && d.localPath)
       .map((d) => d.localPath);
+    // 拼入附件标签:供 inboundBus 等待者(ask_user/plan approval/MFA 等)直接获取完整内容
+    const enrichedForBus = buildEnrichedContent(resolvedContent, earlyDownloaded);
     const inboundExtras: import("./core/inbound-bus.js").InboundExtras = {
       rawContent: resolvedContent,
       imagePaths,
+      enrichedContent: enrichedForBus,
     };
 
     // ── 斜杠命令拦截:以 "/" 开头的消息优先执行,不走 inboundBus ────────
@@ -245,7 +248,7 @@ async function main(): Promise<void> {
     // ── InboundMessageBus 分发:将消息路由给注册的等待者 ──────────────────
     // 覆盖:MFA pendingApproval、plan approval、ask_master、ask_user(含 async slave)
     // 严格 FIFO:按注册时间顺序,找到第一个 match() 的 Waiter 并调用其 handle()
-    if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
+    if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
       return "";
     }
     
@@ -257,7 +260,7 @@ async function main(): Promise<void> {
       if (existing) {
         // 追加消息，重置 timer
         // 如果 runAgent 已注册了 inboundBus 等待者（askUser/exitPlan），优先 dispatch
-        if (session.inboundBus.dispatch(resolvedContent, inboundExtras)) {
+        if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
           clearTimeout(existing.timer);
           pendingBuffers.delete(sessionId);
           // 合并先前缓冲的消息再送入 runAgent
@@ -289,7 +292,11 @@ async function main(): Promise<void> {
                 console.log(`[debounce] flush 合并 ${newBuf.items.length} 条 → sessionId=${sessionId}`);
               }
               // flush 时再次尝试 dispatch，拦截 askUser/exitPlan
-              if (session.inboundBus.dispatch(mergedText, { rawContent: mergedText, imagePaths: [] })) {
+              // flush 时用 mergedText 做 rawContent,enrichedContent 由各 item 的 earlyDownloaded 拼入
+              const mergedDownloadedForBus = newBuf.items.flatMap((i) => i.earlyDownloaded);
+              const mergedEnrichedForBus = buildEnrichedContent(mergedText, mergedDownloadedForBus);
+              const mergedImagePaths = mergedDownloadedForBus.filter(d => d.contentType.startsWith("image/")).map(d => d.localPath);
+              if (session.inboundBus.dispatch(mergedEnrichedForBus, { rawContent: mergedText, imagePaths: mergedImagePaths, enrichedContent: mergedEnrichedForBus })) {
                 resolve('');
                 return;
               }

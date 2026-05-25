@@ -789,14 +789,17 @@ export class Session {
         match: () => true,
         handle: (content, extras) => {
           unregister();
-          const trimmed = content.trim();
-          const n = parseInt(trimmed, 10);
+          // rawContent 用于编号解析(避免被附件标签干扰),content 是已拼入附件标签的完整内容
+          const rawTrimmed = (extras.rawContent ?? content).trim();
+          const n = parseInt(rawTrimmed, 10);
           const imagePaths = extras.imagePaths;
           this.pendingAskUser = null;
+          // answer 使用 enrichedContent(含附件标签),若无附件则与 rawTrimmed 一致
+          const answer = content.trim();
           if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
             resolve({ answer: optionLabels[n - 1]!, isFreeform: false, ...(imagePaths?.length ? { imagePaths } : {}) });
           } else if (allowFreeform) {
-            resolve({ answer: trimmed, isFreeform: true, ...(imagePaths?.length ? { imagePaths } : {}) });
+            resolve({ answer, isFreeform: true, ...(imagePaths?.length ? { imagePaths } : {}) });
           } else {
             // 不允许自由输入：重新注册等待（先 unregister 已调用，需重新 push）
             unregister(); // no-op since already called, but safe

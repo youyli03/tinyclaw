@@ -13,8 +13,10 @@
 export interface InboundExtras {
   /** 消息中包含的图片本地路径 */
   imagePaths?: string[];
-  /** 原始未处理的消息内容 */
+  /** 原始未处理的消息内容(不含附件标签,用于编号/命令解析) */
   rawContent: string;
+  /** 拼入附件标签后的完整内容(含 <img>/<file>/<video>/<audio> 标签) */
+  enrichedContent?: string;
 }
 
 export interface Waiter {
