@@ -210,7 +210,7 @@
             <span v-if="notesQuery && notesSearchResults !== null" style="font-size:11px;color:var(--t3)">{{ notesSearchResults.length }} 个结果</span>
             <button v-if="notesQuery" @click="clearNotesSearch" class="notes-search-clear">✕</button>
           </div>
-                    <div class="notes-tree-body">
+          <div class="notes-tree-body">
           <!-- 搜索结果模式 -->          <div v-if="notesQuery && notesSearchResults !== null">
             <div v-if="!notesSearchResults.length" class="empty-state" style="padding:24px 0">无匹配结果</div>
             <template v-for="r in notesSearchResults" :key="r.path">
