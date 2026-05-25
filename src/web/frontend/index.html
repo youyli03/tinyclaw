@@ -204,6 +204,13 @@
       <div class="notes-layout">
         <!-- 左侧文件树 / 搜索结果 -->
         <div class="notes-tree-panel" v-show="notesMobileView==='tree' || !isMobile">
+          <!-- 搜索栏（固定在文件树顶部）-->
+          <div class="notes-tree-search" v-show="!isMobile">
+            <input v-model="notesQuery" @input="onNotesSearch" type="text" placeholder="🔍 搜索..." class="notes-search-input" />
+            <span v-if="notesQuery && notesSearchResults !== null" style="font-size:11px;color:var(--t3)">{{ notesSearchResults.length }} 个结果</span>
+            <button v-if="notesQuery" @click="clearNotesSearch" class="notes-search-clear">✕</button>
+          </div>
+                    <div class="notes-tree-body">
           <!-- 搜索结果模式 -->          <div v-if="notesQuery && notesSearchResults !== null">
             <div v-if="!notesSearchResults.length" class="empty-state" style="padding:24px 0">无匹配结果</div>
             <template v-for="r in notesSearchResults" :key="r.path">
@@ -241,16 +248,11 @@
               @open-dir="onTreeDirOpen"
             ></notes-tree-node>
           </div>
+          </div><!-- /notes-tree-body -->
         </div>
 
         <!-- 右侧预览 -->
         <div class="notes-preview-panel" :class="{fullscreen: notesFullscreen}" v-show="notesMobileView==='preview' || !isMobile">
-          <!-- 搜索栏 -->
-          <div class="notes-search-bar" v-show="!isMobile">
-            <input v-model="notesQuery" @input="onNotesSearch" type="text" placeholder="🔍  搜索文件名或内容..." class="notes-search-input" />
-            <span v-if="notesQuery && notesSearchResults !== null" style="font-size:12px;color:var(--t3);flex-shrink:0">{{ notesSearchResults.length }} 个结果</span>
-            <button v-if="notesQuery" @click="clearNotesSearch" class="notes-search-clear">✕</button>
-          </div>
           <div v-if="notesSelectedPath" class="notes-preview-header">
             <button v-if="isMobile" class="btn btn-secondary" style="font-size:12px;padding:4px 10px;margin-right:8px" @click="notesMobileBack()">← 返回</button>
             <div class="notes-preview-title" v-if="!isMobile">
