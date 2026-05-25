@@ -144,7 +144,10 @@ body {
 /* 笔记页：禁用 main 自身滚动，由 notes-layout 内部分区滚动 */
 #main.notes-main {
   overflow: hidden;
-  padding-bottom: 0;
+  padding-bottom: 28px;
+}
+#main.notes-main > .notes-page {
+  height: 0;
 }
 
 /* ── 页面头部 ── */
@@ -842,6 +845,7 @@ body {
   box-sizing: border-box;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* 文件树面板 */
