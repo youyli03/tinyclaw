@@ -284,6 +284,28 @@ steps[2]: msg("数据锚定：先原文打印上游数据，再执行实体分�
 
 ---
 
+## 附:botId — 多 bot 路由
+
+系统配置多个 QQ bot 时,`output.botId` 指定发送使用哪个 bot:
+
+```json
+{
+  "output": {
+    "sessionId": "qqbot:c2c:YOUR_OPENID",
+    "peerId": "YOUR_OPENID",
+    "msgType": "c2c",
+    "botId": "chat",
+    "notify": "on_change"
+  }
+}
+```
+
+- `botId` 对应 `config.toml` 中 `[channels.qqbots.<botId>]` 的键名
+- **不填则 fallback 到第一个 bot**;若 peerId 归属于另一个 bot 的账号,必须显式填写 `botId`,否则默认 bot 发不出去
+- 通过 `cron_add` 工具创建时,传入 `"botId": "chat"` 参数即可
+
+---
+
 ## 附：timesOfDay 多时段触发
 
 `daily` 类型支持 `timesOfDay` 字段（字符串数组），在一天内指定多个触发时间点，优先于 `timeOfDay`（单时段）：
