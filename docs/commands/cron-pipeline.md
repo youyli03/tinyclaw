@@ -126,7 +126,31 @@ Job 文件存放在 `~/.tinyclaw/cron/jobs/<id>.json`，直接编辑 JSON 即可
 
 ---
 
-### 示例 3：纯工具流水线（无 LLM）
+### 示例 3:脚本自控推送（[NOTIFY] 块 + notify=llm，无 LLM）
+
+适合脚本逻辑简单、完全不需要 LLM 参与的定时推送场景。脚本自行判断是否需要推送，有内容时包裹 `[NOTIFY]...[/NOTIFY]` 块输出，cron runner 提取并推送，无块时静默。全程零 LLM 调用。
+
+**脚本输出格式（Python 示例）：**
+```python
+if signals:
+    content = "📊 VWAP 信号\n" + "\n".join(signal_lines)
+    print(f"[NOTIFY]{content}[/NOTIFY]")
+# 无信号时不输出任何内容（静默）
+```
+
+**Job 配置（pipeline + notify=llm）：**
+```json
+{
+  "steps": [{ "type": "tool", "name": "exec_shell", "args": { "command": "python3 /path/to/monitor.py" } }],
+  "output": { "notify": "llm" }
+}
+```
+
+> **原理**：Pipeline 最后一个 `tool` step 的输出作为 resultText；`notify=llm` 时 runner 提取 `[NOTIFY]` 块推送，无块则静默，全程不触发 LLM。
+
+---
+
+### 示例 4:纯工具流水线（无 LLM）
 
 用于需要精确控制、不需要 AI 参与的自动化任务（如定时备份、健康检查等）。最后一个 `tool` step 的输出作为 resultText。
 
@@ -171,7 +195,7 @@ Job 文件存放在 `~/.tinyclaw/cron/jobs/<id>.json`，直接编辑 JSON 即可
 
 ---
 
-### 示例 4：带 LLM 判断的条件分支（模拟）
+### 示例 5:带 LLM 判断的条件分支（模拟）
 
 先用工具检查条件，再让 LLM 根据结果决定是否需要提醒。
 
