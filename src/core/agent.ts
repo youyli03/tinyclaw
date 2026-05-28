@@ -821,6 +821,9 @@ export async function runAgent(
   let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let totalCompletionTokens = 0; // 本次 runAgent 所有 LLM 轮次的 output token 累计
+  let totalPromptTokens = 0;     // input token 累计
+  let totalCacheReadTokens = 0;  // cache read token 累计
+  let totalCacheCreationTokens = 0; // cache creation token 累计
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
 
@@ -1000,6 +1003,9 @@ export async function runAgent(
 
     lastUsage = response.usage;
     totalCompletionTokens += lastUsage.completionTokens;
+    totalPromptTokens += lastUsage.promptTokens;
+    totalCacheReadTokens += lastUsage.cacheReadTokens ?? 0;
+    totalCacheCreationTokens += lastUsage.cacheCreationTokens ?? 0;
     // 记录到 session,供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
     Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
@@ -1570,23 +1576,30 @@ export async function runAgent(
     }
   }
 
-  // 写本次 runAgent output_tokens 到 dashboard DB(仅非 copilot 模型,按来源分类写增量)
+  // 写本次 runAgent token 到 dashboard DB(仅非 copilot 模型,按来源分类写增量)
+  // 每个来源(chat/code/cron)写三条 key: input / output / cache
   try {
     const _isNotCopilot = !('isCopilot' in client) || !client.isCopilot;
-    if (_isNotCopilot && totalCompletionTokens > 0) {
+    if (_isNotCopilot && (totalCompletionTokens > 0 || totalPromptTokens > 0)) {
       const LLM_CAT = "llm";
-      const LLM_KEY = session.sessionId.startsWith("cron:")
-        ? "tokens_cron"
+      const source = session.sessionId.startsWith("cron:")
+        ? "cron"
         : session.mode === "code"
-          ? "tokens_code"
-          : "tokens_chat";
-      const KEY_DESC: Record<string, string> = {
-        tokens_chat: "chat 会话 output token 用量(增量)",
-        tokens_code: "code 会话 output token 用量(增量)",
-        tokens_cron: "cron job output token 用量(增量)",
-      };
-      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, KEY_DESC[LLM_KEY] ?? "output token 用量");
-      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: totalCompletionTokens, note: client.model });
+          ? "code"
+          : "chat";
+
+      // source 下三个 key: token/<source>/input, token/<source>/output, token/<source>/cache
+      const entries: Array<{ key: string; value: number; desc: string }> = [
+        { key: `token/${source}/input`,  value: totalPromptTokens,         desc: `${source} input token 增量` },
+        { key: `token/${source}/output`, value: totalCompletionTokens,     desc: `${source} output token 增量` },
+        { key: `token/${source}/cache`,  value: totalCacheReadTokens + totalCacheCreationTokens, desc: `${source} cache token 增量` },
+      ];
+
+      for (const e of entries) {
+        if (e.value <= 0) continue;
+        if (!isMetricKeyAllowed(LLM_CAT, e.key)) addMetricKey(LLM_CAT, e.key, e.desc, "bar");
+        insertMetric({ category: LLM_CAT, key: e.key, value: e.value, note: client.model });
+      }
     }
   } catch { /* 写 db 失败不影响主流程 */ }
 

@@ -366,7 +366,7 @@ export interface ChatResult {
   /** 模型请求执行的工具调用列表（function calling 格式） */
   toolCalls?: ToolCallResult[];
   /** 本次请求消耗的 token 数 */
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number };
 }
 
 /**
@@ -823,6 +823,8 @@ export class LLMClient {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
         totalTokens: response.usage?.total_tokens ?? 0,
+        cacheReadTokens: (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheCreationTokens: (response.usage as any)?.cache_creation_input_tokens ?? 0,
       },
     };
   }
@@ -927,7 +929,7 @@ export class LLMClient {
       );
 
       let fullContent = "";
-      let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       // 聚合流式 tool_calls delta（各 index 独立累积）
       const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
 
@@ -966,6 +968,8 @@ export class LLMClient {
             promptTokens: chunk.usage.prompt_tokens,
             completionTokens: chunk.usage.completion_tokens,
             totalTokens: chunk.usage.total_tokens,
+            cacheReadTokens: (chunk.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+            cacheCreationTokens: (chunk.usage as any)?.cache_creation_input_tokens ?? 0,
           };
         }
         }

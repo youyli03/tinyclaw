@@ -12,11 +12,21 @@ import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/d
 function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void {
   try {
     const isNotCopilot = !('isCopilot' in client) || !(client as { isCopilot?: boolean }).isCopilot;
-    const tokens = result.usage?.completionTokens ?? 0;
-    if (isNotCopilot && tokens > 0) {
-      const CAT = "llm", KEY = "tokens_summarizer";
-      if (!isMetricKeyAllowed(CAT, KEY)) addMetricKey(CAT, KEY, "summarizer output token 用量(增量)");
-      insertMetric({ category: CAT, key: KEY, value: tokens, note: client.model });
+    const inputTok  = result.usage?.promptTokens ?? 0;
+    const outputTok = result.usage?.completionTokens ?? 0;
+    const cacheTok  = (result.usage?.cacheReadTokens ?? 0) + (result.usage?.cacheCreationTokens ?? 0);
+    if (isNotCopilot && (outputTok > 0 || inputTok > 0)) {
+      const CAT = "llm";
+      const entries = [
+        { key: "token/summarizer/input",  value: inputTok,  desc: "summarizer input token 增量" },
+        { key: "token/summarizer/output", value: outputTok, desc: "summarizer output token 增量" },
+        { key: "token/summarizer/cache",  value: cacheTok,  desc: "summarizer cache token 增量" },
+      ];
+      for (const e of entries) {
+        if (e.value <= 0) continue;
+        if (!isMetricKeyAllowed(CAT, e.key)) addMetricKey(CAT, e.key, e.desc, "bar");
+        insertMetric({ category: CAT, key: e.key, value: e.value, note: client.model });
+      }
     }
   } catch { /* 写 db 失败不影响主流程 */ }
 }
