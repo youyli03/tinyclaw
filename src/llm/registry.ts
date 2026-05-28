@@ -168,6 +168,27 @@ class LLMRegistry {
       }
       return client;
     }
+
+    if (provider === "mimo") {
+      const mimoCfg = config.providers.mimo;
+      if (!mimoCfg) {
+        throw new Error(`后端 '${name}' 使用 mimo 模型\uff0c但 [providers.mimo] 未配置`);
+      }
+      const client = new LLMClient({
+        baseUrl: mimoCfg.baseUrl,
+        apiKey: mimoCfg.apiKey,
+        model: modelId,
+        maxTokens: role.maxTokens ?? mimoCfg.maxTokens,
+        timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : mimoCfg.timeoutMs),
+        ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+      });
+      this.clients.set(name, client);
+      if (role.maxContextWindow && role.maxContextWindow > 0) {
+        this.contextWindows.set(name, role.maxContextWindow);
+      }
+      return client;
+    }
+
     throw new Error(`未知 provider "${provider}"（来自模型 symbol "${role.model}"）`);
   }
 

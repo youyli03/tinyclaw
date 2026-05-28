@@ -1,7 +1,25 @@
 import { llmRegistry } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { persistSummary } from "./store.js";
-import type { ChatMessage, OpenAIToolCall } from "../llm/client.js";
+import type { ChatMessage, OpenAIToolCall, ChatResult } from "../llm/client.js";
+import type { AnyLLMClient } from "../llm/registry.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
+
+/**
+ * 记录 summarizer LLM 调用的 output token 增量到 dashboard DB。
+ * 仅非 copilot（按次计费）后端才写入。
+ */
+function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void {
+  try {
+    const isNotCopilot = !('isCopilot' in client) || !(client as { isCopilot?: boolean }).isCopilot;
+    const tokens = result.usage?.completionTokens ?? 0;
+    if (isNotCopilot && tokens > 0) {
+      const CAT = "llm", KEY = "tokens_summarizer";
+      if (!isMetricKeyAllowed(CAT, KEY)) addMetricKey(CAT, KEY, "summarizer output token 用量(增量)");
+      insertMetric({ category: CAT, key: KEY, value: tokens, note: client.model });
+    }
+  } catch { /* 写 db 失败不影响主流程 */ }
+}
 
 const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给定的对话历史压缩为结构化摘要（不超过 20000 token），
 以便在新的对话中无缝续接，不丢失重要的用户意图和对话脉络。
@@ -391,6 +409,7 @@ export async function summarizeAndCompressCode(
       { role: "system", content: CODE_SUMMARIZE_SYSTEM },
       { role: "user", content: historyText },
     ], { isUserInitiated: false });
+    recordSummarizerTokens(result, client);
 
     // 组装压缩后的消息:system + 摘要 + 最近 keepTurns 轮原始消息
     let compressedKeep: ChatMessage[] = [...toKeep];
@@ -509,6 +528,7 @@ export async function distillCodeTurnToNotes(
     { role: "user", content: turnText.slice(0, 10000) },
   ], { isUserInitiated: false });
 
+  recordSummarizerTokens(result, client);
   const notes = result.content.trim();
   if (!notes) return; // LLM 认为本轮无值得记录的内容
 
@@ -577,6 +597,7 @@ export async function distillTurnToDiary(
     { role: "user", content: turnText.slice(0, 4000) },
   ], { isUserInitiated: false });
 
+  recordSummarizerTokens(result, client);
   if (result.content.trim()) {
     await persistSummary(result.content.trim(), agentId);
   }
@@ -665,6 +686,7 @@ export async function summarizeAndCompress(
     { role: "user", content: historyText },
   ], { isUserInitiated: false });
 
+  recordSummarizerTokens(result, client);
   // 将摘要持久化到 QMD
   await persistSummary(result.content, agentId);
 

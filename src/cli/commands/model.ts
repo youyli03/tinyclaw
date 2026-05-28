@@ -209,15 +209,58 @@ async function listDeepSeek(baseUrl: string, apiKey: string, showAll: boolean): 
   }
 }
 
+
+async function listMimo(baseUrl: string, apiKey: string, showAll: boolean): Promise<void> {
+  if (!showAll) {
+    console.log(dim(`
+[providers.mimo] ${baseUrl}`));
+    section("MiMo 可用模型");
+    printTable(
+      ["#", "Symbol", "说明"],
+      [
+        ["1", cyan("mimo/mimo-v2.5-pro"), "MiMo V2.5 Pro(高级推理)"],
+        ["2", cyan("mimo/mimo-v2.5"),     "MiMo V2.5"],
+        ["3", cyan("mimo/mimo-v2-pro"),   "MiMo V2 Pro"],
+      ]
+    );
+    return;
+  }
+  process.stdout.write(`
+正在调用 ${baseUrl}/models......`);
+  try {
+    const resp = await fetch(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!resp.ok) {
+      console.log(` ${red("失败")}`);
+      console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
+      return;
+    }
+    const data = (await resp.json()) as { data?: { id: string; owned_by?: string }[] };
+    const list = data.data ?? [];
+    console.log(` ${green("OK")}`);
+    section(`MiMo 可用模型(共 ${list.length} 个)`);
+    printTable(
+      ["#", "Symbol", "创建方"],
+      list.map((m, i) => [String(i + 1), cyan(`mimo/${m.id}`), m.owned_by ?? "-"])
+    );
+  } catch (e) {
+    console.log(` ${red("失败")}`);
+    console.error(red(`  无法获取模型列表:${e}`));
+  }
+}
 async function cmdList(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const showAll = args.includes("--all") || args.includes("-a");
 
   // 支持 provider 筛选：model list [copilot|openrouter|openai] [-a]
-  const filterArg = args.find((a) => ["copilot", "openrouter", "openai", "deepseek"].includes(a));
-  const { copilot, openai, openrouter, deepseek } = cfg.providers;
+  const filterArg = args.find((a) => ["copilot", "openrouter", "openai", "deepseek", "mimo"].includes(a));
+  const { copilot, openai, openrouter, deepseek, mimo } = cfg.providers;
 
-  if (!copilot && !openai && !openrouter && !deepseek) {
+  if (!copilot && !openai && !openrouter && !deepseek && !mimo) {
     console.log(red("\n未配置任何 provider，请在 config.toml 中配置 provider"));
     return;
   }
@@ -226,6 +269,7 @@ async function cmdList(args: string[]): Promise<void> {
   const showOpenRouter = !filterArg || filterArg === "openrouter";
   const showOpenAI = !filterArg || filterArg === "openai";
   const showDeepSeek = !filterArg || filterArg === "deepseek";
+  const showMimo = !filterArg || filterArg === "mimo";
 
   if (showCopilot && copilot) {
     await listCopilot(copilot.githubToken, showAll);
@@ -238,6 +282,9 @@ async function cmdList(args: string[]): Promise<void> {
   }
   if (showDeepSeek && deepseek) {
     await listDeepSeek(deepseek.baseUrl, deepseek.apiKey, showAll);
+  }
+  if (showMimo && mimo) {
+    await listMimo(mimo.baseUrl, mimo.apiKey, showAll);
   }
 }
 
@@ -265,13 +312,14 @@ async function cmdSet(args: string[]): Promise<void> {
   console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(currentSymbol)}`);
 
   // ── 第一级：选 provider ────────────────────────────────────────────────
-  const { copilot, openai, openrouter, deepseek } = cfg.providers;
+  const { copilot, openai, openrouter, deepseek, mimo } = cfg.providers;
   interface ProviderItem { label: string; value: string; note?: string }
   const providerItems: ProviderItem[] = [];
   if (copilot)     providerItems.push({ label: "Copilot",     value: "copilot",     note: "GitHub Copilot" });
   if (openrouter)  providerItems.push({ label: "OpenRouter",  value: "openrouter",  note: "免费/付费模型" });
   if (openai)      providerItems.push({ label: "OpenAI",      value: "openai",      note: "手动输入" });
   if (deepseek)    providerItems.push({ label: "DeepSeek",    value: "deepseek",    note: "deepseek-chat / deepseek-reasoner" });
+  if (mimo)        providerItems.push({ label: "MiMo",        value: "mimo",        note: "mimo-v2.5-pro / mimo-v2.5" });
 
   if (providerItems.length === 0) {
     console.error(red("未配置任何 provider，无法选择模型"));
@@ -375,6 +423,24 @@ async function cmdSet(args: string[]): Promise<void> {
       newSymbol = `deepseek/${dsTrimmed}`;
     } else {
       newSymbol = dsPicked;
+    }
+
+  } else if (provider === "mimo" && mimo) {
+    interface MimoItem { label: string; value: string; note?: string }
+    const mimoItems: MimoItem[] = [
+      { label: "mimo-v2.5-pro", value: "mimo/mimo-v2.5-pro", note: yellow("高级推理") },
+      { label: "mimo-v2.5",     value: "mimo/mimo-v2.5",     note: green("标准对话") },
+      { label: "mimo-v2-pro",   value: "mimo/mimo-v2-pro",   note: "" },
+      { label: dim("[手动输入 model ID]"), value: "__mimo_manual__", note: "" },
+    ];
+    const mimoPicked = await searchableSelect("选择 MiMo 模型", mimoItems);
+    if (mimoPicked === "__mimo_manual__") {
+      const mimoInput = await prompt("输入 MiMo model ID(如 mimo-v2.5): ");
+      const mimoTrimmed = mimoInput.trim();
+      if (!mimoTrimmed) { console.log(dim("已取消")); return; }
+      newSymbol = `mimo/${mimoTrimmed}`;
+    } else {
+      newSymbol = mimoPicked;
     }
 
   } else {

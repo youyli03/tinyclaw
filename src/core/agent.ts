@@ -12,7 +12,7 @@ import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
-import { insertMetric, isMetricKeyAllowed, addMetricKey, queryMetrics } from "../web/backend/db.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { agentManager } from "./agent-manager.js";
@@ -1570,16 +1570,23 @@ export async function runAgent(
     }
   }
 
-  // 写本次 runAgent 汇总 output_tokens 到 dashboard DB（仅非 copilot 模型）
+  // 写本次 runAgent output_tokens 到 dashboard DB(仅非 copilot 模型,按来源分类写增量)
   try {
     const _isNotCopilot = !('isCopilot' in client) || !client.isCopilot;
     if (_isNotCopilot && totalCompletionTokens > 0) {
-      const LLM_CAT = "llm", LLM_KEY = "output_tokens";
-      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, "非 copilot 模型 output token 累计用量");
-      // 取上次累计值，累加本次消耗
-      const prevRows = queryMetrics({ category: LLM_CAT, key: LLM_KEY, days: 36500 }); // 取全量最后一条
-      const prevTotal = prevRows.length > 0 ? (prevRows[prevRows.length - 1]!.value ?? 0) : 0;
-      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: prevTotal + totalCompletionTokens, note: client.model });
+      const LLM_CAT = "llm";
+      const LLM_KEY = session.sessionId.startsWith("cron:")
+        ? "tokens_cron"
+        : session.mode === "code"
+          ? "tokens_code"
+          : "tokens_chat";
+      const KEY_DESC: Record<string, string> = {
+        tokens_chat: "chat 会话 output token 用量(增量)",
+        tokens_code: "code 会话 output token 用量(增量)",
+        tokens_cron: "cron job output token 用量(增量)",
+      };
+      if (!isMetricKeyAllowed(LLM_CAT, LLM_KEY)) addMetricKey(LLM_CAT, LLM_KEY, KEY_DESC[LLM_KEY] ?? "output token 用量");
+      insertMetric({ category: LLM_CAT, key: LLM_KEY, value: totalCompletionTokens, note: client.model });
     }
   } catch { /* 写 db 失败不影响主流程 */ }
 

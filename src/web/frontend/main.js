@@ -316,7 +316,12 @@ const app = createApp({
       // 从 metrics 里取最新电费/请求（如果有）
       const elecVal = latestMetricVal.value['electric/balance'] ?? '—';
       const copilotVal = latestMetricVal.value['copilot/remaining'] ?? '—';
-      const llmTokenVal = latestMetricVal.value['llm/output_tokens'] ?? '—';
+      const llmTokenChat = latestMetricVal.value['llm/tokens_chat'] ?? 0;
+      const llmTokenCode = latestMetricVal.value['llm/tokens_code'] ?? 0;
+      const llmTokenCron = latestMetricVal.value['llm/tokens_cron'] ?? 0;
+      const llmTokenSumm = latestMetricVal.value['llm/tokens_summarizer'] ?? 0;
+      const llmTokenTotal = llmTokenChat + llmTokenCode + llmTokenCron + llmTokenSumm;
+      const llmTokenVal = llmTokenTotal > 0 ? llmTokenTotal : '—';
 
       return [
         {
@@ -333,12 +338,15 @@ const app = createApp({
           color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
           metricKey: 'copilot/remaining',
         },
-        ...(llmTokenVal !== '—' ? [{
+        ...(llmTokenVal !== '—' && Number(llmTokenVal) > 0 ? [{
           key: 'llm_tokens', label: 'Token 用量',
-          value: llmTokenVal !== '—' ? String(Math.round(Number(llmTokenVal))) : '—',
-          sub1: '最近一次 output tokens', sub2: '点击查看趋势 →',
-          color: C.purple, spark: latestSpark.value['llm/output_tokens'] || [],
-          metricKey: 'llm/output_tokens',
+          value: (() => {
+            // 显示今日增量（最新值 - 今日最早值）
+            return llmTokenVal !== '—' ? '+' + Math.round(Number(llmTokenVal)).toLocaleString() : '—';
+          })(),
+          sub1: '今日 output tokens 增量', sub2: '点击查看趋势 →',
+          color: C.purple, spark: latestSpark.value['llm/tokens_chat'] || [],
+          metricKey: 'llm/tokens_chat',
         }] : []),
         {
           key: 'cpu', label: 'CPU',
@@ -418,18 +426,25 @@ const app = createApp({
     const overviewLastTs = {};
 
     async function drawOverviewCharts(incremental = false) {
-      // 并行拉取 4 个数据源
+      // 并行拉取数据源
+      const sinceToken = incremental && overviewLastTs.llmToken != null ? '&since=' + overviewLastTs.llmToken : '';
       const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
       const copilotUrl = '/api/metrics?category=copilot&key=remaining&days=1' + (incremental && overviewLastTs.copilot  != null ? '&since=' + overviewLastTs.copilot  : '');
       const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
-      const llmTokenUrl = '/api/metrics?category=llm&key=output_tokens&days=7' + (incremental && overviewLastTs.llmToken != null ? '&since=' + overviewLastTs.llmToken : '');
-      let elecData, copilotData, systemData, llmTokenData;
+      const llmUrlChat = '/api/metrics?category=llm&key=tokens_chat&days=7' + sinceToken;
+      const llmUrlCode = '/api/metrics?category=llm&key=tokens_code&days=7' + sinceToken;
+      const llmUrlCron = '/api/metrics?category=llm&key=tokens_cron&days=7' + sinceToken;
+      const llmUrlSumm = '/api/metrics?category=llm&key=tokens_summarizer&days=7' + sinceToken;
+      let elecData, copilotData, systemData, llmChatData, llmCodeData, llmCronData, llmSummData;
       try {
-        [elecData, copilotData, systemData, llmTokenData] = await Promise.all([
+        [elecData, copilotData, systemData, llmChatData, llmCodeData, llmCronData, llmSummData] = await Promise.all([
           fetch(elecUrl).then(r => r.json()),
           fetch(copilotUrl).then(r => r.json()),
           fetch(systemUrl).then(r => r.json()),
-          fetch(llmTokenUrl).then(r => r.json()).catch(() => ({ rows: [] })),
+          fetch(llmUrlChat).then(r => r.json()).catch(() => ({ rows: [] })),
+          fetch(llmUrlCode).then(r => r.json()).catch(() => ({ rows: [] })),
+          fetch(llmUrlCron).then(r => r.json()).catch(() => ({ rows: [] })),
+          fetch(llmUrlSumm).then(r => r.json()).catch(() => ({ rows: [] })),
         ]);
       } catch (e) { console.warn('overview parallel fetch failed', e); return; }
 
@@ -483,31 +498,58 @@ const app = createApp({
         }
       } catch (e) { console.warn('copilot chart failed', e); }
 
-      // LLM Token 用量(非 copilot 模型，如 deepseek)
+      // LLM Token 用量(按来源分类堆叠柱状图)
       try {
-        const tokenRows = (llmTokenData.rows || []);
-        if (tokenRows.length) overviewLastTs.llmToken = tokenRows[tokenRows.length-1].ts;
+        const allLlmRows = [
+          ...(llmChatData.rows || []),
+          ...(llmCodeData.rows || []),
+          ...(llmCronData.rows || []),
+          ...(llmSummData.rows || []),
+        ];
+        if (allLlmRows.length) overviewLastTs.llmToken = Math.max(...allLlmRows.map(r => r.ts));
+        const hasAny = allLlmRows.length > 0;
         const llmCard = document.getElementById('llm-token-card');
-        if (llmCard) llmCard.style.display = tokenRows.length ? '' : 'none';
-        const tokenChart = charts['chart-llm-tokens'];
-        if (incremental && tokenChart && tokenRows.length) {
-          for (const r of tokenRows) tokenChart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
-          tokenChart.update('none');
-        } else if (!incremental) {
-          if (!tokenRows.length) { /* no data */ } else {
-          const points = tokenRows.map(r => ({ x: r.ts * 1000, y: r.value }));
+        if (llmCard) llmCard.style.display = hasAny ? '' : 'none';
+
+        // 按本地日期聚合(数据已是增量,直接 sum)
+        const toDateKey = (ts) => {
+          const d = new Date(ts * 1000);
+          return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        };
+        const aggregateByDay = (rows) => {
+          const map = {};
+          for (const r of rows) { const dk = toDateKey(r.ts); map[dk] = (map[dk] || 0) + (r.value || 0); }
+          return map;
+        };
+        const chatByDay  = aggregateByDay(llmChatData.rows || []);
+        const codeByDay  = aggregateByDay(llmCodeData.rows || []);
+        const cronByDay  = aggregateByDay(llmCronData.rows || []);
+        const summByDay  = aggregateByDay(llmSummData.rows || []);
+        const allDays = [...new Set([
+          ...Object.keys(chatByDay), ...Object.keys(codeByDay),
+          ...Object.keys(cronByDay), ...Object.keys(summByDay),
+        ])].sort();
+
+        if (!incremental && allDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
-            const ctx = tokenCanvas.getContext('2d');
-            const grad = ctx.createLinearGradient(0, 0, 0, 200);
-            grad.addColorStop(0, C.purple + '30');
-            grad.addColorStop(1, C.purple + '00');
+            const mkData = (byDay) => allDays.map(dk => ({ x: dk, y: byDay[dk] || 0 }));
             createOrUpdateChart('chart-llm-tokens', {
               type: 'bar',
-              data: { datasets: [{ label: 'Output Tokens', data: points, borderColor: C.purple, backgroundColor: C.purple + '80', borderWidth: 1 }] },
-              options: { ...baseChartOpts(), scales: { x: smartXAxis(7), y: { ...baseChartOpts().scales.y } } },
+              data: {
+                labels: allDays,
+                datasets: [
+                  { label: 'chat',       data: mkData(chatByDay),  backgroundColor: C.purple + 'cc', stack: 'llm' },
+                  { label: 'code',       data: mkData(codeByDay),  backgroundColor: '#4da6ffcc',     stack: 'llm' },
+                  { label: 'cron',       data: mkData(cronByDay),  backgroundColor: '#ff9966cc',     stack: 'llm' },
+                  { label: 'summarizer', data: mkData(summByDay),  backgroundColor: '#66cc88cc',     stack: 'llm' },
+                ],
+              },
+              options: { ...baseChartOpts(), scales: {
+                x: { ...smartXAxis(7), stacked: true },
+                y: { ...baseChartOpts().scales.y, stacked: true },
+              }},
             });
-          }
           }
         }
       } catch (e) { console.warn('llm token chart failed', e); }
@@ -573,7 +615,7 @@ const app = createApp({
       await nextTick();
       const nmInited = metricKeys.value.some(k => metricLastTs[k.category + '/' + k.key] != null);
       for (const k of metricKeys.value) {
-        await loadOneMetricChart(k.category, k.key, nmInited);
+        await loadOneMetricChart(k.category, k.key, nmInited, k.chart_type || 'line');
       }
     }
 
@@ -581,14 +623,14 @@ const app = createApp({
     async function loadAllMetricCharts() {
       if (!metricKeys.value.length) return;
       for (const k of metricKeys.value) {
-        await loadOneMetricChart(k.category, k.key);
+        await loadOneMetricChart(k.category, k.key, false, k.chart_type || 'line');
       }
     }
 
     // 记录每个指标图最后一条数据的 ts（Unix 秒），用于增量请求
     const metricLastTs = {};
 
-    async function loadOneMetricChart(category, key, incremental = false) {
+    async function loadOneMetricChart(category, key, incremental = false, chartType = 'line') {
       try {
         const chartId = `chart-m-${category}-${key}`;
         const ck = `${category}/${key}`;
@@ -615,38 +657,100 @@ const app = createApp({
           return;
         }
 
-        // 全量：重建图表
+
+        // 全量:重建图表
         const canvas = document.getElementById(chartId);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const h = canvas.clientHeight || 180;
-        const grad = ctx.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, C.accent + '30');
-        grad.addColorStop(1, C.accent + '00');
-        createOrUpdateChart(chartId, {
-          type: 'line',
-          data: {
-            datasets: [{
-              label: ck,
-              data: rows.map(r => ({ x: r.ts * 1000, y: r.value })),
-              borderColor: C.accent,
-              borderWidth: 1.5,
-              backgroundColor: grad,
-              fill: true,
-              tension: 0.4,
-              pointRadius: 0,
-              pointHoverRadius: 4,
-            }],
-          },
-          options: {
-            ...baseChartOpts(),
-            scales: {
-              x: metricXAxis(mDays.value),
-              y: { ...baseChartOpts().scales.y },
+
+        if (chartType === 'bar') {
+          // ── 柱状图:按时间分桶聚合 ────────────────────────────────────────
+          const days = Number(mDays.value) || 1;
+
+          function getBucketLabel(tsSec) {
+            const d = new Date(tsSec * 1000);
+            if (days <= 1) {
+              return String(d.getHours()).padStart(2,'0') + ':00';
+            }
+            return (d.getMonth()+1) + '/' + d.getDate();
+          }
+
+          const bucketMap = new Map();
+          for (const r of rows) {
+            const label = getBucketLabel(r.ts);
+            bucketMap.set(label, (bucketMap.get(label) || 0) + r.value);
+          }
+
+          let labels;
+          if (days <= 1) {
+            labels = [];
+            for (let h = 4; h < 24; h++) labels.push(String(h).padStart(2,'0') + ':00');
+            for (let h = 0; h < 4; h++) labels.push(String(h).padStart(2,'0') + ':00');
+          } else {
+            labels = [...bucketMap.keys()].sort((a,b) => {
+              const [am, ad] = a.split('/').map(Number);
+              const [bm, bd] = b.split('/').map(Number);
+              return am !== bm ? am - bm : ad - bd;
+            });
+          }
+
+          createOrUpdateChart(chartId, {
+            type: 'bar',
+            data: {
+              labels,
+              datasets: [{
+                label: ck,
+                data: labels.map(l => bucketMap.get(l) || 0),
+                backgroundColor: C.accent + '99',
+                borderColor: C.accent,
+                borderWidth: 1,
+                borderRadius: 3,
+              }],
             },
-          },
-        });
+            options: {
+              ...baseChartOpts(),
+              scales: {
+                x: {
+                  grid: { display: false },
+                  border: { color: C.border },
+                  ticks: { color: C.t3, maxRotation: days <= 1 ? 45 : 0, font: { size: 11 } },
+                },
+                y: { ...baseChartOpts().scales.y },
+              },
+            },
+          });
+        } else {
+          // ── 折线图:原有逻辑 ──────────────────────────────────────────────
+          const h = canvas.clientHeight || 180;
+          const grad = ctx.createLinearGradient(0, 0, 0, h);
+          grad.addColorStop(0, C.accent + '30');
+          grad.addColorStop(1, C.accent + '00');
+          createOrUpdateChart(chartId, {
+            type: 'line',
+            data: {
+              datasets: [{
+                label: ck,
+                data: rows.map(r => ({ x: r.ts * 1000, y: r.value })),
+                borderColor: C.accent,
+                borderWidth: 1.5,
+                backgroundColor: grad,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+              }],
+            },
+            options: {
+              ...baseChartOpts(),
+              scales: {
+                x: metricXAxis(mDays.value),
+                y: { ...baseChartOpts().scales.y },
+              },
+            },
+          });
+        }
         if (rows.length > 0) metricLastTs[ck] = rows[rows.length - 1].ts;
+
       } catch (e) { console.warn(`loadOneMetricChart ${category}/${key} failed`, e); }
     }
 
@@ -932,7 +1036,7 @@ const app = createApp({
         }
         if (page.value === 'metrics' && metricKeys.value.length) {
           for (const k of metricKeys.value) {
-            await loadOneMetricChart(k.category, k.key, true); // 增量
+            await loadOneMetricChart(k.category, k.key, true, k.chart_type || 'line'); // 增量
           }
         }
       }, 30000);

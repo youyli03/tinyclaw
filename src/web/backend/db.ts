@@ -35,6 +35,7 @@ function openDB(): Database {
       category    TEXT NOT NULL,
       key         TEXT NOT NULL,
       description TEXT,
+      chart_type  TEXT NOT NULL DEFAULT 'line',
       created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
       PRIMARY KEY (category, key)
     );
@@ -73,6 +74,13 @@ function openDB(): Database {
   db.prepare("DELETE FROM metric_keys WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
   db.prepare("DELETE FROM metrics WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
 
+  // Migration: 为已有 metric_keys 表补充 chart_type 列
+  const cols = (db.prepare("PRAGMA table_info(metric_keys)").all() as Array<{ name: string }>)
+    .map(c => c.name);
+  if (!cols.includes("chart_type")) {
+    db.exec("ALTER TABLE metric_keys ADD COLUMN chart_type TEXT NOT NULL DEFAULT 'line'");
+  }
+
   _db = db;
   return db;
 }
@@ -92,6 +100,7 @@ export interface MetricKeyRow {
   category: string;
   key: string;
   description: string | null;
+  chart_type: string;
   created_at: number;
 }
 
@@ -116,11 +125,11 @@ export function isMetricKeyAllowed(category: string, key: string): boolean {
 }
 
 /** 注册一个新指标（/metric add 命令调用） */
-export function addMetricKey(category: string, key: string, description?: string): void {
+export function addMetricKey(category: string, key: string, description?: string, chartType?: string): void {
   const db = openDB();
   db.prepare(
-    "INSERT OR REPLACE INTO metric_keys (category, key, description) VALUES (?, ?, ?)"
-  ).run(category, key, description ?? null);
+    "INSERT OR REPLACE INTO metric_keys (category, key, description, chart_type) VALUES (?, ?, ?, ?)"
+  ).run(category, key, description ?? null, chartType ?? 'line');
 }
 
 /** 删除一个指标注册（同时删除历史数据） */
@@ -133,11 +142,20 @@ export function removeMetricKey(category: string, key: string): { deleted: numbe
   return { deleted };
 }
 
+/** 修改一个指标的图表类型 */
+export function setMetricChartType(category: string, key: string, chartType: string): boolean {
+  const db = openDB();
+  const result = db.prepare(
+    "UPDATE metric_keys SET chart_type = ? WHERE category = ? AND key = ?"
+  ).run(chartType, category, key) as { changes: number };
+  return result.changes > 0;
+}
+
 /** 列出所有已注册的指标 */
 export function listRegisteredKeys(): MetricKeyRow[] {
   const db = openDB();
   return db
-    .prepare("SELECT category, key, description, created_at FROM metric_keys ORDER BY category, key")
+    .prepare("SELECT category, key, description, chart_type, created_at FROM metric_keys ORDER BY category, key")
     .all() as MetricKeyRow[];
 }
 
@@ -196,8 +214,8 @@ export function queryMetrics(opts: {
 }
 
 /** 查询所有已注册的 category/key（从白名单读，不从 metrics 读） */
-export function listMetricKeys(): Array<{ category: string; key: string }> {
-  return listRegisteredKeys().map(r => ({ category: r.category, key: r.key }));
+export function listMetricKeys(): Array<{ category: string; key: string; chart_type: string }> {
+  return listRegisteredKeys().map(r => ({ category: r.category, key: r.key, chart_type: r.chart_type }));
 }
 
 // ── system_snapshots ──────────────────────────────────────────────────────────

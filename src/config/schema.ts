@@ -58,11 +58,24 @@ const DeepSeekProviderSchema = z.object({
 });
 export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderSchema>;
 
+/** MiMo 提供商(OpenAI-compatible,小米 MiMo 模型,默认 baseUrl = https://token-plan-cn.xiaomimimo.com/v1) */
+const MimoProviderSchema = z.object({
+  apiKey: z.string().min(1),
+  /** API base URL,默认 https://token-plan-cn.xiaomimimo.com/v1 */
+  baseUrl: z.string().url().default("https://token-plan-cn.xiaomimimo.com/v1"),
+  /** 最大输出 token 数,默认 4096(可被后端角色覆盖) */
+  maxTokens: z.number().int().positive().default(4096),
+  /** 请求超时(毫秒),默认 120000(可被后端角色覆盖) */
+  timeoutMs: z.number().int().positive().default(120_000),
+});
+export type MimoProviderConfig = z.infer<typeof MimoProviderSchema>;
+
 const ProvidersSchema = z.object({
   openai: OpenAIProviderSchema.optional(),
   copilot: CopilotProviderSchema.optional(),
   openrouter: OpenRouterProviderSchema.optional(),
   deepseek: DeepSeekProviderSchema.optional(),
+  mimo: MimoProviderSchema.optional(),
 }).default({});
 export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
 

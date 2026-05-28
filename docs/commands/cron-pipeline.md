@@ -319,14 +319,30 @@ steps[2]: msg("数据锚定：先原文打印上游数据，再执行实体分�
     "peerId": "YOUR_OPENID",
     "msgType": "c2c",
     "botId": "chat",
-    "notify": "on_change"
+    "notify": "always"
   }
 }
 ```
 
 - `botId` 对应 `config.toml` 中 `[channels.qqbots.<botId>]` 的键名
-- **不填则 fallback 到第一个 bot**;若 peerId 归属于另一个 bot 的账号,必须显式填写 `botId`,否则默认 bot 发不出去
-- 通过 `cron_add` 工具创建时,传入 `"botId": "chat"` 参数即可
+- **不填则 fallback 到第一个注册 bot**;若 peerId 归属于另一个 bot 的账号,消息会因 bot 身份不匹配而静默丢失(不报错),**必须显式填写正确的 `botId`**
+- 通过 `cron_add` 工具创建时,在 `output` 字段中传入 `"botId": "chat"` 参数即可
+
+### 常见问题:推送到另一个 QQ 账号收不到
+
+**症状**:job 运行正常、notify 策略正确、日志显示已触发,但目标 QQ 收不到消息。
+
+**原因**:系统有多个 QQ bot（如 `default` 和 `chat`），`peerId` 归属于 `chat` bot 的账号，但 `output.botId` 未填，fallback 到了 `default` bot，导致消息发不出去。
+
+**修复**:在 job 的 `output` 中补充 `"botId": "chat"`（或目标 bot 的实际 ID）。
+
+```json
+// 修复前（推送静默失败）
+"output": { "peerId": "TARGET_OPENID", "notify": "always" }
+
+// 修复后
+"output": { "peerId": "TARGET_OPENID", "botId": "chat", "notify": "always" }
+```
 
 ---
 

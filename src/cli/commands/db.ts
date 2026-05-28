@@ -14,9 +14,10 @@ import {
   addMetricKey,
   removeMetricKey,
   listRegisteredKeys,
+  setMetricChartType,
 } from "../../web/backend/db.js";
 
-export const subcommands = ["list", "add", "remove", "help"] as const;
+export const subcommands = ["list", "add", "remove", "set-chart", "help"] as const;
 export const description = "管理 Dashboard 指标白名单";
 export const usage = `tinyclaw db <subcommand> [args]
 
@@ -48,6 +49,12 @@ export async function run(args: string[]): Promise<void> {
 
   if (sub === "remove" || sub === "rm") {
     cmdRemove(args.slice(1));
+    closeRl();
+    return;
+  }
+
+  if (sub === "set-chart") {
+    cmdSetChart(args.slice(1));
     closeRl();
     return;
   }
@@ -90,30 +97,73 @@ function cmdList(): void {
 function cmdAdd(args: string[]): void {
   const slug = args[0];
   if (!slug) {
-    console.error(red("缺少参数，用法: tinyclaw db add <category>/<key> [描述]"));
+    console.error(red("缺少参数,用法: tinyclaw db add <category>/<key> [描述] [--chart bar/line]"));
     process.exit(1);
   }
   if (!slug.includes("/")) {
-    console.error(red(`格式错误: "${slug}"，需要 <category>/<key>（如 electric/balance）`));
+    console.error(red(`格式错误: "${slug}",需要 <category>/<key>(如 electric/balance)`));
     process.exit(1);
   }
 
   const slashIdx = slug.indexOf("/");
   const category = slug.slice(0, slashIdx);
   const key      = slug.slice(slashIdx + 1);
-  const description = args.slice(1).join(" ") || undefined;
+
+  // 从剩余 args 里提取 --chart 参数
+  const rest = [...args.slice(1)];
+  const chartIdx = rest.indexOf("--chart");
+  let chartType: string | undefined;
+  if (chartIdx >= 0 && rest[chartIdx + 1]) {
+    chartType = rest[chartIdx + 1];
+    rest.splice(chartIdx, 2);
+  }
+  const description = rest.join(" ") || undefined;
 
   if (!category || !key) {
     console.error(red("category 和 key 不能为空"));
     process.exit(1);
   }
+  if (chartType && chartType !== "bar" && chartType !== "line") {
+    console.error(red(`--chart 只接受 bar 或 line,得到: "${chartType}"`));
+    process.exit(1);
+  }
 
   try {
-    addMetricKey(category, key, description);
+    addMetricKey(category, key, description, chartType);
     console.log(green(`✓ 已注册指标 ${bold(`${category}/${key}`)}`) +
-      (description ? dim(`  (${description})`) : ""));
+      (description ? dim(`  (${description})`) : "") +
+      (chartType ? dim(`  [${chartType}]`) : ""));
   } catch (e) {
     console.error(red(`注册失败: ${String(e)}`));
+    process.exit(1);
+  }
+}
+
+// ── set-chart ────────────────────────────────────────────────────────────────
+
+function cmdSetChart(args: string[]): void {
+  const slug = args[0];
+  const chartType = args[1];
+  if (!slug || !chartType) {
+    console.error(red("用法: tinyclaw db set-chart <category>/<key> <bar|line>"));
+    process.exit(1);
+  }
+  if (!slug.includes("/")) {
+    console.error(red(`格式错误: "${slug}",需要 <category>/<key>`));
+    process.exit(1);
+  }
+  if (chartType !== "bar" && chartType !== "line") {
+    console.error(red(`图表类型只接受 bar 或 line,得到: "${chartType}"`));
+    process.exit(1);
+  }
+  const slashIdx = slug.indexOf("/");
+  const category = slug.slice(0, slashIdx);
+  const key = slug.slice(slashIdx + 1);
+  const ok = setMetricChartType(category, key, chartType);
+  if (ok) {
+    console.log(green(`✓ ${bold(`${category}/${key}`)} 图表类型已更新为 ${bold(chartType)}`));
+  } else {
+    console.error(red(`指标 "${category}/${key}" 不存在`));
     process.exit(1);
   }
 }
