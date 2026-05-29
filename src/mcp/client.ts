@@ -143,7 +143,7 @@ class MCPClientManager {
    * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_enable_server meta-tool 使用。
    */
-  async enableServer(name: string, agentId?: string): Promise<string> {
+  async enableServer(name: string, agentId?: string, sessionId?: string, mode?: "chat" | "code"): Promise<string> {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"，请先用 mcp_list_servers 查看可用列表。`;
@@ -184,7 +184,7 @@ class MCPClientManager {
    * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_disable_server meta-tool 使用。
    */
-  disableServer(name: string, agentId?: string): string {
+  disableServer(name: string, agentId?: string, sessionId?: string, mode?: "chat" | "code"): string {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"。`;
@@ -200,7 +200,32 @@ class MCPClientManager {
       setToolVisibility(toolName, true);
     }
     rt.connected = false;
+
+    // 从持久化列表移除
+    if (sessionId && mode) {
+      const cur = agentManager.readSessionMcp(sessionId, mode);
+      agentManager.writeSessionMcp(sessionId, mode, cur.filter(s => s !== name));
+    }
+
     return `已禁用 server "${name}" 的 ${rt.toolNames.length} 个工具（连接保持，再次 enable 无需重连）。`;
+  }
+
+  /**
+   * 恢复指定 session+mode 已持久化的 MCP server 启用状态。
+   * 在 runAgent 首次运行时调用，自动 enable 上次已启用的 server。
+   */
+  async restoreSession(sessionId: string, mode: "chat" | "code", agentId?: string): Promise<void> {
+    const servers = agentManager.readSessionMcp(sessionId, mode);
+    if (servers.length === 0) return;
+    for (const name of servers) {
+      const rt = this.runtimes.get(name);
+      if (rt?.connected) continue;
+      try {
+        await this.enableServer(name, agentId, sessionId, mode);
+      } catch (err) {
+        console.warn(`[mcp] restoreSession: failed to enable '${name}':`, err instanceof Error ? err.message : err);
+      }
+    }
   }
 
   /** 关闭所有 MCP 连接（进程退出时调用） */

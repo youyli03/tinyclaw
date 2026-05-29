@@ -29,6 +29,7 @@ import "../tools/cron.js";
 import "../tools/skill-creator.js";
 import "../tools/skill-run.js";
 import "../tools/mcp-manager.js";
+import { mcpManager } from "../mcp/client.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import "../tools/send-report.js";
@@ -644,6 +645,9 @@ export async function runAgent(
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
   const visionClient = !client.supportsVision ? llmRegistry.getVisionClient() : undefined;
 
+  // 恢复该 session 上次已启用的 MCP server
+  void mcpManager.restoreSession(session.sessionId, isCodeMode ? "code" : "chat", session.agentId);
+
   // ── Premium 白名单守卫 ─────────────────────────────────────────────────────
   // slave session 继承 master 的鉴权上下文，不单独做白名单检查
   const isSlave = session.sessionId.startsWith("slave:");
@@ -1152,6 +1156,7 @@ export async function runAgent(
         result = await executeTool(call.name, call.args, {
           cwd: (isCodeMode && session.codeWorkdir) ? session.codeWorkdir : agentManager.workspaceDir(session.agentId),
           sessionId: session.sessionId,
+          mode: isCodeMode ? "code" : "chat",
           agentId: session.agentId,
           masterSession: session,
           ...(session.currentAgentTaskId ? { agentTaskId: session.currentAgentTaskId } : {}),

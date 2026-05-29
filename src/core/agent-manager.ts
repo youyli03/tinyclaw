@@ -287,6 +287,44 @@ export class AgentManager {
   /**
    * 扫描 sessions/*.toml，返回所有有 [loop] 且 enabled=true 的 session。
    */
+  /**
+   * 读取指定 session 某个模式已启用的 MCP server 列表。
+   * 来自 sessions/<id>.toml 中的 [mcp_chat] / [mcp_code] 块的 enabled 字段。
+   */
+  readSessionMcp(sessionId: string, mode: "chat" | "code"): string[] {
+    const p = this.getSessionTomlPath(sessionId);
+    if (!fs.existsSync(p)) return [];
+    try {
+      const raw = fs.readFileSync(p, "utf-8");
+      const parsed = parse(raw) as Record<string, unknown>;
+      const key = mode === "code" ? "mcp_code" : "mcp_chat";
+      const block = parsed[key];
+      if (!block || typeof block !== "object") return [];
+      const enabled = (block as Record<string, unknown>)["enabled"];
+      if (!Array.isArray(enabled)) return [];
+      return enabled.filter((x): x is string => typeof x === "string");
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 写入指定 session 某个模式已启用的 MCP server 列表。
+   */
+  writeSessionMcp(sessionId: string, mode: "chat" | "code", servers: string[]): void {
+    const p = this.getSessionTomlPath(sessionId);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    let existing: Record<string, unknown> = {};
+    if (fs.existsSync(p)) {
+      try {
+        existing = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
+      } catch { /* overwrite */ }
+    }
+    const key = mode === "code" ? "mcp_code" : "mcp_chat";
+    existing[key] = { enabled: servers };
+    fs.writeFileSync(p, formatSessionToml(existing), "utf-8");
+  }
+
   listSessionLoops(): { sessionId: string; cfg: LoopSessionConfig }[] {
     if (!fs.existsSync(SESSIONS_DIR)) return [];
     let entries: fs.Dirent[];

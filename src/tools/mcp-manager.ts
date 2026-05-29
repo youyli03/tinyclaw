@@ -78,7 +78,7 @@ registerTool({
   execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.enableServer(name, ctx?.agentId);
+    return mcpManager.enableServer(name, ctx?.agentId, ctx?.sessionId, ctx?.mode as "chat" | "code" | undefined);
   },
 });
 
@@ -106,6 +106,6 @@ registerTool({
   execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.disableServer(name, ctx?.agentId);
+    return mcpManager.disableServer(name, ctx?.agentId, ctx?.sessionId, ctx?.mode as "chat" | "code" | undefined);
   },
 });

@@ -22,6 +22,8 @@ export interface ToolContext {
   cwd?: string;
   /** 当前 session 的 ID（供 cron_add 等工具自动绑定 output.sessionId） */
   sessionId?: string;
+  /** 当前 session 的模式（chat / code），用于 MCP 持久化 */
+  mode?: string;
   /** 当前 Agent 的 ID */
   agentId?: string;
   /** 当前 Master Session（供 agent_fork 读取上下文快照） */
