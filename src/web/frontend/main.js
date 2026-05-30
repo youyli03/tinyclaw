@@ -431,22 +431,28 @@ const app = createApp({
       const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
       const copilotUrl = '/api/metrics?category=copilot&key=remaining&days=1' + (incremental && overviewLastTs.copilot  != null ? '&since=' + overviewLastTs.copilot  : '');
       const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
-      const llmUrlChat = '/api/metrics?category=llm&key=tokens_chat&days=7' + sinceToken;
-      const llmUrlCode = '/api/metrics?category=llm&key=tokens_code&days=7' + sinceToken;
-      const llmUrlCron = '/api/metrics?category=llm&key=tokens_cron&days=7' + sinceToken;
-      const llmUrlSumm = '/api/metrics?category=llm&key=tokens_summarizer&days=7' + sinceToken;
-      let elecData, copilotData, systemData, llmChatData, llmCodeData, llmCronData, llmSummData;
+      const sources = ['chat', 'code', 'cron', 'summarizer'];
+      const types   = ['input', 'output', 'cache'];
+      // 每个来源3个 key，共12个请求
+      const llmFetches = sources.flatMap(src =>
+        types.map(t => fetch(`/api/metrics?category=llm&key=token/${src}/${t}&days=7${sinceToken}`).then(r => r.json()).catch(() => ({ rows: [] })))
+      );
+      let elecData, copilotData, systemData;
+      let llmRawData; // flat array: [chat/input, chat/output, chat/cache, code/input, ...]
       try {
-        [elecData, copilotData, systemData, llmChatData, llmCodeData, llmCronData, llmSummData] = await Promise.all([
+        [elecData, copilotData, systemData, ...llmRawData] = await Promise.all([
           fetch(elecUrl).then(r => r.json()),
           fetch(copilotUrl).then(r => r.json()),
           fetch(systemUrl).then(r => r.json()),
-          fetch(llmUrlChat).then(r => r.json()).catch(() => ({ rows: [] })),
-          fetch(llmUrlCode).then(r => r.json()).catch(() => ({ rows: [] })),
-          fetch(llmUrlCron).then(r => r.json()).catch(() => ({ rows: [] })),
-          fetch(llmUrlSumm).then(r => r.json()).catch(() => ({ rows: [] })),
+          ...llmFetches,
         ]);
       } catch (e) { console.warn('overview parallel fetch failed', e); return; }
+      // 重组: llmData[source][type] = { rows }
+      const llmData = {};
+      sources.forEach((src, si) => {
+        llmData[src] = {};
+        types.forEach((t, ti) => { llmData[src][t] = llmRawData[si * types.length + ti]; });
+      });
 
       // 电费图(今日趋势)
       try {
@@ -498,53 +504,63 @@ const app = createApp({
         }
       } catch (e) { console.warn('copilot chart failed', e); }
 
-      // LLM Token 用量(按来源分类堆叠柱状图)
+      // LLM Token 用量 — 堆叠柱状图，每来源3种颜色(input/output/cache)
       try {
-        const allLlmRows = [
-          ...(llmChatData.rows || []),
-          ...(llmCodeData.rows || []),
-          ...(llmCronData.rows || []),
-          ...(llmSummData.rows || []),
-        ];
-        if (allLlmRows.length) overviewLastTs.llmToken = Math.max(...allLlmRows.map(r => r.ts));
-        const hasAny = allLlmRows.length > 0;
-        const llmCard = document.getElementById('llm-token-card');
-        if (llmCard) llmCard.style.display = hasAny ? '' : 'none';
-
-        // 按本地日期聚合(数据已是增量,直接 sum)
         const toDateKey = (ts) => {
           const d = new Date(ts * 1000);
           return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
         };
         const aggregateByDay = (rows) => {
           const map = {};
-          for (const r of rows) { const dk = toDateKey(r.ts); map[dk] = (map[dk] || 0) + (r.value || 0); }
+          for (const r of (rows || [])) { const dk = toDateKey(r.ts); map[dk] = (map[dk] || 0) + (r.value || 0); }
           return map;
         };
-        const chatByDay  = aggregateByDay(llmChatData.rows || []);
-        const codeByDay  = aggregateByDay(llmCodeData.rows || []);
-        const cronByDay  = aggregateByDay(llmCronData.rows || []);
-        const summByDay  = aggregateByDay(llmSummData.rows || []);
-        const allDays = [...new Set([
-          ...Object.keys(chatByDay), ...Object.keys(codeByDay),
-          ...Object.keys(cronByDay), ...Object.keys(summByDay),
-        ])].sort();
+
+        // 收集所有行来确定最新 ts 和 hasAny
+        const allLlmRows = sources.flatMap(src => types.flatMap(t => llmData[src][t]?.rows || []));
+        if (allLlmRows.length) overviewLastTs.llmToken = Math.max(...allLlmRows.map(r => r.ts));
+        const hasAny = allLlmRows.length > 0;
+        const llmCard = document.getElementById('llm-token-card');
+        if (llmCard) llmCard.style.display = hasAny ? '' : 'none';
+
+        // 每个来源 3 种颜色（深/中/浅）
+        const sourceColors = {
+          chat:       ['#a78bfacc', '#7c3aedcc', '#5b21b6cc'],  // 紫色系 input/output/cache
+          code:       ['#60a5facc', '#2563ebcc', '#1e3a8acc'],  // 蓝色系
+          cron:       ['#fb923ccc', '#ea580ccc', '#9a3412cc'],  // 橙色系
+          summarizer: ['#4ade80cc', '#16a34acc', '#14532dcc'],  // 绿色系
+        };
+        const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
+
+        // 聚合所有 source+type 的按天数据
+        const byDayMap = {};  // key = "src/type" → {dk: value}
+        sources.forEach(src => types.forEach(t => {
+          byDayMap[`${src}/${t}`] = aggregateByDay(llmData[src][t]?.rows || []);
+        }));
+
+        const allDays = [...new Set(
+          Object.values(byDayMap).flatMap(m => Object.keys(m))
+        )].sort();
 
         if (!incremental && allDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
-            const mkData = (byDay) => allDays.map(dk => ({ x: dk, y: byDay[dk] || 0 }));
+            const datasets = [];
+            sources.forEach((src, si) => {
+              types.forEach((t, ti) => {
+                const data = allDays.map(dk => byDayMap[`${src}/${t}`][dk] || 0);
+                if (data.every(v => v === 0)) return; // 跳过全零系列
+                datasets.push({
+                  label: `${src} ${typeLabel[t]}`,
+                  data: allDays.map((dk, i) => ({ x: dk, y: data[i] })),
+                  backgroundColor: sourceColors[src][ti],
+                  stack: src,  // 同来源叠加，不同来源并排
+                });
+              });
+            });
             createOrUpdateChart('chart-llm-tokens', {
               type: 'bar',
-              data: {
-                labels: allDays,
-                datasets: [
-                  { label: 'chat',       data: mkData(chatByDay),  backgroundColor: C.purple + 'cc', stack: 'llm' },
-                  { label: 'code',       data: mkData(codeByDay),  backgroundColor: '#4da6ffcc',     stack: 'llm' },
-                  { label: 'cron',       data: mkData(cronByDay),  backgroundColor: '#ff9966cc',     stack: 'llm' },
-                  { label: 'summarizer', data: mkData(summByDay),  backgroundColor: '#66cc88cc',     stack: 'llm' },
-                ],
-              },
+              data: { labels: allDays, datasets },
               options: { ...baseChartOpts(), scales: {
                 x: { ...smartXAxis(7), stacked: true },
                 y: { ...baseChartOpts().scales.y, stacked: true },
