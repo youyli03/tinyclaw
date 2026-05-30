@@ -526,12 +526,12 @@ const app = createApp({
         }
 
         // 每个来源 3 种颜色（input实/output中/cache浅）
-        // 统一蓝色冷色调，同来源深→中→浅(input/output/cache)，不同来源色相错开
+        // 每来源使用不同色相，同来源内 input(深)/output(中)/cache(浅) 有明显区分度
         const sourceColors = {
-          chat:       ['#1a6fa8f0', '#3b9ed4f0', '#7bc8f0f0'],  // 天蓝
-          code:       ['#1a528af0', '#3a7ec4f0', '#80b0e8f0'],  // 深蓝
-          cron:       ['#1a8a7af0', '#3ab8a8f0', '#7ad8ccf0'],  // 青蓝
-          summarizer: ['#5565a0f0', '#7b8ec8f0', '#aab8e0f0'],  // 蓝紫
+          chat:       ['#2563ebee', '#60a5faee', '#bfdbfeaa'],  // 蓝：深→中→浅
+          code:       ['#059669ee', '#34d399ee', '#a7f3d0aa'],  // 绿：深→中→浅
+          cron:       ['#d97706ee', '#fbbf24ee', '#fde68aaa'],  // 橙：深→中→浅
+          summarizer: ['#7c3aedee', '#a78bfaee', '#ddd6feaa'],  // 紫：深→中→浅
         };
         const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
 
