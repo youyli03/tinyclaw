@@ -526,13 +526,12 @@ const app = createApp({
         }
 
         // 每个来源 3 种颜色（input实/output中/cache浅）
-        // 全部蓝色调，4来源用不同蓝色色相，同来源 input(实)/output(条纹中)/cache(浅透明) 明显区分
-        // input: 高饱和实色，output: 中亮度，cache: 极浅透明
+        // 天蓝色调，4来源用不同蓝色相区分；同来源 input(深)/output(中)/cache(浅) 三级明显分层
         const sourceColors = {
-          chat:       ['#1d4ed8f0', '#1d4ed8a0', '#1d4ed840'],  // 纯蓝
-          code:       ['#0369a1f0', '#0369a1a0', '#0369a140'],  // 海蓝
-          cron:       ['#4338caf0', '#4338caa0', '#4338ca40'],  // 靛蓝
-          summarizer: ['#0891b2f0', '#0891b2a0', '#0891b240'],  // 青蓝
+          chat:       ['#1565c0', '#42a5f5', '#90caf9'],  // 蓝：深→中→浅
+          code:       ['#0277bd', '#29b6f6', '#81d4fa'],  // 天蓝：深→中→浅
+          cron:       ['#283593', '#5c6bc0', '#9fa8da'],  // 靛蓝：深→中→浅
+          summarizer: ['#00838f', '#26c6da', '#80deea'],  // 青蓝：深→中→浅
         };
         const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
 
@@ -555,9 +554,9 @@ const app = createApp({
         // 合并：保留 fullDays，同时加入超出7天的历史数据日期
         const displayDays = [...new Set([...allDays.filter(dk => !fullDays.includes(dk)), ...fullDays])].sort();
         const typeBorder = {
-          input:  { borderWidth: 0,  borderColor: 'transparent' },         // 实色
-          output: { borderWidth: 2,  borderColor: 'rgba(255,255,255,0.6)' }, // 白色描边
-          cache:  { borderWidth: 2,  borderColor: 'rgba(255,255,255,0.25)', borderDash: [3,3] }, // 细白虚线
+          input:  { borderWidth: 0, borderColor: 'transparent' },
+          output: { borderWidth: 0, borderColor: 'transparent' },
+          cache:  { borderWidth: 0, borderColor: 'transparent' },
         };
 
         if (!incremental && displayDays.length) {
