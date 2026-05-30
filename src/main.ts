@@ -529,7 +529,7 @@ async function main(): Promise<void> {
     ): Promise<{ answer: string; isFreeform: boolean }> => {
       // 达到最大交互次数:通知 AI 总结（code 模式限制，chat 模式不限）
       interactiveCallCount++;
-      if (session.mode === "code" && interactiveCallCount > MAX_INTERACTIVE_CALLS) {
+      if (session.mode !== "code" && interactiveCallCount > MAX_INTERACTIVE_CALLS) {
         const limitMsg = `⚠️ 本次处理已达到最大交互次数(${MAX_INTERACTIVE_CALLS} 次),请立即总结当前内容并输出给用户,不要再调用 ask_user 或 exit_plan_mode。`;
         await connector.send(msg.peerId, msg.type, limitMsg).catch(() => {});
         throw new Error(limitMsg);
