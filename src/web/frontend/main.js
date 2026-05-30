@@ -435,7 +435,7 @@ const app = createApp({
       const types   = ['input', 'output', 'cache'];
       // 每个来源3个 key，共12个请求
       const llmFetches = sources.flatMap(src =>
-        types.map(t => fetch(`/api/metrics?category=llm&key=token/${src}/${t}&days=7${sinceToken}`).then(r => r.json()).catch(() => ({ rows: [] })))
+        types.map(t => fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=7${sinceToken}`).then(r => r.json()).catch(() => ({ rows: [] })))
       );
       let elecData, copilotData, systemData;
       let llmRawData; // flat array: [chat/input, chat/output, chat/cache, code/input, ...]
