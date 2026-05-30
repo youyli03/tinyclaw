@@ -526,12 +526,13 @@ const app = createApp({
         }
 
         // 每个来源 3 种颜色（input实/output中/cache浅）
-        // 天蓝色调，4来源用不同蓝色相区分；同来源 input(深)/output(中)/cache(浅) 三级明显分层
+        // 统一天蓝渐变色：input(深·底) → output(中) → cache(浅·顶) 三级分层
+        const tokenPalette = ['#2979ff', '#5c9dff', '#a8cdff'];  // 深→中→浅
         const sourceColors = {
-          chat:       ['#1565c0', '#42a5f5', '#90caf9'],  // 蓝：深→中→浅
-          code:       ['#0277bd', '#29b6f6', '#81d4fa'],  // 天蓝：深→中→浅
-          cron:       ['#283593', '#5c6bc0', '#9fa8da'],  // 靛蓝：深→中→浅
-          summarizer: ['#00838f', '#26c6da', '#80deea'],  // 青蓝：深→中→浅
+          chat:       tokenPalette,
+          code:       tokenPalette,
+          cron:       tokenPalette,
+          summarizer: tokenPalette,
         };
         const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
 
@@ -553,12 +554,6 @@ const app = createApp({
         });
         // 合并：保留 fullDays，同时加入超出7天的历史数据日期
         const displayDays = [...new Set([...allDays.filter(dk => !fullDays.includes(dk)), ...fullDays])].sort();
-        const typeBorder = {
-          input:  { borderWidth: 0, borderColor: 'transparent' },
-          output: { borderWidth: 0, borderColor: 'transparent' },
-          cache:  { borderWidth: 0, borderColor: 'transparent' },
-        };
-
         if (!incremental && displayDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
@@ -572,10 +567,9 @@ const app = createApp({
                   data: displayDays.map((dk, i) => ({ x: dk, y: data[i] })),
                   backgroundColor: sourceColors[src][ti],
                   stack: src,
-                  barPercentage: 0.35,
-                  categoryPercentage: 0.9,
-                  borderWidth: typeBorder[t].borderWidth,
-                  borderColor: typeBorder[t].borderColor,
+                  barPercentage: 0.6,
+                  categoryPercentage: 0.7,
+                  borderRadius: t === 'cache' ? { topLeft: 3, topRight: 3 } : 0,
                   borderSkipped: false,
                 });
               });
