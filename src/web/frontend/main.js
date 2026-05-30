@@ -639,28 +639,160 @@ const app = createApp({
       } catch (e) { console.warn('fetchMetricKeys failed', e); }
     }
 
+    // 把 metricKeys 重组为展示卡片:
+    //  - llm 下 token/{src}/{input|output|cache} 按后端 src 归组,每后端合并成一张堆叠柱状图
+    //  - 其余 key 各自一张(保持原样)
+    const LLM_TOKEN_RE = /^token\/(.+)\/(input|output|cache)$/;
+    const metricCards = computed(() => {
+      const cards = [];
+      const seenSrc = new Set();
+      for (const k of metricKeys.value) {
+        const m = k.category === 'llm' ? LLM_TOKEN_RE.exec(k.key) : null;
+        if (m) {
+          const src = m[1];
+          if (seenSrc.has(src)) continue;
+          seenSrc.add(src);
+          cards.push({ kind: 'llmtoken', src, id: `chart-m-llmtoken-${src}` });
+        } else {
+          cards.push({ kind: 'single', category: k.category, key: k.key, chart_type: k.chart_type || 'line', id: `chart-m-${k.category}-${k.key}` });
+        }
+      }
+      return cards;
+    });
+
     // 从概览卡片跳转到指标页
     async function navigateToMetric(categoryKey) {
       await fetchMetricKeys();
       mDays.value = '1';
       page.value = 'metrics';
       await nextTick();
-      const nmInited = metricKeys.value.some(k => metricLastTs[k.category + '/' + k.key] != null);
-      for (const k of metricKeys.value) {
-        await loadOneMetricChart(k.category, k.key, nmInited, k.chart_type || 'line');
-      }
+      await renderMetricCards(false);
     }
 
-    // 加载所有指标图（每个指标独立一张图）
+    // 加载所有指标图(普通指标各一张;llm token 按后端合并一张堆叠柱状图)
     async function loadAllMetricCharts() {
-      if (!metricKeys.value.length) return;
-      for (const k of metricKeys.value) {
-        await loadOneMetricChart(k.category, k.key, false, k.chart_type || 'line');
+      await renderMetricCards(false);
+    }
+
+    // 遍历 metricCards,按 kind 分派渲染
+    async function renderMetricCards(incremental) {
+      const cards = metricCards.value;
+      if (!cards.length) return;
+      for (const c of cards) {
+        if (c.kind === 'llmtoken') {
+          await loadLlmTokenCard(c.src, incremental);
+        } else {
+          await loadOneMetricChart(c.category, c.key, incremental, c.chart_type);
+        }
       }
     }
 
     // 记录每个指标图最后一条数据的 ts（Unix 秒），用于增量请求
     const metricLastTs = {};
+
+    // ── llm token 合并卡片：某后端的 input/output/cache 三级堆叠柱状图 ──────────
+    async function loadLlmTokenCard(src, incremental = false) {
+      try {
+        const chartId = `chart-m-llmtoken-${src}`;
+        const types = ['input', 'output', 'cache'];
+        // 深→浅蓝：input(底/深) → output(中) → cache(顶/浅)
+        const palette = { input: '#2979ff', output: '#5c9dff', cache: '#a8cdff' };
+        const days = Number(mDays.value) || 1;
+
+        const ckBase = `llmtoken/${src}`;
+        const lastTs = metricLastTs[ckBase];
+        const existChart = charts[chartId];
+        const useIncremental = incremental && lastTs != null && existChart != null;
+
+        const sinceParam = useIncremental ? `&since=${lastTs}` : '';
+        const fetches = types.map(t =>
+          fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=${days}${sinceParam}`)
+            .then(r => r.json()).catch(() => ({ rows: [] }))
+        );
+        const results = await Promise.all(fetches);
+        const rowsByType = {};
+        types.forEach((t, i) => { rowsByType[t] = results[i].rows || []; });
+
+        function getBucketLabel(tsSec) {
+          const d = new Date(tsSec * 1000);
+          if (days <= 1) return String(d.getHours()).padStart(2,'0') + ':00';
+          return (d.getMonth()+1) + '/' + d.getDate();
+        }
+        let labels;
+        if (days <= 1) {
+          labels = [];
+          for (let h = 4; h < 24; h++) labels.push(String(h).padStart(2,'0') + ':00');
+          for (let h = 0; h < 4; h++) labels.push(String(h).padStart(2,'0') + ':00');
+        } else {
+          const set = new Set();
+          types.forEach(t => rowsByType[t].forEach(r => set.add(getBucketLabel(r.ts))));
+          labels = [...set].sort((a,b) => {
+            const [am,ad]=a.split('/').map(Number), [bm,bd]=b.split('/').map(Number);
+            return am!==bm ? am-bm : ad-bd;
+          });
+        }
+
+        if (useIncremental) {
+          const chart = existChart;
+          let maxTs = lastTs;
+          types.forEach((t, ti) => {
+            const ds = chart.data.datasets[ti];
+            if (!ds) return;
+            for (const r of rowsByType[t]) {
+              const label = getBucketLabel(r.ts);
+              const idx = chart.data.labels.indexOf(label);
+              if (idx >= 0) ds.data[idx] = (ds.data[idx] || 0) + r.value;
+              if (r.ts > maxTs) maxTs = r.ts;
+            }
+          });
+          metricLastTs[ckBase] = maxTs;
+          chart.update('none');
+          return;
+        }
+
+        const datasets = types.map(t => {
+          const bucket = new Map();
+          for (const r of rowsByType[t]) {
+            const label = getBucketLabel(r.ts);
+            bucket.set(label, (bucket.get(label) || 0) + r.value);
+          }
+          return {
+            label: t,
+            data: labels.map(l => bucket.get(l) || 0),
+            backgroundColor: palette[t],
+            stack: src,
+            borderRadius: t === 'cache' ? { topLeft: 3, topRight: 3 } : 0,
+            borderSkipped: false,
+            barPercentage: 0.7,
+            categoryPercentage: 0.8,
+          };
+        });
+
+        const allTs = types.flatMap(t => rowsByType[t].map(r => r.ts));
+        if (allTs.length) metricLastTs[ckBase] = Math.max(...allTs);
+
+        createOrUpdateChart(chartId, {
+          type: 'bar',
+          data: { labels, datasets },
+          options: {
+            ...baseChartOpts(),
+            plugins: {
+              ...baseChartOpts().plugins,
+              legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, padding: 8, color: C.t3, font: { size: 10 } } },
+              tooltip: { ...baseChartOpts().plugins.tooltip, callbacks: {
+                title(items) { return items.length ? items[0].label : ''; },
+                label(item) { return `  ${item.dataset.label}：${item.parsed.y}`; },
+              }},
+            },
+            scales: {
+              x: { stacked: true, grid: { display: false }, border: { color: C.border }, ticks: { color: C.t3, maxRotation: days <= 1 ? 45 : 0, font: { size: 11 } } },
+              y: { ...baseChartOpts().scales.y, stacked: true },
+            },
+          },
+        });
+      } catch (e) { console.warn(`loadLlmTokenCard ${src} failed`, e); }
+    }
+
 
     async function loadOneMetricChart(category, key, incremental = false, chartType = 'line') {
       try {
@@ -997,10 +1129,12 @@ const app = createApp({
       if (newPage === 'metrics') {
         if (!metricKeys.value.length) await fetchMetricKeys();
         await nextTick();
-        const mInited = metricKeys.value.some(k => metricLastTs[k.category + '/' + k.key] != null);
-        for (const k of metricKeys.value) {
-          await loadOneMetricChart(k.category, k.key, mInited);
-        }
+        const mInited = metricCards.value.some(c =>
+          c.kind === 'llmtoken'
+            ? metricLastTs[`llmtoken/${c.src}`] != null
+            : metricLastTs[`${c.category}/${c.key}`] != null
+        );
+        await renderMetricCards(mInited);
       }
       if (newPage === 'notes') {
         if (!notesTree.value.length) await fetchNotesTree();
@@ -1067,9 +1201,7 @@ const app = createApp({
           drawSparklines();
         }
         if (page.value === 'metrics' && metricKeys.value.length) {
-          for (const k of metricKeys.value) {
-            await loadOneMetricChart(k.category, k.key, true, k.chart_type || 'line'); // 增量
-          }
+          await renderMetricCards(true); // 增量
         }
       }, 30000);
 
@@ -1084,7 +1216,7 @@ const app = createApp({
     return {
       page, navTo, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
-      metricKeys, mDays,
+      metricKeys, metricCards, mDays,
       expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
       navigateToMetric, loadAllMetricCharts, toggleReport,

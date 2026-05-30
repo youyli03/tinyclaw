@@ -176,16 +176,27 @@
         </select>
         <span style="font-size:12px;color:var(--t3);margin-left:4px">共 {{ metricKeys.length }} 个指标</span>
       </div>
-      <div class="metrics-grid" v-if="metricKeys.length">
-        <div class="card metrics-card" v-for="k in metricKeys" :key="k.category+'/'+k.key">
-          <div class="card-header">
-            <span class="card-title">{{ k.category }} / {{ k.key }}</span>
-            <span class="card-sub">近 {{ mDays }} 天</span>
+      <div class="metrics-grid" v-if="metricCards.length">
+        <template v-for="c in metricCards" :key="c.id">
+          <div class="card metrics-card" v-if="c.kind==='llmtoken'">
+            <div class="card-header">
+              <span class="card-title">llm / {{ c.src }} token</span>
+              <span class="card-sub">近 {{ mDays }} 天 · 深→浅 = input/output/cache</span>
+            </div>
+            <div class="chart-canvas-wrap" style="height:200px;padding-top:8px">
+              <canvas :id="c.id" style="width:100%;height:180px"></canvas>
+            </div>
           </div>
-          <div class="chart-canvas-wrap" style="height:200px;padding-top:8px">
-            <canvas :id="'chart-m-'+k.category+'-'+k.key" style="width:100%;height:180px"></canvas>
+          <div class="card metrics-card" v-else>
+            <div class="card-header">
+              <span class="card-title">{{ c.category }} / {{ c.key }}</span>
+              <span class="card-sub">近 {{ mDays }} 天</span>
+            </div>
+            <div class="chart-canvas-wrap" style="height:200px;padding-top:8px">
+              <canvas :id="c.id" style="width:100%;height:180px"></canvas>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
       <div class="empty-state" v-else>暂无已注册指标，使用 tinyclaw db add 添加</div>
     </div>
