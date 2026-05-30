@@ -536,6 +536,15 @@ export class Session {
     if (sanitized.length !== this.messages.length) {
       this.messages.length = 0;
       for (const m of sanitized) this.messages.push(m);
+      // 修复：sanitize 删除了消息时，同步回写 JSONL，
+      // 否则进程重启后孤立链又会从磁盘重新加载，循环导致 400 Bad Request。
+      try {
+        if (this.mode === "code") {
+          this.rewriteCodeJsonl();
+        } else {
+          this.rewriteJsonl();
+        }
+      } catch { /* 回写失败不阻塞主流程 */ }
     }
   }
 
