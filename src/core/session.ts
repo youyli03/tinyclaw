@@ -134,6 +134,12 @@ export class Session {
   lastPromptTokens = 0;
 
   /**
+   * 最近一次执行 searchMemory 注入记忆时的 lastPromptTokens 快照（-1 = 尚未搜索过）。
+   * 用于节流：若距上次搜索 promptTokens 增量过小且已有记忆注入，则跳过本轮向量搜索复用旧结果。
+   */
+  lastMemorySearchPromptTokens = -1;
+
+  /**
    * 最近一次传输失败请求的 X-Request-Id（由 runAgent 在捕获 LLMConnectionError 时设置）。
    * /retry 命令将此 ID 作为 turnRequestIdOverride 传给下次请求，服务端识别相同 ID 不重复计费。
    */
@@ -433,6 +439,13 @@ export class Session {
     } else {
       this.messages.push({ role: "system", content: marked });
     }
+  }
+
+  /** 当前 messages 中是否已存在记忆注入（memory: marker）。用于 searchMemory 节流判断。 */
+  hasMemoryContext(): boolean {
+    return this.messages.some(
+      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith("<!-- memory:"),
+    );
   }
 
   replaceOrAddSkillReminder(content: string): void {

@@ -746,13 +746,25 @@ export async function runAgent(
     if (!isCodeMode && !isSlave) {
       const _rawText = userContent;
       if (_rawText.replace(/\s/g, "").length > 15) {
-        try {
-          const _memResult = await searchMemory(_rawText.slice(0, 200), session.agentId, 5);
-          if (_memResult && _memResult.trim()) {
-            const _truncated = _memResult.length > 1000 ? _memResult.slice(0, 1000) + "…" : _memResult;
-            session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
-          }
-        } catch { /* 静默跳过,不阻断主流程 */ }
+        // 节流:连续短对话时复用上次记忆注入,避免每轮都做向量搜索。
+        // 仅当①尚未搜索过,②无记忆注入,或③距上次搜索 promptTokens 增量 ≥ 阈值时才重新搜索。
+        const MEM_SEARCH_TOKEN_DELTA = 3000;
+        const _prevSnapshot = session.lastMemorySearchPromptTokens;
+        const _curTokens = session.lastPromptTokens;
+        const _shouldSearch =
+          _prevSnapshot < 0 ||
+          !session.hasMemoryContext() ||
+          _curTokens - _prevSnapshot >= MEM_SEARCH_TOKEN_DELTA;
+        if (_shouldSearch) {
+          try {
+            const _memResult = await searchMemory(_rawText.slice(0, 200), session.agentId, 5);
+            if (_memResult && _memResult.trim()) {
+              const _truncated = _memResult.length > 1000 ? _memResult.slice(0, 1000) + "..." : _memResult;
+              session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
+            }
+            session.lastMemorySearchPromptTokens = _curTokens;
+          } catch { /* 静默跳过,不阻断主流程 */ }
+        }
       }
     }
 
@@ -1185,10 +1197,18 @@ export async function runAgent(
       }
 
       // 工具结果截断
+      // 工具结果截断：头 70% + 尾 30%，保留尾部关键信息（退出码/报错结尾/最终结果），
+      // 中间省略部分用标记连接。纯保留头部会丢失 exec_shell 等命令的关键尾部输出。
       const maxResultChars = loadConfig().tools.maxToolResultChars;
       if (maxResultChars > 0 && result.length > maxResultChars) {
-        result = result.slice(0, maxResultChars) +
-          `\n\n[内容过长，已截断。原始长度 ${result.length} 字符，保留前 ${maxResultChars} 字符。如需查看更多请缩小范围重新调用。]`;
+        const origLen = result.length;
+        const headLen = Math.floor(maxResultChars * 0.7);
+        const tailLen = maxResultChars - headLen;
+        const omitted = origLen - maxResultChars;
+        result =
+          result.slice(0, headLen) +
+          `\n\n[...内容过长，已省略中间 ${omitted} 字符（原始 ${origLen} 字符）。保留头 ${headLen} + 尾 ${tailLen} 字符。如需完整内容请缩小范围重新调用...]\n\n` +
+          result.slice(origLen - tailLen);
       }
       opts.onToolResult?.(call.name, result);
       return result;
