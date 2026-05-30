@@ -519,10 +519,11 @@ const app = createApp({
         // 收集所有行来确定最新 ts 和 hasAny
         const allLlmRows = sources.flatMap(src => types.flatMap(t => llmData[src][t]?.rows || []));
         if (allLlmRows.length) overviewLastTs.llmToken = Math.max(...allLlmRows.map(r => r.ts));
-        const hasAny = allLlmRows.length > 0;
-        console.log('[llm-token] allLlmRows.length=', allLlmRows.length, 'hasAny=', hasAny);
-        const llmCard = document.getElementById('llm-token-card');
-        if (llmCard) llmCard.style.display = hasAny ? '' : 'none';
+        // 只在首次（非增量）时控制 card 显隐；增量时保持当前状态
+        if (!incremental) {
+          const llmCard = document.getElementById('llm-token-card');
+          if (llmCard) llmCard.style.display = allLlmRows.length > 0 ? '' : 'none';
+        }
 
         // 每个来源 3 种颜色（input实/output中/cache浅）
         const sourceColors = {
@@ -543,21 +544,25 @@ const app = createApp({
           Object.values(byDayMap).flatMap(m => Object.keys(m))
         )].sort();
 
-        // 只保留有数据的日期
-        const activeDays = allDays.filter(dk =>
-          sources.some(src => types.some(t => (byDayMap[`${src}/${t}`][dk] || 0) > 0))
-        );
-        if (!incremental && activeDays.length) {
+        // 固定过去7天作为完整 labels（无数据的填0），保证比例均匀
+        const today = new Date(); today.setHours(0,0,0,0);
+        const fullDays = Array.from({length: 7}, (_, i) => {
+          const d = new Date(today); d.setDate(d.getDate() - (6 - i));
+          return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        });
+        // 合并：保留 fullDays，同时加入超出7天的历史数据日期
+        const displayDays = [...new Set([...allDays.filter(dk => !fullDays.includes(dk)), ...fullDays])].sort();
+        if (!incremental && displayDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
             const datasets = [];
             sources.forEach((src, si) => {
               types.forEach((t, ti) => {
-                const data = activeDays.map(dk => byDayMap[`${src}/${t}`][dk] || 0);
+                const data = displayDays.map(dk => byDayMap[`${src}/${t}`][dk] || 0);
                 if (data.every(v => v === 0)) return;
                 datasets.push({
                   label: `${src} ${typeLabel[t]}`,
-                  data: activeDays.map((dk, i) => ({ x: dk, y: data[i] })),
+                  data: displayDays.map((dk, i) => ({ x: dk, y: data[i] })),
                   backgroundColor: sourceColors[src][ti],
                   stack: 'all',
                 });
@@ -565,7 +570,7 @@ const app = createApp({
             });
             createOrUpdateChart('chart-llm-tokens', {
               type: 'bar',
-              data: { labels: activeDays, datasets },
+              data: { labels: displayDays, datasets },
               options: { ...baseChartOpts(), scales: {
                 x: { type: 'category', stacked: true, grid: { display: false }, border: { color: C.border }, ticks: { color: C.t3, maxRotation: 0 } },
                 y: { ...baseChartOpts().scales.y, stacked: true },
