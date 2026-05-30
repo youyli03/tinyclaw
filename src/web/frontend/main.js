@@ -526,11 +526,12 @@ const app = createApp({
         }
 
         // 每个来源 3 种颜色（input实/output中/cache浅）
+        // 统一蓝色冷色调，同来源深→中→浅(input/output/cache)，不同来源色相错开
         const sourceColors = {
-          chat:       ['#38bdf8dd', '#7dd3fcbb', '#bae6fd77'],  // 天蓝系
-          code:       ['#34d399dd', '#6ee7b7bb', '#a7f3d077'],  // 青绿系
-          cron:       ['#f97316dd', '#fdba74bb', '#fed7aa77'],  // 橙色系
-          summarizer: ['#a78bfadd', '#c4b5fdbb', '#ddd6fe77'],  // 紫色系
+          chat:       ['#1a6fa8f0', '#3b9ed4f0', '#7bc8f0f0'],  // 天蓝
+          code:       ['#1a528af0', '#3a7ec4f0', '#80b0e8f0'],  // 深蓝
+          cron:       ['#1a8a7af0', '#3ab8a8f0', '#7ad8ccf0'],  // 青蓝
+          summarizer: ['#5565a0f0', '#7b8ec8f0', '#aab8e0f0'],  // 蓝紫
         };
         const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
 
@@ -564,7 +565,9 @@ const app = createApp({
                   label: `${src} ${typeLabel[t]}`,
                   data: displayDays.map((dk, i) => ({ x: dk, y: data[i] })),
                   backgroundColor: sourceColors[src][ti],
-                  stack: src,  // 同来源叠加，不同来源并排
+                  stack: src,
+                  barPercentage: 0.4,
+                  categoryPercentage: 0.8,
                 });
               });
             });
