@@ -644,6 +644,8 @@ export interface CopilotClientResult {
  */
 interface CopilotBuildParamsWithVision extends CopilotBuildParams {
   supportsVision?: boolean;
+  /** 手动覆盖 supportsToolCalls(默认按模型元数据自动推断;弱模型可设 false 走 textMode) */
+  supportsToolCalls?: boolean;
 }
 
 export async function buildCopilotClient(
@@ -778,7 +780,7 @@ export async function buildCopilotClient(
       model: resolvedModel.id,
       maxTokens: resolvedModel.maxOutputTokens,
       timeoutMs: config.timeoutMs,
-      supportsToolCalls: resolvedModel.supportsToolCalls,
+      supportsToolCalls: config.supportsToolCalls ?? resolvedModel.supportsToolCalls,
       supportsParallelToolCalls: resolvedModel.supportsParallelToolCalls,
       isCopilotProvider: true,
       // vision 优先级：config 显式值 > API capabilities.supports.vision > 默认 true

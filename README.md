@@ -54,6 +54,18 @@ daily      = { model = "openai/gpt-4o" }
 summarizer = { model = "openai/gpt-4o-mini" }
 ```
 
+**弱模型(不支持 function calling):**
+
+部分本地/小厂模型不支持 OpenAI function calling（tool_calls）。给这类后端加 `supportsToolCalls = false`，tinyclaw 会自动切换为**文本模式工具调用**（textMode）：系统提示注入工具列表与格式规则，模型以 `<tool_call>{"name":...,"args":...}</tool_call>` XML 文本块响应，Agent 正则解析后执行，无需模型原生支持 tools 参数。
+
+```toml
+[llm.backends.daily]
+model = "openai/some-weak-model"
+supportsToolCalls = false   # 不支持 function calling 的模型走文本工具调用
+```
+
+> Copilot 后端留空时按模型元数据（`capabilities.supports.tool_calls`）自动推断，通常无需手动设置。
+
 **QQBot + MFA(可选):**
 ```toml
 [channels.qqbot]

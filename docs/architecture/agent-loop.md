@@ -117,6 +117,10 @@ runAgent(session, userContent, opts)
 │    messages 已有永久 system → 跳过（JSONL 恢复后无需重复注入）
 │    注：文本模式（textMode）时，同时将工具列表与 <tool_call> 格式规则追加进 system prompt
 │         textMode = !client.supportsToolCalls（由后端 supportsToolCalls 标志决定）
+│         supportsToolCalls 来源:Copilot 后端从模型元数据自动推断;
+│         其它 provider(openai/openrouter/deepseek/mimo)默认 true,
+│         可在 config.toml [llm.backends.*] 用 supportsToolCalls = false 手动声明弱模型,
+│         强制走 textMode(让不支持 function calling 的模型也能用工具)。
 │
 ├─ 步骤 2：QMD 向量记忆检索
 │    searchMemory(userContent)

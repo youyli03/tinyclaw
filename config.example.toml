@@ -38,6 +38,10 @@ apiKey  = "sk-..."
 model   = "gpt-4o"
 # maxTokens = 4096    # 可选，默认 4096
 # timeoutMs = 120000  # 可选，默认 120000ms
+# supportsToolCalls = false  # 可选。对接不支持 OpenAI function calling 的"弱模型"(部分本地/小厂模型)时设为 false,
+#                            # 自动改走文本模式工具调用(textMode):模型以 <tool_call>{"name":...,"args":...}</tool_call>
+#                            # XML 文本块响应,Agent 正则解析后执行,无需模型原生支持 tools 参数。
+#                            # Copilot 后端留空时按模型元数据(capabilities.supports.tool_calls)自动推断。
 
 # ── code 后端（可选）──────────────────────────────────────────────────────────
 # 供 /code 斜杠命令的 Code 模式使用，未配置时回退到 daily 后端

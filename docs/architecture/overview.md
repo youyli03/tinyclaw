@@ -205,7 +205,7 @@ tinyclaw/
   - `"copilot/claude-sonnet-4.5"` → 指定具体模型
   - `"openai/gpt-4o"` → OpenAI-compatible 后端
 - `registry.get(name)` 运行时取后端实例，`registry.init()` 在 main.ts 中异步预初始化所有后端
-- 每个后端携带 `supportsToolCalls` 标志（Copilot 后端从模型元数据自动推断）：
+- 每个后端携带 `supportsToolCalls` 标志（Copilot 后端从模型元数据自动推断；其它 provider 默认 true，可在 `[llm.backends.*]` 用 `supportsToolCalls = false` 手动声明弱模型）：
   - `true`（默认）→ 通过 OpenAI `tools` 参数进行 function calling
   - `false` → 自动切换为**文本模式工具调用**：系统提示注入工具列表与格式规则，LLM 以 `<tool_call>` XML 块响应，Agent 正则解析后执行
 - 所有 LLM 调用均受**连接稳定性**保护（重试 / idle timeout / jitter），详见 [RETRY_AND_STABILITY.md](./RETRY_AND_STABILITY.md)
@@ -214,6 +214,14 @@ tinyclaw/
 #### OpenAI-compatible（`provider` 不填 / 为 `"openai"`）
 
 手动提供 `baseUrl` + `apiKey` + `model`，方便对接任意兼容 API。
+
+对接不支持 function calling 的弱模型时,在 `[llm.backends.*]` 设 `supportsToolCalls = false`,自动改走 textMode 文本工具调用(详见上文 supportsToolCalls 标志说明):
+
+```toml
+[llm.backends.daily]
+model = "openai/some-weak-model"
+supportsToolCalls = false
+```
 
 #### GitHub Copilot（`provider = "copilot"`）
 

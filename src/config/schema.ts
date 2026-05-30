@@ -100,6 +100,17 @@ const BackendRoleSchema = z.object({
   /** 是否支持视觉（图片输入）能力，默认 false */
   supportsVision: z.boolean().optional(),
   /**
+   * 是否支持 OpenAI function calling（tool_calls），未设置时：
+   * - Copilot 后端：由模型元数据（capabilities.supports.tool_calls）自动推断
+   * - 其它 provider（openai/openrouter/deepseek/mimo）：默认视为 true
+   *
+   * 对接不支持 function calling 的"弱模型"（部分本地/小厂模型）时，显式设为 false。
+   * 设为 false 后自动切换为**文本模式工具调用**（textMode）：
+   * 系统提示注入工具列表与格式规则，模型以 `<tool_call>{"name":...,"args":...}</tool_call>`
+   * XML 文本块响应，Agent 正则解析后执行，无需模型原生支持 tools 参数。
+   */
+  supportsToolCalls: z.boolean().optional(),
+  /**
    * 手动覆盖 Copilot 后端有效 context window（tokens），可选。
    * 设置后直接替换自动检测结果，可向下限制或向上扩展：
    * - 向下：如 oswe-vscode-prime 上报 256k 但实际 prompt 上限 200k，设为 200000 防溢出

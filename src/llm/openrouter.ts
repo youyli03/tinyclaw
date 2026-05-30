@@ -81,7 +81,8 @@ export function clearFreeModelsCache(): void {
  */
 export function buildOpenRouterClient(
   cfg: OpenRouterProviderConfig,
-  modelId: string
+  modelId: string,
+  supportsToolCalls?: boolean
 ): LLMClient {
   const backend: ResolvedBackend = {
     baseUrl: cfg.baseUrl,
@@ -90,7 +91,8 @@ export function buildOpenRouterClient(
     maxTokens: cfg.maxTokens,
     timeoutMs: cfg.timeoutMs,
     defaultHeaders: { ...DEFAULT_HEADERS },
-    supportsToolCalls: true,
+    // 未指定时默认 true;弱模型可在 config.toml 显式设 false 走 textMode 文本工具调用
+    supportsToolCalls: supportsToolCalls ?? true,
     supportsVision: false,
     supportsParallelToolCalls: false,
   };

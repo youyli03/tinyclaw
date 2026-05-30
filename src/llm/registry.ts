@@ -70,6 +70,7 @@ class LLMRegistry {
         model: modelId,
         timeoutMs: role.timeoutMs ?? defaultTimeoutMs,
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
         ...(role.maxContextWindow !== undefined ? { maxContextWindowOverride: role.maxContextWindow } : {}),
       });
       this.clients.set(name, client);
@@ -128,6 +129,7 @@ class LLMRegistry {
         // code backend 默认超时 240s
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : openaiCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
       });
       this.clients.set(name, client);
       return client;
@@ -142,7 +144,7 @@ class LLMRegistry {
       }
       const client = modelId === "auto-free"
         ? new AutoFreeClient(orCfg)
-        : buildOpenRouterClient(orCfg, modelId);
+        : buildOpenRouterClient(orCfg, modelId, role.supportsToolCalls);
       this.clients.set(name, client);
       return client;
     }
@@ -159,6 +161,7 @@ class LLMRegistry {
         maxTokens: role.maxTokens ?? dsCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : dsCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
         ...(role.disableThinking ? { disableThinking: true } : {}),
       });
       this.clients.set(name, client);
@@ -181,6 +184,7 @@ class LLMRegistry {
         maxTokens: role.maxTokens ?? mimoCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : mimoCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
+        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
       });
       this.clients.set(name, client);
       if (role.maxContextWindow && role.maxContextWindow > 0) {
