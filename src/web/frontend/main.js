@@ -564,7 +564,7 @@ const app = createApp({
                   label: `${src} ${typeLabel[t]}`,
                   data: displayDays.map((dk, i) => ({ x: dk, y: data[i] })),
                   backgroundColor: sourceColors[src][ti],
-                  stack: 'all',
+                  stack: src,  // 同来源叠加，不同来源并排
                 });
               });
             });
