@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import * as os from "node:os";
+import * as zlib from "node:zlib";
 import { execSync } from "node:child_process";
 import { sampleStats } from "./collector.js";
 import { queryMetrics, querySnapshots, listMetricKeys } from "./db.js";
@@ -73,13 +74,28 @@ function countFiles(nodes: TreeNode[]): number {
   return n;
 }
 
+// 当前请求引用(用于 json() 判断客户端是否支持 gzip)
+let _curReq: IncomingMessage | null = null;
+
 function json(res: ServerResponse, data: unknown, status = 200): void {
   const body = JSON.stringify(data);
-  res.writeHead(status, {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-cache",
-  });
+  };
+  // 响应体较大且客户端支持时 gzip(小响应压缩收益低,跳过)
+  const ae = _curReq?.headers["accept-encoding"];
+  const gzipOk = typeof ae === "string" && ae.includes("gzip");
+  if (gzipOk && Buffer.byteLength(body) > 1024) {
+    const gz = zlib.gzipSync(body);
+    headers["Content-Encoding"] = "gzip";
+    headers["Vary"] = "Accept-Encoding";
+    res.writeHead(status, headers);
+    res.end(gz);
+    return;
+  }
+  res.writeHead(status, headers);
   res.end(body);
 }
 
@@ -95,6 +111,8 @@ export async function handleApi(
   const pathname = url.pathname;
 
   if (!pathname.startsWith("/api/")) return false;
+
+  _curReq = req;
 
   try {
     // GET /api/stats

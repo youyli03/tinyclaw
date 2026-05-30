@@ -16,7 +16,23 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
+import * as zlib from "node:zlib";
 import { handleApi } from "./api.js";
+
+// 可压缩的文本类 MIME(前缀匹配)
+const COMPRESSIBLE = [
+  "text/", "application/javascript", "application/json",
+  "image/svg+xml", "application/manifest+json",
+];
+function isCompressible(contentType: string): boolean {
+  return COMPRESSIBLE.some((p) => contentType.startsWith(p));
+}
+function acceptsGzip(req: http.IncomingMessage): boolean {
+  const ae = req.headers["accept-encoding"];
+  return typeof ae === "string" && ae.includes("gzip");
+}
+// 内存缓存:对不变的 vendor / 版本化资源,压缩一次后复用 buffer,避免每次请求重复 gzip
+const gzipCache = new Map<string, Buffer>();
 
 const FRONTEND_DIR = path.join(
   path.dirname(url.fileURLToPath(import.meta.url)),
@@ -144,18 +160,27 @@ function go() {
 
 // ── 静态文件服务 ──────────────────────────────────────────────────────────────
 
-function serveIndexHtml(res: http.ServerResponse): void {
+function serveIndexHtml(res: http.ServerResponse, req?: http.IncomingMessage): void {
   const indexPath = path.join(FRONTEND_DIR, "index.html");
   let html = fs.readFileSync(indexPath, "utf-8");
   // 注入版本号，强制浏览器获取最新 JS/CSS（解决手机/PC 浏览器缓存问题）
   html = html
     .replace(/\/main\.js"/g, `/main.js?v=${BUILD_TS}"`)
     .replace(/\/style\.css"/g, `/style.css?v=${BUILD_TS}"`);
-  res.writeHead(200, {
+  const idxHeaders: Record<string, string> = {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-  });
-  res.end(html);
+  };
+  if (req && acceptsGzip(req)) {
+    const gz = zlib.gzipSync(html);
+    idxHeaders["Content-Encoding"] = "gzip";
+    idxHeaders["Vary"] = "Accept-Encoding";
+    res.writeHead(200, idxHeaders);
+    res.end(gz);
+  } else {
+    res.writeHead(200, idxHeaders);
+    res.end(html);
+  }
 }
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -177,7 +202,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   if (!fs.existsSync(fullPath)) {
     const indexPath = path.join(FRONTEND_DIR, "index.html");
     if (fs.existsSync(indexPath)) {
-      serveIndexHtml(res);
+      serveIndexHtml(res, req);
     } else {
       res.writeHead(404);
       res.end("Not found");
@@ -188,7 +213,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   const ext = path.extname(fullPath);
   // index.html 动态注入版本号（强制不缓存 + 给 JS/CSS 加 ?v= 查询参数）
   if (fullPath.endsWith("index.html")) {
-    serveIndexHtml(res);
+    serveIndexHtml(res, req);
     return;
   }
   const contentType = MIME[ext] ?? "application/octet-stream";
@@ -201,10 +226,32 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   const cacheControl = isVersioned
     ? "public, max-age=31536000, immutable"  // 1 年，不变
     : "public, max-age=3600";               // 其他资源 1 小时
-  res.writeHead(200, {
+  const headers: Record<string, string> = {
     "Content-Type": contentType,
     "Cache-Control": cacheControl,
-  });
+  };
+
+  // gzip 压缩:仅对文本类资源 + 客户端支持时启用
+  if (acceptsGzip(req) && isCompressible(contentType)) {
+    headers["Content-Encoding"] = "gzip";
+    headers["Vary"] = "Accept-Encoding";
+    if (isVersioned) {
+      let buf = gzipCache.get(fullPath);
+      if (!buf) {
+        buf = zlib.gzipSync(fs.readFileSync(fullPath));
+        gzipCache.set(fullPath, buf);
+      }
+      res.writeHead(200, headers);
+      res.end(buf);
+    } else {
+      const buf = zlib.gzipSync(fs.readFileSync(fullPath));
+      res.writeHead(200, headers);
+      res.end(buf);
+    }
+    return;
+  }
+
+  res.writeHead(200, headers);
   fs.createReadStream(fullPath).pipe(res);
 }
 
