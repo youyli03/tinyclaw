@@ -520,15 +520,16 @@ const app = createApp({
         const allLlmRows = sources.flatMap(src => types.flatMap(t => llmData[src][t]?.rows || []));
         if (allLlmRows.length) overviewLastTs.llmToken = Math.max(...allLlmRows.map(r => r.ts));
         const hasAny = allLlmRows.length > 0;
+        console.log('[llm-token] allLlmRows.length=', allLlmRows.length, 'hasAny=', hasAny);
         const llmCard = document.getElementById('llm-token-card');
         if (llmCard) llmCard.style.display = hasAny ? '' : 'none';
 
-        // 每个来源 3 种颜色（深/中/浅）
+        // 每个来源 3 种颜色（input实/output中/cache浅）
         const sourceColors = {
-          chat:       ['#a78bfacc', '#7c3aedcc', '#5b21b6cc'],  // 紫色系 input/output/cache
-          code:       ['#60a5facc', '#2563ebcc', '#1e3a8acc'],  // 蓝色系
-          cron:       ['#fb923ccc', '#ea580ccc', '#9a3412cc'],  // 橙色系
-          summarizer: ['#4ade80cc', '#16a34acc', '#14532dcc'],  // 绿色系
+          chat:       ['#38bdf8dd', '#7dd3fcbb', '#bae6fd77'],  // 天蓝系
+          code:       ['#34d399dd', '#6ee7b7bb', '#a7f3d077'],  // 青绿系
+          cron:       ['#f97316dd', '#fdba74bb', '#fed7aa77'],  // 橙色系
+          summarizer: ['#a78bfadd', '#c4b5fdbb', '#ddd6fe77'],  // 紫色系
         };
         const typeLabel = { input: 'in', output: 'out', cache: 'cache' };
 
@@ -542,27 +543,31 @@ const app = createApp({
           Object.values(byDayMap).flatMap(m => Object.keys(m))
         )].sort();
 
-        if (!incremental && allDays.length) {
+        // 只保留有数据的日期
+        const activeDays = allDays.filter(dk =>
+          sources.some(src => types.some(t => (byDayMap[`${src}/${t}`][dk] || 0) > 0))
+        );
+        if (!incremental && activeDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
             const datasets = [];
             sources.forEach((src, si) => {
               types.forEach((t, ti) => {
-                const data = allDays.map(dk => byDayMap[`${src}/${t}`][dk] || 0);
-                if (data.every(v => v === 0)) return; // 跳过全零系列
+                const data = activeDays.map(dk => byDayMap[`${src}/${t}`][dk] || 0);
+                if (data.every(v => v === 0)) return;
                 datasets.push({
                   label: `${src} ${typeLabel[t]}`,
-                  data: allDays.map((dk, i) => ({ x: dk, y: data[i] })),
+                  data: activeDays.map((dk, i) => ({ x: dk, y: data[i] })),
                   backgroundColor: sourceColors[src][ti],
-                  stack: src,  // 同来源叠加，不同来源并排
+                  stack: 'all',
                 });
               });
             });
             createOrUpdateChart('chart-llm-tokens', {
               type: 'bar',
-              data: { labels: allDays, datasets },
+              data: { labels: activeDays, datasets },
               options: { ...baseChartOpts(), scales: {
-                x: { ...smartXAxis(7), stacked: true },
+                x: { type: 'category', stacked: true, grid: { display: false }, border: { color: C.border }, ticks: { color: C.t3, maxRotation: 0 } },
                 y: { ...baseChartOpts().scales.y, stacked: true },
               }},
             });
