@@ -264,8 +264,53 @@ const MFASchema = z.object({
   path_guard_mode: z.enum(["simple", "totp", "msal", "ask", "deny"]).default("simple"),
 });
 
+/**
+ * Secret 文件权限守卫配置。
+ *
+ * tinyclaw 启动加载 secrets.toml / config.toml 时,检查文件权限是否过宽
+ * (group / other 可读)。过宽则告警,autoChmod=true 时自动 chmod 600。
+ */
+const SecretGuardSchema = z.object({
+  /** 启用权限检查(默认 true) */
+  enabled: z.boolean().default(true),
+  /** 权限过宽时自动 chmod 600(默认 false,仅告警) */
+  autoChmod: z.boolean().default(false),
+});
+export type SecretGuardConfig = z.infer<typeof SecretGuardSchema>;
+
+/**
+ * Prompt 完整性 / 中转站篡改检测配置。
+ *
+ * 用于检测 system prompt 是否被本地篡改(MEM/SYSTEM 被注入持久化)
+ * 或被中转站(proxy/relay)暗改。默认全部关闭,不改变现有行为。
+ */
+const PromptIntegritySchema = z.object({
+  /** 总开关(默认 false) */
+  enabled: z.boolean().default(false),
+  /**
+   * 检测命中后的处理模式:
+   * - `"warn"` — 仅告警,继续执行(默认,建议先观察)
+   * - `"halt"` — 急停:中止本轮 LLM 调用并通知用户
+   */
+  mode: z.enum(["warn", "halt"]).default("warn"),
+  /**
+   * 本地 system prompt SHA-256 基线校验。
+   * 首次运行写入基线,后续不一致即告警/急停(检测 MEM/SYSTEM 被篡改)。
+   */
+  baselineHash: z.boolean().default(false),
+  /**
+   * 中转站 canary 检测。在 system prompt 注入随机 NONCE 隐藏标记,
+   * 要求模型回显;中转站删/改 prompt 后回显缺失即判定被篡改。
+   * 局限:只能检测"改/删指令",不能检测"只窃听不改";小模型可能误报。
+   */
+  canary: z.boolean().default(false),
+});
+export type PromptIntegrityConfig = z.infer<typeof PromptIntegritySchema>;
+
 const AuthSchema = z.object({
   mfa: MFASchema.optional(),
+  secret_guard: SecretGuardSchema.default({}),
+  prompt_integrity: PromptIntegritySchema.default({}),
 });
 
 // ── QQBot ─────────────────────────────────────────────────────────────────────
@@ -466,6 +511,15 @@ const ToolsSchema = z.object({
    * 0 = 不限制。
    */
   maxToolCallArgChars: z.number().int().min(0).default(8_000),
+  /** http_request 工具的 SSRF 防护配置 */
+  http_request: z.object({
+    /**
+     * 允许请求私网 / 环回 / 云元数据地址(默认 false)。
+     * 默认拒绝 127/8、10/8、172.16/12、192.168/16、169.254/16(云元数据)等,
+     * 防止 prompt 注入诱导访问内网服务。需访问本地服务时设为 true。
+     */
+    allowPrivateHosts: z.boolean().default(false),
+  }).default({}),
 }).default({});
 
 // ── MemStore 配置（独立文件 ~/.tinyclaw/memstores.toml）──────────────────────────

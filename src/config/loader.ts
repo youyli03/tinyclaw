@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
 import { ConfigSchema, type Config, MCPConfigSchema, MCPServerSchema, type MCPConfig, type MCPServerConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, type SecretsConfig } from "./schema.js";
+import { ensureSecureFilePerm } from "../utils/file-perm.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -58,6 +59,17 @@ export function loadConfig(): Config {
   }
 
   cached = result.data;
+
+  // 敏感文件权限守卫:config.toml 含 provider apiKey,过宽则告警
+  try {
+    const guard = cached.auth.secret_guard;
+    if (guard.enabled) {
+      ensureSecureFilePerm(CONFIG_PATH, "config.toml", guard.autoChmod);
+    }
+  } catch {
+    /* 守卫失败不阻塞启动 */
+  }
+
   return cached;
 }
 
@@ -153,6 +165,15 @@ export function loadMcpConfig(): MCPConfig {
  */
 export function loadSecretsConfig(): SecretsConfig {
   const p = path.join(os.homedir(), ".tinyclaw", "secrets.toml");
+  // 敏感文件权限守卫:secrets.toml 含全部第三方 token,过宽则告警
+  try {
+    const guard = loadConfig().auth.secret_guard;
+    if (guard.enabled && fs.existsSync(p)) {
+      ensureSecureFilePerm(p, "secrets.toml", guard.autoChmod);
+    }
+  } catch {
+    /* 守卫失败不阻塞 */
+  }
   let raw: unknown;
   try {
     raw = parse(fs.readFileSync(p, "utf-8"));

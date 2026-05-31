@@ -15,6 +15,7 @@ import * as crypto from "node:crypto";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, green, red, cyan, yellow, section, closeRl } from "../ui.js";
 import { CONFIG_PATH, patchTomlField } from "../../config/writer.js";
+import { redactSecret } from "../../utils/redact.js";
 
 export const subcommands = ["info", "token", "help"] as const;
 export const description = "管理 Dashboard Web 访问（地址、token）";
@@ -112,7 +113,8 @@ function cmdInfo(): void {
   console.log(`  状态   ${cfg.enabled ? green("已启用") : red("未启用")}`);
   console.log(`  端口   ${bold(String(cfg.port))}`);
   if (cfg.token) {
-    console.log(`  Token  ${dim(cfg.token)}`);
+    // 状态行只显示脱敏 token(完整 token 在下方可访问地址的 URL 中)
+    console.log(`  Token  ${dim(redactSecret(cfg.token))}`);
   } else {
     console.log(`  Token  ${yellow("未设置（无需认证）")}`);
   }

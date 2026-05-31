@@ -88,6 +88,22 @@ tenantId    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 clientId    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # timeoutSecs = 60   # 可选，默认 60 秒
 
+# ── Secret 文件权限守卫 ─────────────────────────────────────────────────────────
+# 启动加载 secrets.toml / config.toml 时检查文件权限是否过宽(group/other 可读)
+[auth.secret_guard]
+# enabled   = true    # 启用权限检查(默认 true)
+# autoChmod = false   # 过宽时自动 chmod 600(默认 false,仅告警)
+
+# ── Prompt 完整性 / 中转站篡改检测 ──────────────────────────────────────────────
+# 检测 system prompt 是否被本地篡改(MEM/SYSTEM 被注入)或被中转站(proxy)暗改,默认全关
+[auth.prompt_integrity]
+# enabled      = false    # 总开关
+# mode         = "warn"   # warn=仅告警 | halt=急停中止本轮 LLM 调用
+# baselineHash = false    # 本地 system prompt SHA-256 基线校验(检测 MEM/SYSTEM 被篡改)
+# canary       = false    # 中转站 canary 篡改检测(注入 nonce 要求模型回显)
+#   说明:canary 只能检测"删/改指令",不能检测"只窃听不改";小模型可能误报,
+#         建议仅对中转站 backend 开启,且先用 mode="warn" 观察。
+
 # ── QQ Bot ─────────────────────────────────────────────────────────────────────
 # 官方 QQ 开放平台 https://q.qq.com/ 申请机器人后获取
 
@@ -115,6 +131,11 @@ backend        = "copilot"   # 底层执行方式
 # 工具执行结果的最大字符数，超出时自动截断，防止大文件读取或冗长命令输出耗尽 context window
 # 0 = 不限制（默认 20000）
 # maxToolResultChars = 20000
+
+# http_request 工具的 SSRF 防护:默认拒绝请求私网/环回/云元数据地址
+# (127/8、10/8、172.16/12、192.168/16、169.254/16 等),防 prompt 注入访问内网
+# [tools.http_request]
+# allowPrivateHosts = false   # 设为 true 可放行内网(如访问本地 MCSM/Dashboard)
 
 [channels.qqbot]
 appId        = "102xxxxx"

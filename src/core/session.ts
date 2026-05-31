@@ -140,6 +140,12 @@ export class Session {
   lastMemorySearchPromptTokens = -1;
 
   /**
+   * 本轮注入的 canary nonce(中转站篡改检测用,仅在 [auth.prompt_integrity].canary
+   * 开启时有值)。runAgent 在收到最终回复后校验回显是否匹配。
+   */
+  pendingCanaryNonce: string | undefined = undefined;
+
+  /**
    * 最近一次传输失败请求的 X-Request-Id（由 runAgent 在捕获 LLMConnectionError 时设置）。
    * /retry 命令将此 ID 作为 turnRequestIdOverride 传给下次请求，服务端识别相同 ID 不重复计费。
    */

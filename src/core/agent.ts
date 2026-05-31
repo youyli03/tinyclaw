@@ -20,6 +20,14 @@ import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 import { readFeedback } from "./feedback-writer.js";
 import { sanitizeUserInput } from "../tools/sanitize.js";
+import {
+  isPromptIntegrityActive,
+  verifyPromptBaseline,
+  injectCanary,
+  checkCanary,
+  stripCanary,
+  PromptIntegrityError,
+} from "../auth/prompt-integrity.js";
 import { skillRegistry } from "../skills/registry.js";
 
 // 确保所有工具在模块加载时注册
@@ -749,6 +757,47 @@ export async function runAgent(
       if (textMode && initialTools.length > 0) {
         sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
       }
+
+      // Prompt 完整性 / 中转站篡改检测(默认全关,由 [auth.prompt_integrity] 控制)
+      try {
+        const _piCfg = loadConfig().auth.prompt_integrity;
+        if (isPromptIntegrityActive(_piCfg)) {
+          const _piMode = _piCfg.mode;
+          const _piKey = `${session.agentId}:${isCodeMode ? "code" : "chat"}`;
+          // (a) 本地基线:检测 system prompt(含 MEM/SYSTEM)被本地篡改
+          if (_piCfg.baselineHash) {
+            const _r = verifyPromptBaseline(_piKey, sysPrompt);
+            if (!_r.firstSeen && !_r.match) {
+              const _msg =
+                `⚠️ Prompt 完整性告警:本地 system prompt 与基线不一致(${_piKey})\n` +
+                `   旧 hash: ${_r.oldHash?.slice(0, 16)}… → 新 hash: ${_r.newHash.slice(0, 16)}…\n` +
+                `   可能是 MEM/SYSTEM/skills 被篡改,或你刚修改了配置。\n` +
+                `   确认无误后删除 ~/.tinyclaw/prompt-baseline.json 对应项以更新基线。`;
+              console.warn(`[prompt-integrity] ${_msg}`);
+              if (_piMode === "halt") {
+                await opts.onNotify?.(_msg);
+                throw new PromptIntegrityError(_msg, "baseline");
+              } else {
+                await opts.onNotify?.(_msg);
+              }
+            }
+          }
+          // (b) 中转站 canary:在 system prompt 注入 nonce,回复校验回显
+          if (_piCfg.canary && !textMode) {
+            const _inj = injectCanary(sysPrompt);
+            sysPrompt = _inj.prompt;
+            session.pendingCanaryNonce = _inj.nonce;
+          } else {
+            session.pendingCanaryNonce = undefined;
+          }
+        } else {
+          session.pendingCanaryNonce = undefined;
+        }
+      } catch (e) {
+        if (e instanceof PromptIntegrityError) throw e;
+        // 配置读取等异常不阻断主流程
+      }
+
       session.replaceOrPrependSystemMessage(sysPrompt);
     }
 
@@ -1065,7 +1114,9 @@ export async function runAgent(
       // (post-call 绝对 token 数阈值压缩已移除：headers 修复后无 60s 超时，由正常滑动窗口处理)
     }
 
-    const { content, toolCalls } = parseResponse(response, textMode);
+    const _parsed = parseResponse(response, textMode);
+    let content = _parsed.content;
+    const toolCalls = _parsed.toolCalls;
 
     // ── 格式纠错：检测格式错误并重提示（最多 1 次，不限 textMode）──────────
     // 根因：supportsToolCalls 默认 true → textMode=false，但模型仍可能输出裸 JSON
@@ -1113,6 +1164,39 @@ export async function runAgent(
 
     // 没有工具调用 → 最终回复
     if (!toolCalls || toolCalls.length === 0) {
+      // 中转站 canary 校验:检测 system prompt 是否在传输中被篡改/删除
+      if (session.pendingCanaryNonce) {
+        const _nonce = session.pendingCanaryNonce;
+        session.pendingCanaryNonce = undefined;
+        try {
+          const _piCfg = loadConfig().auth.prompt_integrity;
+          const _chk = checkCanary(content, _nonce);
+          // strip 掉 canary 标记,避免泄露给用户
+          content = stripCanary(content);
+          if (!_chk.ok) {
+            const _detail = _chk.found
+              ? `回显 nonce 不匹配(期望 ${_nonce.slice(0, 6)}… 实得 ${_chk.gotNonce?.slice(0, 6)}…)`
+              : `回复缺失完整性标记`;
+            const _backend = isCodeMode ? "code" : "daily";
+            const _msg =
+              `🚨 中转站篡改告警:${_detail}\n` +
+              `   backend=${_backend} 可能存在中转站(proxy/relay)删改了 system prompt,\n` +
+              `   或当前模型指令遵循能力不足导致误报。\n` +
+              `   建议:核查 provider baseUrl 是否为可信端点;持续告警请勿信任该 backend。`;
+            console.warn(`[prompt-integrity] ${_msg}`);
+            await opts.onNotify?.(_msg);
+            if (_piCfg.mode === "halt") {
+              finalContent = content;
+              session.addAssistantMessage(finalContent);
+              throw new PromptIntegrityError(_msg, "canary", _backend);
+            }
+          }
+        } catch (e) {
+          if (e instanceof PromptIntegrityError) throw e;
+          // 配置/校验异常仅 strip,不阻断
+          content = stripCanary(content);
+        }
+      }
       finalContent = content;
       session.addAssistantMessage(finalContent);
       break;
