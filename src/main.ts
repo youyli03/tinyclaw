@@ -926,6 +926,8 @@ ${message}`;
           restartTaskId?: string;
           /** 多 session 同时 restart_tool: 排队的其他 session 续接信息 */
           additionalSessions?: import("./tools/restart.js").RestartQueueItem[];
+          /** /model 等命令写入的自定义提示文本,重启后追加到通知里 */
+          note?: string;
         };
         fs.unlinkSync(RESTART_NOTIFY_FILE);
         connector.onReady = () => {
@@ -936,7 +938,10 @@ ${message}`;
           //    code 模式重启(含 codeSessionId)由 resume runAgent 的 result.content 返回结果，
           //    不额外推送 "✅ 重启完成" 避免重复打扰。
           if (!marker.codeSessionId) {
-            void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成,服务已恢复").catch(() => {});
+            const okMsg = marker.note
+              ? `✅ ${marker.note},服务已恢复`
+              : "✅ 重启完成,服务已恢复";
+            void connector!.send(marker.peerId, marker.msgType, okMsg).catch(() => {});
           }
 
           // 2. 若是 restart_tool 触发的重启（含 codeSessionId），延迟 1s 后续接 code session

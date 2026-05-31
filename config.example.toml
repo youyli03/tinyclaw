@@ -66,6 +66,16 @@ baseUrl = "https://api.openai.com/v1"
 apiKey  = "sk-..."
 model   = "gpt-4o-mini"
 
+# ── 模型别名(可选) ──────────────────────────────────────────────────────────
+# QQ 内用 /model <别名> 快捷切换模型,无需输入完整 provider/model-id。
+# 与内置别名(src/llm/aliases.ts)合并,此处同名键覆盖内置。
+# 用法:/model opus(切 chat)、/model code prime(切 code)、/model list copilot
+# [llm.aliases]
+# opus = "copilot/claude-opus-4.8"
+# prime = "copilot/oswe-vscode-prime"
+# mimo = "mimo/mimo-v2.5"
+# free = "openrouter/auto-free"
+
 # ── Microsoft MFA ──────────────────────────────────────────────────────────────
 # 用于高危操作（exec_shell / delete_file 等）的 number-matching 推送确认
 # 注册步骤：

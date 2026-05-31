@@ -387,52 +387,228 @@ function runTypecheck(): Promise<{ ok: boolean; output: string }> {
   });
 }
 
+/**
+ * 通用「typecheck → 写重启通知 marker → 等待其他 session → 退出(码75)」流程。
+ * /restart 与 /model 切换后均复用此 helper。
+ */
+async function performRestart(
+  session: import("../core/session.js").Session,
+  noteMsg?: string,
+  skipTypecheck = false,
+): Promise<string> {
+  if (session.running) {
+    return "⚠️ 当前有任务正在运行,请等待完成后再重启。";
+  }
+
+  if (!skipTypecheck) {
+    const { ok, output } = await runTypecheck();
+    if (!ok) {
+      const truncated = output.length > 1500
+        ? output.slice(0, 1500) + "\n...(输出已截断)"
+        : output || "(无输出)";
+      return `❌ 类型检查失败,已取消重启:\n\`\`\`\n${truncated}\n\`\`\``;
+    }
+  }
+
+  if (session.sessionId.startsWith("qqbot:")) {
+    const parts = session.sessionId.split(":");
+    const msgType = parts[1] as import("../connectors/base.js").InboundMessage["type"];
+    const peerId = parts.slice(2).join(":");
+    if (peerId) {
+      const markerPath = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
+      try {
+        fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+        fs.writeFileSync(
+          markerPath,
+          JSON.stringify({ peerId, msgType, ...(noteMsg ? { note: noteMsg } : {}) }),
+          "utf-8",
+        );
+      } catch { /* 写失败不影响重启 */ }
+    }
+  }
+
+  await waitForOtherSessions(session.sessionId);
+  setTimeout(() => process.exit(75), 600);
+
+  const tail = noteMsg ? `${noteMsg},正在重启服务,稍后恢复...` : "正在重启服务,稍后恢复...";
+  return skipTypecheck ? `⏳ ${tail}` : `⏳ 类型检查通过,${tail}`;
+}
+
 registerCommand({
   name: "restart",
-  description: "类型检查通过后重启 tinyclaw 服务，重启完成后发送通知",
+  description: "类型检查通过后重启 tinyclaw 服务,重启完成后发送通知",
   usage: "/restart",
   modes: ["chat"],
   async execute({ session }) {
-    if (session.running) {
-      return "⚠️ 当前有任务正在运行，请等待完成后再重启。";
-    }
-
-    const { ok, output } = await runTypecheck();
-
-    if (!ok) {
-      const truncated = output.length > 1500
-        ? output.slice(0, 1500) + "\n…（输出已截断）"
-        : output || "（无输出）";
-      return `❌ 类型检查失败，已取消重启：\n\`\`\`\n${truncated}\n\`\`\``;
-    }
-
-    // 若是 QQ 会话，写 marker 文件，重启后发通知
-    if (session.sessionId.startsWith("qqbot:")) {
-      const parts = session.sessionId.split(":");
-      // qqbot:<msgType>:<peerId>
-      const msgType = parts[1] as import("../connectors/base.js").InboundMessage["type"];
-      const peerId = parts.slice(2).join(":");
-      if (peerId) {
-        const markerPath = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
-        try {
-          fs.mkdirSync(path.dirname(markerPath), { recursive: true });
-          fs.writeFileSync(markerPath, JSON.stringify({ peerId, msgType }), "utf-8");
-        } catch { /* 写失败不影响重启 */ }
-      }
-    }
-
-    // 延迟退出，给当前 HTTP 响应/消息推送留出时间
-    // 等待其他正在运行的 session 完成后再重启
-    await waitForOtherSessions(session.sessionId);
-
-    setTimeout(() => process.exit(75), 600);
-
-    return "⏳ 类型检查通过，正在重启服务，稍后恢复...";
+    return performRestart(session);
   },
 });
 
 // ── code 模式命令（/code 和 /chat）────────────────────────────────────────────
 // 命令实现在 src/code/，此处触发注册
+// ── /model 切换模型 ─────────────────────────────────────────────────────────
+import { getAliases, resolveAlias, aliasForSymbol } from "../llm/aliases.js";
+import { getCopilotModels } from "../llm/copilot.js";
+import { fetchFreeModels } from "../llm/openrouter.js";
+import { patchTomlField } from "../config/writer.js";
+
+const BACKEND_KEYWORDS: Record<string, "daily" | "code" | "summarizer" | "vision"> = {
+  chat: "daily",
+  daily: "daily",
+  code: "code",
+  summarizer: "summarizer",
+  vision: "vision",
+};
+
+function currentBackendModels(): Record<string, string | undefined> {
+  const cfg = loadConfig();
+  const b = cfg.llm.backends;
+  return {
+    chat: b.daily?.model,
+    code: b.code?.model,
+    summarizer: b.summarizer?.model,
+    vision: b.vision?.model,
+  };
+}
+
+function validateSymbolProvider(symbol: string): string | null {
+  const slash = symbol.indexOf("/");
+  if (slash < 0) return "模型格式应为 provider/model-id,收到 " + symbol;
+  const provider = symbol.slice(0, slash);
+  const cfg = loadConfig();
+  const p = cfg.providers as Record<string, unknown>;
+  if (!(provider in p) || !p[provider]) {
+    return "Provider " + provider + " 未在 [providers." + provider + "] 配置,无法切换。";
+  }
+  return null;
+}
+
+async function listProviderModels(provider: string): Promise<string> {
+  const cfg = loadConfig();
+  const p = cfg.providers;
+  try {
+    if (provider === "copilot") {
+      if (!p.copilot) return "❌ [providers.copilot] 未配置。";
+      const models = await getCopilotModels(p.copilot.githubToken);
+      const picker = models.filter((m) => m.isPickerEnabled);
+      const lines = picker.map((m) => {
+        const mult = m.multiplier === undefined ? "" : m.multiplier === 0 ? " (free)" : " ×" + m.multiplier;
+        return "· `copilot/" + m.id + "`" + mult;
+      });
+      return "**Copilot 可用模型(" + picker.length + ")**\n" + lines.join("\n") +
+        "\n\n用 `/model code copilot/<id>` 或 `/model chat copilot/<id>` 切换。";
+    }
+    if (provider === "openrouter") {
+      if (!p.openrouter) return "❌ [providers.openrouter] 未配置。";
+      const models = await fetchFreeModels(p.openrouter.apiKey);
+      const lines = models.slice(0, 30).map((m) => "· `openrouter/" + m.id + "`");
+      return "**OpenRouter 免费模型(top " + Math.min(30, models.length) + "/" + models.length + ")**\n" +
+        lines.join("\n") + "\n\n另有 `openrouter/auto-free` 自动路由。";
+    }
+    if (provider === "deepseek") {
+      if (!p.deepseek) return "❌ [providers.deepseek] 未配置。";
+      return "**DeepSeek 可用模型**\n· `deepseek/deepseek-v4-flash`\n· `deepseek/deepseek-v4-pro`";
+    }
+    if (provider === "mimo") {
+      if (!p.mimo) return "❌ [providers.mimo] 未配置。";
+      return "**MiMo 可用模型**\n· `mimo/mimo-v2.5-pro`\n· `mimo/mimo-v2.5`\n· `mimo/mimo-v2-pro`";
+    }
+    if (provider === "openai") {
+      if (!p.openai) return "❌ [providers.openai] 未配置。";
+      return "**OpenAI**\nbaseUrl: " + p.openai.baseUrl + "\n用 `/model chat openai/<model-id>` 直接指定。";
+    }
+    return "未知 provider " + provider + ",可选:copilot / openrouter / openai / deepseek / mimo";
+  } catch (e) {
+    return "❌ 拉取 " + provider + " 模型列表失败:" + (e instanceof Error ? e.message : String(e));
+  }
+}
+
+function renderModelOverview(): string {
+  const cur = currentBackendModels();
+  const aliases = getAliases();
+  const lines: string[] = ["**当前模型配置**"];
+  const rows: Array<[string, string]> = [["💬 chat", "chat"], ["🖥️ code", "code"], ["📝 summarizer", "summarizer"], ["👁️ vision", "vision"]];
+  for (const [label, key] of rows) {
+    const sym = cur[key];
+    if (!sym) { lines.push(label + ":_(未配置,回退 chat)_"); continue; }
+    const al = aliasForSymbol(sym);
+    lines.push(label + ":`" + sym + "`" + (al ? " (别名 `" + al + "`)" : ""));
+  }
+  lines.push("\n**可用别名**(`/model <别名>` 切 chat,`/model code <别名>` 切 code)");
+  const groups: Record<string, string[]> = {};
+  for (const [name, sym] of Object.entries(aliases)) {
+    const prov = sym.split("/")[0] ?? "?";
+    (groups[prov] ??= []).push("`" + name + "`→" + sym.split("/").slice(1).join("/"));
+  }
+  for (const [prov, items] of Object.entries(groups)) {
+    lines.push("· **" + prov + "**:" + items.join("、"));
+  }
+  lines.push("\n💡 `/model list <provider>` 查实时模型 · `/model reset` 恢复默认");
+  return lines.join("\n");
+}
+
+registerCommand({
+  name: "model",
+  description: "查看/切换模型(chat 与 code 分别设置,支持别名,切换后自动重启)",
+  usage: "/model [chat|code|summarizer|vision] <别名|provider/model-id> · /model list [provider] · /model reset",
+  modes: ["chat"],
+  async execute({ session, args }) {
+    if (args.length === 0) return renderModelOverview();
+
+    const sub = args[0]!.toLowerCase();
+
+    if (sub === "list") {
+      if (args[1]) return listProviderModels(args[1].toLowerCase());
+      return renderModelOverview();
+    }
+
+    if (sub === "reset") {
+      const def = resolveAlias("mimo")!;
+      patchTomlField(["llm", "backends", "daily"], "model", '"' + def + '"');
+      return performRestart(session, "chat 已恢复默认 " + def, true);
+    }
+
+    let backendKw = "chat";
+    let modelArg: string;
+    if (BACKEND_KEYWORDS[sub] && args.length >= 2) {
+      backendKw = sub;
+      modelArg = args.slice(1).join(" ").trim();
+    } else {
+      modelArg = args.join(" ").trim();
+    }
+
+    const symbol = resolveAlias(modelArg);
+    if (!symbol) {
+      return "❌ 无法识别模型 `" + modelArg + "`。\n" +
+        "可用别名见 `/model`,或直接传 `provider/model-id`(如 `copilot/gpt-4o`)。";
+    }
+
+    const verr = validateSymbolProvider(symbol);
+    if (verr) return "❌ " + verr;
+
+    const backend = BACKEND_KEYWORDS[backendKw]!;
+    let warn = "";
+    if (symbol.startsWith("copilot/")) {
+      try {
+        const cfg = loadConfig();
+        if (cfg.providers.copilot) {
+          const models = await getCopilotModels(cfg.providers.copilot.githubToken);
+          const id = symbol.slice("copilot/".length);
+          if (id !== "auto" && !models.some((m) => m.id === id)) {
+            warn = "\n⚠️ Copilot 模型列表中未找到 `" + id + "`,仍按你的输入写入(可能拼写有误)。";
+          }
+        }
+      } catch { /* 校验失败不阻断 */ }
+    }
+
+    patchTomlField(["llm", "backends", backend], "model", '"' + symbol + '"');
+    const al = aliasForSymbol(symbol);
+    const note = backendKw + " 模型已切到 `" + symbol + "`" + (al ? " (别名 " + al + ")" : "");
+    const reply = await performRestart(session, note, true);
+    return warn ? reply + warn : reply;
+  },
+});
+
 import "../code/index.js";
 
 // ── /retry ────────────────────────────────────────────────────────────────────

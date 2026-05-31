@@ -199,6 +199,12 @@ const LLMSchema = z.object({
   backends: LLMBackendsSchema,
   /** 高级模型使用白名单（可选），不配置则不限制 */
   premiumAllowlist: PremiumAllowlistSchema,
+  /**
+   * 模型别名映射表(可选)。键为短别名,值为完整模型 symbol(provider/model-id)。
+   * 供 QQ 内 `/model <别名>` 快捷切换使用,与内置别名(src/llm/aliases.ts)合并,
+   * config 中的同名别名覆盖内置。
+   */
+  aliases: z.record(z.string()).default({}),
 });
 
 // ── Microsoft MFA ─────────────────────────────────────────────────────────────
