@@ -178,3 +178,18 @@ model    = "small"   # 模型大小：tiny / base / small / medium / large-v3
                      # tiny ≈ 39M，small ≈ 244M，large-v3 ≈ 1.5G
                      # 中文推荐 "small" 或 "medium"
 language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
+
+# ── Google Gemini Provider ────────────────────────────────────────────────────
+# [providers.google]
+# apiKey = "AIza..."          # Google AI Studio key
+# baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# maxTokens = 8192
+
+# Vision 后端多模型回退示例:
+# [llm.backends.vision]
+# model = "google/gemini-2.5-flash"         # 主模型(20 RPD)
+# supportsVision = true
+# fallbacks = [
+#   "google/gemini-2.5-flash-lite-preview-05-20",   # 500 RPD 保底
+#   "copilot/oswe-vscode-prime",                    # Copilot 兜底
+# ]

@@ -131,6 +131,12 @@ const BackendRoleSchema = z.object({
   maxContextWindow: z.number().int().positive().optional(),
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
+  /**
+   * Vision 后端专属：有序备用模型列表。
+   * 主模型 429 / RPD 超限 / 网络错误时，按顺序尝试 fallbacks 中的模型。
+   * 示例: fallbacks = ["google/gemini-2.5-flash-lite-preview-05-20", "copilot/oswe-vscode-prime"]
+   */
+  fallbacks: z.array(z.string()).optional(),
 });
 export type BackendRole = z.infer<typeof BackendRoleSchema>;
 

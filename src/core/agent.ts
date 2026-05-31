@@ -52,44 +52,58 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
  * 当主模型不支持视觉时，用 vision 后端对图片做单轮描述，返回文字描述。
  * 解析失败时返回 null。
  */
+/**
+ * 用 vision client 链（主模型 + fallbacks）依序识别图片。
+ * 某个 client 遇到 429/RPD超限/网络错误时自动切到下一个，全部失败返回 null。
+ */
 async function describeImageWithVisionFallback(
   imgPath: string,
-  visionClient: import("../llm/registry.js").AnyLLMClient
+  visionClientOrChain: import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[]
 ): Promise<string | null> {
-  try {
-    const fs = await import("fs");
-    const path = await import("path");
-    const os = await import("os");
-    const resolved = path.resolve(imgPath.replace(/^~/, os.homedir()));
-    if (!fs.existsSync(resolved)) return null;
-    const ext = path.extname(resolved).toLowerCase().slice(1);
-    const mime =
-      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
-      ext === "png" ? "image/png" :
-      ext === "gif" ? "image/gif" :
-      ext === "webp" ? "image/webp" :
-      "image/png";
-    const buf = fs.readFileSync(resolved);
-    // 压缩图片再发给 visionClient，避免大图超出 API 限制（原始截图通常 2-3 MB）
-    const dataUrl = pathToDataUrlCompressed(resolved) ?? `data:${mime};base64,${buf.toString("base64")}`;
-    const VISION_MAX_BASE64 = 1 * 1024 * 1024; // 1 MB
-    if (dataUrl.length > VISION_MAX_BASE64) {
-      console.warn(`[visionFallback] 图片 base64 仍超限(${(dataUrl.length / 1024).toFixed(0)} KB),跳过描述`);
-      return null;
-    }    let description = "";
-    await visionClient.streamChat(
-      [{ role: "user", content: [
-        { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
-        { type: "text", text: "请详细描述图片内容，包括主要元素、文字和图表信息。用中文回答。" }
-      ] }],
-      (chunk) => { description += chunk; },
-      {}
-    );
-    return description.trim() || null;
-  } catch (e) {
-    console.error("[visionFallback] 描述失败:", e);
+  const chain = Array.isArray(visionClientOrChain) ? visionClientOrChain : [visionClientOrChain];
+  const nodeFs = await import("fs");
+  const path = await import("path");
+  const os = await import("os");
+  const resolved = path.resolve(imgPath.replace(/^~/, os.homedir()));
+  if (!nodeFs.existsSync(resolved)) return null;
+  const ext = path.extname(resolved).toLowerCase().slice(1);
+  const mime =
+    ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+    ext === "png" ? "image/png" :
+    ext === "gif" ? "image/gif" :
+    ext === "webp" ? "image/webp" :
+    "image/png";
+  const buf = nodeFs.readFileSync(resolved);
+  const dataUrl = pathToDataUrlCompressed(resolved) ?? `data:${mime};base64,${buf.toString("base64")}`;
+  const VISION_MAX_BASE64 = 1 * 1024 * 1024;
+  if (dataUrl.length > VISION_MAX_BASE64) {
+    console.warn(`[visionFallback] 图片 base64 仍超限(${(dataUrl.length / 1024).toFixed(0)} KB),跳过描述`);
     return null;
   }
+  for (let i = 0; i < chain.length; i++) {
+    const client = chain[i];
+    if (!client) continue;
+    try {
+      let description = "";
+      await client.streamChat(
+        [{ role: "user", content: [
+          { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
+          { type: "text", text: "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
+        ] }],
+        (chunk) => { description += chunk; },
+        {}
+      );
+      if (description.trim()) {
+        if (i > 0) console.info(`[visionFallback] 主模型失败,使用第 ${i + 1} 个备用模型成功`);
+        return description.trim();
+      }
+    } catch (e: any) {
+      const isRateLimit = e?.status === 429 || (typeof e?.message === "string" && e.message.includes("429"));
+      console.warn(`[visionFallback] client[${i}] 失败(${isRateLimit ? "429/RPD" : e?.message ?? e})${i < chain.length - 1 ? ",尝试下一个..." : ""}`);
+    }
+  }
+  console.error("[visionFallback] 所有 vision 后端均失败");
+  return null;
 }
 
 setBuiltinAgentFilter((toolName: string, agentId: string): boolean => {
@@ -643,7 +657,7 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
-  const visionClient = !client.supportsVision ? llmRegistry.getVisionClient() : undefined;
+  const visionClient = !client.supportsVision ? llmRegistry.getVisionClientChain() : undefined;
 
   // 恢复该 session 上次已启用的 MCP server
   void mcpManager.restoreSession(session.sessionId, isCodeMode ? "code" : "chat", session.agentId);

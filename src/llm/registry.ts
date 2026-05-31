@@ -239,6 +239,44 @@ class LLMRegistry {
   /**
    * 获取图片识别后端（未配置时返回 undefined）。
    */
+  /** 根据模型 symbol 动态构建 client(不缓存,用于 fallback 列表) */
+  buildClientForSymbol(symbol: string): AnyLLMClient {
+    const config = loadConfig();
+    const { provider, modelId } = parseModelSymbol(symbol);
+    if (provider === "copilot") {
+      // fallback to daily copilot client (vision=true)
+      const daily = this.clients.get("daily");
+      if (daily) return daily;
+      throw new Error("Copilot vision fallback: daily client 未初始化");
+    }
+    if (provider === "openai") {
+      const c = config.providers.openai;
+      if (!c) throw new Error("providers.openai 未配置");
+      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+    }
+    if (provider === "openrouter") {
+      const c = config.providers.openrouter;
+      if (!c) throw new Error("providers.openrouter 未配置");
+      return buildOpenRouterClient(c, modelId, false);
+    }
+    if (provider === "deepseek") {
+      const c = config.providers.deepseek;
+      if (!c) throw new Error("providers.deepseek 未配置");
+      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+    }
+    if (provider === "mimo") {
+      const c = config.providers.mimo;
+      if (!c) throw new Error("providers.mimo 未配置");
+      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+    }
+    if (provider === "google") {
+      const c = config.providers.google;
+      if (!c) throw new Error("providers.google 未配置");
+      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+    }
+    throw new Error(`未知 provider "${provider}"`);
+  }
+
   getVisionClient(): AnyLLMClient | undefined {
     try {
       const config = loadConfig();
@@ -247,6 +285,22 @@ class LLMRegistry {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * 获取 vision 后端的有序 client 链（主模型 + fallbacks）。
+   * describeImageWithVisionFallback 会按序尝试，某个失败后自动切下一个。
+   */
+  getVisionClientChain(): AnyLLMClient[] {
+    const config = loadConfig();
+    const visionCfg = config.llm.backends.vision;
+    if (!visionCfg) return [];
+    const chain: AnyLLMClient[] = [];
+    try { chain.push(this.get("vision")); } catch { /* skip */ }
+    for (const sym of visionCfg.fallbacks ?? []) {
+      try { chain.push(this.buildClientForSymbol(sym)); } catch { /* skip */ }
+    }
+    return chain;
   }
 
   _reset(): void {
