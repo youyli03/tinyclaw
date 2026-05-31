@@ -938,8 +938,8 @@ export class LLMClient {
         if (opts.signal?.aborted) break;
         const delta = chunk.choices[0]?.delta;
 
-        // 文本 delta
-        const textDelta = delta?.content ?? "";
+        // 文本 delta(兼容 reasoning_content: mimo-v2-omni 等思考模型把内容放在 reasoning_content 里)
+        const textDelta = delta?.content ?? (delta as any)?.reasoning_content ?? "";
         if (textDelta) {
           fullContent += textDelta;
           onChunk(textDelta);
