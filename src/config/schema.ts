@@ -70,12 +70,23 @@ const MimoProviderSchema = z.object({
 });
 export type MimoProviderConfig = z.infer<typeof MimoProviderSchema>;
 
+/** Google Gemini 提供商(OpenAI-compatible endpoint) */
+const GoogleProviderSchema = z.object({
+  apiKey: z.string().min(1),
+  /** Gemini OpenAI-compatible base URL */
+  baseUrl: z.string().url().default("https://generativelanguage.googleapis.com/v1beta/openai/"),
+  maxTokens: z.number().int().positive().default(8192),
+  timeoutMs: z.number().int().positive().default(120_000),
+});
+export type GoogleProviderConfig = z.infer<typeof GoogleProviderSchema>;
+
 const ProvidersSchema = z.object({
   openai: OpenAIProviderSchema.optional(),
   copilot: CopilotProviderSchema.optional(),
   openrouter: OpenRouterProviderSchema.optional(),
   deepseek: DeepSeekProviderSchema.optional(),
   mimo: MimoProviderSchema.optional(),
+  google: GoogleProviderSchema.optional(),
 }).default({});
 export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
 

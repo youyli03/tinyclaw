@@ -175,7 +175,7 @@ class LLMRegistry {
     if (provider === "mimo") {
       const mimoCfg = config.providers.mimo;
       if (!mimoCfg) {
-        throw new Error(`后端 '${name}' 使用 mimo 模型\uff0c但 [providers.mimo] 未配置`);
+        throw new Error(`后端 '${name}' 使用 mimo 模型，但 [providers.mimo] 未配置`);
       }
       const client = new LLMClient({
         baseUrl: mimoCfg.baseUrl,
@@ -189,6 +189,30 @@ class LLMRegistry {
       this.clients.set(name, client);
       if (role.maxContextWindow && role.maxContextWindow > 0) {
         this.contextWindows.set(name, role.maxContextWindow);
+      }
+      return client;
+    }
+
+    if (provider === "google") {
+      const googleCfg = config.providers.google;
+      if (!googleCfg) {
+        throw new Error(`后端 '${name}' 使用 google 模型，但 [providers.google] 未配置`);
+      }
+      const client = new LLMClient({
+        baseUrl: googleCfg.baseUrl,
+        apiKey: googleCfg.apiKey,
+        model: modelId,
+        maxTokens: role.maxTokens ?? googleCfg.maxTokens,
+        timeoutMs: role.timeoutMs ?? googleCfg.timeoutMs,
+        supportsVision: role.supportsVision ?? true,  // Gemini Flash 原生支持视觉
+        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
+      });
+      this.clients.set(name, client);
+      if (role.maxContextWindow && role.maxContextWindow > 0) {
+        this.contextWindows.set(name, role.maxContextWindow);
+      } else {
+        // gemini-2.5-flash 支持 1M context
+        this.contextWindows.set(name, 1_000_000);
       }
       return client;
     }

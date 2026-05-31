@@ -28,6 +28,9 @@ export const BUILTIN_ALIASES: Record<string, string> = {
   "mimo-pro": "mimo/mimo-v2.5-pro",
   // OpenRouter
   free: "openrouter/auto-free",
+  // Google Gemini
+  gemini: "google/gemini-2.5-flash",
+  flash: "google/gemini-2.5-flash",
 };
 
 /**
