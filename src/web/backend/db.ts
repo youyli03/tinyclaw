@@ -201,10 +201,23 @@ export function queryMetrics(opts: {
   category: string;
   key: string;
   days: number;
-  since?: number; // Unix 秒，若提供则只返回 ts > since 的行（增量）
+  since?: number; // Unix 秒,若提供则只返回 ts > since 的行(增量)
+  /**
+   * 若为 true,将 since 下限替换为当日本地时区 0:00:00。
+   * 这样 days=1 时返回"今日自然日"而非"过去24小时",
+   * 避免把昨天16:00后的数据算入今日。
+   */
+  todayOnly?: boolean;
 }): MetricRow[] {
   const db = openDB();
-  const windowSince = Math.floor(Date.now() / 1000) - opts.days * 86400;
+  let windowSince: number;
+  if (opts.todayOnly) {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    windowSince = Math.floor(midnight.getTime() / 1000);
+  } else {
+    windowSince = Math.floor(Date.now() / 1000) - opts.days * 86400;
+  }
   const since = opts.since != null ? Math.max(opts.since, windowSince) : windowSince;
   return db
     .prepare(

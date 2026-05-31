@@ -157,7 +157,9 @@ export async function handleApi(
       }
       const sinceParam = url.searchParams.get("since");
       const sinceOpts = sinceParam ? { since: parseInt(sinceParam, 10) } : {};
-      const rows = queryMetrics({ category, key, days, ...sinceOpts });
+      // today=1 时使用当日自然日(本地 0:00)而非"过去24小时",避免把昨天数据计入今日
+      const todayOnly = url.searchParams.get("today") === "1";
+      const rows = queryMetrics({ category, key, days, ...sinceOpts, ...(todayOnly ? { todayOnly: true } : {}) });
       json(res, { category, key, rows });
       return true;
     }

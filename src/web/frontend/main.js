@@ -410,7 +410,7 @@ const app = createApp({
       try {
         const keysData = await fetch('/api/metric-keys').then(r => r.json());
         for (const { category, key } of (keysData.keys || [])) {
-          const data = await fetch(`/api/metrics?category=${category}&key=${key}&days=1`).then(r => r.json());
+          const data = await fetch(`/api/metrics?category=${category}&key=${key}&days=1&today=1`).then(r => r.json());
           const rows = data.rows || [];
           if (rows.length) {
             const k = `${category}/${key}`;
@@ -706,7 +706,7 @@ const app = createApp({
 
         const sinceParam = useIncremental ? `&since=${lastTs}` : '';
         const fetches = types.map(t =>
-          fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=${days}${sinceParam}`)
+          fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=${days}${days <= 1 ? '&today=1' : ''}${sinceParam}`)
             .then(r => r.json()).catch(() => ({ rows: [] }))
         );
         const results = await Promise.all(fetches);
@@ -803,7 +803,8 @@ const app = createApp({
         const existChart = charts[chartId];
         const useIncremental = incremental && lastTs != null && existChart != null;
         console.log('[metric]', ck, 'incremental:', incremental, 'lastTs:', lastTs, 'existChart:', !!existChart, 'useIncremental:', useIncremental);
-        let url = `/api/metrics?category=${category}&key=${key}&days=${mDays.value}`;
+        const _mdays = Number(mDays.value) || 1;
+        let url = `/api/metrics?category=${category}&key=${key}&days=${_mdays}${_mdays <= 1 ? '&today=1' : ''}`;
         if (useIncremental) url += `&since=${lastTs}`;
 
         const data = await fetch(url).then(r => r.json());
