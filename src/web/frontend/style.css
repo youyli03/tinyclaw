@@ -259,10 +259,7 @@ body {
   margin-bottom: 16px;
 }
 .chart-row-2 { grid-template-columns: 54fr 46fr; }
-.chart-row-2b { grid-template-columns: 52fr 48fr; align-items: stretch; }
-.chart-row-2b .card { display: flex; flex-direction: column; }
-.chart-row-2b .card:first-child .chart-canvas-wrap { flex: 1; min-height: 0; }
-.chart-row-2b .card:last-child .card-body { flex: 1; overflow-y: auto; min-height: 0; }
+.chart-row-2b { grid-template-columns: 52fr 48fr; align-items: start; }
 .chart-canvas-wrap {
   padding: 4px 18px 16px;
   position: relative;
