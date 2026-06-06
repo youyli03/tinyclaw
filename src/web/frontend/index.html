@@ -125,7 +125,7 @@
             </span>
           </div>
           <div class="chart-canvas-wrap">
-            <canvas id="chart-system" style="width:100%;height:200px"></canvas>
+            <canvas id="chart-system" style="width:100%;"></canvas>
           </div>
         </div>
         <div class="card" style="display:flex;flex-direction:column">
@@ -133,7 +133,7 @@
             <span class="card-title">Cron 任务</span>
             <span class="badge badge-green" style="font-size:12px">{{ cronActive }} / {{ cronTotal }} 活跃</span>
           </div>
-          <div class="card-body" style="padding-top:4px;flex:1;overflow-y:auto;max-height:320px">
+          <div class="card-body" style="padding-top:4px;flex:1;overflow-y:auto;min-height:0">
             <table class="cron-table">
               <thead>
                 <tr>
