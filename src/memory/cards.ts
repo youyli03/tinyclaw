@@ -6,7 +6,7 @@ import { agentManager } from "../core/agent-manager.js";
 export const CARD_TYPES = [
   "preference",
   "constraint",
-  "profile",
+  // "profile",  // 已禁用：用户特征描述，没有行动价值
   "relationship",
   "routine",
   "open_loop",
@@ -14,7 +14,7 @@ export const CARD_TYPES = [
   "decision",
   "task_state",
   "project_fact",
-  "pattern",
+  // "pattern",  // 已禁用：行为模式观察，只是描述而非约束
 ] as const;
 
 export const CARD_STATUSES = ["active", "obsolete", "resolved"] as const;

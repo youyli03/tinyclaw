@@ -48,7 +48,7 @@ const DISTILL_MEM_SYSTEM = `你是一个记忆提炼助手。
 
 MEM.md 有以下固定章节(不得新增其他章节):
 - ## 👤 用户偏好       ← 长期稳定:回复风格、操作习惯、禁忌
-- ## 🎯 当前任务       ← 常更新:正在做什么、下一步,必须反映最新状态
+- ## 🎯 当前任务       ← 常更新:正在做什么、下一步,必须反映最新状态（⚠️ 整体替换原章节，只保留最近仍在进行的任务，≤8条，删除已完成/过时条目）
 - ## 🗂️ 常用技能与任务 ← 已建立的 skill/cron/脚本,路径+一句话说明
 - ## 🐛 踩坑记录       ← 错误原因+修复方法,避免重蹈覆辙
 - ## ✅ 已完成大事      ← 里程碑级成果(不写日常琐事)
@@ -83,37 +83,42 @@ ACTIVE.md 有以下固定章节(不得新增其他章节):
 const DISTILL_CARDS_SYSTEM = `你是一个结构化记忆卡片提炼助手。
 请从近期 diary 中提炼高价值、可长期复用或需要持续跟踪的信息,输出 JSON 数组。
 
-允许的 type 只有:
-- preference
-- constraint
-- profile
-- relationship
-- routine
-- open_loop
-- life_event
-- decision
-- task_state
-- project_fact
-- pattern
+允许的 type 只有（严格遵守，不得使用其他类型）:
+- preference    ← 用户明确表达的偏好/习惯/禁忌，AI 回复时需直接遵守
+- constraint    ← 用户明确禁止或要求的约束，AI 必须遵守，最高优先级
+- relationship  ← 重要关系事实（人物/组织/账号等）
+- routine       ← 用户的固定流程/习惯（如每天的固定操作）
+- open_loop     ← 未闭环的待办/问题（用户说"以后"/"下次"/"待做"的事）
+- life_event    ← 值得记录的重大生活事件
+- decision      ← 用户做出的重要决策（投资/架构/工具选型等）
+- task_state    ← 正在进行的任务的当前状态（有明确截止/里程碑）
+- project_fact  ← 项目相关的客观事实（路径/端口/密钥规则等）
+
+⛔ 禁止使用的类型（因为没有行动价值）:
+- profile   ← 禁止！用户特征描述，AI 无法从中获得行动指导
+- pattern   ← 禁止！行为模式观察，只是描述而非约束，不要生成
 
 每张卡片字段:
-- type: 上述枚举之一
+- type: 上述允许类型之一
 - scope: 如 personal / family / workflow / project:tinyclaw
 - facet: 简短主题,如 communication / memory / reminder / architecture
 - status: active / obsolete / resolved
 - importance: 0~1 数值
 - ts: ISO 时间字符串
-- title: 简短标题
-- summary: 1~4 句中文摘要
+- title: 简短标题（能直接告诉 AI"要怎么做"，而不是"用户是什么人"）
+- summary: 1~4 句中文摘要（内容必须能直接指导 AI 行为或作为事实参考）
 - tags: 字符串数组(可选)
 - supersedes: 字符串数组(可选)
 
 规则:
-1. 优先提炼:用户偏好、明确纠正、关系事实、最近决策、未闭环事项、任务状态变化、可复用模式
-2. 同时覆盖生活和项目,不能只围绕工程任务
-3. 不要输出低价值流水账
-4. 若没有合适卡片,只输出 []
-5. 只输出合法 JSON,不要 markdown 代码块
+1. 优先生成 constraint 和 preference：这两类直接约束 AI 行为，价值最高
+2. 合格的 card 标题应能回答"AI 在这件事上应该怎么做？"，而非"用户是什么样的人？"
+   ❌ 坏例：用户具备批判性思维 → 这是特征描述，不是约束
+   ✅ 好例：股票分析只输出结论，不给操作建议 → AI 直接遵守
+3. 同时覆盖生活和项目,不能只围绕工程任务
+4. 不要输出低价值流水账，不要重复 MEM.md 里已有的条目
+5. 若没有合适卡片,只输出 []
+6. 只输出合法 JSON,不要 markdown 代码块
 `;
 
 function msUntilTimeOfDay(timeOfDay: string): number {
@@ -272,7 +277,10 @@ class MemoryMaintenanceScheduler {
     let updatedCount = 0;
     for (const [sectionTitle, newLines] of sectionPatches) {
       if (!(MEM_SECTION_KEYS as readonly string[]).includes(sectionTitle)) continue;
-      const nextMem = this.upsertSection(updatedMem, sectionTitle, newLines);
+      // 🎯 当前任务 章节使用"完全替换"策略，避免无限追加历史任务
+      const nextMem = sectionTitle === "🎯 当前任务"
+        ? this.replaceSection(updatedMem, sectionTitle, newLines)
+        : this.upsertSection(updatedMem, sectionTitle, newLines);
       if (nextMem !== updatedMem) updatedCount++;
       updatedMem = nextMem;
     }

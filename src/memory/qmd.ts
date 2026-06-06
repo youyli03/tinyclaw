@@ -63,9 +63,9 @@ function queryCardTypes(kind: MemoryQueryKind): MemoryCardType[] {
     case "active_context_query":
       return ["open_loop", "task_state"];
     case "decision_query":
-      return ["decision", "pattern", "project_fact"];
+      return ["decision", "project_fact"];
     case "profile_query":
-      return ["profile", "relationship", "routine"];
+      return ["relationship", "routine"];
     default:
       return [...CARD_TYPES];
   }
