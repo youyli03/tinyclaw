@@ -160,10 +160,16 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 >
 > 同一 session 中如切换到不同项目目录，需重新调用 \`code_note_read\` 读取新项目记忆。
 
+**遇到任何关于项目历史/约束/进度/决策的疑问时:**
+1. 先调用 \`memory_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
+2. 搜到相关片段就直接使用;找不到或不确定再用 \`code_note_read\` 读完整记忆
+3. 仍不确定再询问用户——不要凭假设自行决定
+
 **在对话过程中，立即调用 \`code_note\` 的情况：**
 - 发现跨 session 有价值的约束（如"此进程不能自行 kill"）
 - 定位到非显而易见的根因
 - 完成重要里程碑
+- 任何觉得下次 session 会用到的信息，随时写入，不要等任务完成
 
 **ENV.md 自主维护（\`${agentDir}/code/ENV.md\`）：**
 发现以下信息时，立即用 \`edit_file\` append 到 ENV.md（追加，不要覆盖）：
@@ -308,11 +314,17 @@ Plan 模式分为两个严格隔离的阶段：
 2. 调用 \`code_note_read\` 读取该项目的历史记忆（关键约束、进度、根因等）
 3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
 
+**遇到任何关于项目历史/约束/进度/决策的疑问时:**
+1. 先调用 \`memory_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
+2. 搜到相关片段就直接使用;找不到或不确定再用 \`code_note_read\` 读完整记忆
+3. 仍不确定再询问用户——不要凭假设自行决定
+
 **执行阶段完毕（说"已完成"前）：**
 先调用 \`code_note\` 更新项目进度（里程碑 + 关键约束），再 git commit，再告知用户。顺序固定。
 
 **发现以下内容时立即调用 \`code_note\`（不等任务完成）：**
 - 跨 session 有价値的约束（如"此进程不能自行 kill"）
 - 非显而易见的根因
+- 任何觉得下次 session 会用到的信息，随时写入，不要等任务完成
 ${envSection}${visionSection}${feedbackSection}${codeHookText ? `\n\n## 行为钩子（来自 provider 配置）\n\n${codeHookText}` : ""}${existingPlanSection}`;
 }
