@@ -911,6 +911,21 @@ ${message}`;
   if (connector) {
     console.log("[tinyclaw] Starting QQBot connector...");
 
+    // 检查 git 自动回退通知（由 supervisor 写入，main.ts 启动后发 QQ 消息）
+    const ROLLBACK_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_notify.json");
+    const ROLLBACK_STATE_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_state.json");
+    let didRollback = false;
+    if (fs.existsSync(ROLLBACK_NOTIFY_FILE)) {
+      try {
+        const rn = JSON.parse(fs.readFileSync(ROLLBACK_NOTIFY_FILE, "utf-8")) as {
+          originalHead: string; prevHead: string; rollbackAt: string;
+        };
+        fs.unlinkSync(ROLLBACK_NOTIFY_FILE);
+        didRollback = true;
+        console.log(`[tinyclaw] ⚠️ git 自动回退: ${rn.originalHead} → ${rn.prevHead} at ${rn.rollbackAt}`);
+      } catch { /* ignore */ }
+    }
+
     // 检查重启通知 marker（由 /restart 命令或 restart_tool 写入，用于重启后发送通知）
     const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
     if (fs.existsSync(RESTART_NOTIFY_FILE)) {
@@ -951,9 +966,19 @@ ${message}`;
               if (codeSession) {
                 // 回填 tool_result：将 "⏳ 正在重启..." 更新为 "✅ 重启完成"，避免注入额外用户消息
                 if (marker.restartCallId) {
-                  codeSession.updateToolResult(marker.restartCallId, "✅ 重启完成，继续执行之前的任务。");
+                  const restartMsg = didRollback
+                    ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash）。继续执行之前的任务。"
+                    : "✅ 重启完成，继续执行之前的任务。";
+                  codeSession.updateToolResult(marker.restartCallId, restartMsg);
                 }
-                void connector!.send(marker.peerId, marker.msgType, "✅ 重启完成，继续执行之前的任务。").catch(() => {});
+                void connector!.send(marker.peerId, marker.msgType,
+                  didRollback
+                    ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash，可用 git stash pop 恢复）"
+                    : "✅ 重启完成，继续执行之前的任务。",
+                ).catch(() => {});
+                if (didRollback) {
+                  try { fs.unlinkSync(ROLLBACK_STATE_FILE); } catch { /* ignore */ }
+                }
                 codeSession.running = true;
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
                 // 重建 onAskUser / onNotify,供续接的 runAgent 使用
