@@ -161,7 +161,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 > 同一 session 中如切换到不同项目目录，需重新调用 \`code_note_read\` 读取新项目记忆。
 
 **遇到任何关于项目历史/约束/进度/决策的疑问时:**
-1. 先调用 \`memory_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
+1. 先调用 \`code_note_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
 2. 搜到相关片段就直接使用;找不到或不确定再用 \`code_note_read\` 读完整记忆
 3. 仍不确定再询问用户——不要凭假设自行决定
 
@@ -315,7 +315,7 @@ Plan 模式分为两个严格隔离的阶段：
 3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
 
 **遇到任何关于项目历史/约束/进度/决策的疑问时:**
-1. 先调用 \`memory_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
+1. 先调用 \`code_note_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
 2. 搜到相关片段就直接使用;找不到或不确定再用 \`code_note_read\` 读完整记忆
 3. 仍不确定再询问用户——不要凭假设自行决定
 

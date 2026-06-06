@@ -17,7 +17,7 @@ import * as path from "node:path";
 import * as dns from "node:dns/promises";
 import { registerTool, type ToolContext } from "./registry.js";
 import { agentManager } from "../core/agent-manager.js";
-import { searchMemory, updateStore } from "../memory/qmd.js";
+import { searchMemory, searchStore, updateStore } from "../memory/qmd.js";
 import { persistSummary } from "../memory/store.js";
 import { CARD_STATUSES, CARD_TYPES, appendCard } from "../memory/cards.js";
 
@@ -369,6 +369,50 @@ registerTool({
       });
     }).catch(() => {});
     return `已追加到项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
+  },
+});
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "code_note_search",
+      description:
+        "在当前 Agent 的项目记忆（code_note 存储）中做语义向量搜索，返回相关片段。\n" +
+        "遇到任何关于项目历史/约束/进度/决策的疑问时先调用此工具搜索，找不到再用 code_note_read 读完整记忆。\n" +
+        "无需 MFA，无需 read_file 权限。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "搜索查询词（自然语言，支持中英文）",
+          },
+          limit: {
+            type: "number",
+            description: "最多返回条数，默认 5，最大 20",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
+    const agentId = ctx?.agentId ?? "default";
+    const query = String(args["query"] ?? "").trim();
+    const rawLimit = Number(args["limit"] ?? 5);
+    const limit = Math.max(1, Math.min(20, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 5));
+    if (!query) return "错误：缺少 query 参数";
+
+    const result = await searchStore("code_notes", query, agentId, limit);
+    if (result === null) {
+      return "向量记忆功能未启用（memory.enabled = false），无法搜索。";
+    }
+    if (!result) {
+      return `在项目记忆中未找到与 "${query}" 相关的内容。`;
+    }
+    return result;
   },
 });
 
