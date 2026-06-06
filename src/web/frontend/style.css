@@ -259,7 +259,7 @@ body {
   margin-bottom: 16px;
 }
 .chart-row-2 { grid-template-columns: 54fr 46fr; }
-.chart-row-2b { grid-template-columns: 52fr 48fr; align-items: start; }
+.chart-row-2b { grid-template-columns: 52fr 48fr; align-items: stretch; }
 .chart-canvas-wrap {
   padding: 4px 18px 16px;
   position: relative;
