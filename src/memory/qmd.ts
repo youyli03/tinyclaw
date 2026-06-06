@@ -332,10 +332,12 @@ async function hybridSearchCollection(
   })).sort((a, b) => b.decayedScore - a.decayedScore);
 }
 
-async function searchCardsByType(s: QMDStore, query: string, limit: number, types: MemoryCardType[]): Promise<SearchCandidate[]> {
+async function searchCardsByType(s: QMDStore, query: string, limit: number, types: MemoryCardType[], includeObsolete = false): Promise<SearchCandidate[]> {
   const results = await hybridSearchCollection(s, CARDS_COLLECTION, query, Math.max(limit * 2, limit), "相关卡片");
   return results.filter((r) => {
     const body = (r.body ?? "").toLowerCase();
+    // 默认过滤掉已过期/已解决的卡片
+    if (!includeObsolete && (body.includes("status: obsolete") || body.includes("status: resolved"))) return false;
     return types.some((type) => body.includes(`type: ${type}`));
   });
 }
@@ -365,7 +367,7 @@ function formatMemorySections(results: SearchCandidate[]): string {
   return sections.join("\n\n");
 }
 
-export async function searchMemory(query: string, agentId = "default", limit = 5, mode: "chat" | "code" = "chat"): Promise<string | null> {
+export async function searchMemory(query: string, agentId = "default", limit = 5, mode: "chat" | "code" = "chat", includeObsolete = false): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
 
@@ -393,7 +395,7 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
     candidates.push(...activeResults);
   }
 
-  const cardResults = await searchCardsByType(s, query, limit, queryCardTypes(kind));
+  const cardResults = await searchCardsByType(s, query, limit, queryCardTypes(kind), includeObsolete);
   candidates.push(...cardResults.slice(0, limit));
 
   const diaryResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");

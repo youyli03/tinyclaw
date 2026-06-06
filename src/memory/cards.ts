@@ -193,9 +193,12 @@ export function readExistingCards(agentId: string): MemoryCard[] {
 }
 
 function isSimilarCard(a: MemoryCard, b: MemoryCard): boolean {
+  if (a.type !== b.type || a.scope !== b.scope) return false;
+  // preference/constraint: 同 facet 即视为重复，无需比较标题（避免同义卡片堆积）
+  if ((a.type === "preference" || a.type === "constraint") && a.facet === b.facet) return true;
   const titleA = a.title.trim().toLowerCase();
   const titleB = b.title.trim().toLowerCase();
-  return a.type === b.type && a.scope === b.scope && (titleA === titleB || titleA.includes(titleB) || titleB.includes(titleA));
+  return titleA === titleB || titleA.includes(titleB) || titleB.includes(titleA);
 }
 
 export function saveCards(cards: MemoryCard[], agentId: string): { saved: number; obsoleted: number } {
@@ -231,4 +234,29 @@ export function appendCard(card: MemoryCard, agentId: string): string {
 
 export function cardsRootPath(agentId: string): string {
   return path.join(os.homedir(), ".tinyclaw", "agents", agentId, "cards");
+}
+
+/**
+ * 将超过 maxAgeDays 天未更新的 open_loop 卡片标记为 obsolete。
+ * 不删除文件，保留历史可查。
+ */
+export function ageOpenLoopCards(agentId: string, maxAgeDays = 30): { aged: number } {
+  const now = new Date();
+  const existing = readExistingCards(agentId);
+  let aged = 0;
+  for (const card of existing) {
+    if (card.type !== "open_loop" || card.status !== "active") continue;
+    const ts = new Date(card.ts);
+    if (isNaN(ts.getTime())) continue;
+    const daysOld = (now.getTime() - ts.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysOld >= maxAgeDays) {
+      card.status = "obsolete";
+      const filePath = cardPath(agentId, card);
+      if (fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, serializeCard(card), "utf-8");
+        aged++;
+      }
+    }
+  }
+  return { aged };
 }

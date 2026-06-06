@@ -21,7 +21,7 @@ import { rebuildMemoryIndex, updateMemoryIndex, updateStore } from "../memory/qm
 import { llmRegistry } from "../llm/registry.js";
 import { updateJob, getJob } from "../cron/store.js";
 import { cronScheduler } from "../cron/scheduler.js";
-import { parseCardJson, saveCards } from "../memory/cards.js";
+import { parseCardJson, saveCards, ageOpenLoopCards } from "../memory/cards.js";
 
 const MEM_SECTION_KEYS = [
   "👤 用户偏好",
@@ -242,6 +242,14 @@ class MemoryMaintenanceScheduler {
       console.log(`[memory-maintenance] [${agentId}] cards distill result: ${result}`);
     } catch (err) {
       console.error(`[memory-maintenance] [${agentId}] cards distill error:`, err);
+    }
+
+    console.log(`[memory-maintenance] [${agentId}] Step 5: aging stale open_loop cards...`);
+    try {
+      const result = ageOpenLoopCards(agentId, 30);
+      console.log(`[memory-maintenance] [${agentId}] aged ${result.aged} open_loop cards → obsolete`);
+    } catch (err) {
+      console.error(`[memory-maintenance] [${agentId}] age open_loop error:`, err);
     }
   }
 

@@ -190,6 +190,7 @@ registerTool({
         properties: {
           query: { type: "string", description: "搜索查询词(自然语言,支持中英文)" },
           limit: { type: "number", description: "最多返回条数,默认 5,最大 20" },
+          include_obsolete: { type: "boolean", description: "是否包含已过期(obsolete/resolved)的卡片,默认 false。设为 true 可翻查历史记忆" },
         },
         required: ["query"],
       },
@@ -201,7 +202,8 @@ registerTool({
     if (!query) return "错误:缺少 query 参数";
     const rawLimit = Number(args["limit"] ?? 5);
     const limit = Math.max(1, Math.min(20, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 5));
-    const result = await searchMemory(query, agentId, limit);
+    const includeObsolete = args["include_obsolete"] === true;
+    const result = await searchMemory(query, agentId, limit, "chat", includeObsolete);
     if (result === null) return "记忆功能未启用(memory.enabled = false)";
     if (!result) return "未找到相关历史记忆";
     return result;
