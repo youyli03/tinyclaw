@@ -23,6 +23,19 @@ import * as os from "node:os";
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
 
+/**
+ * tinyclaw 内置 skills 目录（随仓库代码管理）。
+ * registry.ts 位于 src/skills/registry.ts，故 ../../skills/ 即为仓库根目录的 skills/。
+ */
+export const BUILTIN_SKILLS_DIR: string = (() => {
+  try {
+    return path.resolve(new URL("../../skills/", import.meta.url).pathname);
+  } catch {
+    // ESM URL 解析失败时（如 Jest 环境）返回空字符串，跳过内置加载
+    return "";
+  }
+})();
+
 /** snapshot 最多包含的 skill 数量 */
 const MAX_SKILLS_COUNT = 10;
 /** snapshot 字符上限(超出时截断末尾 skill) */
@@ -41,6 +54,8 @@ export interface SkillEntry {
   requires?: string[];
   /** 精确触发短语列表,AI 仅在用户使用这些短语时才触发该 skill */
   triggerPhrases?: string[];
+  /** true = tinyclaw 仓库内置 skill（随代码管理，非用户安装） */
+  builtin?: boolean;
 }
 
 interface AgentSkillCache {
@@ -100,31 +115,54 @@ class SkillRegistry {
     const cached = this.cache.get(agentId);
     if (cached) return cached;
 
-    const skillsDir = path.join(AGENTS_ROOT, agentId, "skills");
+    // ── 1. 加载内置 skills（随 tinyclaw 仓库代码管理）──────────────────────
+    const builtinEntries: SkillEntry[] = [];
     let version = 0;
-    let entries: SkillEntry[] = [];
+
+    if (BUILTIN_SKILLS_DIR && fs.existsSync(BUILTIN_SKILLS_DIR)) {
+      try {
+        const builtinMtime = fs.statSync(BUILTIN_SKILLS_DIR).mtimeMs;
+        version = Math.max(version, builtinMtime);
+        const scanned = this._scanSkillsDir(agentId, BUILTIN_SKILLS_DIR, true);
+        builtinEntries.push(...scanned);
+      } catch {
+        // 内置目录读取失败不影响用户 skill 加载
+      }
+    }
+
+    // ── 2. 加载用户安装的 skills（~/.tinyclaw/agents/{agentId}/skills/）────
+    const userEntries: SkillEntry[] = [];
+    const skillsDir = path.join(AGENTS_ROOT, agentId, "skills");
 
     if (fs.existsSync(skillsDir)) {
       try {
-        version = fs.statSync(skillsDir).mtimeMs;
-        entries = this._scanSkillsDir(agentId, skillsDir);
+        const userMtime = fs.statSync(skillsDir).mtimeMs;
+        version = Math.max(version, userMtime);
+        userEntries.push(...this._scanSkillsDir(agentId, skillsDir, false));
       } catch {
         // 读取失败时返回空
       }
     }
 
-    // 兼容旧版 SKILLS.md 索引文件(若 skills/ 目录不存在时 fallback)
-    if (entries.length === 0) {
+    // ── 3. 兼容旧版 SKILLS.md 索引文件 ─────────────────────────────────────
+    if (userEntries.length === 0) {
       const skillsPath = path.join(AGENTS_ROOT, agentId, "SKILLS.md");
       if (fs.existsSync(skillsPath)) {
         try {
-          version = fs.statSync(skillsPath).mtimeMs;
-          entries = this._parseLegacySkillsIndex(agentId, skillsPath);
+          version = Math.max(version, fs.statSync(skillsPath).mtimeMs);
+          userEntries.push(...this._parseLegacySkillsIndex(agentId, skillsPath));
         } catch {
           // ignore
         }
       }
     }
+
+    // ── 4. 合并：用户 skill 优先覆盖同名内置 skill ──────────────────────────
+    const userNames = new Set(userEntries.map((e) => e.name));
+    const entries: SkillEntry[] = [
+      ...builtinEntries.filter((e) => !userNames.has(e.name)),
+      ...userEntries,
+    ];
 
     // 过滤掉 disable-model-invocation=true 的 skill(不出现在 AI 可见列表中)
     const visibleEntries = entries.filter((e) => !e.disableModelInvocation);
@@ -137,8 +175,9 @@ class SkillRegistry {
 
   /**
    * 扫描 skills/ 目录,每个子目录寻找 SKILL.md 或 README.md,解析 frontmatter。
+   * @param isBuiltin - true 时标记条目为内置 skill
    */
-  private _scanSkillsDir(agentId: string, skillsDir: string): SkillEntry[] {
+  private _scanSkillsDir(agentId: string, skillsDir: string, isBuiltin = false): SkillEntry[] {
     const agentDir = path.join(AGENTS_ROOT, agentId);
     const entries: SkillEntry[] = [];
 
@@ -175,6 +214,7 @@ class SkillRegistry {
             disableModelInvocation: fm.disableModelInvocation ?? false,
             ...(fm.requires !== undefined ? { requires: fm.requires } : {}),
             ...(fm.triggerPhrases !== undefined ? { triggerPhrases: fm.triggerPhrases } : {}),
+            ...(isBuiltin ? { builtin: true } : {}),
           });
         } catch {
           // 单个 skill 解析失败不影响其他

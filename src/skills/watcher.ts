@@ -13,7 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { skillRegistry } from "./registry.js";
+import { skillRegistry, BUILTIN_SKILLS_DIR } from "./registry.js";
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
 
@@ -40,6 +40,11 @@ class SkillWatcher {
 
     if (onSkillsChanged) {
       this.onChangeFns.push(onSkillsChanged);
+    }
+
+    // 监听内置 skills 目录（仅一个，变更时对所有 agent 执行 refresh）
+    if (BUILTIN_SKILLS_DIR && fs.existsSync(BUILTIN_SKILLS_DIR)) {
+      this._pollBuiltinSkillsDir(BUILTIN_SKILLS_DIR, agentIds);
     }
 
     for (const agentId of agentIds) {
@@ -187,6 +192,69 @@ class SkillWatcher {
     for (const fn of this.onChangeFns) {
       try { fn(agentId); } catch { /* ignore */ }
     }
+  }
+
+  /**
+   * 内置 skills 目录轮询：变更时对所有 agent 刷新缓存。
+   * 内置 skill 是全局的，不属于特定 agentId，变更后所有 agent 都需要重新加载。
+   */
+  private _pollBuiltinSkillsDir(skillsDir: string, agentIds: string[]): void {
+    const snapshot = new Map<string, number>();
+
+    const scan = (): Map<string, number> => {
+      const cur = new Map<string, number>();
+      if (!fs.existsSync(skillsDir)) return cur;
+
+      let subdirs: string[];
+      try {
+        subdirs = fs.readdirSync(skillsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.endsWith(".disabled"))
+          .map((d) => d.name);
+      } catch {
+        return cur;
+      }
+
+      for (const sub of subdirs) {
+        const subDir = path.join(skillsDir, sub);
+        try { cur.set(subDir, fs.statSync(subDir).mtimeMs); } catch { /* ignore */ }
+        for (const docName of ["SKILL.md", "README.md"]) {
+          const docPath = path.join(subDir, docName);
+          try {
+            if (fs.existsSync(docPath)) cur.set(docPath, fs.statSync(docPath).mtimeMs);
+          } catch { /* ignore */ }
+        }
+      }
+      return cur;
+    };
+
+    const initial = scan();
+    for (const [k, v] of initial) snapshot.set(k, v);
+
+    const timer = setInterval(() => {
+      const cur = scan();
+      let changed = false;
+
+      for (const [k, v] of cur) {
+        if (snapshot.get(k) !== v) { changed = true; break; }
+      }
+      if (!changed) {
+        for (const k of snapshot.keys()) {
+          if (!cur.has(k)) { changed = true; break; }
+        }
+      }
+
+      if (changed) {
+        console.log(`[skills] 内置 skills 目录变更，刷新所有 agent 的 skill 缓存`);
+        snapshot.clear();
+        for (const [k, v] of cur) snapshot.set(k, v);
+        for (const agentId of agentIds) {
+          this._doRefresh(agentId);
+        }
+      }
+    }, POLL_INTERVAL_MS);
+
+    timer.unref();
+    this.pollTimers.push(timer);
   }
 }
 
