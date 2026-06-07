@@ -51,9 +51,14 @@ requires:
 找到本 skill 的目录（通过 read_file 读取的 doc_path 的父目录的父目录），执行：
 
 ```bash
+# 标准分析
 python3 /home/lyy/tinyclaw/skills/trading-analyst/scripts/run.py --ticker {TICKER}
-# 或带日期：
+
+# 带日期
 python3 /home/lyy/tinyclaw/skills/trading-analyst/scripts/run.py --ticker {TICKER} --date {DATE}
+
+# 针对特定假设分析
+python3 /home/lyy/tinyclaw/skills/trading-analyst/scripts/run.py --ticker {TICKER} --hypothesis "{用户的具体问题}"
 ```
 
 - 超时设置：600 秒（10 分钟）
