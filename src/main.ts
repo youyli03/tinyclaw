@@ -512,7 +512,7 @@ async function main(): Promise<void> {
           );
           fs.mkdirSync(outDir, { recursive: true });
           const imgPath = await mdToImage(menuMsg, outDir);
-          await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`).catch(() => {});
+          await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`);
           sent = true;
         } catch (renderErr) {
           console.warn("[plan] 计划摘要渲染图片失败，降级为文本:", renderErr);
@@ -573,7 +573,8 @@ async function main(): Promise<void> {
         );
         fs.mkdirSync(outDir, { recursive: true });
         const imgPath = await mdToImage(menuMsg, outDir);
-        await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`).catch(() => {});
+        // 注意：不加 .catch() — send 失败应抛出，让外层 catch 捕获，sent 保持 false，走 fallback
+        await connector.send(msg.peerId, msg.type, `<img src="${imgPath}"/>`);
         sent = true;
       } catch {
         // 渲染失败，降级为纯文本
