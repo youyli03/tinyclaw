@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS news_items (
     mobile_url TEXT DEFAULT '',
     crawl_time TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    embedding BLOB DEFAULT NULL,
     UNIQUE(title, platform_id, crawl_time)
 );
 
@@ -84,15 +85,62 @@ CREATE INDEX IF NOT EXISTS idx_news_platform ON news_items(platform_id);
 CREATE INDEX IF NOT EXISTS idx_news_rank ON news_items(rank);
 """
 
+SCHEMA_VEC0 = "CREATE VIRTUAL TABLE IF NOT EXISTS vec_news USING vec0(title_embedding float[1024])"
+
+
 
 def get_db_path(date: str) -> Path:
     DB_DIR.mkdir(parents=True, exist_ok=True)
     return DB_DIR / f"{date}.db"
 
 
+EMBED_API = "http://127.0.0.1:11434"
+EMBED_DIM = 1024
+
+
+def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
+    """加载 sqlite-vec 扩展，失败则返回 False（不影响基础功能）"""
+    try:
+        import sqlite_vec
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        return True
+    except Exception as e:
+        print(f"[WARN] sqlite-vec 加载失败，向量搜索不可用: {e}", file=sys.stderr)
+        return False
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    if _load_sqlite_vec(conn):
+        try:
+            conn.execute(SCHEMA_VEC0)
+            conn.commit()
+        except Exception as e:
+            print(f"[WARN] vec0 虚拟表创建失败: {e}", file=sys.stderr)
     conn.commit()
+
+
+def embed_batch(texts: list[str]) -> list[list[float] | None]:
+    """批量调用 RKLLM embed 服务生成向量（失败时返回 None 列表）"""
+    if not texts:
+        return []
+    try:
+        import urllib.request
+        data = json.dumps({"texts": texts}).encode()
+        req = urllib.request.Request(
+            f"{EMBED_API}/embed_batch",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read())
+        embeddings = result.get("embeddings", [])
+        return [e if isinstance(e, list) else None for e in embeddings]
+    except Exception as e:
+        print(f"[WARN] embed_batch 失败（向量搜索不可用）: {e}", file=sys.stderr)
+        return [None] * len(texts)
 
 
 def upsert_platforms(conn: sqlite3.Connection, platforms: list[dict]) -> None:
@@ -110,22 +158,53 @@ def insert_items(
     items: list[dict],
     crawl_time: str,
 ) -> int:
-    inserted = 0
+    """插入新闻条目并生成向量（若 embed 服务可用）"""
+    titles: list[str] = []
+    rows: list[tuple] = []
+
     for i, item in enumerate(items):
         title = item.get("title", "").strip()
         url = item.get("url", "").strip()
         mobile_url = item.get("mobileUrl", "").strip()
         if not title:
             continue
+        titles.append(title)
+        rows.append((title, platform_id, i + 1, url, mobile_url, crawl_time))
+
+    if not rows:
+        return 0
+
+    # 批量生成 embedding
+    embeddings = embed_batch(titles)
+
+    inserted = 0
+    for row, emb in zip(rows, embeddings):
+        title, pid, rank, url, mobile_url, ct = row
+        emb_blob = None
+        if emb and len(emb) == EMBED_DIM:
+            import struct
+            emb_blob = struct.pack(f"{EMBED_DIM}f", *emb)
         try:
-            conn.execute(
-                "INSERT OR IGNORE INTO news_items(title, platform_id, rank, url, mobile_url, crawl_time) "
-                "VALUES(?, ?, ?, ?, ?, ?)",
-                (title, platform_id, i + 1, url, mobile_url, crawl_time)
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO news_items(title, platform_id, rank, url, mobile_url, crawl_time, embedding) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (title, pid, rank, url, mobile_url, ct, emb_blob)
             )
-            inserted += 1
+            if cur.rowcount > 0:
+                new_rowid = cur.lastrowid
+                inserted += 1
+                # 同步到 vec0 虚拟表
+                if emb_blob is not None:
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO vec_news(rowid, title_embedding) VALUES (?, ?)",
+                            (new_rowid, emb_blob)
+                        )
+                    except Exception as ve:
+                        pass  # vec0 不可用时忽略
         except Exception:
             pass
+
     conn.commit()
     return inserted
 

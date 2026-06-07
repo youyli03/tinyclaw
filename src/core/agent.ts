@@ -43,6 +43,7 @@ import "../tools/notify.js";
 import "../tools/send-report.js";
 import "../tools/render-diagram.js";
 import "../tools/search-store.js";
+import "../tools/search-newsnow.js";
 import "../tools/ask-user-tool.js";
 import "../tools/ask-master.js";
 import "../tools/run-code-subagent.js";
