@@ -266,7 +266,17 @@ class SkillRegistry {
           result.name = rawVal;
           break;
         case "description":
-          result.description = rawVal;
+          if (rawVal === "|" || rawVal === "|-" || rawVal === "|+") {
+            // YAML 块标量：后续缩进行是内容
+            const descLines: string[] = [];
+            while (i < lines.length && (lines[i]!.match(/^\s+/) || lines[i]!.trim() === "")) {
+              descLines.push(lines[i]!.trim());
+              i++;
+            }
+            result.description = descLines.join(" ").replace(/\s+/g, " ").trim();
+          } else {
+            result.description = rawVal;
+          }
           break;
         case "disable-model-invocation":
           result.disableModelInvocation = rawVal === "true";
