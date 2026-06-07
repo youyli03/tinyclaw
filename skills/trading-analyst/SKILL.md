@@ -5,16 +5,16 @@ description: |
   支持的股票: MU、NVDA、ARM、ORCL、AMD、INTC、TSLA、META、MSFT、AAPL、AMZN、GOOGL 等所有美股代码
   注意: 每次分析约需 3-8 分钟，LLM 使用 DeepSeek（推理+对话）。
 trigger-phrases:
-  - 分析
+  - 深入分析
   - 多空分析
-  - 股票分析
-  - 帮我分析
-  - 怎么样
-  - 值得买吗
-  - 技术面
-  - 基本面
   - 多空辩论
+  - 股票深度分析
+  - 帮我深入分析
+  - 技术面深度分析
+  - 基本面分析
+  - TradingAgents分析
   - trading analysis
+  - multi-agent analysis
 requires:
   - exec_shell
 ---
