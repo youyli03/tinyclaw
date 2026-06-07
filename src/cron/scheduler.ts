@@ -249,9 +249,25 @@ class CronScheduler {
     if (this.workerReady) return this.workerReady;
 
     this.workerReady = new Promise<void>((resolve, reject) => {
+      // 从父进程环境变量中去掉 Python venv 污染，避免 exec_shell 里的 python3 走到错误的 venv
+      // 根本原因：tinyclaw 可能在激活了某个 venv 的 shell 中启动，若不清理则 spawn 出的所有
+      // worker / cron 进程都会继承 VIRTUAL_ENV + venv/bin 前缀的 PATH
+      const cleanEnv: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v === undefined) continue;
+        if (k === "VIRTUAL_ENV" || k === "VIRTUAL_ENV_PROMPT") continue; // 删除 venv 标记
+        if (k === "PATH") {
+          // 过滤掉 PATH 中所有包含 "venv/bin" 或 ".venv/bin" 的分段
+          const parts = v.split(":").filter((p) => !p.includes("venv/bin"));
+          cleanEnv[k] = parts.join(":");
+        } else {
+          cleanEnv[k] = v;
+        }
+      }
+
       const child = spawn("node", ["--import", "tsx/esm", CRON_WORKER_SCRIPT], {
         stdio: ["ignore", "inherit", "inherit", "ipc"],
-        env: process.env,
+        env: cleanEnv,
         cwd: new URL("../../", import.meta.url).pathname,
       });
       this.worker = child;
