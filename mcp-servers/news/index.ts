@@ -6,6 +6,7 @@
  *   read_day          — 读取指定日期的新闻存档（默认今天）
  *   list_days         — 列出已有存档的日期列表
  *   search_local      — 在本地存档中做简单关键词全文搜索
+ *   search_trendradar    — 在 TrendRadar 热榜 SQLite DB 中做关键词检索(中文财经热榜)
  *   rebuild_index     — 写入 .update-pending 标记，触发主进程侧 QMD 重新索引
  *
  * 启动方式：bun run /path/to/mcp-servers/news/index.ts
@@ -42,6 +43,13 @@ const FETCH_SCRIPT = path.join(
   path.dirname(new URL(import.meta.url).pathname),
   "lib",
   "news_fetch.py"
+);
+
+// search_trendradar.py 路径
+const TRENDRADAR_SCRIPT = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "lib",
+  "search_trendradar.py"
 );
 
 // ── 辅助函数 ───────────────────────────────────────────────────────────────────
@@ -246,6 +254,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {},
       },
     },
+    {
+      name: "search_trendradar",
+      description:
+        "在 TrendRadar 热榜 SQLite DB 中做关键词检索，返回中文财经热榜条目（华尔街见闻/财联社/微博/知乎等）。\n" +
+        "数据来源：/home/lyy/TrendRadar/output/news/*.db，仅含热榜 title + rank，不含正文。\n" +
+        "适合查询近期财经热点、股票/公司相关热搜词。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "搜索关键词（如 NVDA、美光、芯片）",
+          },
+          days: {
+            type: "number",
+            description: "搜索最近 N 天数据，默认 7",
+          },
+          limit: {
+            type: "number",
+            description: "最多返回结果数，默认 30",
+          },
+          platforms: {
+            type: "string",
+            description: "平台过滤，逗号分隔（如 '华尔街见闻,财联社热门'），不填则搜索所有平台",
+          },
+        },
+        required: ["query"],
+      },
+    },
   ],
 }));
 
@@ -398,6 +435,44 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           message:
             "已写入 .update-pending 标记。下次在 tinyclaw 中调用 search_store 时将自动重建 news 索引。",
         });
+      }
+
+      // ── search_trendradar ────────────────────────────────────────
+      case "search_trendradar": {
+        const query = String(args["query"] ?? "").trim();
+        if (!query) return err("缺少 query 参数");
+
+        const days = Math.min(30, Math.max(1, Number(args["days"] ?? 7)));
+        const limit = Math.min(100, Math.max(1, Number(args["limit"] ?? 30)));
+        const platforms = String(args["platforms"] ?? "").trim();
+
+        const scriptArgs = [
+          TRENDRADAR_SCRIPT,
+          "--query", query,
+          "--days", String(days),
+          "--limit", String(limit),
+        ];
+        if (platforms) scriptArgs.push("--platforms", platforms);
+
+        const result = spawnSync("python3", scriptArgs, {
+          encoding: "utf-8",
+          timeout: 15_000,
+        });
+
+        if (result.error) return err(String(result.error));
+        if (result.status !== 0) {
+          return err(`search_trendradar 脚本错误:${result.stderr}`);
+        }
+
+        let parsed: { results: unknown[]; count: number; error?: string };
+        try {
+          parsed = JSON.parse(result.stdout ?? "{}");
+        } catch {
+          return err(`JSON 解析失败: ${result.stdout?.slice(0, 200)}`);
+        }
+
+        if (parsed.error) return err(parsed.error);
+        return ok(parsed);
       }
 
       default:
