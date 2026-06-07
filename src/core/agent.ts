@@ -1314,27 +1314,34 @@ export async function runAgent(
 
     /** 将 (call, result) 列表按顺序写入 session */
     const flushResults = async (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
+      // 收集需要在所有 tool_result 写完后才注入的额外 user 消息。
+      // 原因：Claude/Anthropic API 要求 assistant+tool_calls 之后的所有 tool_result 必须连续，
+      // 中间不能插入其他角色（如 user）的消息，否则报 400 "unexpected tool_use_id"。
+      // 因此先把所有 addToolResultMessage 写完，再统一追加这些 user 消息。
+      type PendingMsg = string | import("../llm/client.js").ContentPart[];
+      const pendingUserMsgs: PendingMsg[] = [];
+
       for (const { call, result } of pairs) {
         if (!textMode) {
-          // read_image tool 返回 data URL 时，改用路径引用存储，避免 base64 写入 JSONL
-          // 从 call.args 取原始路径，tool result 存路径占位，注入 image_path 供 resolveMessagesForApi 按需编码
+          // read_image tool 返回 data URL 时,改用路径引用存储,避免 base64 写入 JSONL
+          // 从 call.args 取原始路径,tool result 存路径占位,注入 image_path 供 resolveMessagesForApi 按需编码
           if (call.name === "read_image" && result.startsWith("data:image/")) {
             const origPath = String((call.args as Record<string, unknown>)["path"] ?? "");
             session.addToolResultMessage(call.callId, origPath ? `[图片已加载: ${origPath}]` : result);
             if (origPath) {
-              // 仅当主模型支持视觉时才注入 image_path，避免将图片传给不支持视觉的模型（如 deepseek）
+              // 仅当主模型支持视觉时才注入 image_path,避免将图片传给不支持视觉的模型(如 deepseek)
               if (client.supportsVision) {
-                session.addUserMessage([{ type: "image_path", path: origPath }]);
+                pendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
               }
               if (visionClient) {
                 const desc = await describeImageWithVisionFallback(origPath, visionClient);
-                if (desc) session.addUserMessage(`[图片描述 ${origPath}]:\n${desc}`);
+                if (desc) pendingUserMsgs.push(`[图片描述 ${origPath}]:\n${desc}`);
               }
             }
           } else {
             session.addToolResultMessage(call.callId, result);
           }
-          // MCP tool 返回了图片（如截图），直接注入视觉上下文
+          // MCP tool 返回了图片(如截图),直接注入视觉上下文
           if (result.includes("__MCP_IMAGE__:")) {
             const lines = result.split("\n");
             const imgPaths: string[] = [];
@@ -1345,16 +1352,26 @@ export async function runAgent(
             }
             for (const imgPath of imgPaths) {
               if (client.supportsVision) {
-                session.addUserMessage([{ type: "image_path" as const, path: imgPath }]);
+                pendingUserMsgs.push([{ type: "image_path" as const, path: imgPath }]);
               }
               if (visionClient) {
                 const desc = await describeImageWithVisionFallback(imgPath, visionClient);
-                if (desc) session.addUserMessage(`[图片描述 ${imgPath}]:\n${desc}`);
+                if (desc) pendingUserMsgs.push(`[图片描述 ${imgPath}]:\n${desc}`);
               }
             }
           }
         } else {
           session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
+        }
+      }
+
+      // 所有 tool_result 已写入后，统一追加视觉上下文 user 消息，
+      // 确保消息链为：...tool_result...tool_result → user(image_path)，不中断 tool_result 连续性。
+      for (const msg of pendingUserMsgs) {
+        if (typeof msg === "string") {
+          session.addUserMessage(msg);
+        } else {
+          session.addUserMessage(msg as import("../llm/client.js").ContentPart[]);
         }
       }
     };
