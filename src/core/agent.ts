@@ -1312,15 +1312,37 @@ export async function runAgent(
       return result;
     };
 
+    // ── roundPendingUserMsgs ─────────────────────────────────────────────────
+    // 整轮工具调用期间需要延迟追加的 user 消息（image_path / 图片描述等）。
+    // 必须等当前轮次所有 tool_result 全部写完后再统一注入，以保证消息链为：
+    //   assistant([A, B]) → tool(A) → tool(B) → user(image)
+    // 而非夹在中间（如 tool(A) → user(image) → tool(B)）触发 Anthropic API 400。
+    //
+    // 根因：read_image 是 SERIAL 工具，exec_shell 等是 CONCURRENT 工具。
+    // 当 LLM 同时调用两者时，read_image 先串行执行并调用 flushResults，
+    // 若在 flushResults 内追加 user(image_path)，此时 exec_shell 的 tool_result
+    // 还未写入，user 消息就会夹在两个 tool_result 之间。
+    // 解决方案：将 pendingUserMsgs 提升到 for 循环外部，统一在末尾写入。
+    type PendingMsg = string | import("../llm/client.js").ContentPart[];
+    const roundPendingUserMsgs: PendingMsg[] = [];
+
+    /** 将本轮积累的 pendingUserMsgs 统一写入 session 并清空。 */
+    const flushRoundPendingUserMsgs = () => {
+      for (const msg of roundPendingUserMsgs) {
+        if (typeof msg === "string") {
+          session.addUserMessage(msg);
+        } else {
+          session.addUserMessage(msg as import("../llm/client.js").ContentPart[]);
+        }
+      }
+      roundPendingUserMsgs.length = 0;
+    };
+
     /** 将 (call, result) 列表按顺序写入 session */
     const flushResults = async (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
-      // 收集需要在所有 tool_result 写完后才注入的额外 user 消息。
-      // 原因：Claude/Anthropic API 要求 assistant+tool_calls 之后的所有 tool_result 必须连续，
-      // 中间不能插入其他角色（如 user）的消息，否则报 400 "unexpected tool_use_id"。
-      // 因此先把所有 addToolResultMessage 写完，再统一追加这些 user 消息。
-      type PendingMsg = string | import("../llm/client.js").ContentPart[];
-      const pendingUserMsgs: PendingMsg[] = [];
-
+      // 注意：此函数只写 tool_result，不追加 user 消息。
+      // image_path 等延迟消息统一收集到外部 roundPendingUserMsgs，
+      // 由调用方在所有工具执行完毕后调用 flushRoundPendingUserMsgs() 统一注入。
       for (const { call, result } of pairs) {
         if (!textMode) {
           // read_image tool 返回 data URL 时,改用路径引用存储,避免 base64 写入 JSONL
@@ -1331,11 +1353,11 @@ export async function runAgent(
             if (origPath) {
               // 仅当主模型支持视觉时才注入 image_path,避免将图片传给不支持视觉的模型(如 deepseek)
               if (client.supportsVision) {
-                pendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
+                roundPendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
               }
               if (visionClient) {
                 const desc = await describeImageWithVisionFallback(origPath, visionClient);
-                if (desc) pendingUserMsgs.push(`[图片描述 ${origPath}]:\n${desc}`);
+                if (desc) roundPendingUserMsgs.push(`[图片描述 ${origPath}]:\n${desc}`);
               }
             }
           } else {
@@ -1352,11 +1374,11 @@ export async function runAgent(
             }
             for (const imgPath of imgPaths) {
               if (client.supportsVision) {
-                pendingUserMsgs.push([{ type: "image_path" as const, path: imgPath }]);
+                roundPendingUserMsgs.push([{ type: "image_path" as const, path: imgPath }]);
               }
               if (visionClient) {
                 const desc = await describeImageWithVisionFallback(imgPath, visionClient);
-                if (desc) pendingUserMsgs.push(`[图片描述 ${imgPath}]:\n${desc}`);
+                if (desc) roundPendingUserMsgs.push(`[图片描述 ${imgPath}]:\n${desc}`);
               }
             }
           }
@@ -1364,18 +1386,8 @@ export async function runAgent(
           session.addSystemMessage(`[tool_result:${call.name}]\n${result}`);
         }
       }
-
-      // 所有 tool_result 已写入后，统一追加视觉上下文 user 消息，
-      // 确保消息链为：...tool_result...tool_result → user(image_path)，不中断 tool_result 连续性。
-      for (const msg of pendingUserMsgs) {
-        if (typeof msg === "string") {
-          session.addUserMessage(msg);
-        } else {
-          session.addUserMessage(msg as import("../llm/client.js").ContentPart[]);
-        }
-      }
+      // ⚠️ 不在此处追加 user 消息，由外部 flushRoundPendingUserMsgs() 统一处理
     };
-
     // 积累并发批次，遇到串行工具时先 flush 再串行执行
     let concurrentBatch: (typeof validToolCalls)[number][] = [];
 
@@ -1533,6 +1545,8 @@ export async function runAgent(
             if (!textMode) session.addToolResultMessage(remaining.callId, skipMsg);
             else session.addSystemMessage(`[tool_result:${remaining.name}]\n${skipMsg}`);
           }
+          // ask_user 前先注入积累的 image_path 消息（若有），确保不被 break 丢弃
+          flushRoundPendingUserMsgs();
           break;
         }
       } else {
@@ -1548,6 +1562,8 @@ export async function runAgent(
 
     // flush 最后一批并发工具
     await flushConcurrentBatch();
+    // 所有工具结果写完后，统一追加本轮积累的 image_path / 图片描述等 user 消息
+    flushRoundPendingUserMsgs();
 
     // 一整批工具处理完，若已中断则退出轮次循环
     if (session.abortRequested) break;
