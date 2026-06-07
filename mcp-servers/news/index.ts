@@ -52,6 +52,13 @@ const TRENDRADAR_SCRIPT = path.join(
   "search_trendradar.py"
 );
 
+// fetch_newsnow.py 路径
+const NEWSNOW_SCRIPT = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "lib",
+  "fetch_newsnow.py"
+);
+
 // ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
 /** 今日日期字符串 YYYY-MM-DD */
@@ -267,6 +274,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "string",
             description: "搜索关键词（如 NVDA、美光、芯片）",
           },
+    {
+      name: "fetch_newsnow",
+      description:
+        "从 NewsNow 公共 API 抓取中文财经热榜（华尔街见闻/财联社/知乎/微博等），\n" +
+        "存入 ~/.tinyclaw/newsnow/YYYY-MM-DD.db。\n" +
+        "抓取后即可用 search_trendradar 检索。每次约需 10-30 秒。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          platforms: {
+            type: "string",
+            description: "平台 ID 逗号分隔（如 wallstreetcn-hot,cls-hot），不填则抓取全部 11 个平台",
+          },
+          date: {
+            type: "string",
+            description: "写入日期 YYYY-MM-DD（默认今天）",
+          },
+        },
+        required: [],
+      },
+    },
           days: {
             type: "number",
             description: "搜索最近 N 天数据，默认 7",
@@ -463,6 +491,38 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (result.status !== 0) {
           return err(`search_trendradar 脚本错误:${result.stderr}`);
         }
+
+      // ── fetch_newsnow ─────────────────────────────────────────────────
+      case "fetch_newsnow": {
+        const fetchPlatforms = String(args["platforms"] ?? "").trim();
+        const fetchDate = String(args["date"] ?? "").trim();
+
+        const fetchArgs = [NEWSNOW_SCRIPT];
+        if (fetchPlatforms) fetchArgs.push("--platforms", fetchPlatforms);
+        if (fetchDate) fetchArgs.push("--date", fetchDate);
+
+        const fetchResult = spawnSync("python3", fetchArgs, {
+          encoding: "utf-8",
+          timeout: 60_000,
+        });
+
+        if (fetchResult.error) return err(String(fetchResult.error));
+        if (fetchResult.status !== 0) {
+          return err(`fetch_newsnow 脚本错误:\n${fetchResult.stderr}`);
+        }
+
+        let fetchParsed: { date: string; db: string; platforms: number; inserted: number };
+        try {
+          fetchParsed = JSON.parse(fetchResult.stdout ?? "{}");
+        } catch {
+          return err(`JSON 解析失败: ${fetchResult.stdout?.slice(0, 200)}`);
+        }
+
+        return ok({
+          ...fetchParsed,
+          message: `已抓取 ${fetchParsed.platforms} 个平台，插入 ${fetchParsed.inserted} 条热榜数据`,
+        });
+      }
 
         let parsed: { results: unknown[]; count: number; error?: string };
         try {

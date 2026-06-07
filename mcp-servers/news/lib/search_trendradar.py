@@ -15,12 +15,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-TRENDRADAR_NEWS_DIR = Path("/home/lyy/TrendRadar/output/news")
+# 优先使用 tinyclaw 自己维护的 NewsNow DB（通过 fetch_newsnow.py 抓取）
+# 回退到 TrendRadar 原目录（如果存在）
+_NEWSNOW_DIR = Path(os.environ.get("NEWSNOW_DB_DIR", Path.home() / ".tinyclaw" / "newsnow"))
+_TRENDRADAR_LEGACY_DIR = Path("/home/lyy/TrendRadar/output/news")
+
+def _get_news_dirs() -> list[Path]:
+    """返回有效的 DB 目录列表（优先 newsnow，回退 TrendRadar）"""
+    dirs = []
+    if _NEWSNOW_DIR.exists():
+        dirs.append(_NEWSNOW_DIR)
+    if _TRENDRADAR_LEGACY_DIR.exists() and _TRENDRADAR_LEGACY_DIR != _NEWSNOW_DIR:
+        dirs.append(_TRENDRADAR_LEGACY_DIR)
+    return dirs
+
+TRENDRADAR_NEWS_DIR = _NEWSNOW_DIR  # backward compat
 
 
 def search(
@@ -29,17 +44,30 @@ def search(
     limit: int = 30,
     platforms: list[str] | None = None,
 ) -> list[dict]:
-    """在最近 days 天的 TrendRadar SQLite DB 中搜索标题包含 query 的热榜条目"""
+    """在最近 days 天的热榜 SQLite DB 中搜索标题包含 query 的条目
+    
+    优先搜索 ~/.tinyclaw/newsnow/（由 fetch_newsnow.py 维护），
+    回退到 TrendRadar 原始目录（/home/lyy/TrendRadar/output/news/）。
+    """
     results: list[dict] = []
     today = date.today()
+    db_dirs = _get_news_dirs()
+    if not db_dirs:
+        return []
 
     for i in range(days):
         if len(results) >= limit:
             break
 
         d = (today - timedelta(days=i)).isoformat()
-        db_path = TRENDRADAR_NEWS_DIR / f"{d}.db"
-        if not db_path.exists():
+        # 在所有目录中查找该日期的 DB（去重：同一日期只取第一个找到的）
+        db_path = None
+        for db_dir in db_dirs:
+            candidate = db_dir / f"{d}.db"
+            if candidate.exists():
+                db_path = candidate
+                break
+        if db_path is None:
             continue
 
         try:
@@ -57,8 +85,20 @@ def search(
             where = " AND ".join(where_clauses)
             remaining = limit - len(results)
 
+            # 兼容两种 schema:
+            # - 新版 (fetch_newsnow.py): crawl_time
+            # - 旧版 (TrendRadar): first_crawl_time
+            crawl_col = "n.crawl_time"
+            try:
+                cols = conn.execute("PRAGMA table_info(news_items)").fetchall()
+                col_names = {c[1] for c in cols}
+                if "first_crawl_time" in col_names and "crawl_time" not in col_names:
+                    crawl_col = "n.first_crawl_time"
+            except Exception:
+                pass
+
             sql = f"""
-                SELECT n.title, p.name AS platform, n.rank, n.first_crawl_time
+                SELECT n.title, p.name AS platform, n.rank, {crawl_col} AS crawl_time
                 FROM news_items n
                 LEFT JOIN platforms p ON n.platform_id = p.id
                 WHERE {where}
@@ -73,7 +113,7 @@ def search(
                     "title": row["title"],
                     "platform": row["platform"] or "",
                     "rank": row["rank"],
-                    "crawl_time": row["first_crawl_time"],
+                    "crawl_time": row["crawl_time"],
                 })
             conn.close()
 
@@ -85,13 +125,12 @@ def search(
 
 
 def list_available_dates() -> list[str]:
-    """列出 TrendRadar 有数据的日期"""
-    if not TRENDRADAR_NEWS_DIR.exists():
-        return []
-    return sorted(
-        [p.stem for p in TRENDRADAR_NEWS_DIR.glob("*.db")],
-        reverse=True,
-    )
+    """列出所有有数据的日期（合并所有 DB 目录）"""
+    dates: set[str] = set()
+    for db_dir in _get_news_dirs():
+        for p in db_dir.glob("*.db"):
+            dates.add(p.stem)
+    return sorted(dates, reverse=True)
 
 
 def list_platforms() -> list[str]:
@@ -99,7 +138,14 @@ def list_platforms() -> list[str]:
     dates = list_available_dates()
     if not dates:
         return []
-    db_path = TRENDRADAR_NEWS_DIR / f"{dates[0]}.db"
+    db_path = None
+    for db_dir in _get_news_dirs():
+        candidate = db_dir / f"{dates[0]}.db"
+        if candidate.exists():
+            db_path = candidate
+            break
+    if db_path is None:
+        return []
     try:
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute("SELECT name FROM platforms WHERE is_active=1 ORDER BY name").fetchall()
