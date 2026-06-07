@@ -59,6 +59,14 @@ registerTool({
             type: "number",
             description: "页面加载后额外等待时间（毫秒，默认 2000），用于等待 JS 渲染完成",
           },
+          width: {
+            type: "number",
+            description: "viewport 宽度(像素,默认 1280)。截图时也影响全页宽度",
+          },
+          offset: {
+            type: "number",
+            description: "截图模式:起始 Y 像素(设置后只截 offset~offset+900px 区域)；文字模式:字符偏移量(从第 offset 个字符开始返回)",
+          },
         },
         required: ["url"],
       },
@@ -72,6 +80,8 @@ registerTool({
 
     const mode = String(args["mode"] ?? "text") as "text" | "screenshot" | "both";
     const wait_ms = Math.min(10000, Math.max(0, Number(args["wait_ms"] ?? 2000)));
+    const vp_width = Math.max(320, Math.min(3840, Number(args["width"] ?? 1280)));
+    const offset = Math.max(0, Number(args["offset"] ?? 0));
 
     // 预生成缓存路径
     let textPath = "";
@@ -88,6 +98,8 @@ registerTool({
       "--url", url,
       "--mode", mode,
       "--wait-ms", String(wait_ms),
+      "--width", String(vp_width),
+      "--offset", String(offset),
     ];
     if (textPath) spawnArgs.push("--text-out", textPath);
     if (imgPath) spawnArgs.push("--img-out", imgPath);

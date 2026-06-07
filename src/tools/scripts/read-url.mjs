@@ -6,6 +6,7 @@
  *   node read-url.mjs --url <URL> [--mode text|screenshot|both]
  *                     [--wait-ms 2000] [--text-out /path/to/file.md]
  *                     [--img-out /path/to/file.png]
+ *                     [--width 1280] [--offset 0]
  *
  * 依赖: playwright-core（已在 tinyclaw 主包安装）
  * 输出: JSON 到 stdout
@@ -66,6 +67,9 @@ async function main() {
   const waitMs = parseInt(args["wait-ms"] ?? "2000", 10);
   const textOut = args["text-out"];
   const imgOut = args["img-out"];
+  const vpWidth = parseInt(args["width"] ?? "1280", 10);
+  const vpHeight = 900;
+  const offset = parseInt(args["offset"] ?? "0", 10);
 
   if (!url) {
     console.log(JSON.stringify({ error: "缺少 --url 参数" }));
@@ -91,7 +95,7 @@ async function main() {
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      viewport: { width: 1280, height: 900 },
+      viewport: { width: vpWidth, height: vpHeight },
     });
 
     const page = await context.newPage();
@@ -105,15 +109,17 @@ async function main() {
     if (mode === "text" || mode === "both") {
       const text = await extractText(page);
       const title = await page.title();
-      const markdown = `# ${title}\n\n> 来源：${url}\n\n${text}`;
+      // offset 支持：字符切片
+      const slicedText = offset > 0 ? text.slice(offset) : text;
+      const markdown = `# ${title}\n\n> 来源:${url}\n\n${slicedText}`;
 
       if (textOut) {
         mkdirSync(dirname(textOut), { recursive: true });
         writeFileSync(textOut, markdown, "utf-8");
         result.textLength = text.length;
-        result.textPreview = text.slice(0, 800);
+        result.textPreview = slicedText.slice(0, 800);
       } else {
-        result.textPreview = text.slice(0, 2000);
+        result.textPreview = slicedText.slice(0, 2000);
         result.textLength = text.length;
       }
     }
@@ -122,7 +128,18 @@ async function main() {
     if (mode === "screenshot" || mode === "both") {
       if (imgOut) {
         mkdirSync(dirname(imgOut), { recursive: true });
-        await page.screenshot({ path: imgOut, fullPage: false, type: "png" });
+        if (offset > 0) {
+          // 从 offset Y 位置截取 viewport 高度的区域
+          await page.screenshot({
+            path: imgOut,
+            fullPage: false,
+            clip: { x: 0, y: offset, width: vpWidth, height: vpHeight },
+            type: "png",
+          });
+        } else {
+          // 默认截全页
+          await page.screenshot({ path: imgOut, fullPage: true, type: "png" });
+        }
       }
     }
 
