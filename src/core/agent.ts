@@ -9,6 +9,7 @@ import { searchMemory } from "../memory/qmd.js";
 import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary, distillCodeTurnToNotes } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
+import { PlanAbortError } from "../core/session.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
@@ -1289,7 +1290,10 @@ export async function runAgent(
           ...(opts.onLoopExit ? { onLoopExit: opts.onLoopExit } : {}),
         });
       } catch (err) {
-        if (err instanceof MFAError) {
+        if (err instanceof PlanAbortError) {
+          // exit_plan_mode 被用户新消息中断:用"未执行"消息替代 approved:false，避免 AI 误判继续执行
+          result = "操作被用户新消息中断，此工具调用未执行";
+        } else if (err instanceof MFAError) {
           result = `操作被取消：${err.message}`;
         } else {
           result = `工具执行错误：${err instanceof Error ? err.message : String(err)}`;

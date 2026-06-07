@@ -24,6 +24,17 @@ interface PendingApproval {
 }
 
 /** Plan 审批控制柄 */
+/**
+ * exit_plan_mode 等待被用户新消息中断时抛出的错误。
+ * agent.ts 会把此错误转为 "操作被用户新消息中断" tool_result（不留 approved:false）。
+ */
+export class PlanAbortError extends Error {
+  constructor() {
+    super("会话被中断,Plan 审批已取消");
+    this.name = "PlanAbortError";
+  }
+}
+
 interface PendingPlanApproval {
   resolve: (result: PlanApprovalResult) => void;
   reject: (err: Error) => void;
@@ -759,6 +770,7 @@ export class Session {
         match: () => true,
         handle: (content) => {
           unregister();
+          console.log("[plan] waitForPlanApproval handle triggered, content:", content.slice(0, 120));
           const trimmed = content.trim();
           const n = parseInt(trimmed, 10);
           this.pendingPlanApproval = null;
@@ -789,7 +801,7 @@ export class Session {
 
     abortPendingPlanApproval(): void {
     if (this.pendingPlanApproval) {
-      this.pendingPlanApproval.reject(new Error("会话被中断，Plan 审批已取消"));
+      this.pendingPlanApproval.reject(new PlanAbortError());
       this.pendingPlanApproval = null;
     }
   }

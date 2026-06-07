@@ -15,6 +15,7 @@
  */
 
 import { registerTool, type ToolContext } from "../tools/registry.js";
+import { PlanAbortError } from "../core/session.js";
 
 const DEFAULT_ACTIONS = ["autopilot", "interactive", "exit_only"];
 const DEFAULT_RECOMMENDED = "autopilot";
@@ -75,7 +76,9 @@ registerTool({
       const result = await ctx.onPlanRequest(summary, actions, recommendedAction, planPath);
       return JSON.stringify(result);
     } catch (err) {
-      // 超时或中断
+      // 被用户新消息中断:re-throw 让 agent.ts 用"操作被中断"替代 tool_result
+      if (err instanceof PlanAbortError) throw err;
+      // 其他超时或中断
       return JSON.stringify({
         approved: false,
         feedback: err instanceof Error ? err.message : "操作超时或被中断",
