@@ -282,7 +282,7 @@ async function main(): Promise<void> {
       if (existing) {
         // 追加消息，重置 timer
         // 如果 runAgent 已注册了 inboundBus 等待者（askUser/exitPlan），优先 dispatch
-        if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
+        if (!session.inboundBus.hasNoBounceWaiter() && session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
           clearTimeout(existing.timer);
           pendingBuffers.delete(sessionId);
           // 合并先前缓冲的消息再送入 runAgent
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
               const mergedDownloadedForBus = newBuf.items.flatMap((i) => i.earlyDownloaded);
               const mergedEnrichedForBus = buildEnrichedContent(mergedText, mergedDownloadedForBus);
               const mergedImagePaths = mergedDownloadedForBus.filter(d => d.contentType.startsWith("image/")).map(d => d.localPath);
-              if (session.inboundBus.dispatch(mergedEnrichedForBus, { rawContent: mergedText, imagePaths: mergedImagePaths, enrichedContent: mergedEnrichedForBus })) {
+              if (!session.inboundBus.hasNoBounceWaiter() && session.inboundBus.dispatch(mergedEnrichedForBus, { rawContent: mergedText, imagePaths: mergedImagePaths, enrichedContent: mergedEnrichedForBus })) {
                 resolve('');
                 return;
               }

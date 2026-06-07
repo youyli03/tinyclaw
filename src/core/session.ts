@@ -755,6 +755,7 @@ export class Session {
       const unregister = this.inboundBus.register({
         id: `${this.sessionId}:plan:${Date.now()}`,
         label: "Plan 审批",
+        noBounce: true,
         match: () => true,
         handle: (content) => {
           unregister();

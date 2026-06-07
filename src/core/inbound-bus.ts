@@ -25,6 +25,12 @@ export interface Waiter {
   /** 可选标签，用于日志或向用户展示来源（如 "B站总结"） */
   label?: string;
   /**
+   * 若为 true,此 Waiter 不可被 debounce 积压的旧消息消费。
+   * 适用于 exit_plan_mode 等需要用户主动看到提示后才回复的场景。
+   * debounce flush 时若存在 noBounce waiter,会走 handleMessageCore 而非 dispatch。
+   */
+  noBounce?: boolean;
+  /**
    * 判断这条消息是否可以被本 Waiter 处理。
    * 通常返回 true（等待任意用户回复），或做特定前缀检测。
    */
@@ -63,6 +69,14 @@ export class InboundMessageBus {
   /** 强制清除所有等待者（会话结束或重置时调用） */
   clear(): void {
     this.waiters = [];
+  }
+
+  /**
+   * 检查队列中是否存在 noBounce waiter（不可被 debounce 旧消息消费）。
+   * debounce flush 前应先检查此方法，若为 true 则走 handleMessageCore。
+   */
+  hasNoBounceWaiter(): boolean {
+    return this.waiters.some((w) => w.noBounce === true);
   }
 
   /** 当前队列长度（用于调试） */
