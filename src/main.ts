@@ -105,6 +105,23 @@ function getSession(sessionId: string): Session {
 
 // ── 主函数 ────────────────────────────────────────────────────────────────────
 
+/** 清理 Python venv 对 process.env 的污染。
+ *  若 tinyclaw 在已激活 venv 的 shell 中启动，VIRTUAL_ENV 和 PATH 前缀都会被继承，
+ *  导致所有 spawn("python3"...) 调用走到错误的 venv python3。
+ *  在最早的入口处清理，之后所有子进程 spawn 都继承干净的环境。
+ */
+function stripVenvFromEnv(): void {
+  delete process.env.VIRTUAL_ENV;
+  delete process.env.VIRTUAL_ENV_PROMPT;
+  if (process.env.PATH) {
+    const cleaned = process.env.PATH.split(":").filter((p) => !p.includes("venv/bin")).join(":");
+    if (cleaned !== process.env.PATH) {
+      process.env.PATH = cleaned;
+      console.log("[tinyclaw] Stripped venv/bin from PATH");
+    }
+  }
+}
+
 /** 加载 ~/.tinyclaw/env 文件（每行 KEY=VALUE），注入 process.env */
 function loadDotEnv(): void {
   const envPath = path.join(os.homedir(), ".tinyclaw", "env");
@@ -131,7 +148,8 @@ function loadDotEnv(): void {
 }
 
 async function main(): Promise<void> {
-  // 0. 加载用户自定义环境变量
+  // 0. 清理 venv 环境污染 + 加载用户自定义环境变量
+  stripVenvFromEnv();
   loadDotEnv();
   // 1. 验证配置（fail-fast）
   const cfg = loadConfig();
@@ -340,7 +358,7 @@ async function main(): Promise<void> {
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;
 
     /** 每次用户消息处理中，exit_plan_mode + ask_user 合计最多调用次数 */
-    const MAX_INTERACTIVE_CALLS = 15;
+    const MAX_INTERACTIVE_CALLS = 30;
     /** 当前用户消息处理中已使用的交互调用计数 */
     let interactiveCallCount = 0;
 
@@ -984,7 +1002,7 @@ ${message}`;
                 // 重建 onAskUser / onNotify,供续接的 runAgent 使用
                 // (marker.peerId/msgType 记录了原始请求者,重启后仍向其发送交互消息)
                 let restartInteractiveCallCount = 0;
-                const MAX_INTERACTIVE_CALLS_RESTART = 15;
+                const MAX_INTERACTIVE_CALLS_RESTART = 30;
                 const resumeOnAskUser = async (
                   resumeQuestion: string,
                   resumeOptions?: Array<{ label: string; description?: string; recommended?: boolean }>,
