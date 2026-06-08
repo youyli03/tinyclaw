@@ -358,7 +358,7 @@ async function main(): Promise<void> {
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;
 
     /** 每次用户消息处理中，exit_plan_mode + ask_user 合计最多调用次数 */
-    const MAX_INTERACTIVE_CALLS = 30;
+    const MAX_INTERACTIVE_CALLS = 45;
     /** 当前用户消息处理中已使用的交互调用计数 */
     let interactiveCallCount = 0;
 
@@ -1003,7 +1003,7 @@ ${message}`;
                 // 重建 onAskUser / onNotify,供续接的 runAgent 使用
                 // (marker.peerId/msgType 记录了原始请求者,重启后仍向其发送交互消息)
                 let restartInteractiveCallCount = 0;
-                const MAX_INTERACTIVE_CALLS_RESTART = 30;
+                const MAX_INTERACTIVE_CALLS_RESTART = 45;
                 const resumeOnAskUser = async (
                   resumeQuestion: string,
                   resumeOptions?: Array<{ label: string; description?: string; recommended?: boolean }>,
