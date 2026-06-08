@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { ConfigSchema, type Config, MCPConfigSchema, MCPServerSchema, type MCPConfig, type MCPServerConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, type SecretsConfig } from "./schema.js";
+import { ConfigSchema, type Config, MCPConfigSchema, MCPServerSchema, type MCPConfig, type MCPServerConfig, type RetryConfig, MemStoresConfigSchema, type MemStoresConfig, SecretsConfigSchema, SecretEntrySchema, type SecretsConfig } from "./schema.js";
 import { ensureSecureFilePerm } from "../utils/file-perm.js";
 
 // ~/.tinyclaw/config.toml
@@ -183,10 +183,25 @@ export function loadSecretsConfig(): SecretsConfig {
     }
     return {};
   }
+  // 先尝试整体解析（快路径）
   const result = SecretsConfigSchema.safeParse(raw);
-  if (!result.success) {
-    console.warn(`[tinyclaw] secrets.toml 验证失败，使用空配置：${result.error.message}`);
-    return {};
+  if (result.success) {
+    return result.data;
   }
-  return result.data;
+
+  // 整体解析失败 → 逐条容错，避免单个格式错误使全部 secrets 丢失（如 QQBOT_MAIN）
+  console.warn(`[tinyclaw] secrets.toml 验证失败，尝试逐条加载: ${JSON.stringify(result.error.issues)}`);
+  const secrets: SecretsConfig = {};
+  const rawRecord = raw as Record<string, unknown>;
+  for (const [key, val] of Object.entries(rawRecord)) {
+    const sr = SecretEntrySchema.safeParse(val);
+    if (sr.success) {
+      secrets[key] = sr.data;
+    } else {
+      console.warn(
+        `[tinyclaw] secrets.toml [${key}] 格式无效，已跳过: ${JSON.stringify(sr.error.issues)}`
+      );
+    }
+  }
+  return secrets;
 }

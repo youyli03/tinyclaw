@@ -717,11 +717,21 @@ export type MFAConfig = z.infer<typeof MFASchema>;
  * - `value`         — 真实凭证值，仅在 http_request 工具内部使用，不暴露给 LLM
  * - `allowed_hosts` — 该凭证允许发往的域名列表（空数组 = 不限制）
  */
-const SecretEntrySchema = z.object({
+const SecretEntryObjectSchema = z.object({
   value: z.string(),
   allowed_hosts: z.array(z.string()).default([]),
 });
-export type SecretEntry = z.infer<typeof SecretEntrySchema>;
+
+/**
+ * 单个 secret 条目，支持两种格式：
+ * - 对象格式（推荐）：`[KEY]\nvalue = "..."\nallowed_hosts = [...]`
+ * - 裸字符串格式（兼容）：`KEY = "value"` → 自动转为 `{value, allowed_hosts: []}`
+ */
+export const SecretEntrySchema = z.union([
+  SecretEntryObjectSchema,
+  z.string().transform((v) => ({ value: v, allowed_hosts: [] as string[] })),
+]);
+export type SecretEntry = z.infer<typeof SecretEntryObjectSchema>;
 
 /**
  * secrets.toml 整体结构：`{ [KEY]: { value, allowed_hosts } }`
