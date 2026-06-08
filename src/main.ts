@@ -716,6 +716,36 @@ ${message}`;
           }
         }
 
+        // render_diagram 兜底:若 AI 使用了 render_diagram 但最终 content 未嵌入 <img> 标签,
+        // 则从 session 最近的 tool_result 中扫描并自动附加图片路径。
+        if (result.toolsUsed.includes("render_diagram") && !/<img\s/i.test(toSend)) {
+          const msgs = session.getMessages();
+          let foundImgPath: string | null = null;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i]!;
+            if (m.role === "assistant") {
+              const tc = (m as { role: "assistant"; tool_calls?: Array<{ function: { name: string }; id: string }> }).tool_calls;
+              if (!tc) continue;
+              for (const call of tc) {
+                if (call.function.name === "render_diagram") {
+                  const toolMsg = msgs.find(
+                    (x) => x.role === "tool" && (x as { role: "tool"; tool_call_id: string }).tool_call_id === call.id
+                  ) as { role: "tool"; content: string } | undefined;
+                  if (toolMsg) {
+                    const imgMatch = toolMsg.content.match(/<img\s+src="([^"]+)"/);
+                    if (imgMatch?.[1]) { foundImgPath = imgMatch[1]; break; }
+                  }
+                }
+              }
+            }
+            if (foundImgPath) break;
+          }
+          if (foundImgPath && fs.existsSync(foundImgPath)) {
+            console.log(`[main] render_diagram 兜底:自动附加图片 ${foundImgPath}`);
+            toSend = `${toSend}\n<img src="${foundImgPath}"/>`.trim();
+          }
+        }
+
         // Code 模式：将含 Markdown 特征的纯文本回复渲染为图片
         if (session.mode === "code" && looksLikeMarkdown(toSend)) {
           try {
