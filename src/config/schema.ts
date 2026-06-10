@@ -520,6 +520,17 @@ const ToolsSchema = z.object({
      */
     allowPrivateHosts: z.boolean().default(false),
   }).default({}),
+  /** 工具返回值安全检测配置 */
+  security: z.object({
+    /**
+     * Prompt Injection 检测：扫描工具返回值中是否含有提示词注入特征。
+     * 检测到后会：打印安全日志、通过 onNotify 推送报警、将可疑内容替换为占位符。
+     * 默认开启（true），可设为 false 关闭。
+     */
+    injectionDetect: z.object({
+      enabled: z.boolean().default(true),
+    }).default({}),
+  }).default({}),
 }).default({});
 
 // ── MemStore 配置（独立文件 ~/.tinyclaw/memstores.toml）──────────────────────────

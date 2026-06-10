@@ -1,3 +1,4 @@
+import { detectPromptInjection } from "../security/injection-detector.js";
 import { Session } from "./session.js";
 import { llmRegistry, buildFallbackClient } from "../llm/registry.js";
 import { LLMConnectionError, pathToDataUrlCompressed } from "../llm/client.js";
@@ -1315,6 +1316,21 @@ export async function runAgent(
           result.slice(origLen - tailLen);
       }
       opts.onToolResult?.(call.name, result);
+
+      // ── Prompt Injection 检测 ────────────────────────────────────────────
+      const injAlert = detectPromptInjection(call.name, result, loadConfig());
+      if (injAlert) {
+        console.warn(`[security] prompt injection detected in tool "${call.name}": ${injAlert.pattern} | snippet: ${injAlert.snippet}`);
+        void opts.onNotify?.(
+          `⚠️ **[安全警告] 检测到疑似提示词注入！**\n` +
+          `工具: \`${call.name}\`\n` +
+          `规则: ${injAlert.pattern}\n` +
+          `片段: \`${injAlert.snippet}\`\n\n` +
+          `可疑内容已自动屏蔽，建议检查该工具的数据来源。`
+        );
+        result = injAlert.sanitized;
+      }
+
       return result;
     };
 
