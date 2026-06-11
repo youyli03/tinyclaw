@@ -566,6 +566,38 @@ async function main(): Promise<void> {
         (optionLines.length > 0 ? `---\n\n${optionLines.join("\n")}` : "") +
         freeformNote;
 
+      // ── render_diagram 抢发修复 ──────────────────────────────────────────────
+      // ask_user 会阻塞等待用户回复，若本轮同时调用了 render_diagram，
+      // 其图片不会出现在 final content 里。在此先主动发出。
+      try {
+        const allMsgs = session.getMessages();
+        for (let mi = allMsgs.length - 1; mi >= 0; mi--) {
+          const mm = allMsgs[mi]!;
+          if (mm.role === "assistant") {
+            const tcs = (mm as { role: "assistant"; tool_calls?: Array<{ function: { name: string }; id: string }> }).tool_calls;
+            if (!tcs) break; // 最近一批 assistant 消息无 tool_calls，停止扫描
+            for (const tc of tcs) {
+              if (tc.function.name === "render_diagram") {
+                const tmsg = allMsgs.find(
+                  (x) => x.role === "tool" && (x as { role: "tool"; tool_call_id: string }).tool_call_id === tc.id
+                ) as { role: "tool"; content: string } | undefined;
+                if (tmsg) {
+                  const imgM = tmsg.content.match(/<img\s+src="([^"]+)"/);
+                  if (imgM?.[1] && fs.existsSync(imgM[1])) {
+                    console.log(`[main] ask_user 前预发 render_diagram 图片: ${imgM[1]}`);
+                    await connector.send(msg.peerId, msg.type, `<img src="${imgM[1]}"/>`).catch(() => {});
+                  }
+                }
+              }
+            }
+            break; // 只处理最近一批
+          }
+        }
+      } catch (preErr) {
+        console.warn("[main] render_diagram 预发失败:", preErr);
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       let sent = false;
       try {
         const outDir = path.join(
