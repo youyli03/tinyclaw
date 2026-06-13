@@ -240,6 +240,8 @@ export interface ResolvedBackend {
   isCopilotProvider?: boolean;
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型） */
   disableThinking?: boolean;
+  /** 历史视觉消息保留数量,保留最近 N 条含图消息,默认 3 */
+  maxHistoryImages?: number;
   /**
    * WebSocket Responses API 端点 URL（wss://...）。
    * 设置后，streamChat() 优先使用 WebSocket，失败时自动降级为 HTTP Chat Completions。
@@ -482,28 +484,22 @@ export function pathToDataUrlCompressed(imgPath: string): string | null {
 
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
  *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
-function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true): LLMChatMessage[] {
-  // 找出最后一条含 image_path 的消息索引（该轮图片正常传输，历史图片丢弃）
-  let lastImageMsgIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
+function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true, maxHistoryImages = 3): LLMChatMessage[] {
+  // 收集最近 maxHistoryImages 条含 image_path 的消息索引
+  const allowedImageMsgIdxSet = new Set<number>();
+  for (let i = messages.length - 1; i >= 0 && allowedImageMsgIdxSet.size < maxHistoryImages; i--) {
     const m = messages[i]!;
     if (m.role === "tool") continue;
     const parts = getContentParts(m.content);
     if (parts.some((p) => p.type === "image_path")) {
-      // 检查该消息之后是否已有 assistant 回复；若有，说明 LLM 上轮已见过该图，
-      // 本轮无需再次编码（降级为历史图片文本提示）。
-      const hasAssistantAfter = messages.slice(i + 1).some((mm) => mm.role === "assistant");
-      if (!hasAssistantAfter) {
-        lastImageMsgIdx = i;
-      }
-      break;
+      allowedImageMsgIdxSet.add(i);
     }
   }
 
-  // 只收集最后一条含图消息的图片路径，历史图片不编码
+  // 收集允许编码的所有图片路径
   const imagePaths: string[] = [];
-  if (lastImageMsgIdx >= 0) {
-    const m = messages[lastImageMsgIdx]!;
+  for (const idx of allowedImageMsgIdxSet) {
+    const m = messages[idx]!;
     for (const p of getContentParts(m.content)) {
       if (p.type === "image_path") imagePaths.push(p.path);
     }
@@ -537,8 +533,8 @@ function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true
         if (!supportsVision) {
           return { type: "text" as const, text: `[图片: ${p.path}（当前模型不支持视觉）]` };
         }
-        // 历史图片（非最后一条含图消息）直接丢弃，替换为文本提示
-        if (idx !== lastImageMsgIdx) {
+        // 历史图片(不在允许列表中)直接丢弃,替换为文本提示
+        if (!allowedImageMsgIdxSet.has(idx)) {
           return { type: "text" as const, text: `[历史图片: ${p.path}（如需查看请用 read_image tool）]` };
         }
         const url = getUrl(p.path);
@@ -670,7 +666,7 @@ export class LLMClient {
     const canUseTools = this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
     // Resolve images to base64 (same as HTTP path)
-    const resolved = resolveMessagesForApi(messages, this.supportsVision);
+    const resolved = resolveMessagesForApi(messages, this.supportsVision, this.maxHistoryImages);
     const { instructions, input } = chatMessagesToResponsesInput(resolved);
     const tools = canUseTools ? toolsToResponsesFormat(opts.tools!) : [];
 
@@ -733,6 +729,11 @@ export class LLMClient {
     return this.backend.supportsVision ?? false;
   }
 
+  /** 历史视觉消息保留数量,默认 3 */
+  get maxHistoryImages(): number {
+    return this.backend.maxHistoryImages ?? 3;
+  }
+
   /** 该模型是否支持并行工具调用（parallel_tool_calls） */
   get supportsParallelToolCalls(): boolean {
     return this.backend.supportsParallelToolCalls ?? false;
@@ -761,7 +762,7 @@ export class LLMClient {
       ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
     } : undefined;
 
-    const resolved = resolveMessagesForApi(messages, this.supportsVision);
+    const resolved = resolveMessagesForApi(messages, this.supportsVision, this.maxHistoryImages);
     const resolvedCall = withRetry(() => this.client.chat.completions.create(
       {
         model: this.backend.model,
@@ -848,7 +849,7 @@ export class LLMClient {
     const idleMsAfterFirstChunk = opts.disableIdleAfterFirstChunk ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
-    const resolvedForStream = resolveMessagesForApi(messages, this.supportsVision);
+    const resolvedForStream = resolveMessagesForApi(messages, this.supportsVision, this.maxHistoryImages);
     const canUseTools =
       this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 

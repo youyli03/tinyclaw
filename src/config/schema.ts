@@ -132,6 +132,12 @@ const BackendRoleSchema = z.object({
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
   /**
+   * 历史视觉消息保留数量:发送 API 请求时保留最近 N 条含图消息(含 read_image 注入的图片),
+   * 超出部分降级为"[历史图片: path]"文本提示。默认 3。
+   * 设为 1 可恢复旧行为(只保留最新一张)。
+   */
+  maxHistoryImages: z.number().int().min(1).optional(),
+  /**
    * Vision 后端专属：有序备用模型列表。
    * 主模型 429 / RPD 超限 / 网络错误时，按顺序尝试 fallbacks 中的模型。
    * 示例: fallbacks = ["google/gemini-2.5-flash-lite-preview-05-20", "copilot/oswe-vscode-prime"]
