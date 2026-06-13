@@ -54,6 +54,76 @@ registerTool({
   },
 });
 
+/**
+ * 章节级 upsert:在 MEM.md 中定位指定 `## section` 章节,替换或追加其内容。
+ * - mode=upsert(默认):替换该章节标题行之后、下一个 ## 章节之前的全部内容
+ * - mode=append:在该章节末尾追加内容
+ * - 章节不存在时:在文件末尾追加新章节
+ * 操作完成后触发向量索引更新(fire-and-forget)。
+ */
+function upsertMemSection(filePath: string, section: string, content: string, mode: "upsert" | "append", agentId: string): string {
+  const heading = `## ${section}`;
+
+  // 文件不存在时直接创建
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, `# 持久记忆\n\n${heading}\n\n${content.trimEnd()}\n`, "utf-8");
+    return `已创建 MEM.md 并写入章节"${section}"`;
+  }
+
+  const fileContent = fs.readFileSync(filePath, "utf-8");
+  const lines = fileContent.split("\n");
+
+  // 查找章节起始行(## section)
+  const startLineIdx = lines.findIndex(l => l.trimEnd() === heading);
+
+  if (startLineIdx === -1) {
+    // 章节不存在,追加到文件末尾
+    const trimmed = fileContent.trimEnd();
+    fs.writeFileSync(filePath, `${trimmed}\n\n${heading}\n\n${content.trimEnd()}\n`, "utf-8");
+    import("../memory/qmd.js").then(({ updateStore }) => {
+      updateStore("memory", agentId).catch(() => {});
+    }).catch(() => {});
+    return `已在 MEM.md 末尾追加新章节"${section}"(${content.length} 字节)`;
+  }
+
+  // 查找章节结束行(下一个 ## 行,或文件末尾)
+  let endLineIdx = lines.length;
+  for (let i = startLineIdx + 1; i < lines.length; i++) {
+    if ((lines[i] ?? "").startsWith("## ")) {
+      endLineIdx = i;
+      break;
+    }
+  }
+
+  let newLines: string[];
+  if (mode === "append") {
+    const contentLines = content.trimEnd().split("\n");
+    newLines = [
+      ...lines.slice(0, endLineIdx),
+      ...contentLines,
+      ...(endLineIdx < lines.length ? ["", ...lines.slice(endLineIdx)] : [""]),
+    ];
+  } else {
+    const contentLines = content.trimEnd().split("\n");
+    newLines = [
+      ...lines.slice(0, startLineIdx + 1),
+      "",
+      ...contentLines,
+      ...(endLineIdx < lines.length ? ["", ...lines.slice(endLineIdx)] : [""]),
+    ];
+  }
+
+  const joined = newLines.join("\n").trimEnd() + "\n";
+  fs.writeFileSync(filePath, joined, "utf-8");
+
+  import("../memory/qmd.js").then(({ updateStore }) => {
+    updateStore("memory", agentId).catch(() => {});
+  }).catch(() => {});
+
+  const action = mode === "append" ? "已追加内容到" : "已更新";
+  return `${action} MEM.md 章节"${section}"(${content.length} 字节):${filePath}`;
+}
+
 registerTool({
   requiresMFA: false,
   spec: {
@@ -61,22 +131,37 @@ registerTool({
     function: {
       name: "memory_write_mem",
       description:
-        "写入当前 Agent 的 MEM.md 持久记忆文件。" +
-        "支持 overwrite(覆盖全文,默认)和 append(追加到末尾)两种模式。" +
+        "写入当前 Agent 的 MEM.md 持久记忆文件——章节级更新,不会破坏其他章节内容。\n" +
+        "必须指定 section(目标章节标题,不含 ## 前缀),如「👤 用户偏好」、「📝 行为反馈记录」。\n" +
+        "- mode=upsert(默认):替换该章节的全部内容,保留其他所有章节不变\n" +
+        "- mode=append:在该章节末尾追加内容,不覆盖现有内容\n" +
+        "若指定的章节不存在,会自动在 MEM.md 末尾追加新章节。\n" +
         "无需 MFA,适合在禁用了 write_file 的 Agent 中使用。",
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "要写入的内容" },
-          mode: { type: "string", enum: ["overwrite", "append"], description: "写入模式:overwrite 覆盖全文(默认),append 追加到末尾" },
+          section: {
+            type: "string",
+            description: "目标章节标题,不含 ## 前缀,例如「👤 用户偏好」或「📝 行为反馈记录」。MEM.md 现有章节:👤 用户偏好 / 🎯 当前任务 / 🗂️ 常用技能与任务 / 🐛 踩坑记录 / ✅ 已完成大事 / 📝 行为反馈记录 / 📝 近期变更"
+          },
+          content: { type: "string", description: "章节的新内容(不含 ## 标题行本身)" },
+          mode: {
+            type: "string",
+            enum: ["upsert", "append"],
+            description: "upsert(默认):替换章节全部内容;append:追加到章节末尾"
+          },
         },
-        required: ["content"],
+        required: ["section", "content"],
       },
     },
   },
   execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
-    return writeTextFile(agentManager.memPath(agentId), String(args["content"] ?? ""), String(args["mode"] ?? "overwrite"), "MEM.md");
+    const section = String(args["section"] ?? "").trim();
+    const content = String(args["content"] ?? "");
+    const mode = (String(args["mode"] ?? "upsert") === "append") ? "append" : "upsert";
+    if (!section) return "错误:缺少 section 参数,请指定目标章节标题(如「👤 用户偏好」)";
+    return upsertMemSection(agentManager.memPath(agentId), section, content, mode, agentId);
   },
 });
 
