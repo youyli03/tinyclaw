@@ -52,7 +52,7 @@ registerTool({
           },
           mode: {
             type: "string",
-            enum: ["text", "screenshot", "both"],
+            enum: ["text", "screenshot", "both", "html"],
             description: "获取模式：text（提取正文，默认）/ screenshot（截图）/ both（文本+截图）",
           },
           wait_ms: {
@@ -78,7 +78,7 @@ registerTool({
     if (!url) return "错误：缺少 url 参数";
     if (!url.startsWith("http")) return `错误：不支持的 URL 格式: ${url}`;
 
-    const mode = String(args["mode"] ?? "text") as "text" | "screenshot" | "both";
+    const mode = String(args["mode"] ?? "text") as "text" | "screenshot" | "both" | "html";
     const wait_ms = Math.min(10000, Math.max(0, Number(args["wait_ms"] ?? 2000)));
     const vp_width = Math.max(320, Math.min(3840, Number(args["width"] ?? 1280)));
     const offset = Math.max(0, Number(args["offset"] ?? 0));
@@ -86,11 +86,15 @@ registerTool({
     // 预生成缓存路径
     let textPath = "";
     let imgPath = "";
+    let htmlPath = "";
     if (mode === "text" || mode === "both") {
       textPath = urlToFilename(url, "md");
     }
     if (mode === "screenshot" || mode === "both") {
       imgPath = urlToFilename(url, "png");
+    }
+    if (mode === "html") {
+      htmlPath = urlToFilename(url, "html");
     }
 
     const spawnArgs = [
@@ -103,6 +107,7 @@ registerTool({
     ];
     if (textPath) spawnArgs.push("--text-out", textPath);
     if (imgPath) spawnArgs.push("--img-out", imgPath);
+    if (htmlPath) spawnArgs.push("--html-out", htmlPath);
 
     const result = spawnSync("node", spawnArgs, {
       encoding: "utf-8",
@@ -116,6 +121,8 @@ registerTool({
       url: string;
       textPath?: string;
       imgPath?: string;
+      htmlPath?: string;
+      htmlLength?: number;
       textLength?: number;
       textPreview?: string;
       error?: string;
@@ -138,6 +145,9 @@ registerTool({
     if (parsed.imgPath) {
       lines.push(`📸 截图已保存: \`${parsed.imgPath}\``);
       lines.push(`<img src="${parsed.imgPath}"/>`);
+    }
+    if (parsed.htmlPath) {
+      lines.push(`🌐 HTML 已保存: \`${parsed.htmlPath}\` (${parsed.htmlLength ?? 0} 字节)`);
     }
     return lines.join("\n");
   },

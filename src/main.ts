@@ -704,7 +704,7 @@ ${message}`;
     } else {
       messageContent = buildEnrichedContent(msg.content, earlyDownloaded);
       // 在用户发出的消息前加上当前时间，方便 Agent 识别当前日期
-      const nowStr = new Date().toLocaleString();
+      const nowStr = new Date().toLocaleString() + " UTC+8";
       messageContent = `[${nowStr}] ${messageContent}`;
     }
 
@@ -871,7 +871,7 @@ ${message}`;
     }
 
     // 注入消息，走完整 runAgent 路径
-    const nowStr = new Date().toLocaleString();
+    const nowStr = new Date().toLocaleString() + " UTC+8";
 
     // 尝试从 targetSessionId 解析 qqbot peerId，构建 onNotify 推送回调
     let targetOnNotify: ((msg: string) => Promise<void>) | undefined;

@@ -3,9 +3,10 @@
  * read-url.mjs — 无头浏览器访问 URL，提取文本和/或截图
  *
  * 用法:
- *   node read-url.mjs --url <URL> [--mode text|screenshot|both]
+ *   node read-url.mjs --url <URL> [--mode text|screenshot|both|html]
  *                     [--wait-ms 2000] [--text-out /path/to/file.md]
  *                     [--img-out /path/to/file.png]
+ *                     [--html-out /path/to/file.html]
  *                     [--width 1280] [--offset 0]
  *
  * 依赖: playwright-core（已在 tinyclaw 主包安装）
@@ -67,6 +68,7 @@ async function main() {
   const waitMs = parseInt(args["wait-ms"] ?? "2000", 10);
   const textOut = args["text-out"];
   const imgOut = args["img-out"];
+  const htmlOut = args["html-out"];
   const vpWidth = parseInt(args["width"] ?? "1280", 10);
   const vpHeight = 900;
   const offset = parseInt(args["offset"] ?? "0", 10);
@@ -77,7 +79,7 @@ async function main() {
   }
 
   let browser;
-  const result = { url, textPath: textOut, imgPath: imgOut };
+  const result = { url, textPath: textOut, imgPath: imgOut, htmlPath: htmlOut ?? undefined };
 
   try {
     browser = await chromium.launch({
@@ -99,7 +101,7 @@ async function main() {
     });
 
     const page = await context.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
 
     if (waitMs > 0) {
       await page.waitForTimeout(waitMs);
@@ -140,6 +142,21 @@ async function main() {
           // 默认截全页
           await page.screenshot({ path: imgOut, fullPage: true, type: "png" });
         }
+      }
+    }
+
+    // 保存 HTML
+    if (mode === "html" || htmlOut) {
+      const html = await page.content();
+      const outPath = htmlOut;
+      if (outPath) {
+        mkdirSync(dirname(outPath), { recursive: true });
+        writeFileSync(outPath, html, "utf-8");
+        result.htmlPath = outPath;
+        result.htmlLength = html.length;
+      } else {
+        // 未指定路径时也记录长度
+        result.htmlLength = (await page.content()).length;
       }
     }
 
