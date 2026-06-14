@@ -37,9 +37,9 @@ export const BUILTIN_SKILLS_DIR: string = (() => {
 })();
 
 /** snapshot 最多包含的 skill 数量 */
-const MAX_SKILLS_COUNT = 10;
+const MAX_SKILLS_COUNT = 15;
 /** snapshot 字符上限(超出时截断末尾 skill) */
-const MAX_SKILLS_PROMPT_CHARS = 3000;
+const MAX_SKILLS_PROMPT_CHARS = 5000;
 
 // ── 类型 ──────────────────────────────────────────────────────────────────────
 
