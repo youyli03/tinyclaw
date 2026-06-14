@@ -402,10 +402,11 @@ class SkillRegistry {
     const rules = [
       "",
       "**[Skill 调用规则 — 严格遵守]**",
-      "1. 仅当用户意图与 <description> 或 <trigger_phrases> **精确匹配**时才触发，禁止主动猜测",
-      "2. 触发前必须先调用 read_file 读取 <doc_path>，再严格按文档步骤执行，禁止凭记忆执行",
-      "3. 使用 skill_run 工具执行，禁止绕过 skill_run 自行实现步骤",
-      "4. 未找到匹配 skill 时，告知用户并询问是否继续",
+      "1. 当用户意图与 <description> 或 <trigger_phrases> **相关**（含模糊匹配、语义相近）时即可触发，无需精确匹配",
+      "2. **触发前必须先调用 read_file 读取 <doc_path> 获取完整文档**，禁止凭记忆回答 skill 相关问题（包括\"你会怎么做\"这类询问）",
+      "3. 读完文档后再判断：执行请求 → skill_run；仅询问行为 → 按文档如实回答，不要编造路径/步骤",
+      "4. 使用 skill_run 工具执行实际操作，禁止绕过 skill_run 自行实现步骤",
+      "5. 未找到匹配 skill 时，告知用户并询问是否继续",
     ].join("\n");
 
     let snapshot =
