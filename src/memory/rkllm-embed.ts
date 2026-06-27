@@ -9,78 +9,19 @@
 
 const MODEL_NAME = "rkllm/Qwen3-Embedding-0.6B_w8a8";
 const FETCH_TIMEOUT_MS = 30_000; // 30s 单次 HTTP 超时(仅网络层面)
-const MAX_RETRIES = 3;           // 最多重试 3 次
-const RETRY_BACKOFF_MS = [2000, 4000, 8000]; // 指数退避
-
 interface RkllmHttpEmbedResult {
   embedding: number[];
   dim: number;
 }
 
-/**
- * FIFO 串行队列：所有 NPU embedding 请求排队,一个完成后再处理下一个。
- * 避免并发 HTTP 连接在 NPU 串行处理时堆积超时。
- * 队列纯内存,重启后丢失;但 QMD Store(SQLite)里待嵌入文本状态未更新,
- * 下次 updateStore 会自动重新提交,最终一致。
- */
-class SerialQueue {
-  private _queue: Array<() => Promise<unknown>> = [];
-  private _running = false;
-
-  enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      this._queue.push(async () => {
-        try {
-          resolve(await fn());
-        } catch (e) {
-          reject(e);
-        }
-      });
-      this._drain();
-    });
-  }
-
-  private _drain() {
-    if (this._running) return;
-    const task = this._queue.shift();
-    if (!task) return;
-    this._running = true;
-    task().finally(() => {
-      this._running = false;
-      this._drain();
-    });
-  }
-
-  get length(): number { return this._queue.length; }
-}
-
-const _embedQueue = new SerialQueue();
-
-/**
- * 内部 fetch：不设 AbortSignal 超时(队列串行,排到了自然会处理)。
- * 仅保留 30s fetchTimeout 应对网络层面异常。
- * 重试间隔静默,最终失败才打一次 warn。
- */
 async function _doFetch(url: string, options: RequestInit): Promise<Response> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, { ...options, signal: controller.signal });
-      return res;
-    } catch (e: unknown) {
-      lastErr = e;
-      if (attempt < MAX_RETRIES) {
-        // 中间重试静默,不刷屏
-        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS[attempt]));
-      }
-    } finally {
-      clearTimeout(timer);
-    }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
-  console.warn(`[rkllm-embed] fetch failed after ${MAX_RETRIES + 1} attempts:`, (lastErr as Error)?.message ?? "unknown");
-  throw lastErr;
 }
 
 /**
@@ -95,35 +36,31 @@ export function makeRkllmEmbedLlm(port = 11434): any {
   return {
     __rkllm: true as const,
     async embed(text: string): Promise<{ embedding: number[]; model: string } | null> {
-      return _embedQueue.enqueue(async () => {
-        const res = await _doFetch(`${base}/embed`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) {
-          const err = await res.text().catch(() => "unknown");
-          throw new Error(`rkllm-embed HTTP ${res.status}: ${err}`);
-        }
-        const data = (await res.json()) as RkllmHttpEmbedResult;
-        return { embedding: data.embedding, model: MODEL_NAME };
+      const res = await _doFetch(`${base}/embed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
       });
+      if (!res.ok) {
+        const err = await res.text().catch(() => "unknown");
+        throw new Error(`rkllm-embed HTTP ${res.status}: ${err}`);
+      }
+      const data = (await res.json()) as RkllmHttpEmbedResult;
+      return { embedding: data.embedding, model: MODEL_NAME };
     },
 
     async embedBatch(texts: string[]): Promise<({ embedding: number[]; model: string } | null)[]> {
-      return _embedQueue.enqueue(async () => {
-        const res = await _doFetch(`${base}/embed_batch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ texts }),
-        });
-        if (!res.ok) {
-          const err = await res.text().catch(() => "unknown");
-          throw new Error(`rkllm-embed HTTP ${res.status}: ${err}`);
-        }
-        const data = (await res.json()) as { embeddings: number[][] };
-        return data.embeddings.map((emb) => ({ embedding: emb, model: MODEL_NAME }));
+      const res = await _doFetch(`${base}/embed_batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texts }),
       });
+      if (!res.ok) {
+        const err = await res.text().catch(() => "unknown");
+        throw new Error(`rkllm-embed HTTP ${res.status}: ${err}`);
+      }
+      const data = (await res.json()) as { embeddings: number[][] };
+      return data.embeddings.map((emb) => ({ embedding: emb, model: MODEL_NAME }));
     },
 
     async modelExists(_model: string): Promise<{ exists: boolean }> {
