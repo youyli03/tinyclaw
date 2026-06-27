@@ -349,17 +349,26 @@ registerTool({
     function: {
       name: "code_note_read",
       description:
-        "读取指定项目的跨 session 记忆（NOTES.md）。" +
-        "不传 project 时，列出所有已知项目名称。" +
-        "适合在 code session 开始时，识别出当前项目后主动调用，了解历史约束和进度。",
+        "读取指定项目的跨 session 记忆(NOTES.md)。" +
+        "默认返回摘要模式(各条目标题 + 前 200 字),避免全量加载撑 prompt。" +
+        "传 summary=false 可获取全文;不传 project 时列出所有已知项目。" +
+        "适合在 code session 开始时快速了解历史约束和进度。",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
             description:
-              "项目 slug（如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app）。" +
+              "项目 slug(如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app)。" +
               "不传则返回所有已知项目列表。",
+          },
+          summary: {
+            type: "boolean",
+            description: "摘要模式(默认 true):只返回各条目标题 + 前 200 字;false 返回全文。",
+          },
+          limit: {
+            type: "number",
+            description: "摘要模式下最多返回的条目数(默认 50)",
           },
         },
         required: [],
@@ -372,12 +381,12 @@ registerTool({
 
     // 不传 project → 列出所有已知项目
     if (!args["project"]) {
-      if (!fs.existsSync(projectsDir)) return "（暂无已知项目记忆，可通过 code_note 写入）";
+      if (!fs.existsSync(projectsDir)) return "(暂无已知项目记忆,可通过 code_note 写入)";
       const dirs = fs.readdirSync(projectsDir, { withFileTypes: true })
         .filter(d => d.isDirectory())
         .map(d => d.name);
-      if (dirs.length === 0) return "（暂无已知项目记忆）";
-      return `已知项目列表：\n${dirs.map(d => `- ${d}`).join("\n")}`;
+      if (dirs.length === 0) return "(暂无已知项目记忆)";
+      return `已知项目列表:\n${dirs.map(d => `- ${d}`).join("\n")}`;
     }
 
     const project = String(args["project"]).trim();
@@ -385,14 +394,146 @@ registerTool({
     if (noteFiles.length === 0) {
       return `项目 "${project}" 暂无记忆,可通过 code_note 创建。`;
     }
+
+    const summaryMode = args["summary"] !== false; // 默认 true
+    const maxEntries = typeof args["limit"] === "number" && args["limit"] > 0
+      ? Math.floor(args["limit"])
+      : 50;
+
+    if (!summaryMode) {
+      // 全文模式(当前行为,截断上调至 16000)
+      const recent = noteFiles.slice(-3);
+      const parts: string[] = [];
+      for (const f of recent) {
+        const month = f.split("/").pop()!.replace(".md", "");
+        parts.push(`# ${month}\n${fs.readFileSync(f, "utf-8").trim()}`);
+      }
+      const combined = parts.join("\n\n---\n\n").slice(0, 16000);
+      return combined || `项目 "${project}" 的记忆为空。`;
+    }
+
+    // 摘要模式:解析 markdown 提取结构化摘要
     const recent = noteFiles.slice(-3);
-    const parts: string[] = [];
+    const entries: string[] = [];
+    let fileHeader = "";
+
     for (const f of recent) {
       const month = f.split("/").pop()!.replace(".md", "");
-      parts.push(`# ${month}\n${fs.readFileSync(f, "utf-8").trim()}`);
+      const rawContent = fs.readFileSync(f, "utf-8");
+      const lines = rawContent.split("\n");
+
+      let inSection = false;
+      let sectionLines: string[] = [];
+      let sectionType: "date" | "milestone" | "compress" | "distill" | "analysis" | "manual" | "other" = "other";
+
+      const flushSection = () => {
+        if (!inSection || sectionLines.length === 0) return;
+        const heading = sectionLines[0] ?? "";
+        const body = sectionLines.slice(1).join("\n").trim();
+
+        if (sectionType === "date") {
+          fileHeader = heading;
+        } else if (sectionType === "milestone") {
+          const firstLine = body.split("\n")[0] ?? "";
+          entries.push(`  ${heading}  ${firstLine}`);
+        } else if (sectionType === "compress") {
+          const snippet = body.slice(0, 200).replace(/\n/g, " ");
+          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
+        } else if (sectionType === "distill") {
+          const snippet = body.slice(0, 200).replace(/\n/g, " ");
+          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
+        } else if (sectionType === "analysis") {
+          entries.push(`  ${heading}`);
+          if (body) entries.push(`    ${body.slice(0, 300)}`);
+        } else if (sectionType === "manual") {
+          const snippet = body.slice(0, 200).replace(/\n/g, " ");
+          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
+        } else {
+          const snippet = body.slice(0, 200).replace(/\n/g, " ");
+          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
+        }
+        sectionLines = [];
+        inSection = false;
+        sectionType = "other";
+      };
+
+      for (const line of lines) {
+        // 日期标题 ## YYYY-MM-DD
+        if (/^## \d{4}-\d{2}-\d{2}/.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "date";
+          continue;
+        }
+
+        // 压缩摘要 ### 压缩摘要 [...]
+        if (/^### 压缩摘要 /.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "compress";
+          continue;
+        }
+
+        // distill 条目 ### YYYY-MM-DD HH:MM:SS  [workdir: ...]
+        if (/^### \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+\[workdir:/.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "distill";
+          continue;
+        }
+
+        // 里程碑 ### 完成:
+        if (/^### 完成:/.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "milestone";
+          continue;
+        }
+
+        // 手动 code_note 条目 ### YYYY-MM-DD(仅日期)
+        if (/^### \d{4}-\d{2}-\d{2}$/.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "manual";
+          continue;
+        }
+
+        // 分析条目
+        if (line.trim().startsWith("[分析]")) {
+          flushSection();
+          sectionLines = [line.trim()];
+          inSection = true;
+          sectionType = "analysis";
+          continue;
+        }
+
+        // 其他 ### 标题
+        if (/^### /.test(line)) {
+          flushSection();
+          sectionLines = [line];
+          inSection = true;
+          sectionType = "other";
+          continue;
+        }
+
+        // 累积当前 section 内容
+        if (inSection) {
+          sectionLines.push(line);
+        }
+      }
+      flushSection();
+
+      if (entries.length >= maxEntries) break;
     }
-    const combined = parts.join("\n\n---\n\n").slice(0, 8000);
-    return combined || `项目 "${project}" 的记忆为空。`;
+
+    const header = fileHeader ? `## ${project} 项目记忆${fileHeader ? ` - ${fileHeader}` : ""}\n` : `## ${project} 项目记忆\n`;
+    const result = header + (entries.slice(0, maxEntries).join("\n").trim() || "暂无可摘要的记忆。");
+    return result + `\n\n> 摘要模式(${Math.min(entries.length, maxEntries)} 条)。传 summary=false 获取全文。`;
   },
 });
 

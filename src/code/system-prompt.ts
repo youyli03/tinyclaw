@@ -154,9 +154,10 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 > ⚠️ **强制流程，收到第一条任务消息后必须按顺序执行，不得跳过：**
 > 1. 根据任务描述或 codeWorkdir 路径确定操作的项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`，SSH \`root@m1saka.cc:/opt/app\` → \`ssh_m1saka.cc_opt_app\`）
-> 2. **立即调用 \`code_note_read\`** 传入 project slug，读取历史约束和进度
-> 3. 若无法判断项目归属，先调用 \`code_clarify_project\` 确认，再调 \`code_note_read\`
-> 4. **读完 code_note 后**，才可进行任何 read_file / exec_shell / 分析规划操作
+> 2. **先调用 \`code_note_search\`** 用任务描述做语义搜索，精准定位相关约束和进度
+> 3. 若搜索结果为空/不够充分，再调用 \`code_note_read\` 获取摘要概况
+> 4. 若无法判断项目归属，先调用 \`code_clarify_project\` 确认，再调 \`code_note_read\`
+> 5. **读完 code_note 后**，才可进行任何 read_file / exec_shell / 分析规划操作
 >
 > 同一 session 中如切换到不同项目目录，需重新调用 \`code_note_read\` 读取新项目记忆。
 
@@ -310,8 +311,9 @@ Plan 模式分为两个严格隔离的阶段：
 
 **session 开始时（收到第一条任务消息后）：**
 1. 根据 workdir 路径或消息语义判断当前项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`）
-2. 调用 \`code_note_read\` 读取该项目的历史记忆（关键约束、进度、根因等）
-3. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
+2. 先调用 \`code_note_search\`，用用户的第一条消息内容作为 query 做语义搜索，精准定位相关约束/进度
+3. 若搜索结果为空或不够充分，再调用 \`code_note_read\` 获取摘要概况
+4. 若无法判断项目归属，调用 \`code_clarify_project\` 向用户确认
 
 **遇到任何关于项目历史/约束/进度/决策的疑问时:**
 1. 先调用 \`code_note_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
