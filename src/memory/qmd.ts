@@ -304,7 +304,10 @@ async function hybridSearchCollection(
 ): Promise<SearchCandidate[]> {
   const fetchLimit = Math.max(limit * ROUTED_FETCH_LIMIT_FACTOR, limit);
   const [vecResults, lexResults] = await Promise.all([
-    s.searchVector(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
+    Promise.race([
+      s.searchVector(query, { limit: fetchLimit, collection }),
+      new Promise<SearchResult[]>((_, reject) => setTimeout(() => reject(new Error("embed timeout")), 15_000)),
+    ]).catch(() => [] as SearchResult[]),
     s.searchLex(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
   ]);
   if (vecResults.length === 0 && lexResults.length === 0) return [];
@@ -463,7 +466,10 @@ export async function closeQMDStore(): Promise<void> {
 export async function searchStore(name: string, query: string, agentId = "default", limit = 8): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
-  const results = await s.searchVector(query, { limit, collection: name });
+  const results = await Promise.race([
+    s.searchVector(query, { limit, collection: name }),
+    new Promise<SearchResult[]>((_, reject) => setTimeout(() => reject(new Error("embed timeout")), 15_000)),
+  ]);
   if (results.length === 0) return "";
   const lines = results.map((r) => {
     const score = Math.round(r.score * 100);
