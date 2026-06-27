@@ -103,7 +103,7 @@ async function describeImageWithVisionFallback(
           { type: "text", text: "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
         ] }],
         (chunk) => { description += chunk; },
-        {}
+        { includeReasoningInStream: true }
       );
       if (description.trim()) {
         if (i > 0) console.info(`[visionFallback] 主模型失败,使用第 ${i + 1} 个备用模型成功`);

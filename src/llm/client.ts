@@ -356,6 +356,12 @@ export interface ChatOptions {
    */
   disableIdleAfterFirstChunk?: boolean;
   /**
+   * 是否将 reasoning_content(思考过程)推给 onChunk 回调。
+   * 默认 false——正常 chat 不需要展示思考过程。
+   * vision 后端(mimo-v2-omni 把答案放在 reasoning_content 里)需设为 true。
+   */
+  includeReasoningInStream?: boolean;
+  /**
    * 覆盖本轮的 X-Request-Id（UUID）。
    * /retry 命令传入上次失败请求的 requestId，服务端识别相同 ID 不重复计费。
    * 不传时 streamChat/chat 每轮自动生成新 UUID。
@@ -940,10 +946,17 @@ export class LLMClient {
         const delta = chunk.choices[0]?.delta;
 
         // 文本 delta(兼容 reasoning_content: mimo-v2-omni 等思考模型把内容放在 reasoning_content 里)
-        const textDelta = delta?.content ?? (delta as any)?.reasoning_content ?? "";
+        const contentDelta = delta?.content ?? "";
+        const reasoningDelta = (delta as any)?.reasoning_content ?? "";
+        const textDelta = contentDelta || reasoningDelta;
         if (textDelta) {
           fullContent += textDelta;
-          onChunk(textDelta);
+          // content 始终推给 onChunk；reasoning_content 仅在显式 opt-in 时推
+          if (contentDelta) {
+            onChunk(contentDelta);
+          } else if (reasoningDelta && opts.includeReasoningInStream) {
+            onChunk(reasoningDelta);
+          }
           chunksReceived++;
         }
 
