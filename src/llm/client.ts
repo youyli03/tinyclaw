@@ -936,6 +936,7 @@ export class LLMClient {
       );
 
       let fullContent = "";
+      let streamedContent = "";
       let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       // 聚合流式 tool_calls delta（各 index 独立累积）
       const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
@@ -954,8 +955,10 @@ export class LLMClient {
           // content 始终推给 onChunk；reasoning_content 仅在显式 opt-in 时推
           if (contentDelta) {
             onChunk(contentDelta);
+            streamedContent += contentDelta;
           } else if (reasoningDelta && opts.includeReasoningInStream) {
             onChunk(reasoningDelta);
+            streamedContent += reasoningDelta;
           }
           chunksReceived++;
         }
@@ -1035,7 +1038,7 @@ export class LLMClient {
               }))
           : undefined;
 
-      return { content: fullContent, ...(toolCalls ? { toolCalls } : {}), usage };
+      return { content: streamedContent, ...(toolCalls ? { toolCalls } : {}), usage };
     }, opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
     } catch (err) {
       // Propagate the turn's X-Request-Id so callers (e.g. /retry command) can reuse
