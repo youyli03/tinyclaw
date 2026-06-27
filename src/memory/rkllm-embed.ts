@@ -8,10 +8,38 @@
  */
 
 const MODEL_NAME = "rkllm/Qwen3-Embedding-0.6B_w8a8";
+const FETCH_TIMEOUT_MS = 60_000; // 60s 单次超时
+const MAX_RETRIES = 2;           // 最多重试 2 次
 
 interface RkllmHttpEmbedResult {
   embedding: number[];
   dim: number;
+}
+
+/**
+ * 带超时和重试的 fetch 包装。
+ * NPU 可能被主 LLM 占用导致 embedding server 阻塞，短暂等待后重试通常能成功。
+ */
+async function fetchWithRetry(url: string, options: RequestInit, retries = MAX_RETRIES): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      return res;
+    } catch (e: unknown) {
+      if (attempt < retries) {
+        const delay = 1000 * (attempt + 1); // 1s, 2s 退避
+        console.warn(`[rkllm-embed] fetch attempt ${attempt + 1} failed, retrying in ${delay}ms:`, (e as Error).message);
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        throw e;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error("unreachable");
 }
 
 /**
@@ -26,7 +54,7 @@ export function makeRkllmEmbedLlm(port = 11434): any {
   return {
     __rkllm: true as const,
     async embed(text: string): Promise<{ embedding: number[]; model: string } | null> {
-      const res = await fetch(`${base}/embed`, {
+      const res = await fetchWithRetry(`${base}/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -40,7 +68,7 @@ export function makeRkllmEmbedLlm(port = 11434): any {
     },
 
     async embedBatch(texts: string[]): Promise<({ embedding: number[]; model: string } | null)[]> {
-      const res = await fetch(`${base}/embed_batch`, {
+      const res = await fetchWithRetry(`${base}/embed_batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ texts }),
