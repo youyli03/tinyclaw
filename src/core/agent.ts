@@ -101,7 +101,7 @@ async function describeImageWithVisionFallback(
       const result = await client.streamChat(
         [{ role: "user", content: [
           { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
-          { type: "text", text: (customPrompt ? customPrompt + "\n" : "") + "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
+          { type: "text", text: (customPrompt ? customPrompt + "\n" : "") + "Describe the image in detail, including all elements, text, and charts. Note the approximate position of each element (e.g., top-left, center, bottom-right). Only describe what you can see — do not infer or guess. Reply in Chinese." }
         ] }],
         (chunk) => { description += chunk; },
         { includeReasoningInStream: true }
