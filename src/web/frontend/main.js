@@ -315,7 +315,7 @@ const app = createApp({
 
       // 从 metrics 里取最新电费/请求（如果有）
       const elecVal = latestMetricVal.value['electric/balance'] ?? '—';
-      const copilotVal = latestMetricVal.value['copilot/remaining'] ?? '—';
+      const deepseekVal = latestMetricVal.value['deepseek/balance'] ?? '—';
       const llmTokenChat = latestMetricVal.value['llm/tokens_chat'] ?? 0;
       const llmTokenCode = latestMetricVal.value['llm/tokens_code'] ?? 0;
       const llmTokenCron = latestMetricVal.value['llm/tokens_cron'] ?? 0;
@@ -332,11 +332,11 @@ const app = createApp({
           metricKey: 'electric/balance',
         },
         {
-          key: 'copilot', label: '高级请求',
-          value: copilotVal !== '—' ? (Number(copilotVal) < 0 ? '—' : String(Math.round(Number(copilotVal)))) : '—',
-          sub1: '剩余次数', sub2: '点击查看趋势 →',
-          color: C.accent2, spark: latestSpark.value['copilot/remaining'] || [],
-          metricKey: 'copilot/remaining',
+          key: 'deepseek', label: 'DeepSeek',
+          value: deepseekVal !== '—' ? `¥ ${Number(deepseekVal).toFixed(2)}` : '¥ —',
+          sub1: '余额(元)', sub2: '点击查看趋势 →',
+          color: C.accent2, spark: latestSpark.value['deepseek/balance'] || [],
+          metricKey: 'deepseek/balance',
         },
         ...(llmTokenVal !== '—' && Number(llmTokenVal) > 0 ? [{
           key: 'llm_tokens', label: 'Token 用量',
@@ -429,7 +429,7 @@ const app = createApp({
       // 并行拉取数据源
       const sinceToken = incremental && overviewLastTs.llmToken != null ? '&since=' + overviewLastTs.llmToken : '';
       const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
-      const copilotUrl = '/api/metrics?category=copilot&key=remaining&days=1' + (incremental && overviewLastTs.copilot  != null ? '&since=' + overviewLastTs.copilot  : '');
+      const deepseekUrl = '/api/metrics?category=deepseek&key=balance&days=1' + (incremental && overviewLastTs.deepseek != null ? '&since=' + overviewLastTs.deepseek : '');
       const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
       const sources = ['chat', 'code', 'cron', 'summarizer'];
       const types   = ['input', 'output', 'cache'];
@@ -437,12 +437,12 @@ const app = createApp({
       const llmFetches = sources.flatMap(src =>
         types.map(t => fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=7${sinceToken}`).then(r => r.json()).catch(() => ({ rows: [] })))
       );
-      let elecData, copilotData, systemData;
+      let elecData, deepseekData, systemData;
       let llmRawData; // flat array: [chat/input, chat/output, chat/cache, code/input, ...]
       try {
-        [elecData, copilotData, systemData, ...llmRawData] = await Promise.all([
+        [elecData, deepseekData, systemData, ...llmRawData] = await Promise.all([
           fetch(elecUrl).then(r => r.json()),
-          fetch(copilotUrl).then(r => r.json()),
+          fetch(deepseekUrl).then(r => r.json()),
           fetch(systemUrl).then(r => r.json()),
           ...llmFetches,
         ]);
@@ -479,30 +479,30 @@ const app = createApp({
         }
       } catch (e) { console.warn('electric chart failed', e); }
 
-      // 高级请求剩余趋势
+      // DeepSeek 余额趋势
       try {
-        const rows = (copilotData.rows || []).filter(r => r.value >= 0);
-        if (rows.length) overviewLastTs.copilot = rows[rows.length-1].ts;
-        const chart2 = charts['chart-copilot'];
+        const rows = (deepseekData.rows || []);
+        if (rows.length) overviewLastTs.deepseek = rows[rows.length-1].ts;
+        const chart2 = charts['chart-deepseek'];
         if (incremental && chart2 && rows.length) {
           for (const r of rows) chart2.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
           chart2.update('none');
         } else if (!incremental) {
           const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
-          const canvas2 = document.getElementById('chart-copilot');
+          const canvas2 = document.getElementById('chart-deepseek');
           if (canvas2) {
             const ctx2 = canvas2.getContext('2d');
             const grad2 = ctx2.createLinearGradient(0, 0, 0, 200);
             grad2.addColorStop(0, C.accent2 + '30');
             grad2.addColorStop(1, C.accent2 + '00');
-            createOrUpdateChart('chart-copilot', {
+            createOrUpdateChart('chart-deepseek', {
               type: 'line',
-              data: { datasets: [{ label: '高级请求剩余', data: points, borderColor: C.accent2, borderWidth: 2, backgroundColor: grad2, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }] },
+              data: { datasets: [{ label: 'DeepSeek 余额(¥)', data: points, borderColor: C.accent2, borderWidth: 2, backgroundColor: grad2, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }] },
               options: { ...baseChartOpts(), scales: { x: smartXAxis(1), y: { ...baseChartOpts().scales.y } } },
             });
           }
         }
-      } catch (e) { console.warn('copilot chart failed', e); }
+      } catch (e) { console.warn('deepseek chart failed', e); }
 
       // LLM Token 用量 — 堆叠柱状图，每来源3种颜色(input/output/cache)
       try {
