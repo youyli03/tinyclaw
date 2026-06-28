@@ -82,7 +82,8 @@ export function clearFreeModelsCache(): void {
 export function buildOpenRouterClient(
   cfg: OpenRouterProviderConfig,
   modelId: string,
-  supportsToolCalls?: boolean
+  supportsToolCalls?: boolean,
+  supportsVision?: boolean
 ): LLMClient {
   const backend: ResolvedBackend = {
     baseUrl: cfg.baseUrl,
@@ -93,7 +94,7 @@ export function buildOpenRouterClient(
     defaultHeaders: { ...DEFAULT_HEADERS },
     // 未指定时默认 true;弱模型可在 config.toml 显式设 false 走 textMode 文本工具调用
     supportsToolCalls: supportsToolCalls ?? true,
-    supportsVision: false,
+    supportsVision: supportsVision ?? false,
     supportsParallelToolCalls: false,
   };
   return new LLMClient(backend);

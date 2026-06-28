@@ -144,7 +144,7 @@ class LLMRegistry {
       }
       const client = modelId === "auto-free"
         ? new AutoFreeClient(orCfg)
-        : buildOpenRouterClient(orCfg, modelId, role.supportsToolCalls);
+        : buildOpenRouterClient(orCfg, modelId, role.supportsToolCalls, role.supportsVision);
       this.clients.set(name, client);
       return client;
     }
@@ -240,7 +240,7 @@ class LLMRegistry {
    * 获取图片识别后端（未配置时返回 undefined）。
    */
   /** 根据模型 symbol 动态构建 client(不缓存,用于 fallback 列表) */
-  buildClientForSymbol(symbol: string): AnyLLMClient {
+  buildClientForSymbol(symbol: string, supportsVision?: boolean): AnyLLMClient {
     const config = loadConfig();
     const { provider, modelId } = parseModelSymbol(symbol);
     if (provider === "copilot") {
@@ -257,7 +257,7 @@ class LLMRegistry {
     if (provider === "openrouter") {
       const c = config.providers.openrouter;
       if (!c) throw new Error("providers.openrouter 未配置");
-      return buildOpenRouterClient(c, modelId, false);
+      return buildOpenRouterClient(c, modelId, false, supportsVision);
     }
     if (provider === "deepseek") {
       const c = config.providers.deepseek;
@@ -298,7 +298,7 @@ class LLMRegistry {
     const chain: AnyLLMClient[] = [];
     try { chain.push(this.get("vision")); } catch { /* skip */ }
     for (const sym of visionCfg.fallbacks ?? []) {
-      try { chain.push(this.buildClientForSymbol(sym)); } catch { /* skip */ }
+      try { chain.push(this.buildClientForSymbol(sym, true)); } catch { /* skip */ }
     }
     return chain;
   }
