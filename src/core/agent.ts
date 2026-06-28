@@ -71,7 +71,7 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
 async function describeImageWithVisionFallback(
   imgPath: string,
   visionClientOrChain: import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[]
-): Promise<string | null> {
+): Promise<{ description: string; usage: ChatResult["usage"] } | null> {
   const chain = Array.isArray(visionClientOrChain) ? visionClientOrChain : [visionClientOrChain];
   const nodeFs = await import("fs");
   const path = await import("path");
@@ -97,7 +97,7 @@ async function describeImageWithVisionFallback(
     if (!client) continue;
     try {
       let description = "";
-      await client.streamChat(
+      const result = await client.streamChat(
         [{ role: "user", content: [
           { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
           { type: "text", text: "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
@@ -105,9 +105,9 @@ async function describeImageWithVisionFallback(
         (chunk) => { description += chunk; },
         { includeReasoningInStream: true }
       );
-      if (description.trim()) {
+      if (result.content.trim()) {
         if (i > 0) console.info(`[visionFallback] 主模型失败,使用第 ${i + 1} 个备用模型成功`);
-        return description.trim();
+        return { description: result.content.trim(), usage: result.usage };
       }
     } catch (e: any) {
       const isRateLimit = e?.status === 429 || (typeof e?.message === "string" && e.message.includes("429"));
@@ -670,6 +670,10 @@ export async function runAgent(
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
   const visionClient = !client.supportsVision ? llmRegistry.getVisionClientChain() : undefined;
+  let totalVisionPromptTokens = 0;      // vision 模型 input token 累计
+  let totalVisionCompletionTokens = 0;  // vision 模型 output token 累计
+  let totalVisionCacheReadTokens = 0;   // vision 模型 cache read token 累计
+  let totalVisionCacheCreationTokens = 0; // vision 模型 cache creation token 累计
 
   // 恢复该 session 上次已启用的 MCP server
   void mcpManager.restoreSession(session.sessionId, isCodeMode ? "code" : "chat", session.agentId);
@@ -891,8 +895,14 @@ export async function runAgent(
             : [];
           for (const imgPart of imageParts) {
             if (imgPart.type === "image_path") {
-              const desc = await describeImageWithVisionFallback(imgPart.path, visionClient);
-              if (desc) session.addUserMessage(`[图片描述 ${imgPart.path}]:\n${desc}`);
+              const visResult = await describeImageWithVisionFallback(imgPart.path, visionClient);
+              if (visResult) {
+                session.addUserMessage(`[图片描述 ${imgPart.path}]:\n${visResult.description}`);
+                totalVisionPromptTokens += visResult.usage.promptTokens;
+                totalVisionCompletionTokens += visResult.usage.completionTokens;
+                totalVisionCacheReadTokens += visResult.usage.cacheReadTokens ?? 0;
+                totalVisionCacheCreationTokens += visResult.usage.cacheCreationTokens ?? 0;
+              }
             }
           }
         }
@@ -1378,8 +1388,14 @@ export async function runAgent(
                 roundPendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
               }
               if (visionClient) {
-                const desc = await describeImageWithVisionFallback(origPath, visionClient);
-                if (desc) roundPendingUserMsgs.push(`[图片描述 ${origPath}]:\n${desc}`);
+                const visResult = await describeImageWithVisionFallback(origPath, visionClient);
+                if (visResult) {
+                  roundPendingUserMsgs.push(`[图片描述 ${origPath}]:\n${visResult.description}`);
+                  totalVisionPromptTokens += visResult.usage.promptTokens;
+                  totalVisionCompletionTokens += visResult.usage.completionTokens;
+                  totalVisionCacheReadTokens += visResult.usage.cacheReadTokens ?? 0;
+                  totalVisionCacheCreationTokens += visResult.usage.cacheCreationTokens ?? 0;
+                }
               }
             }
           } else {
@@ -1399,8 +1415,14 @@ export async function runAgent(
                 roundPendingUserMsgs.push([{ type: "image_path" as const, path: imgPath }]);
               }
               if (visionClient) {
-                const desc = await describeImageWithVisionFallback(imgPath, visionClient);
-                if (desc) roundPendingUserMsgs.push(`[图片描述 ${imgPath}]:\n${desc}`);
+                const visResult = await describeImageWithVisionFallback(imgPath, visionClient);
+                if (visResult) {
+                  roundPendingUserMsgs.push(`[图片描述 ${imgPath}]:\n${visResult.description}`);
+                  totalVisionPromptTokens += visResult.usage.promptTokens;
+                  totalVisionCompletionTokens += visResult.usage.completionTokens;
+                  totalVisionCacheReadTokens += visResult.usage.cacheReadTokens ?? 0;
+                  totalVisionCacheCreationTokens += visResult.usage.cacheCreationTokens ?? 0;
+                }
               }
             }
           }
@@ -1555,8 +1577,14 @@ export async function runAgent(
               session.addUserMessage(imgParts);
               if (!client.supportsVision && visionClient) {
                 for (const p of parsed.image_paths) {
-                  const desc = await describeImageWithVisionFallback(p, visionClient);
-                  if (desc) session.addUserMessage(`[图片描述 ${p}]:\n${desc}`);
+                  const visResult = await describeImageWithVisionFallback(p, visionClient);
+                  if (visResult) {
+                    session.addUserMessage(`[图片描述 ${p}]:\n${visResult.description}`);
+                    totalVisionPromptTokens += visResult.usage.promptTokens;
+                    totalVisionCompletionTokens += visResult.usage.completionTokens;
+                    totalVisionCacheReadTokens += visResult.usage.cacheReadTokens ?? 0;
+                    totalVisionCacheCreationTokens += visResult.usage.cacheCreationTokens ?? 0;
+                  }
                 }
               }
             }
@@ -1777,6 +1805,21 @@ export async function runAgent(
         if (e.value <= 0) continue;
         if (!isMetricKeyAllowed(LLM_CAT, e.key)) addMetricKey(LLM_CAT, e.key, e.desc, "bar");
         insertMetric({ category: LLM_CAT, key: e.key, value: e.value, note: client.model });
+      }
+
+      // vision token 用量(独立模型,独立 source)
+      if (totalVisionPromptTokens > 0 || totalVisionCompletionTokens > 0) {
+        const visSource = "vision";
+        const visEntries: Array<{ key: string; value: number; desc: string }> = [
+          { key: `token/${visSource}/input`,  value: totalVisionPromptTokens,                            desc: `${visSource} input token 增量` },
+          { key: `token/${visSource}/output`, value: totalVisionCompletionTokens,                        desc: `${visSource} output token 增量` },
+          { key: `token/${visSource}/cache`,  value: totalVisionCacheReadTokens + totalVisionCacheCreationTokens, desc: `${visSource} cache token 增量` },
+        ];
+        for (const e of visEntries) {
+          if (e.value <= 0) continue;
+          if (!isMetricKeyAllowed(LLM_CAT, e.key)) addMetricKey(LLM_CAT, e.key, e.desc, "bar");
+          insertMetric({ category: LLM_CAT, key: e.key, value: e.value, note: "vision" });
+        }
       }
     }
   } catch { /* 写 db 失败不影响主流程 */ }
