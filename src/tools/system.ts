@@ -485,6 +485,7 @@ registerTool({
         type: "object",
         properties: {
           path: { type: "string", description: "图片的绝对路径（支持 png/jpg/webp/gif）" },
+          prompt: { type: "string", description: "可选的视觉模型提问指令,会拼接到默认描述 prompt 前面。例如:请重点关注杯子里的液体颜色" },
         },
         required: ["path"],
       },

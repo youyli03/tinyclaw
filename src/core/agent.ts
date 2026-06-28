@@ -70,7 +70,8 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
  */
 async function describeImageWithVisionFallback(
   imgPath: string,
-  visionClientOrChain: import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[]
+  visionClientOrChain: import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[],
+  customPrompt?: string
 ): Promise<{ description: string; usage: ChatResult["usage"] } | null> {
   const chain = Array.isArray(visionClientOrChain) ? visionClientOrChain : [visionClientOrChain];
   const nodeFs = await import("fs");
@@ -100,7 +101,7 @@ async function describeImageWithVisionFallback(
       const result = await client.streamChat(
         [{ role: "user", content: [
           { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
-          { type: "text", text: "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
+          { type: "text", text: (customPrompt ? customPrompt + "\n" : "") + "请详细描述图片内容,包括主要元素、文字和图表信息。用中文回答。" }
         ] }],
         (chunk) => { description += chunk; },
         { includeReasoningInStream: true }
@@ -1388,7 +1389,10 @@ export async function runAgent(
                 roundPendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
               }
               if (visionClient) {
-                const visResult = await describeImageWithVisionFallback(origPath, visionClient);
+                const customPrompt = typeof (call.args as Record<string, unknown>)["prompt"] === "string"
+                  ? (call.args as Record<string, unknown>)["prompt"] as string
+                  : undefined;
+                const visResult = await describeImageWithVisionFallback(origPath, visionClient, customPrompt);
                 if (visResult) {
                   roundPendingUserMsgs.push(`[图片描述 ${origPath}]:\n${visResult.description}`);
                   totalVisionPromptTokens += visResult.usage.promptTokens;
