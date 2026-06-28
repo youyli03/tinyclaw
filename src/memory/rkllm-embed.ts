@@ -8,7 +8,7 @@
  */
 
 const MODEL_NAME = "rkllm/Qwen3-Embedding-0.6B_w8a8";
-const FETCH_TIMEOUT_MS = 30_000; // 30s 单次 HTTP 超时(仅网络层面)
+const FETCH_TIMEOUT_MS = 120_000; // 120s 单次 HTTP 超时; batch embed(32条)在 NPU 上可能耗时较长
 interface RkllmHttpEmbedResult {
   embedding: number[];
   dim: number;
@@ -19,9 +19,30 @@ async function _doFetch(url: string, options: RequestInit): Promise<Response> {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`rkllm-embed 请求超时 (${FETCH_TIMEOUT_MS / 1000}s): ${url}`);
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function _fetchWithRetry(url: string, options: RequestInit, retries = 2): Promise<Response> {
+  let lastErr: Error | undefined;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await _doFetch(url, options);
+    } catch (e: any) {
+      lastErr = e;
+      if (i < retries) {
+        const delay = Math.min(1000 * Math.pow(2, i), 5000);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -50,7 +71,7 @@ export function makeRkllmEmbedLlm(port = 11434): any {
     },
 
     async embedBatch(texts: string[]): Promise<({ embedding: number[]; model: string } | null)[]> {
-      const res = await _doFetch(`${base}/embed_batch`, {
+      const res = await _fetchWithRetry(`${base}/embed_batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ texts }),
