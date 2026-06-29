@@ -385,6 +385,11 @@ export class AgentManager {
     return path.join(AGENTS_ROOT, agentId, "code", "projects");
   }
 
+  /** Code 模式环境上下文文件路径 (~/.tinyclaw/agents/<id>/code/ENV.md) */
+  codeEnvPath(agentId: string): string {
+    return path.join(AGENTS_ROOT, agentId, "code", "ENV.md");
+  }
+
   /** Code session 增量日志根目录 (~/.tinyclaw/agents/<id>/code/sessions/) */
   codeSessionsDir(agentId: string): string {
     return path.join(AGENTS_ROOT, agentId, "code", "sessions");

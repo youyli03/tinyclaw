@@ -6,7 +6,7 @@ import type { AnyLLMClient } from "../llm/registry.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
 import { pathToProjectSlug } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
-import { mkdirSync, appendFileSync, readdirSync } from "node:fs";
+import { mkdirSync, appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -507,7 +507,8 @@ const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
  * 压缩时蒸馏系统 prompt（模板）。
  * 调用前调用方应注入已知 project 清单到 prompt 末尾。
  */
-function buildCompressDistillPrompt(knownProjects: string): string {
+function buildCompressDistillPrompt(knownProjects: string, envKeys?: string): string {
+  const envSection = envKeys ? `\n⚠️ 以下环境 key 已存在 ENV.md,请勿重复输出:\n${envKeys}` : "";
   return `[⚠️BLOCKED:zh_you_are]。
 你看到的是一批被压缩掉的旧对话消息（包含用户消息和 AI 的工具调用/回复）。
 从这些消息中提炼出值得写入各项目长期记忆的要点。
@@ -524,6 +525,11 @@ function buildCompressDistillPrompt(knownProjects: string): string {
     {"project": "win:F:/Github/fpgallm", "items": ["要点1", "要点2"]},
     {"project": "/home/lyy/fpgallm", "items": ["要点3"]},
     {"project": "分析", "items": ["跨项目分析要点"]}
+  ],
+  "env_updates": [
+    {"category": "projects", "key": "my-project", "value": "/home/lyy/my-project"},
+    {"category": "tools", "key": "vivado", "value": "C:/Xilinx/Vivado/2023.1/bin/vivado"},
+    {"category": "services", "key": "MCSManager", "value": "HTTP API,daemon port 24444"}
   ]
 }
 
@@ -533,7 +539,7 @@ function buildCompressDistillPrompt(knownProjects: string): string {
 - SSH 远程路径：m1saka.cc:/opt/app 等
 - 无法归属到具体项目的分析性内容：project 字段填 "分析"
 
-${knownProjects}
+${knownProjects}${envSection}
 
 只输出 JSON，不要输出其他内容。确保 JSON 合法（注意字符串中的引号和换行要转义）。`;
 }
@@ -608,6 +614,35 @@ function injectKnownProjects(agentId: string): string {
  * 解析 distill LLM 输出的 JSON，写入各项目 NOTES.md。
  * @returns true 表示成功写入至少一条笔记
  */
+
+/**
+ * 读取 ENV.md,提取已有 key 清单(仅 category::key,不传 value),
+ * 用于注入蒸馏 prompt 避免 LLM 重复输出。
+ * @returns 逗号分隔的 key 清单字符串,如 "projects::tinyclaw, tools::aria2c"
+ */
+function loadEnvKeys(agentId: string): string {
+  try {
+    const envPath = agentManager.codeEnvPath(agentId);
+    if (!existsSync(envPath)) return "";
+    const raw = readFileSync(envPath, "utf-8");
+    const m = raw.match(/```json\n([\s\S]*?)\n```/);
+    if (!m) return "";
+    const data = JSON.parse(m[1]!);
+    const keys: string[] = [];
+    for (const cat of ["projects", "tools", "services"]) {
+      const obj = data[cat];
+      if (obj && typeof obj === "object") {
+        for (const k of Object.keys(obj)) {
+          keys.push(`${cat}::${k}`);
+        }
+      }
+    }
+    return keys.join(", ");
+  } catch {
+    return "";
+  }
+}
+
 function parseAndWriteDistillJson(
   raw: string,
   agentId: string,
@@ -683,6 +718,42 @@ function parseAndWriteDistillJson(
       wroteAny = true;
     }
     
+    // 处理 env_updates:写入 ENV.md
+    if (data.env_updates && Array.isArray(data.env_updates)) {
+      try {
+        const envPath = agentManager.codeEnvPath(agentId);
+        let existing: Record<string, Record<string, string>> = { projects: {}, tools: {}, services: {} };
+        try {
+          if (existsSync(envPath)) {
+            const rawEnv = readFileSync(envPath, "utf-8");
+            const me = rawEnv.match(/```json\n([\s\S]*?)\n```/);
+            if (me) existing = JSON.parse(me[1]!);
+          }
+        } catch { /* ENV.md 不存在或格式异常,使用空对象 */ }
+
+        let changed = false;
+        for (const e of data.env_updates) {
+          const cat: string = e.category;
+          if (!cat || !["projects", "tools", "services"].includes(cat)) continue;
+          if (!existing[cat]) existing[cat] = {};
+          if (!(e.key in existing[cat]!)) {
+            existing[cat]![e.key] = e.value;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          const body = "```json\n" + JSON.stringify(existing, null, 2) + "\n```";
+          const md = "# 本机环境上下文\n\n" + body + "\n";
+          mkdirSync(dirname(envPath), { recursive: true });
+          writeFileSync(envPath, md, "utf-8");
+          console.log("[distillCompression] ENV.md 已更新");
+        }
+      } catch (e) {
+        console.warn("[distillCompression] ENV.md 写入失败:", e instanceof Error ? e.message : e);
+      }
+    }
+
     return wroteAny;
   } catch (e) {
     console.warn("[distillCompression] JSON 解析失败:", e instanceof Error ? e.message : e);
@@ -719,7 +790,8 @@ async function distillCompressionNotes(
       for (const d of dirs) knownSlugs.add(d);
     } catch {}
     
-    const prompt = buildCompressDistillPrompt(knownProjects);
+    const envKeys = loadEnvKeys(agentId);
+    const prompt = buildCompressDistillPrompt(knownProjects, envKeys);
     
     const client = llmRegistry.get("summarizer");
     const result = await client.chat([
