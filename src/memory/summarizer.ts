@@ -4,6 +4,10 @@ import { persistSummary } from "./store.js";
 import type { ChatMessage, OpenAIToolCall, ChatResult } from "../llm/client.js";
 import type { AnyLLMClient } from "../llm/registry.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
+import { pathToProjectSlug } from "../tools/memory.js";
+import { agentManager } from "../core/agent-manager.js";
+import { mkdirSync, appendFileSync, readdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * 记录 summarizer LLM 调用的 output token 增量到 dashboard DB。
@@ -286,6 +290,7 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
  */
 export async function summarizeAndCompressCode(
   messages: ChatMessage[],
+  agentId?: string,
 ): Promise<ChatMessage[]> {
   const client = llmRegistry.get("summarizer");
 
@@ -421,6 +426,13 @@ export async function summarizeAndCompressCode(
     ], { isUserInitiated: false });
     recordSummarizerTokens(result, client);
 
+    // fire-and-forget 蒸馏笔记（不阻塞压缩）
+    if (agentId && toSummarize.length > 0) {
+      distillCompressionNotes(toSummarize as ChatMessage[], agentId).catch((err) =>
+        console.warn("[summarizeAndCompressCode] 蒸馏失败:", err instanceof Error ? err.message : err)
+      );
+    }
+
     // 组装压缩后的消息:system + 摘要 + 最近 keepTurns 轮原始消息
     let compressedKeep: ChatMessage[] = [...toKeep];
 
@@ -491,17 +503,251 @@ const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
 用 1-3 句中文提炼本轮对话的核心内容：用户的意图、AI 的主要行动或结论。
 要求：简洁、精准，不要加前缀（如"本轮"、"摘要："等），直接输出内容。`;
 
-const CODE_DISTILL_SYSTEM = `你是一个代码项目记忆助手。
-根据以下代码会话的最新一轮交互(用户消息 + AI 回复)，提炼出值得写入项目长期记忆的要点。
+/**
+ * 压缩时蒸馏系统 prompt（模板）。
+ * 调用前调用方应注入已知 project 清单到 prompt 末尾。
+ */
+function buildCompressDistillPrompt(knownProjects: string): string {
+  return `[⚠️BLOCKED:zh_you_are]。
+你看到的是一批被压缩掉的旧对话消息（包含用户消息和 AI 的工具调用/回复）。
+从这些消息中提炼出值得写入各项目长期记忆的要点。
+重点关注：里程碑进度、发现的关键约束、非显然的根因、完成的重要改动。
+如果整批消息都没有值得记录的内容，输出 {"projects":[],"notes":[]}。
+
+你必须输出合法 JSON，格式如下：
+{
+  "projects": [
+    {"path": "win:F:/Github/fpgallm", "slug": "ssh_win_F_Github_fpgallm"},
+    {"path": "/home/lyy/fpgallm", "slug": "_home_lyy_fpgallm"}
+  ],
+  "notes": [
+    {"project": "win:F:/Github/fpgallm", "items": ["要点1", "要点2"]},
+    {"project": "/home/lyy/fpgallm", "items": ["要点3"]},
+    {"project": "分析", "items": ["跨项目分析要点"]}
+  ]
+}
+
+路径格式规则（重要）：
+- 本地路径：/home/lyy/xxx 或 ~/xxx（输出时统一用绝对路径 /home/lyy/xxx）
+- Windows MCP 路径：F:/Github/xxx 等，输出时写成 win:F:/Github/xxx
+- SSH 远程路径：m1saka.cc:/opt/app 等
+- 无法归属到具体项目的分析性内容：project 字段填 "分析"
+
+${knownProjects}
+
+只输出 JSON，不要输出其他内容。确保 JSON 合法（注意字符串中的引号和换行要转义）。`;
+}
+/** 单轮蒸馏（保留兼容，用于 distillCodeTurnToNotes） */
+const CODE_DISTILL_SYSTEM = `[⚠️BLOCKED:zh_you_are]。
+根据以下代码会话的最新一轮交互（用户消息 + AI 回复），提炼出值得写入项目长期记忆的要点。
 重点关注：里程碑进度、发现的关键约束、非显然的根因、完成的重要改动。
 如果本轮没有值得记录的内容（如只是闲聊、询问、未完成操作），直接输出空字符串（不要输出任何内容）。
 若有内容，用 1-5 句中文要点（可以是短语），每行一条，直接输出，不要加前缀和标题。
-⚠️ 重要:每条要点开头必须注明实际被修改/涉及的项目路径(绝对路径或 ~/xxx 形式),例如 [~/pin-hunter-bot] 或 [~/tinyclaw/src]。
-  - 路径必须来自 AI 回复中实际操作或 read_file/exec_shell 的文件路径,不能用当前工作目录(codeWorkdir)替代
-  - 若同一轮改动涉及多个项目,每个项目分别写一行并各自标注路径
-  - 若 AI 本轮未修改任何文件(只有分析/解释),标注为 [分析] 前缀而非项目路径
-  - 不要把 workdir 当成改动路径,也不要省略实际项目路径
-  - 本地路径可用 ~/xxx 缩写;SSH 远程路径必须用 host:/path 或 user@host:/path 绝对格式,不能写 ~`;
+⚠️ 重要：每条要点开头必须注明实际被修改/涉及的项目路径（绝对路径或 ~/xxx 形式），例如 [~/pin-hunter-bot] 或 [~/tinyclaw/src]。
+  - 路径必须来自 AI 回复中实际操作或 read_file/exec_shell 的文件路径，不能用当前工作目录（codeWorkdir）替代
+  - 若同一轮改动涉及多个项目，每个项目分别写一行并各自标注路径
+  - 若 AI 本轮未修改任何文件（只有分析/解释），标注为 [分析] 前缀而非项目路径
+  - 不要把 workdir 当成改动路径，也不要省略实际项目路径
+  - 本地路径可用 ~/xxx 缩写；SSH 远程路径必须用 host:/path 或 user@host:/path 绝对格式，不能写 ~`;
+
+
+
+/**
+ * 扫描 code/projects/ 目录，生成已知 project slug 清单，
+ * 注入到 distill prompt 中供 LLM 参考。
+ */
+function injectKnownProjects(agentId: string): string {
+  try {
+    const projectsDir = agentManager.codeProjectsDir(agentId);
+    const dirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    
+    if (dirs.length === 0) return "";
+    
+    const lines: string[] = ["已知项目 slug（请复用，不要新建）："];
+    for (const slug of dirs) {
+      if (slug.startsWith("ssh_win_")) {
+        const rest = slug.slice("ssh_win_".length);
+        const parts = rest.split("_");
+        if (parts.length >= 2) {
+          const drive = parts[0] + ":/";
+          const winRest = parts.slice(1).join("/");
+          lines.push(`  ${slug}  →  [win:${drive}${winRest}]`);
+        } else {
+          lines.push(`  ${slug}  →  [win:${rest}]`);
+        }
+      } else if (slug.startsWith("ssh_")) {
+        const rest = slug.slice(4);
+        const firstUnderscore = rest.indexOf("_");
+        if (firstUnderscore > 0) {
+          const host = rest.slice(0, firstUnderscore).replace(/_/g, ".");
+          const path = rest.slice(firstUnderscore + 1);
+          if (path) {
+            lines.push(`  ${slug}  →  [${host}:${path.replace(/_/g, "/")}]`);
+          } else {
+            lines.push(`  ${slug}  →  [${host}]`);
+          }
+        } else {
+          lines.push(`  ${slug}  →  [${rest.replace(/_/g, "/")}]`);
+        }
+      } else if (slug.startsWith("_home_lyy_")) {
+        const rest = slug.slice("_home_lyy_".length);
+        lines.push(`  ${slug}  →  [home:/home/lyy/${rest.replace(/_/g, "/")}]`);
+      } else {
+        lines.push(`  ${slug}  →  [${slug.replace(/_/g, "/")}]`);
+      }
+    }
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 解析 distill LLM 输出的 JSON，写入各项目 NOTES.md。
+ * @returns true 表示成功写入至少一条笔记
+ */
+function parseAndWriteDistillJson(
+  raw: string,
+  agentId: string,
+  knownSlugs: Set<string>,
+): boolean {
+  try {
+    let jsonStr = raw.trim();
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1]!.trim();
+    }
+    
+    const data = JSON.parse(jsonStr);
+    if (!data || typeof data !== "object") return false;
+    
+    const projects: Array<{ path: string; slug: string }> = data.projects || [];
+    const notes: Array<{ project: string; items: string[] }> = data.notes || [];
+    
+    if (notes.length === 0) return false;
+    
+    const pathToSlug = new Map<string, string>();
+    for (const p of projects) {
+      let slug = p.slug || pathToProjectSlug(p.path);
+      pathToSlug.set(p.path, slug);
+    }
+    
+    const resolveSlug = (project: string): string | null => {
+      if (project === "分析") return null;
+      if (pathToSlug.has(project)) return pathToSlug.get(project)!;
+      
+      const slug = pathToProjectSlug(project);
+      
+      // 尾段模糊匹配
+      const tail = project.replace(/^.*[\\\/]/, "").toLowerCase();
+      for (const ks of knownSlugs) {
+        if (ks.toLowerCase().endsWith(tail) || (tail && ks.toLowerCase().includes(tail))) {
+          return ks;
+        }
+      }
+      
+      return slug;
+    };
+    
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toTimeString().slice(0, 8);
+    
+    let wroteAny = false;
+    
+    for (const note of notes) {
+      if (!note.items || note.items.length === 0) continue;
+      
+      const itemsText = note.items.join("\n");
+      const header = `### ${dateStr} ${timeStr}  [压缩蒸馏]`;
+      const entry = `\n${header}\n\n${itemsText}\n`;
+      
+      const resolvedSlug = resolveSlug(note.project);
+      
+      if (resolvedSlug) {
+        const notesPath = agentManager.codeProjectNotesPath(agentId, resolvedSlug);
+        mkdirSync(dirname(notesPath), { recursive: true });
+        appendFileSync(notesPath, entry, "utf-8");
+        console.log(`[distillCompression] 项目归档: ${resolvedSlug} → ${notesPath}`);
+      }
+      
+      const sessionDailyPath = agentManager.codeSessionDailyPath(agentId);
+      mkdirSync(dirname(sessionDailyPath), { recursive: true });
+      const dailyEntry = resolvedSlug
+        ? `\n${header} [${resolvedSlug}]\n\n${itemsText}\n`
+        : `\n${header} [分析]\n\n${itemsText}\n`;
+      appendFileSync(sessionDailyPath, dailyEntry, "utf-8");
+      
+      wroteAny = true;
+    }
+    
+    return wroteAny;
+  } catch (e) {
+    console.warn("[distillCompression] JSON 解析失败:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
+/**
+ * 压缩时蒸馏：将待压缩的旧消息批量提炼为多项目要点。
+ * fire-and-forget，失败时只打 warn 日志。
+ */
+async function distillCompressionNotes(
+  toSummarize: ChatMessage[],
+  agentId: string,
+): Promise<void> {
+  if (toSummarize.length === 0) return;
+  
+  try {
+    const historyText = toSummarize
+      .map((m) => formatMsgForSummary(m))
+      .filter(Boolean)
+      .join("\n\n");
+    
+    if (!historyText.trim()) return;
+    
+    const knownProjects = injectKnownProjects(agentId);
+    
+    const knownSlugs = new Set<string>();
+    try {
+      const projectsDir = agentManager.codeProjectsDir(agentId);
+      const dirs = readdirSync(projectsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      for (const d of dirs) knownSlugs.add(d);
+    } catch {}
+    
+    const prompt = buildCompressDistillPrompt(knownProjects);
+    
+    const client = llmRegistry.get("summarizer");
+    const result = await client.chat([
+      { role: "system", content: prompt },
+      { role: "user", content: historyText.slice(0, 20000) },
+    ], { isUserInitiated: false });
+    
+    recordSummarizerTokens(result, client);
+    
+    const raw = result.content.trim();
+    if (!raw || raw === '{"projects":[],"notes":[]}') return;
+    
+    const wrote = parseAndWriteDistillJson(raw, agentId, knownSlugs);
+    if (wrote) {
+      import("../memory/qmd.js").then(({ updateStore }) => {
+        updateStore("code_notes", agentId).catch((e) =>
+          console.warn("[distillCompression] code_notes index update failed:", e)
+        );
+        updateStore("code_sessions", agentId).catch((e) =>
+          console.warn("[distillCompression] code_sessions index update failed:", e)
+        );
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[distillCompression] 蒸馏失败:", e instanceof Error ? e.message : e);
+  }
+}
+
 
 /**
  * Code 模式:将单轮交互提炼为项目 NOTES.md 要点，fire-and-forget。

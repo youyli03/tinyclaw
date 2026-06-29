@@ -331,6 +331,16 @@ registerTool({
  * root@m1saka.cc:/opt/app → ssh_m1saka.cc_opt_app
  */
 export function pathToProjectSlug(p: string): string {
+  // win: 前缀 → 映射到 ssh_win_ slug（Windows MCP 远程操作，对齐已有格式）
+  if (p.startsWith("win:")) {
+    const winPath = p.slice(4); // "F:/Github/fpgallm"
+    const host = "win";
+    return "ssh_" + host + "_" + winPath.replace(/[:\\\/]/g, "_");
+  }
+  // home: 前缀 → 本地路径（显式标注，避免与裸路径混淆）
+  if (p.startsWith("home:")) {
+    return pathToProjectSlug(p.slice(5));
+  }
   // SSH 格式：user@host:/path 或 ssh://user@host/path
   const sshMatch = p.match(/(?:ssh:\/\/)?(?:[^@]+@)?([^:/]+):?(\/.*)?$/);
   if (p.startsWith("ssh://") || p.includes("@")) {

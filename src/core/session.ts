@@ -642,7 +642,7 @@ export class Session {
    * 返回 true 表示压缩已执行。
    */
   async compressForCode(): Promise<boolean> {
-    const compressed = await summarizeAndCompressCode(this.messages);
+    const compressed = await summarizeAndCompressCode(this.messages, this.agentId);
     // 如果返回原始消息（无足够旧内容可压缩），跳过更新
     const estimateChars = (msgs: typeof this.messages): number =>
       msgs.reduce((sum, m) => {
@@ -658,34 +658,6 @@ export class Session {
     }
     this.messages = compressed;
     this.rewriteCodeJsonl();
-
-    // 压缩成功后，将摘要追加到当前项目的 NOTES.md
-    try {
-      const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
-      const summaryText = typeof summaryMsg?.content === "string" ? summaryMsg.content.trim() : "";
-      if (summaryText && this.codeWorkdir) {
-        const { pathToProjectSlug } = await import("../tools/memory.js");
-        const slug = pathToProjectSlug(this.codeWorkdir);
-        const notesPath = agentManager.codeProjectNotesPath(this.agentId, slug);
-        const now = new Date();
-        const dateStr = now.toISOString().slice(0, 10);
-        const timeStr = now.toTimeString().slice(0, 8);
-        const entry = `\n### 压缩摘要 [${dateStr} ${timeStr}]\n\n${summaryText}\n`;
-        console.log(`[compressForCode] 开始写入压缩摘要: ${notesPath}`);
-        fs.mkdirSync(path.dirname(notesPath), { recursive: true });
-        fs.appendFileSync(notesPath, entry, "utf-8");
-        console.log("[compressForCode] 写入完成");
-
-        // 写入后触发增量索引（fire-and-forget）
-        import("../memory/qmd.js").then(({ updateStore }) => {
-          updateStore("code_notes", this.agentId).catch((e) =>
-            console.warn("[compressForCode] code_notes index update failed:", e)
-          );
-        }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn("[compressForCode] 存档失败:", e);
-    }
 
     return true;
   }
