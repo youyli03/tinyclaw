@@ -507,8 +507,9 @@ const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
  * 压缩时蒸馏系统 prompt（模板）。
  * 调用前调用方应注入已知 project 清单到 prompt 末尾。
  */
-function buildCompressDistillPrompt(knownProjects: string, envKeys?: string): string {
+function buildCompressDistillPrompt(knownProjects: string, envKeys?: string, feedbackKeys?: string): string {
   const envSection = envKeys ? `\n⚠️ 以下环境 key 已存在 ENV.md,请勿重复输出:\n${envKeys}` : "";
+  const fbSection = feedbackKeys ? `\n⚠️ 以下行为约束已记录在 feedback.md,请勿重复输出:\n  - ${feedbackKeys}` : "";
   return `[⚠️BLOCKED:zh_you_are]。
 你看到的是一批被压缩掉的旧对话消息（包含用户消息和 AI 的工具调用/回复）。
 从这些消息中提炼出值得写入各项目长期记忆的要点。
@@ -530,16 +531,23 @@ function buildCompressDistillPrompt(knownProjects: string, envKeys?: string): st
     {"category": "projects", "key": "my-project", "value": "/home/lyy/my-project"},
     {"category": "tools", "key": "vivado", "value": "C:/Xilinx/Vivado/2023.1/bin/vivado"},
     {"category": "services", "key": "MCSManager", "value": "HTTP API,daemon port 24444"}
+  ],
+  "behavior_corrections": [
+    {"content": "排查网络问题前先确认目标机器"},
+    {"content": "不要自行执行 force push,须先告知风险"}
   ]
 }
 
-路径格式规则（重要）：
-- 本地路径：/home/lyy/xxx 或 ~/xxx（输出时统一用绝对路径 /home/lyy/xxx）
-- Windows MCP 路径：F:/Github/xxx 等，输出时写成 win:F:/Github/xxx
-- SSH 远程路径：m1saka.cc:/opt/app 等
-- 无法归属到具体项目的分析性内容：project 字段填 "分析"
+⚠️ behavior_corrections 约束:只记跨项目通用的行为纠正(适用于所有项目)。
+不记专属于单一项目的规则(如"tinyclaw 中不要改 YAML")。若无新增则留空数组。
 
-${knownProjects}${envSection}
+路径格式规则(重要):
+- 本地路径:/home/lyy/xxx 或 ~/xxx(输出时统一用绝对路径 /home/lyy/xxx)
+- Windows MCP 路径:F:/Github/xxx 等,输出时写成 win:F:/Github/xxx
+- SSH 远程路径:m1saka.cc:/opt/app 等
+- 无法归属到具体项目的分析性内容:project 字段填 "分析"
+
+${knownProjects}${envSection}${fbSection}
 
 只输出 JSON，不要输出其他内容。确保 JSON 合法（注意字符串中的引号和换行要转义）。`;
 }
@@ -638,6 +646,27 @@ function loadEnvKeys(agentId: string): string {
       }
     }
     return keys.join(", ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 读取 feedback.md,提取已有内容清单(去掉日期前缀),
+ * 用于注入蒸馏 prompt 避免 LLM 重复输出。
+ * @returns 换行分隔的内容清单,如 "排查网络问题前先确认目标机器\n  - 不要自行 force push"
+ */
+function loadFeedbackKeys(agentId: string): string {
+  try {
+    const fbPath = agentManager.feedbackPath(agentId, "code");
+    if (!existsSync(fbPath)) return "";
+    const raw = readFileSync(fbPath, "utf-8");
+    const contents: string[] = [];
+    for (const line of raw.split("\n")) {
+      const m = line.match(/^- \[[\d-]+\] (.+)$/);
+      if (m) contents.push(m[1]!.trim());
+    }
+    return contents.join("\n  - ");
   } catch {
     return "";
   }
@@ -754,6 +783,41 @@ function parseAndWriteDistillJson(
       }
     }
 
+    // 处理 behavior_corrections:写入 feedback.md
+    if (data.behavior_corrections && Array.isArray(data.behavior_corrections)) {
+      try {
+        const fbPath = agentManager.feedbackPath(agentId, "code");
+        let existingContents = new Set<string>();
+        try {
+          if (existsSync(fbPath)) {
+            const rawFb = readFileSync(fbPath, "utf-8");
+            for (const line of rawFb.split("\n")) {
+              const m = line.match(/^- \[[\d-]+\] (.+)$/);
+              if (m) existingContents.add(m[1]!.trim());
+            }
+          }
+        } catch { /* feedback.md 不存在或格式异常,使用空集合 */ }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const newLines: string[] = [];
+        for (const bc of data.behavior_corrections) {
+          const content = typeof bc.content === "string" ? bc.content.trim() : "";
+          if (!content) continue;
+          if (existingContents.has(content)) continue;
+          newLines.push(`- [${today}] ${content}`);
+          existingContents.add(content);
+        }
+
+        if (newLines.length > 0) {
+          mkdirSync(dirname(fbPath), { recursive: true });
+          appendFileSync(fbPath, newLines.join("\n") + "\n", "utf-8");
+          console.log(`[distillCompression] feedback.md 追加 ${newLines.length} 条`);
+        }
+      } catch (e) {
+        console.warn("[distillCompression] feedback.md 写入失败:", e instanceof Error ? e.message : e);
+      }
+    }
+
     return wroteAny;
   } catch (e) {
     console.warn("[distillCompression] JSON 解析失败:", e instanceof Error ? e.message : e);
@@ -791,7 +855,8 @@ async function distillCompressionNotes(
     } catch {}
     
     const envKeys = loadEnvKeys(agentId);
-    const prompt = buildCompressDistillPrompt(knownProjects, envKeys);
+    const feedbackKeys = loadFeedbackKeys(agentId);
+    const prompt = buildCompressDistillPrompt(knownProjects, envKeys, feedbackKeys);
     
     const client = llmRegistry.get("summarizer");
     const result = await client.chat([
