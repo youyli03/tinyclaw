@@ -4,8 +4,9 @@ import { persistSummary } from "./store.js";
 import type { ChatMessage, OpenAIToolCall, ChatResult } from "../llm/client.js";
 import type { AnyLLMClient } from "../llm/registry.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
-import { pathToProjectSlug } from "../tools/memory.js";
+import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
+import { readExistingCards, parseCardJson, saveCards } from "./cards.js";
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -1092,7 +1093,358 @@ export async function summarizeAndCompress(
     ...toKeep,
   ];
 
+  // ── Chat 蒸馏:fire-and-forget 提炼 cards + 更新 MEM.md ──
+  if (agentId && toSummarize.length > 0) {
+    distillChatCompression(toSummarize as ChatMessage[], agentId).catch((err) =>
+      console.warn("[summarizeAndCompress] chat 蒸馏失败:", err instanceof Error ? err.message : err)
+    );
+  }
+
   return compressed;
+}
+
+// ── Chat 压缩蒸馏 ─────────────────────────────────────────────────────────────
+
+/**
+ * 生成当前 MEM.md 章节摘要供 LLM 去重参考。
+ * 只输出章节名 + 前 3 条代表性条目,不送全文节省 token。
+ */
+function summarizeMemSections(agentId: string): string {
+  const memPath = agentManager.memPath(agentId);
+  if (!existsSync(memPath)) return "(MEM.md 尚不存在)";
+
+  const content = readFileSync(memPath, "utf-8");
+  const sections: Array<{ heading: string; count: number; samples: string[] }> = [];
+  const lines = content.split("\n");
+  let currentHeading = "";
+  let currentItems: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      if (currentHeading && currentItems.length > 0) {
+        sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+      }
+      currentHeading = line.slice(3).trim();
+      currentItems = [];
+    } else if (line.startsWith("- ") && currentHeading) {
+      const text = line.slice(2).trim();
+      if (text && !text.startsWith("[")) currentItems.push(text.slice(0, 80));
+    }
+  }
+  if (currentHeading && currentItems.length > 0) {
+    sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+  }
+
+  if (sections.length === 0) return "(MEM.md 为空)";
+
+  return sections.map((s) => {
+    const sampleStr = s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
+    return `- ${s.heading}: ${s.count} 条${sampleStr}`;
+  }).join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`;
+}
+
+/**
+ * 生成当前 active cards 清单供 LLM 去重参考。
+ */
+function summarizeCardInventory(agentId: string): string {
+  try {
+    const cards = readExistingCards(agentId);
+    const active = cards.filter((c) => c.status === "active");
+    const byType = new Map<string, string[]>();
+    for (const c of active) {
+      const list = byType.get(c.type) || [];
+      list.push(c.title.slice(0, 60));
+      byType.set(c.type, list);
+    }
+    if (byType.size === 0) return "(无 active cards)";
+    return Array.from(byType.entries())
+      .map(([type, titles]) => `- ${type}: ${titles.length} 张 (${titles.join("; ")})`)
+      .join("\n");
+  } catch {
+    return "(无法读取 cards)";
+  }
+}
+
+const CHAT_DISTILL_PROMPT = `[⚠️BLOCKED:zh_you_are]。
+你是一个对话记忆萃取助手。
+从被压缩的旧对话历史中,提炼出值得写入持久记忆的新内容。
+
+当前 MEM.md 已包含:
+{{mem_summary}}
+
+当前 Cards 已有:
+{{card_inventory}}
+
+你的任务:
+1. 检查对话中是否出现了新的偏好/约束/决策/例行事务/待跟踪事项
+2. **只输出真正新的内容**(当前 MEM.md 和 Cards 中没有的)
+3. 若对话中有语义相同但表述更精确的版本,用新版本覆盖(通过 supersedes 去重)
+4. 若无新增内容,输出 {"cards":[],"mem_updates":{}}
+
+Cards 输出格式(MemoryCard JSON):
+- type: preference/constraint/decision/routine/open_loop/life_event/project_fact/relationship/task_state
+- scope: 范围(general/project:stock/project:tinyclaw 等)
+- facet: 分类维度(同类 cards 合并到同一 facet)
+- importance: 0-1 重要性
+- title: 简短标题(≤30字)
+- summary: 完整说明(1-3 句)
+- supersedes: 要替换的旧 card id 数组(可选)
+- 不填 id/ts/status(由系统自动生成)
+
+MEM.md 更新格式(按章节):
+{
+  "mem_updates": {
+    "👤 用户偏好": ["- 新偏好1", "- 新偏好2"],
+    "🐛 踩坑记录": ["- 新踩坑描述"],
+    "🎯 当前任务": ["- 新任务"],
+    "✅ 已完成大事": ["- 已完成事项"],
+    "📅 近期变更": ["- [日期] 变更描述"]
+  }
+}
+每条 item 以 "- " 开头,与 MEM.md 现有格式保持一致。
+
+⚠️ Cards 去重规则:
+- 同一 facet + 同一 scope 的 preference/constraint 视为重复,不要重复输出
+- 标题相同或高度相似的 card 视为重复
+- 如果旧 card 内容需要更新(更精确的表述),在 supersedes 中引用旧 card id
+
+⚠️ MEM.md 去重规则:
+- 若新条目与已有条目语义相同(只是换个说法),不要输出
+- 若新条目是已有条目的精炼版,仍可输出(由程序合并)
+
+只输出合法 JSON,不要输出其他内容。`;
+
+/**
+ * 应用 MEM.md 章节补丁:对每个章节执行 append 模式,带基本去重。
+ */
+function applyMemPatches(memUpdates: Record<string, string[]>, agentId: string): number {
+  const memPath = agentManager.memPath(agentId);
+  let applied = 0;
+
+  // 读取当前 MEM.md 用于去重
+  let existingContent = "";
+  let existingLines = new Set<string>();
+  try {
+    if (existsSync(memPath)) {
+      existingContent = readFileSync(memPath, "utf-8");
+      // 提取所有现有的 - 开头行,归一化后用于去重
+      for (const line of existingContent.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("- ")) {
+          existingLines.add(trimmed.slice(2).trim().toLowerCase());
+        }
+      }
+    }
+  } catch { /* 忽略 */ }
+
+  for (const [section, items] of Object.entries(memUpdates)) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+
+    // 去重:过滤掉与已有条目高度相似的新条目
+    const newItems: string[] = [];
+    for (const item of items) {
+      const text = item.startsWith("- ") ? item.slice(2).trim() : item.trim();
+      if (!text) continue;
+      const normalized = text.toLowerCase();
+      // 检查是否与已有条目重复
+      let isDuplicate = false;
+      for (const existing of existingLines) {
+        if (existing.includes(normalized.slice(0, 30)) || normalized.includes(existing.slice(0, 30))) {
+          isDuplicate = true;
+          break;
+        }
+      }
+      if (!isDuplicate) {
+        newItems.push(`- ${text}`);
+        existingLines.add(normalized);
+      }
+    }
+
+    if (newItems.length === 0) continue;
+
+    const content = newItems.join("\n");
+    try {
+      upsertMemSection(memPath, section, content, "append", agentId);
+      applied += newItems.length;
+    } catch (e) {
+      console.warn(`[distillChat] 写入 MEM.md 章节"${section}"失败:`, e);
+    }
+  }
+
+  return applied;
+}
+
+/**
+ * 扫描所有 active cards,生成卡片索引,写入 MEM.md。
+ */
+function regenerateCardIndex(agentId: string): void {
+  try {
+    const cards = readExistingCards(agentId);
+    const active = cards.filter((c) => c.status === "active");
+    if (active.length === 0) return;
+
+    // 按 type 分组
+    const byType = new Map<string, typeof active>();
+    for (const c of active) {
+      const list = byType.get(c.type) || [];
+      list.push(c);
+      byType.set(c.type, list);
+    }
+
+    // 生成索引条目
+    const indexLines: string[] = [];
+
+    // preference: 全收,合并同类 facet
+    const prefs = (byType.get("preference") || []).sort((a, b) => b.importance - a.importance);
+    if (prefs.length > 0) {
+      // 按 facet 合并
+      const byFacet = new Map<string, typeof prefs>();
+      for (const p of prefs) {
+        const list = byFacet.get(p.facet) || [];
+        list.push(p);
+        byFacet.set(p.facet, list);
+      }
+      for (const [, group] of byFacet) {
+        const titles = group.map((c) => c.title.slice(0, 40)).join("; ");
+        const topCard = group[0]!;
+        const path = `${topCard.ts.slice(0, 7)}/${topCard.id}.md`;
+        indexLines.push(`- **${titles}** → cards/${path}`);
+      }
+    }
+
+    // constraint: 全收
+    const constraints = (byType.get("constraint") || []).sort((a, b) => b.importance - a.importance);
+    for (const c of constraints) {
+      const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
+      indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
+    }
+
+    // decision: 最近 5 条
+    const decisions = (byType.get("decision") || []).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 5);
+    for (const c of decisions) {
+      const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
+      indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
+    }
+
+    // open_loop: 最近 5 条
+    const openLoops = (byType.get("open_loop") || []).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 5);
+    for (const c of openLoops) {
+      const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
+      indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
+    }
+
+    // routine: 合并摘要
+    const routines = (byType.get("routine") || []);
+    if (routines.length > 0) {
+      const titles = routines.map((c) => c.title.slice(0, 30)).join("; ");
+      indexLines.push(`- 例行: ${titles}`);
+    }
+
+    // 其他类型:合并为摘要,提示用 memory_search 检索
+    const otherTypes = ["relationship", "life_event", "project_fact", "task_state", "pattern", "profile"];
+    let hasOther = false;
+    for (const t of otherTypes) {
+      const items = byType.get(t);
+      if (items && items.length > 0) {
+        hasOther = true;
+        break;
+      }
+    }
+    if (hasOther) {
+      indexLines.push("- 其他记忆(账户/事件/事实/关系) → 使用 memory_search 按需检索");
+    }
+
+    const indexContent = indexLines.join("\n");
+    upsertMemSection(agentManager.memPath(agentId), "🗂️ 记忆卡片索引", indexContent, "upsert", agentId);
+    console.log(`[distillChat] 卡片索引已刷新: ${active.length} active → ${indexLines.length} 条目`);
+  } catch (e) {
+    console.warn("[distillChat] 卡片索引生成失败:", e);
+  }
+}
+
+/**
+ * 压缩时蒸馏:将待压缩的旧消息提炼为 chat cards + MEM.md 章节更新。
+ * fire-and-forget,失败时只打 warn 日志。
+ */
+async function distillChatCompression(
+  toSummarize: ChatMessage[],
+  agentId: string,
+): Promise<void> {
+  if (toSummarize.length === 0) return;
+
+  try {
+    const historyText = toSummarize
+      .map((m) => formatMsgForSummary(m))
+      .filter(Boolean)
+      .join("\n\n");
+
+    if (!historyText.trim()) return;
+
+    const memSummary = summarizeMemSections(agentId);
+    const cardInventory = summarizeCardInventory(agentId);
+
+    const prompt = CHAT_DISTILL_PROMPT
+      .replace("{{mem_summary}}", memSummary)
+      .replace("{{card_inventory}}", cardInventory);
+
+    const client = llmRegistry.get("summarizer");
+    const result = await client.chat([
+      { role: "system", content: prompt },
+      { role: "user", content: historyText.slice(0, 15000) },
+    ], { isUserInitiated: false });
+
+    recordSummarizerTokens(result, client);
+    const raw = result.content.trim();
+    if (!raw || raw === '{"cards":[],"mem_updates":{}}') return;
+
+    // 解析 JSON
+    let data: { cards?: unknown[]; mem_updates?: Record<string, string[]> };
+    try {
+      let jsonStr = raw;
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1]!.trim();
+      data = JSON.parse(jsonStr);
+    } catch {
+      console.warn("[distillChat] JSON 解析失败:", raw.slice(0, 200));
+      return;
+    }
+
+    let cardCount = 0;
+    let memCount = 0;
+
+    // 处理 cards
+    if (Array.isArray(data.cards) && data.cards.length > 0) {
+      const parsed = parseCardJson(JSON.stringify(data.cards));
+      if (parsed.length > 0) {
+        const { saved } = saveCards(parsed, agentId);
+        cardCount = saved;
+      }
+    }
+
+    // 处理 mem_updates
+    if (data.mem_updates && typeof data.mem_updates === "object") {
+      memCount = applyMemPatches(data.mem_updates, agentId);
+    }
+
+    if (cardCount > 0 || memCount > 0) {
+      console.log(`[distillChat] 蒸馏完成: ${cardCount} cards + ${memCount} mem 条目`);
+
+      // 刷新卡片索引
+      regenerateCardIndex(agentId);
+
+      // 更新向量索引
+      import("../memory/qmd.js").then(({ updateStore }) => {
+        updateStore("cards", agentId).catch((e) =>
+          console.warn("[distillChat] cards index update failed:", e)
+        );
+        updateStore("memory", agentId).catch((e) =>
+          console.warn("[distillChat] memory index update failed:", e)
+        );
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[distillChat] 蒸馏失败:", e instanceof Error ? e.message : e);
+  }
 }
 
 // ── MicroCompact ──────────────────────────────────────────────────────────────

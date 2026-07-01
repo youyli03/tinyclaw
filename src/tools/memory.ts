@@ -61,7 +61,7 @@ registerTool({
  * - 章节不存在时:在文件末尾追加新章节
  * 操作完成后触发向量索引更新(fire-and-forget)。
  */
-function upsertMemSection(filePath: string, section: string, content: string, mode: "upsert" | "append", agentId: string): string {
+export function upsertMemSection(filePath: string, section: string, content: string, mode: "upsert" | "append", agentId: string): string {
   const heading = `## ${section}`;
 
   // 文件不存在时直接创建
