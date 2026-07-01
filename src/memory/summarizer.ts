@@ -1109,7 +1109,7 @@ export async function summarizeAndCompress(
  * 生成当前 MEM.md 章节摘要供 LLM 去重参考。
  * 只输出章节名 + 前 3 条代表性条目,不送全文节省 token。
  */
-function summarizeMemSections(agentId: string): string {
+export function summarizeMemSections(agentId: string): string {
   const memPath = agentManager.memPath(agentId);
   if (!existsSync(memPath)) return "(MEM.md 尚不存在)";
 
@@ -1136,6 +1136,41 @@ function summarizeMemSections(agentId: string): string {
   }
 
   if (sections.length === 0) return "(MEM.md 为空)";
+
+  return sections.map((s) => {
+    const sampleStr = s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
+    return `- ${s.heading}: ${s.count} 条${sampleStr}`;
+  }).join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`;
+}
+
+/** 对 ACTIVE.md 做同样的章节摘要,供 distillActive 使用 */
+export function summarizeActiveSections(agentId: string): string {
+  const activePath = agentManager.activePath(agentId);
+  if (!existsSync(activePath)) return "(ACTIVE.md 尚不存在)";
+
+  const content = readFileSync(activePath, "utf-8");
+  const sections: Array<{ heading: string; count: number; samples: string[] }> = [];
+  const lines = content.split("\n");
+  let currentHeading = "";
+  let currentItems: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      if (currentHeading && currentItems.length > 0) {
+        sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+      }
+      currentHeading = line.slice(3).trim();
+      currentItems = [];
+    } else if (line.startsWith("- ") && currentHeading) {
+      const text = line.slice(2).trim();
+      if (text && !text.startsWith("[")) currentItems.push(text.slice(0, 80));
+    }
+  }
+  if (currentHeading && currentItems.length > 0) {
+    sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+  }
+
+  if (sections.length === 0) return "(ACTIVE.md 为空)";
 
   return sections.map((s) => {
     const sampleStr = s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";

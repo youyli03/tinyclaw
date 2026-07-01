@@ -22,6 +22,7 @@ import { llmRegistry } from "../llm/registry.js";
 import { updateJob, getJob } from "../cron/store.js";
 import { cronScheduler } from "../cron/scheduler.js";
 import { parseCardJson, saveCards, ageOpenLoopCards } from "../memory/cards.js";
+import { summarizeMemSections, summarizeActiveSections } from "../memory/summarizer.js";
 
 const MEM_SECTION_KEYS = [
   "👤 用户偏好",
@@ -271,7 +272,7 @@ class MemoryMaintenanceScheduler {
         role: "user",
         content:
           `## 近期日记内容\n\n${diaryContent.slice(0, 6000)}\n\n` +
-          `## 当前 MEM.md 内容\n\n${currentMem.slice(0, 3000)}`,
+          `## 当前 MEM.md 概况\n\n${summarizeMemSections(agentId)}`,
       },
     ]);
 
@@ -283,7 +284,11 @@ class MemoryMaintenanceScheduler {
 
     let updatedMem = currentMem;
     let updatedCount = 0;
-    for (const [sectionTitle, newLines] of sectionPatches) {
+
+    // Embedding 去重: 对追加式章节的新条目做余弦相似度检查
+    const dedupedPatches = await embedDedupPatches(currentMem, sectionPatches, agentId);
+
+    for (const [sectionTitle, newLines] of dedupedPatches) {
       if (!(MEM_SECTION_KEYS as readonly string[]).includes(sectionTitle)) continue;
       // 🎯 当前任务 章节使用"完全替换"策略，避免无限追加历史任务
       const nextMem = sectionTitle === "🎯 当前任务"
@@ -302,6 +307,9 @@ class MemoryMaintenanceScheduler {
         console.error(`[memory-maintenance] [${agentId}] post-distill index update error:`, err);
       });
     }
+
+    // LLM 定期合并: 👤 用户偏好 > 50 条时触发
+    await maybeConsolidatePreferences(agentId, updatedMem, memPath);
 
     return `已更新 ${updatedCount} 个章节到 MEM.md`;
   }
@@ -324,7 +332,7 @@ class MemoryMaintenanceScheduler {
         role: "user",
         content:
           `## 近期日记内容\n\n${diaryContent.slice(0, 7000)}\n\n` +
-          `## 当前 ACTIVE.md 内容\n\n${currentActive.slice(0, 3000)}`,
+          `## 当前 ACTIVE.md 概况\n\n${summarizeActiveSections(agentId)}`,
       },
     ]);
 
@@ -539,6 +547,254 @@ class MemoryMaintenanceScheduler {
 
     return contents.length > 0 ? contents.join("\n\n---\n\n") : null;
   }
+}
+
+// ================= Embedding 去重 & LLM 合并辅助函数 =================
+
+/** 计算两个向量的余弦相似度 */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  return na > 0 && nb > 0 ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+/** 调用本机 RKLLM embedding 服务,批量获取向量 */
+async function batchEmbed(texts: string[]): Promise<number[][]> {
+  const EMBED_URL = "http://127.0.0.1:11434/embed";
+  const maxRetries = 2;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // 逐条调用 (API 只接受单条 text)
+      const embeddings: number[][] = [];
+      for (const text of texts) {
+        const resp = await fetch(EMBED_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json() as { embedding?: number[] };
+        if (!data.embedding || !Array.isArray(data.embedding)) {
+          throw new Error("Invalid embedding response");
+        }
+        embeddings.push(data.embedding);
+      }
+      return embeddings;
+    } catch (e) {
+      if (attempt === maxRetries) {
+        console.warn(`[memory-maintenance] Embedding 服务不可用 (${maxRetries + 1} 次重试均失败),跳过去重:`, e);
+        return [];
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  return [];
+}
+
+/**
+ * 对 distillMem 产生的追加式章节 patches 做 embedding 去重。
+ * 只过滤掉余弦相似度 > 0.92 的新候选条目。
+ */
+async function embedDedupPatches(
+  currentMem: string,
+  sectionPatches: Map<string, string[]>,
+  agentId: string,
+): Promise<Map<string, string[]>> {
+  const deduped = new Map<string, string[]>();
+
+  // 收集需要去重的章节 (非替换式)
+  const appendSections: Array<{ title: string; newLines: string[] }> = [];
+  for (const [title, newLines] of sectionPatches) {
+    if (title === "🎯 当前任务" || title === "📝 近期变更") {
+      // 替换式章节不去重,直接保留
+      deduped.set(title, newLines);
+    } else if (newLines.length > 0) {
+      appendSections.push({ title, newLines });
+    }
+  }
+
+  if (appendSections.length === 0) return deduped;
+
+  // 提取各章节已有条目
+  const existingBySection = extractSectionItems(currentMem);
+
+  // 收集所有新候选 + 已有条目,批量 embed
+  const allTexts: string[] = [];
+  const textMeta: Array<{ sectionIdx: number; isNew: boolean }> = [];
+  for (let si = 0; si < appendSections.length; si++) {
+    const section = appendSections[si]!;
+    const existing = existingBySection.get(section.title) || [];
+    for (const t of existing) {
+      allTexts.push(t);
+      textMeta.push({ sectionIdx: si, isNew: false });
+    }
+    for (const t of section.newLines) {
+      allTexts.push(t);
+      textMeta.push({ sectionIdx: si, isNew: true });
+    }
+  }
+
+  if (allTexts.length === 0) return deduped;
+
+  const embs = await batchEmbed(allTexts);
+  if (embs.length === 0) {
+    // embedding 服务不可用,全部放行
+    console.warn(`[memory-maintenance] [${agentId}] Embedding 去重跳过: 服务不可用`);
+    for (const s of appendSections) deduped.set(s.title, s.newLines);
+    return deduped;
+  }
+
+  // 按 section 分组已有和新候选的 embedding
+  const results = new Map<number, { existing: number[][]; candidates: { text: string; emb: number[] }[] }>();
+  for (let i = 0; i < textMeta.length; i++) {
+    const meta = textMeta[i]!;
+    const emb = embs[i]!;
+    let group = results.get(meta.sectionIdx);
+    if (!group) {
+      group = { existing: [], candidates: [] };
+      results.set(meta.sectionIdx, group);
+    }
+    if (meta.isNew) {
+      group.candidates.push({ text: allTexts[i]!, emb });
+    } else {
+      group.existing.push(emb);
+    }
+  }
+
+  // 对每个 section 做去重
+  for (let si = 0; si < appendSections.length; si++) {
+    const section = appendSections[si]!;
+    const group = results.get(si);
+    if (!group || group.candidates.length === 0) {
+      deduped.set(section.title, section.newLines);
+      continue;
+    }
+
+    const filtered: string[] = [];
+    for (const cand of group.candidates) {
+      let isDup = false;
+      for (const exEmb of group.existing) {
+        if (cosineSimilarity(cand.emb, exEmb) > 0.92) {
+          isDup = true;
+          break;
+        }
+      }
+      if (!isDup) filtered.push(cand.text);
+    }
+
+    if (filtered.length < section.newLines.length) {
+      const skipped = section.newLines.length - filtered.length;
+      console.log(`[memory-maintenance] [${agentId}] Embedding 去重: ${section.title} 跳过 ${skipped} 条重复`);
+    }
+    deduped.set(section.title, filtered);
+  }
+
+  return deduped;
+}
+
+/** 从 MEM.md 文本中提取各章节的条目列表 */
+function extractSectionItems(memContent: string): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  const lines = memContent.split("\n");
+  let currentHeading = "";
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      currentHeading = line.slice(3).trim();
+      result.set(currentHeading, []);
+    } else if (line.startsWith("- ") && currentHeading) {
+      const text = line.slice(2).trim();
+      if (text && !text.startsWith("[")) {
+        result.get(currentHeading)!.push(text);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * LLM 定期合并:当 👤 用户偏好 条目数 > 50 时,调用 LLM 合并语义完全相同的条目。
+ * embedding 抓逐字重复,LLM 处理语义相近但措辞不同的边界 case。
+ */
+async function maybeConsolidatePreferences(
+  agentId: string,
+  updatedMem: string,
+  memPath: string,
+): Promise<void> {
+  try {
+    const sectionItems = extractSectionItems(updatedMem);
+    const prefs = sectionItems.get("👤 用户偏好") || [];
+    if (prefs.length <= 50) return;
+
+    console.log(`[memory-maintenance] [${agentId}] 👤 用户偏好 ${prefs.length} 条,触发 LLM 合并`);
+
+    const client = llmRegistry.get("summarizer");
+    const prefText = prefs.map((p, i) => `${i + 1}. ${p}`).join("\n");
+
+    const result = await client.chat([
+      {
+        role: "system",
+        content: `[⚠️BLOCKED:zh_you_are]。
+你的任务是将"用户偏好"列表中语义完全相同的条目合并,保留表述最清晰的一条。
+重要:不要删除任何独立的约束/偏好,只合并语义完全相同的条目。
+输出格式:用 Markdown 列表(- 开头),每行一条合并后的偏好。`,
+      },
+      {
+        role: "user",
+        content: `以下是当前"用户偏好"列表(${prefs.length} 条),请合并语义完全相同的条目:\n\n${prefText}`,
+      },
+    ], { isUserInitiated: false });
+
+    const consolidated = result.content.trim();
+    if (!consolidated) return;
+
+    // 解析合并后的列表
+    const newLines = consolidated
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("- "))
+      .map((l) => l.replace(/^-\s*/, "").trim());
+
+    if (newLines.length === 0 || newLines.length >= prefs.length) return;
+
+    // 用 replaceSection 替换整个章节
+    const merged = replaceSectionStatic(updatedMem, "👤 用户偏好", newLines);
+    fs.writeFileSync(memPath, merged, "utf-8");
+    console.log(`[memory-maintenance] [${agentId}] 👤 用户偏好合并完成: ${prefs.length} → ${newLines.length} 条`);
+  } catch (e) {
+    console.warn(`[memory-maintenance] [${agentId}] 偏好合并失败:`, e);
+  }
+}
+
+/** 静态版本的 replaceSection,供 maybeConsolidatePreferences 使用 */
+function replaceSectionStatic(content: string, sectionTitle: string, newLines: string[]): string {
+  const lines = content.split("\n");
+  const headingLine = `## ${sectionTitle}`;
+  let sectionStart = -1;
+  let sectionEnd = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line === headingLine) {
+      sectionStart = i;
+    } else if (sectionStart >= 0 && line.startsWith("## ")) {
+      sectionEnd = i;
+      break;
+    }
+  }
+  if (sectionEnd < 0) sectionEnd = lines.length;
+
+  const before = lines.slice(0, sectionStart + 1);
+  const after = lines.slice(sectionEnd);
+  const body = newLines.length > 0 ? newLines.map((l) => `- ${l}`) : ["(待记录)"];
+
+  return [...before, ...body, ...after].join("\n");
 }
 
 export const memoryMaintenance = new MemoryMaintenanceScheduler();
