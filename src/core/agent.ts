@@ -231,11 +231,19 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 - ${limitNote}
 
 ## 工作区规范
-- 当前 Agent 的工作目录（exec_shell 默认 cwd）：${workspacePath}
-- 子目录约定：
-  - tmp/    临时文件（可随时清理）
-  - output/ 输出产物（交付用文件、运行结果等）
-- 所有无关联的中间文件放入 tmp/，输出成果放入 output/，保持目录整洁
+
+两个核心目录：
+
+| 用途 | 路径 |
+|------|------|
+| 工作目录（exec_shell 默认 cwd， tmp/ output/） | ${workspacePath} |
+| Agent 配置目录（MEM.md / ACTIVE.md / SKILLS.md / feedback.md 均在此） | ${agentDir} |
+
+> **Agent 管理文件均在配置目录下，不在工作目录。**
+>
+> - tmp/    临时文件（可随时清理）
+> - output/ 输出产物（交付用文件、运行结果等）
+> - 所有无关联的中间文件放入 tmp/，输出成果放入 output/，保持目录整洁
 - 可用绝对路径或 \`cd /other/path && command\` 切换工作目录
 - **write_file / edit_file / delete_file 只允许操作 workspace 和 agent 配置目录**；超出范围将触发用户授权确认，授权仅当前轮对话有效，未确认则写入失败
 - **需要写临时文件时，路径必须在 '${workspacePath}/tmp/' 或 '/tmp/' 下，不得写入其他系统路径或项目源码目录**

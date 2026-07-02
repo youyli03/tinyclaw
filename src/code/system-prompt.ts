@@ -32,6 +32,7 @@ export function buildCodeSystemPrompt(
   const planPath = sessionId
     ? agentManager.codePlanPath(agentId, sessionId)
     : agentManager.planPath(agentId);
+  const workspaceDir = agentManager.workspaceDir(agentId);
   const workdirNote = workdir
     ? `\n- 默认 workspace（文件输出备用）：${agentManager.workspaceDir(agentId)}`
     : "";
@@ -65,12 +66,13 @@ export function buildCodeSystemPrompt(
     const hookText = loadConfig().agent.responseHooks?.[currentProvider];
     if (hookText) codeHookText = hookText;
   }
-  return buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText });
+  return buildPlanModePrompt({ workspacePath, agentDir, workspaceDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText });
 }
 
 interface PromptParts {
   workspacePath: string;
   agentDir: string;
+  workspaceDir: string;
   workdirNote: string;
   visionSection: string;
   planPath?: string;
@@ -86,7 +88,7 @@ interface PromptParts {
   codeHookText?: string | undefined;
 }
 
-function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
+function buildAutoModePrompt({ workspacePath, agentDir, workspaceDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
   const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
   const planNote = planPath
     ? `\n- PLAN.md（本 session 计划与执行日志）：\`${planPath}\`，用 \`edit_file\` 追加执行进度`
@@ -120,11 +122,15 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 
 ## 工作区
 
-- 当前工作目录：${workspacePath}
-- Agent 目录：${agentDir}${workdirNote}${planNote}${feedbackNote}
-- 子目录约定：
-  - tmp/    临时文件（可随时清理）
-  - output/ 输出产物（交付用文件、运行结果等）
+三个核心目录，用途完全不同：
+
+| 用途 | 路径 |
+|------|------|
+| 项目代码（exec_shell 默认 cwd，git 操作） | ${workspacePath} |
+| Agent 配置（ENV.md / PLAN.md / feedback.md 均在 code/ 子目录） | ${agentDir} |
+| 文件输出（tmp/ output/ 子目录） | ${workspaceDir} |
+
+> **所有 Agent 管理文件（ENV.md、PLAN.md、feedback.md）都在 Agent 配置目录的 code/ 下，不在项目目录。**${workdirNote}${planNote}${feedbackNote}
 
 ## 代码任务规范
 
@@ -204,7 +210,7 @@ function buildAutoModePrompt({ workspacePath, agentDir, workdirNote, visionSecti
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式${visionSection}${feedbackSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText }: PromptParts): string {
+function buildPlanModePrompt({ workspacePath, agentDir, workspaceDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText }: PromptParts): string {
   const envSection = envContent ? `\n\n## 本机环境上下文（ENV.md）\n\n${envContent}` : "";
   const existingPlanSection = existingPlan
     ? `\n\n## 已有计划（上次会话遗留）\n\n> ⚠️ PLAN.md 已有内容，**禁止用 write_file 覆盖**。无论是新任务还是续接，都只能用 \`edit_file\` 追加或修改相关部分，保留历史轨迹。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
@@ -267,12 +273,16 @@ Plan 模式分为两个严格隔离的阶段：
 
 ## 工作区
 
-- 当前工作目录：${workspacePath}
-- Agent 目录：${agentDir}${workdirNote}
+三个核心目录，用途完全不同：
+
+| 用途 | 路径 |
+|------|------|
+| 项目代码（exec_shell 默认 cwd，git 操作） | ${workspacePath} |
+| Agent 配置（ENV.md / PLAN.md / feedback.md 均在 code/ 子目录） | ${agentDir} |
+| 文件输出（tmp/ output/ 子目录） | ${workspaceDir} |
+
 - PLAN.md（本 session 计划文件）：\`${planPath}\`，不存在时用 \`write_file\` 创建，已存在时只能用 \`edit_file\` 局部更新${feedbackNote}
-- 子目录约定：
-  - tmp/    临时文件（可随时清理）
-  - output/ 输出产物（交付用文件、运行结果等）
+> **所有 Agent 管理文件（ENV.md、PLAN.md、feedback.md）都在 Agent 配置目录的 code/ 下，不在项目目录。**${workdirNote}
 
 ## 代码任务规范
 
