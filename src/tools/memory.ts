@@ -17,6 +17,7 @@ import * as path from "node:path";
 import * as dns from "node:dns/promises";
 import { registerTool, type ToolContext } from "./registry.js";
 import { agentManager } from "../core/agent-manager.js";
+import * as projectMemory from "../core/project-memory.js";
 import { searchMemory, searchStore, updateStore } from "../memory/qmd.js";
 import { persistSummary } from "../memory/store.js";
 import { CARD_STATUSES, CARD_TYPES, appendCard } from "../memory/cards.js";
@@ -359,7 +360,7 @@ registerTool({
     function: {
       name: "code_note_read",
       description:
-        "读取指定项目的跨 session 记忆(NOTES.md)。" +
+        "读取指定项目的跨 session 记忆(MEMORY.md 索引或 topic 文件)。" +
         "默认返回摘要模式(各条目标题 + 前 200 字),避免全量加载撑 prompt。" +
         "传 summary=false 可获取全文;不传 project 时列出所有已知项目。" +
         "适合在 code session 开始时快速了解历史约束和进度。",
@@ -380,6 +381,12 @@ registerTool({
             type: "number",
             description: "摘要模式下最多返回的条目数(默认 50)",
           },
+          topic: {
+            type: "string",
+            description:
+              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
+              "传此参数时直接读取对应 topic 文件全文,并自动附带 age warning。",
+          },
         },
         required: [],
       },
@@ -387,163 +394,84 @@ registerTool({
   },
   execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
-    const projectsDir = agentManager.codeProjectsDir(agentId);
 
-    // 不传 project → 列出所有已知项目
+    // 不传 project → 列出所有有 MEMORY.md 的项目
     if (!args["project"]) {
-      if (!fs.existsSync(projectsDir)) return "(暂无已知项目记忆,可通过 code_note 写入)";
-      const dirs = fs.readdirSync(projectsDir, { withFileTypes: true })
-        .filter(d => d.isDirectory())
-        .map(d => d.name);
-      if (dirs.length === 0) return "(暂无已知项目记忆)";
-      return `已知项目列表:\n${dirs.map(d => `- ${d}`).join("\n")}`;
+      const projects = projectMemory.listProjects(agentId);
+      if (projects.length === 0) return "(暂无已知项目记忆,可通过 code_note 创建)";
+      return "已知项目列表:\n" + projects.map(d => "- " + d).join("\n");
     }
 
     const project = String(args["project"]).trim();
-    const noteFiles = agentManager.codeProjectNotesList(agentId, project);
-    if (noteFiles.length === 0) {
-      return `项目 "${project}" 暂无记忆,可通过 code_note 创建。`;
+
+    // 传 topic → 读对应 topic 文件,带 age warning
+    if (args["topic"]) {
+      const topic = String(args["topic"]).trim();
+      const topicFilePath = projectMemory.topicPath(agentId, project, topic);
+      if (!fs.existsSync(topicFilePath)) {
+        return "topic 文件 \"" + topic + ".md\" 不存在。可用 write_file 创建: " + topicFilePath;
+      }
+      const age = projectMemory.getTopicAge(agentId, project, topic);
+      let prefix = "";
+      if (age && age.daysAgo > 7) {
+        prefix = "⚠️ " + topic + ".md 已有 " + age.daysAgo + " 天未更新\n\n";
+      }
+      const topicContent = fs.readFileSync(topicFilePath, "utf-8").trim();
+      return prefix + (topicContent || "(空文件)") + "\n\n> 文件路径: " + topicFilePath;
     }
 
-    const summaryMode = args["summary"] !== false; // 默认 true
+    // 传 project,不传 topic → 读 MEMORY.md
+    const memPath = projectMemory.memoryIndexPath(agentId, project);
+    if (!fs.existsSync(memPath)) {
+      return "项目 \"" + project + "\" 暂无记忆索引,可通过 code_note 创建。";
+    }
+
+    const rawContent = fs.readFileSync(memPath, "utf-8");
+
+    const summaryMode = args["summary"] !== false;
+    if (!summaryMode) {
+      return rawContent.slice(0, 16000);
+    }
+
+    // 摘要模式: 解析 ## Section 标题 + 每节前 2 条
     const maxEntries = typeof args["limit"] === "number" && args["limit"] > 0
       ? Math.floor(args["limit"])
       : 50;
+    const lines = rawContent.split("\n");
+    const sections: Array<{ heading: string; pointers: string[] }> = [];
+    let currentSection: { heading: string; pointers: string[] } | null = null;
 
-    if (!summaryMode) {
-      // 全文模式(当前行为,截断上调至 16000)
-      const recent = noteFiles.slice(-3);
-      const parts: string[] = [];
-      for (const f of recent) {
-        const month = f.split("/").pop()!.replace(".md", "");
-        parts.push(`# ${month}\n${fs.readFileSync(f, "utf-8").trim()}`);
+    for (const line of lines) {
+      const sectionMatch = line.match(/^##\s+(.+)$/);
+      if (sectionMatch && sectionMatch[1]) {
+        if (currentSection) sections.push(currentSection);
+        currentSection = { heading: sectionMatch[1].trim(), pointers: [] };
+        continue;
       }
-      const combined = parts.join("\n\n---\n\n").slice(0, 16000);
-      return combined || `项目 "${project}" 的记忆为空。`;
+      if (currentSection && line.trim().startsWith("-") && currentSection.pointers.length < 2) {
+        currentSection.pointers.push(line.trim());
+      }
+    }
+    if (currentSection) sections.push(currentSection);
+
+    if (sections.length === 0) {
+      return "项目 \"" + project + "\" 的 MEMORY.md 为空。";
     }
 
-    // 摘要模式:解析 markdown 提取结构化摘要
-    const recent = noteFiles.slice(-3);
-    const entries: string[] = [];
-    let fileHeader = "";
-
-    for (const f of recent) {
-      const month = f.split("/").pop()!.replace(".md", "");
-      const rawContent = fs.readFileSync(f, "utf-8");
-      const lines = rawContent.split("\n");
-
-      let inSection = false;
-      let sectionLines: string[] = [];
-      let sectionType: "date" | "milestone" | "compress" | "distill" | "analysis" | "manual" | "other" = "other";
-
-      const flushSection = () => {
-        if (!inSection || sectionLines.length === 0) return;
-        const heading = sectionLines[0] ?? "";
-        const body = sectionLines.slice(1).join("\n").trim();
-
-        if (sectionType === "date") {
-          fileHeader = heading;
-        } else if (sectionType === "milestone") {
-          const firstLine = body.split("\n")[0] ?? "";
-          entries.push(`  ${heading}  ${firstLine}`);
-        } else if (sectionType === "compress") {
-          const snippet = body.slice(0, 200).replace(/\n/g, " ");
-          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
-        } else if (sectionType === "distill") {
-          const snippet = body.slice(0, 200).replace(/\n/g, " ");
-          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
-        } else if (sectionType === "analysis") {
-          entries.push(`  ${heading}`);
-          if (body) entries.push(`    ${body.slice(0, 300)}`);
-        } else if (sectionType === "manual") {
-          const snippet = body.slice(0, 200).replace(/\n/g, " ");
-          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
-        } else {
-          const snippet = body.slice(0, 200).replace(/\n/g, " ");
-          entries.push(`  ${heading}  ${snippet}${body.length > 200 ? "..." : ""}`);
-        }
-        sectionLines = [];
-        inSection = false;
-        sectionType = "other";
-      };
-
-      for (const line of lines) {
-        // 日期标题 ## YYYY-MM-DD
-        if (/^## \d{4}-\d{2}-\d{2}/.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "date";
-          continue;
-        }
-
-        // 压缩摘要 ### 压缩摘要 [...]
-        if (/^### 压缩摘要 /.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "compress";
-          continue;
-        }
-
-        // distill 条目 ### YYYY-MM-DD HH:MM:SS  [workdir: ...]
-        if (/^### \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+\[workdir:/.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "distill";
-          continue;
-        }
-
-        // 里程碑 ### 完成:
-        if (/^### 完成:/.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "milestone";
-          continue;
-        }
-
-        // 手动 code_note 条目 ### YYYY-MM-DD(仅日期)
-        if (/^### \d{4}-\d{2}-\d{2}$/.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "manual";
-          continue;
-        }
-
-        // 分析条目
-        if (line.trim().startsWith("[分析]")) {
-          flushSection();
-          sectionLines = [line.trim()];
-          inSection = true;
-          sectionType = "analysis";
-          continue;
-        }
-
-        // 其他 ### 标题
-        if (/^### /.test(line)) {
-          flushSection();
-          sectionLines = [line];
-          inSection = true;
-          sectionType = "other";
-          continue;
-        }
-
-        // 累积当前 section 内容
-        if (inSection) {
-          sectionLines.push(line);
-        }
+    const output: string[] = [];
+    let count = 0;
+    for (const sec of sections) {
+      if (count >= maxEntries) break;
+      output.push(sec.heading + ":");
+      count++;
+      for (const p of sec.pointers) {
+        if (count >= maxEntries) break;
+        output.push("  " + p);
+        count++;
       }
-      flushSection();
-
-      if (entries.length >= maxEntries) break;
     }
 
-    const header = fileHeader ? `## ${project} 项目记忆${fileHeader ? ` - ${fileHeader}` : ""}\n` : `## ${project} 项目记忆\n`;
-    const result = header + (entries.slice(0, maxEntries).join("\n").trim() || "暂无可摘要的记忆。");
-    return result + `\n\n> 摘要模式(${Math.min(entries.length, maxEntries)} 条)。传 summary=false 获取全文。`;
+    return output.join("\n") || "项目 \"" + project + "\" 的 MEMORY.md 暂无条目。";
   },
 });
 
@@ -589,24 +517,28 @@ registerTool({
     if (!content) return "错误：缺少 content 参数";
     const mode = String(args["mode"] ?? "append");
 
-    const notesPath = agentManager.codeProjectNotesPath(agentId, project);
-    fs.mkdirSync(path.dirname(notesPath), { recursive: true });
+    // ensure project memory structure
+    projectMemory.ensureProjectMemory(agentId, project);
+
+    const notesPath = projectMemory.memoryIndexPath(agentId, project);
 
     if (mode === "overwrite") {
       const ts0 = new Date().toISOString().slice(0, 10);
+      projectMemory.refreshIndexMeta(agentId, project);
       fs.writeFileSync(notesPath, `<!-- overwrite ${ts0} -->\n${content}\n`, "utf-8");
-      return `已覆写项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
+      return `已覆写项目 "${project}" MEMORY.md（${content.length} 字节）:${notesPath}`;
     }
     const ts = new Date().toISOString().slice(0, 10);
     const entry = `\n### ${ts}\n${content}\n`;
     fs.appendFileSync(notesPath, entry, "utf-8");
+    projectMemory.refreshIndexMeta(agentId, project);
     // 写入后立即触发增量索引（fire-and-forget）
     import("../memory/qmd.js").then(({ updateStore }) => {
       updateStore("code_notes", agentId).catch((e) => {
         console.warn("[code_note] post-write index update failed:", e);
       });
     }).catch(() => {});
-    return `已追加到项目 "${project}" 当月记忆（${content.length} 字节）:${notesPath}`;
+    return `已追加到项目 "${project}" MEMORY.md（${content.length} 字节）:${notesPath}`;
   },
 });
 

@@ -382,7 +382,8 @@ export class AgentManager {
    */
   /** Code 模式项目记忆根目录 */
   codeProjectsDir(agentId: string): string {
-    return path.join(AGENTS_ROOT, agentId, "code", "projects");
+    const { projectsDir } = require("./project-memory.js");
+    return projectsDir(agentId);
   }
 
   /** Code 模式环境上下文文件路径 (~/.tinyclaw/agents/<id>/code/ENV.md) */
@@ -404,26 +405,21 @@ export class AgentManager {
   }
 
   /** 指定项目当月的记忆文件路径（格式：<project>/<YYYY-MM>.md） */
-  codeProjectNotesPath(agentId: string, project: string, date?: Date): string {
-    const d = date ?? new Date();
-    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    return path.join(this.codeProjectsDir(agentId), project, `${month}.md`);
+  codeProjectNotesPath(agentId: string, project: string, _date?: Date): string {
+    const { memoryIndexPath } = require("./project-memory.js");
+    return memoryIndexPath(agentId, project);
   }
 
   /** 列出指定项目下所有月份记忆文件，按文件名排序（旧→新） */
   codeProjectNotesList(agentId: string, project: string): string[] {
-    const dir = path.join(this.codeProjectsDir(agentId), project);
-    if (!fs.existsSync(dir)) return [];
-    return fs
-      .readdirSync(dir)
-      .filter((f) => /^\d{4}-\d{2}\.md$/.test(f))
-      .sort()
-      .map((f) => path.join(dir, f));
+    const { topicFilesList } = require("./project-memory.js");
+    return topicFilesList(agentId, project);
   }
 
   /** project-aliases.json 路径（hostname/IP → 项目 slug 映射） */
   codeProjectAliasesPath(agentId: string): string {
-    return path.join(AGENTS_ROOT, agentId, "code", "project-aliases.json");
+    const { aliasesPath } = require("./project-memory.js");
+    return aliasesPath(agentId);
   }
 
   feedbackPath(agentId: string, mode: "chat" | "code"): string {
