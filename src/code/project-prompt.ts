@@ -104,19 +104,38 @@ export function renderProjectContext(ctx: ProjectContext): string {
 }
 
 /** 渲染「项目记忆系统」指令（精简版：不含切换、不含 slug 约束） */
+/** 渲染「项目记忆系统」指令 */
 export function renderProjectMemoryInstructions(slug: string): string {
   return `## 项目记忆系统
 
-你已在项目 \`${slug}\` 的上下文中，项目记忆已注入，无需初始化。
+你已在项目 \`${slug}\` 的上下文中,项目记忆已注入,无需初始化。
 
-- 写入: \`code_note({project:"${slug}", content:"..."})\` → MEMORY.md
-- 搜索: \`code_note_search({query:"..."})\` 语义搜索
-- 读专题: \`code_note_read({topic:"xxx", project:"${slug}"})\`
+MEMORY.md 按分区组织,每分区下按日期存放摘要行:
 
-MEMORY.md 超过约 200 行时，自行将旧条目详情移到对应 topic 文件，索引中只留摘要行。
+| 分区 | topic 文件 | 用途 |
+|------|-----------|------|
+| ⛔ 约束 | constraints | 不可违反的约束 |
+| 🧠 架构 | architecture | 模块架构理解 |
+| 📊 进度 | progress | 里程碑/当前状态 |
+| 🐛 问题 | bugs | 已知问题与根因 |
+| 📝 决策 | decisions | 设计决策及理由 |
 
-**执行完毕前**: code_note 更新进度 → git commit → 告知用户。
-**发现约束/根因**: 立即调 code_note，不等任务完成。`;
+**读取**:
+- \`code_note_read()\` — 读 MEMORY.md 索引
+- \`code_note_read({topic:"constraints"})\` — 读 topic 文件
+- \`code_note_read({section:"⛔ 约束"})\` — 读指定分区
+- \`code_note_search({query:"..."})\` — 语义搜索
+
+**写入**:
+- \`code_note_write({content:"[约束] 摘要 → constraints.md"})\` — 追加摘要行到 MEMORY.md
+- \`code_note_write({topic:"constraints", content:"详情"})\` — 写 topic 文件
+- \`code_note_write({section:"⛔ 约束", content:"..."})\` — 写 MEMORY.md 指定分区
+- \`code_note_write({topic:"constraints", section:"API限制", content:"..."})\` — 写 topic 指定分点
+
+MEMORY.md 超过约 200 行时,将旧条目详情移到对应 topic 文件,索引中只留摘要行。
+
+**执行完毕前**: code_note_write 更新进度 → git commit → 告知用户。
+**发现约束/根因**: 立即调 code_note_write,不等任务完成。`;
 }
 
 // ── Build Full Prompt ────────────────────────────────────────────────────────

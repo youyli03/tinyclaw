@@ -201,6 +201,18 @@ registerTool({
       parameters: {
         type: "object",
         properties: {
+          topic: {
+            type: "string",
+            description:
+              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
+              "不传则写入 MEMORY.md 索引。",
+          },
+          section: {
+            type: "string",
+            description:
+              "分点/章节标题(不含 ## 前缀)。" +
+              "传此参数时 upsert 该章节内容,而非操作整个文件。",
+          },
           content: { type: "string", description: "要写入的内容" },
           mode: { type: "string", enum: ["overwrite", "append"], description: "写入模式:overwrite 覆盖全文(默认),append 追加到末尾" },
         },
@@ -387,6 +399,12 @@ registerTool({
               "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
               "传此参数时直接读取对应 topic 文件全文,并自动附带 age warning。",
           },
+          section: {
+            type: "string",
+            description:
+              "分点/章节标题(不含 ## 前缀)。" +
+              "传此参数时仅返回该章节内容,而非整个文件。",
+          },
         },
         required: [],
       },
@@ -398,18 +416,31 @@ registerTool({
     // 不传 project → 列出所有有 MEMORY.md 的项目
     if (!args["project"]) {
       const projects = projectMemory.listProjects(agentId);
-      if (projects.length === 0) return "(暂无已知项目记忆,可通过 code_note 创建)";
+      if (projects.length === 0) return "(暂无已知项目记忆,可通过 code_note_write 创建)";
       return "已知项目列表:\n" + projects.map(d => "- " + d).join("\n");
     }
 
     const project = String(args["project"]).trim();
+
+    // 提取 section 的辅助函数
+    const extractSection = (fileContent: string, secName: string): string | null => {
+      const heading = `## ${secName}`;
+      const lines = fileContent.split("\n");
+      const startIdx = lines.findIndex(l => l.trimEnd() === heading);
+      if (startIdx === -1) return null;
+      let endIdx = lines.length;
+      for (let i = startIdx + 1; i < lines.length; i++) {
+        if ((lines[i] ?? "").startsWith("## ")) { endIdx = i; break; }
+      }
+      return lines.slice(startIdx, endIdx).join("\n").trim();
+    };
 
     // 传 topic → 读对应 topic 文件,带 age warning
     if (args["topic"]) {
       const topic = String(args["topic"]).trim();
       const topicFilePath = projectMemory.topicPath(agentId, project, topic);
       if (!fs.existsSync(topicFilePath)) {
-        return "topic 文件 \"" + topic + ".md\" 不存在。可用 write_file 创建: " + topicFilePath;
+        return "topic 文件 \"" + topic + ".md\" 不存在。可用 code_note_write 创建: " + topicFilePath;
       }
       const age = projectMemory.getTopicAge(agentId, project, topic);
       let prefix = "";
@@ -417,16 +448,37 @@ registerTool({
         prefix = "⚠️ " + topic + ".md 已有 " + age.daysAgo + " 天未更新\n\n";
       }
       const topicContent = fs.readFileSync(topicFilePath, "utf-8").trim();
+
+      // section 过滤
+      if (args["section"]) {
+        const sec = String(args["section"]).trim();
+        const extracted = extractSection(topicContent, sec);
+        if (extracted === null) {
+          return prefix + "topic \"" + topic + ".md\" 中未找到分点 \"" + sec + "\"。\n\n> 文件路径: " + topicFilePath;
+        }
+        return prefix + extracted + "\n\n> 文件路径: " + topicFilePath;
+      }
+
       return prefix + (topicContent || "(空文件)") + "\n\n> 文件路径: " + topicFilePath;
     }
 
     // 传 project,不传 topic → 读 MEMORY.md
     const memPath = projectMemory.memoryIndexPath(agentId, project);
     if (!fs.existsSync(memPath)) {
-      return "项目 \"" + project + "\" 暂无记忆索引,可通过 code_note 创建。";
+      return "项目 \"" + project + "\" 暂无记忆索引,可通过 code_note_write 创建。";
     }
 
     const rawContent = fs.readFileSync(memPath, "utf-8");
+
+    // section 过滤(MEMORY.md)
+    if (args["section"]) {
+      const sec = String(args["section"]).trim();
+      const extracted = extractSection(rawContent, sec);
+      if (extracted === null) {
+        return "项目 \"" + project + "\" 的 MEMORY.md 中未找到分区 \"" + sec + "\"。";
+      }
+      return extracted;
+    }
 
     const summaryMode = args["summary"] !== false;
     if (!summaryMode) {
@@ -480,9 +532,9 @@ registerTool({
   spec: {
     type: "function",
     function: {
-      name: "code_note",
+      name: "code_note_write",
       description:
-        "向指定项目的跨 session 记忆（NOTES.md）写入或追加内容。\n" +
+        "向指定项目的跨 session 记忆（MEMORY.md）写入或追加内容。\n" +
         "在以下情况立即调用（不要等 session 结束）：\n" +
         "1. 发现跨 session 有价值的约束（如\"此进程不能自行 kill\"）\n" +
         "2. 完成重要里程碑（如\"pathname 路由已完成\"）\n" +
@@ -498,6 +550,18 @@ registerTool({
               "项目 slug（如 _home_lyy_tinyclaw）。" +
               "根据当前操作的仓库/服务器语义自行命名，不确定时调用 code_clarify_project。",
           },
+          topic: {
+            type: "string",
+            description:
+              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
+              "不传则写入 MEMORY.md 索引。",
+          },
+          section: {
+            type: "string",
+            description:
+              "分点/章节标题(不含 ## 前缀)。" +
+              "传此参数时 upsert 该章节内容,而非操作整个文件。",
+          },
           content: { type: "string", description: "要写入的内容（Markdown 格式）" },
           mode: {
             type: "string",
@@ -505,40 +569,78 @@ registerTool({
             description: "append（默认）追加到末尾；overwrite 全量覆写",
           },
         },
-        required: ["project", "content"],
+        required: ["content"],
       },
     },
   },
   execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
     const project = String(args["project"] ?? "").trim();
-    if (!project) return "错误：缺少 project 参数";
+    const topic = args["topic"] ? String(args["topic"]).trim() : "";
+    const section = args["section"] ? String(args["section"]).trim() : "";
     const content = String(args["content"] ?? "").trim();
-    if (!content) return "错误：缺少 content 参数";
+    if (!content) return "错误:缺少 content 参数";
     const mode = String(args["mode"] ?? "append");
+
+    if (!project) return "错误:缺少 project 参数";
 
     // ensure project memory structure
     projectMemory.ensureProjectMemory(agentId, project);
 
-    const notesPath = projectMemory.memoryIndexPath(agentId, project);
+    // 确定目标文件路径
+    let targetPath: string;
+    let fileLabel: string;
+    if (topic) {
+      targetPath = projectMemory.topicPath(agentId, project, topic);
+      fileLabel = `topic "${topic}.md"`;
+    } else {
+      targetPath = projectMemory.memoryIndexPath(agentId, project);
+      fileLabel = "MEMORY.md";
+    }
 
+    // 有 section → 章节级 upsert
+    if (section) {
+      const result = upsertMemSection(targetPath, section, content, mode === "append" ? "append" : "upsert", agentId);
+      if (topic) {
+        projectMemory.refreshTopicMeta(agentId, project, topic);
+      } else {
+        projectMemory.refreshIndexMeta(agentId, project);
+      }
+      return result + " (" + fileLabel + ")";
+    }
+
+    // 无 section → 整文件操作
     if (mode === "overwrite") {
       const ts0 = new Date().toISOString().slice(0, 10);
-      projectMemory.refreshIndexMeta(agentId, project);
-      fs.writeFileSync(notesPath, `<!-- overwrite ${ts0} -->\n${content}\n`, "utf-8");
-      return `已覆写项目 "${project}" MEMORY.md（${content.length} 字节）:${notesPath}`;
+      fs.writeFileSync(targetPath, `<!-- overwrite ${ts0} -->\n${content}\n`, "utf-8");
+      if (topic) {
+        projectMemory.refreshTopicMeta(agentId, project, topic);
+      } else {
+        projectMemory.refreshIndexMeta(agentId, project);
+      }
+      return `已覆写项目 "${project}" ${fileLabel}(${content.length} 字节):${targetPath}`;
     }
+
+    // append 模式(无 section)
+    if (topic) {
+      // topic 文件追加: 直接 append
+      fs.appendFileSync(targetPath, "\n" + content + "\n", "utf-8");
+      projectMemory.refreshTopicMeta(agentId, project, topic);
+      return `已追加到项目 "${project}" ${fileLabel}(${content.length} 字节):${targetPath}`;
+    }
+
+    // MEMORY.md 追加: 按日期分区
     const ts = new Date().toISOString().slice(0, 10);
     const entry = `\n### ${ts}\n${content}\n`;
-    fs.appendFileSync(notesPath, entry, "utf-8");
+    fs.appendFileSync(targetPath, entry, "utf-8");
     projectMemory.refreshIndexMeta(agentId, project);
-    // 写入后立即触发增量索引（fire-and-forget）
+    // 写入后立即触发增量索引(fire-and-forget)
     import("../memory/qmd.js").then(({ updateStore }) => {
       updateStore("code_notes", agentId).catch((e) => {
-        console.warn("[code_note] post-write index update failed:", e);
+        console.warn("[code_note_write] post-write index update failed:", e);
       });
     }).catch(() => {});
-    return `已追加到项目 "${project}" MEMORY.md（${content.length} 字节）:${notesPath}`;
+    return `已追加到项目 "${project}" ${fileLabel}(${content.length} 字节):${targetPath}`;
   },
 });
 
@@ -664,7 +766,7 @@ registerTool({
       action: "ask_user",
       question: `请确认当前操作属于哪个项目？${hintText}`,
       options,
-      instruction: "请调用 ask_user 工具，将上面的 question 和 options 展示给用户，获得确认后：\n1. 若用户选择已有项目，直接使用该 slug\n2. 若用户输入新项目名，用 code_note 写入初始记忆，并用下面的方式更新别名表",
+      instruction: "请调用 ask_user 工具，将上面的 question 和 options 展示给用户，获得确认后：\n1. 若用户选择已有项目，直接使用该 slug\n2. 若用户输入新项目名，用 code_note_write 写入初始记忆，并用下面的方式更新别名表",
       aliasesPath,
       resolvedIP: sshHost ? "（DNS 解析失败或未提供）" : undefined,
     });

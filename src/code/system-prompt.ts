@@ -154,38 +154,6 @@ function buildAutoModePrompt({ workspacePath, agentDir, workspaceDir, workdirNot
 - 用中文回复，简洁明了
 
 
-## 项目记忆系统
-
-你拥有针对不同项目的跨 session 记忆能力，存储在 tinyclaw 本地，不写入项目目录。
-
-> ⚠️ **强制流程，收到第一条任务消息后必须按顺序执行，不得跳过：**
-> 1. 根据任务描述或 codeWorkdir 路径确定操作的项目（路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`，SSH \`root@m1saka.cc:/opt/app\` → \`ssh_m1saka.cc_opt_app\`）
-> 2. **先调用 \`code_note_search\`** 用任务描述做语义搜索，精准定位相关约束和进度
-> 3. 若搜索结果为空/不够充分，再调用 \`code_note_read\` 获取摘要概况
-> 4. 若无法判断项目归属，先调用 \`code_clarify_project\` 确认，再调 \`code_note_read\`
-> 5. **读完 code_note 后**，才可进行任何 read_file / exec_shell / 分析规划操作
->
-> 同一 session 中如切换到不同项目目录，需重新调用 \`code_note_read\` 读取新项目记忆。
-
-**遇到任何关于项目历史/约束/进度/决策的疑问时:**
-1. 先调用 \`code_note_search\` 做语义搜索,输入具体疑问词(如"DDR3地址规划"/"上次部署的端口")
-2. 搜到相关片段就直接使用;找不到或不确定再用 \`code_note_read\` 读完整记忆
-3. 仍不确定再询问用户——不要凭假设自行决定
-
-**在对话过程中，立即调用 \`code_note\` 的情况：**
-- 发现跨 session 有价值的约束（如"此进程不能自行 kill"）
-- 定位到非显而易见的根因
-- 完成重要里程碑
-- 任何觉得下次 session 会用到的信息，随时写入，不要等任务完成
-
-**ENV.md 自主维护（\`${agentDir}/code/ENV.md\`）：**
-发现以下信息时，立即用 \`edit_file\` append 到 ENV.md（追加，不要覆盖）：
-- 本机已运行的服务（路径、端口、管理方式，如 mcsm、pin-hunter-bot）
-- 常用工具路径（如 tj.py、aria2c 等）
-- 已知项目仓库位置
-
-**任务完成时（说"已完成"前）：**
-先调用 \`code_note\` 更新项目进度，再 git commit，再告知用户。顺序固定。
 
 ## 图表与可视化
 
@@ -315,44 +283,6 @@ Plan 模式分为两个严格隔离的阶段：
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式
 - 用中文回复，简洁明了
 
-## 项目记忆系统
-
-你拥有针对不同项目的跨 session 记忆能力,存储在 tinyclaw 本地,不写入项目目录。
-
-记忆结构: \`projects/<slug>/MEMORY.md\`(索引) + topic 文件(\`constraints.md\`/\`architecture.md\`/\`progress.md\`/\`bugs.md\`/\`decisions.md\`)
-
-**session 开始时(收到第一条任务消息后):**
-1. 根据 workdir 路径或消息语义判断当前项目(路径 \`/home/lyy/tinyclaw\` → slug \`_home_lyy_tinyclaw\`)
-2. 调用 \`code_note_read\` 读取 MEMORY.md 索引(Section 标题 + 每节前 2 条 pointer)
-3. 根据任务需要,用 \`code_note_read({topic:"xxx"})\` 加载对应 topic 文件详情(带 age warning)
-4. 若无法判断项目归属,调用 \`code_clarify_project\` 向用户确认
-
-**遇到任何关于项目历史/约束/进度/决策的疑问时:**
-1. 先调用 \`code_note_search\` 做语义搜索,输入具体疑问词
-2. 搜到相关片段就直接使用;找不到再用 \`code_note_read({topic:"xxx"})\` 读 topic 文件
-3. 仍不确定再询问用户——不要凭假设自行决定
-
-**写入时:**
-- \`code_note\` → 写 MEMORY.md(摘要行,推荐格式 \`[约束/进度/决策] 摘要 → xxx.md\`)
-- \`write_file\` → 写 topic 文件详情(路径: \`projects/<slug>/xxx.md\`)
-- MEMORY.md 超过约 200 行时,自行将旧条目详情移到对应 topic 文件,索引中只留摘要行
-
-**预定义 topic 文件(AI 可自行创建更多):**
-| 文件 | 用途 |
-|------|------|
-| constraints.md | 不可违反的约束 |
-| architecture.md | 模块架构理解 |
-| progress.md | 里程碑/当前状态 |
-| bugs.md | 已知问题与根因 |
-| decisions.md | 设计决策及理由 |
-
-**执行阶段完毕(说"已完成"前):**
-先调用 \`code_note\` 更新项目进度,再 git commit,再告知用户。顺序固定。
-
-**发现以下内容时立即调用 \`code_note\`(不等任务完成):**
-- 跨 session 有价値的约束(如"此进程不能自行 kill")
-- 非显而易见的根因
-- 任何觉得下次 session 会用到的信息,随时写入,不要等任务完成
 
 ${envSection}${visionSection}${feedbackSection}${codeHookText ? `\n\n## 行为钩子（来自 provider 配置）\n\n${codeHookText}` : ""}${existingPlanSection}`;
 }
