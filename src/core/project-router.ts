@@ -112,6 +112,11 @@ export function acquireLock(agentId: string, slug: string, sessionId: string): b
 
     // 检查是否已被锁定
     if (fs.existsSync(lockPath)) {
+      const content = fs.readFileSync(lockPath, "utf-8");
+      try {
+        const existing: SessionLock = JSON.parse(content);
+        if (existing.holder === sessionId) return true; // 同 session 重入
+      } catch {}
       return false;
     }
 
