@@ -1517,7 +1517,7 @@ export async function runAgent(
 
       // ── MFA 检查（需要用户交互，先 flush 并发批次再串行）────────────
       const mfaCfg = loadConfig().auth.mfa;
-      if (toolNeedsMFA(call.name, call.args, mfaCfg) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
+      if ((toolNeedsMFA(call.name, call.args, mfaCfg) || getTool(call.name)?.requiresMFA) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
         await flushConcurrentBatch();
         let mfaPassed = false;
         try {
