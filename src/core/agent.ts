@@ -1642,6 +1642,27 @@ export async function runAgent(
     // 所有工具结果写完后，统一追加本轮积累的 image_path / 图片描述等 user 消息
     flushRoundPendingUserMsgs();
 
+    // ── Project switch 处理 ─────────────────────────────────────────
+    // project_switch 工具可能在本轮执行。为避免 task 注入打断 tool_result
+    // 序列（导致 400），handler 仅设置 _projectJustSwitched + _pendingProjectTask，
+    // 在此处本轮所有 tool_result 写入完成后统一注入 + 重建 system prompt。
+    if (session._projectJustSwitched && session._pendingProjectTask) {
+      session.addUserMessage(session._pendingProjectTask);
+      if (isCodeMode && session.projectSlug) {
+        const pctx = loadProjectContext(session.agentId, session.projectSlug);
+        const _codeProvider = (() => { try { return loadConfig().llm.backends["code"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
+        const projOpts = {
+          sessionId: session.sessionId,
+          supportsVision: client.supportsVision,
+          ...(_codeProvider ? { currentProvider: _codeProvider } : {}),
+        };
+        const newSysPrompt = buildProjectSystemPrompt(session.agentId, pctx, projOpts);
+        session.replaceOrPrependSystemMessage(newSysPrompt);
+      }
+      session._projectJustSwitched = false;
+      delete session._pendingProjectTask;
+    }
+
     // 一整批工具处理完，若已中断则退出轮次循环
     if (session.abortRequested) break;
 

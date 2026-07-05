@@ -84,7 +84,7 @@ registerTool({
       // 直接注入 task
       const sess = ctx?.masterSession;
       if (sess) {
-        sess.addUserMessage(task);
+        sess._pendingProjectTask = task;
         sess._projectJustSwitched = true;
       }
       return `✅ 已在当前项目 \`${slug}\`。任务已注入:${task}`;
@@ -109,8 +109,8 @@ registerTool({
     const sess = ctx?.masterSession;
     if (sess) {
       sess.projectSlug = slug;
-      // 注入 task 为 user 消息
-      sess.addUserMessage(task);
+      // 暂存 task,agent.ts 在 flushRoundPendingUserMsgs 后统一注入(避免打断 tool_result 序列)
+      sess._pendingProjectTask = task;
       // 设置标记,agent.ts 下一轮检测后重建项目 prompt
       sess._projectJustSwitched = true;
     }

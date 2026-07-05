@@ -143,6 +143,9 @@ export class Session {
   /** project_switch tool 设置，agent.ts 检测后清除（重建 project prompt） */
   _projectJustSwitched?: boolean;
 
+  /** project_switch 待注入的任务文本，与 _projectJustSwitched 配套，agent.ts 检测后清除 */
+  _pendingProjectTask?: string;
+
   /** Plan 审批：等待用户选择操作或提供反馈的控制柄 */
   pendingPlanApproval: PendingPlanApproval | null = null;
 
