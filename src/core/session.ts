@@ -232,6 +232,19 @@ export class Session {
         this.lastPromptTokens = restored.lastPromptTokens;
         this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
         this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
+        // 项目 session: 从 metadata.json 读取 workdir 覆盖（优先于 .code.dir）
+        if (this.projectSlug) {
+          try {
+            const metaPath = path.join(
+              os.homedir(), ".tinyclaw", "agents", this.agentId,
+              "code", "projects", this.projectSlug, "metadata.json",
+            );
+            const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+            if (meta?.project?.workdir) {
+              this.codeWorkdir = meta.project.workdir;
+            }
+          } catch { /* metadata.json 不存在或格式错误, 保持 .code.dir 的值 */ }
+        }
         this._persistReady = true;
         return;
       }

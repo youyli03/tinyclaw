@@ -20,6 +20,7 @@ import { join } from "path";
 import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
+import { buildProjectSystemPrompt, loadProjectContext } from "../code/project-prompt.js";
 import { readFeedback } from "./feedback-writer.js";
 import { sanitizeUserInput } from "../tools/sanitize.js";
 import {
@@ -769,7 +770,18 @@ export async function runAgent(
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
         const _codeProvider = (() => { try { return loadConfig().llm.backends["code"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
-        sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId, _codeProvider);
+        if (session.projectSlug) {
+          // project session: MEMORY.md + topic table injection
+          const pctx = loadProjectContext(session.agentId, session.projectSlug);
+          const projOpts: { sessionId: string; supportsVision: boolean; currentProvider?: string } = {
+            sessionId: session.sessionId,
+            supportsVision: client.supportsVision,
+          };
+          if (_codeProvider) projOpts.currentProvider = _codeProvider;
+          sysPrompt = buildProjectSystemPrompt(session.agentId, pctx, projOpts);
+        } else {
+          sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId, _codeProvider);
+        }
       } else {
         const _provider = (() => { try { return loadConfig().llm.backends[isCodeMode ? "code" : "daily"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
         sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix, _provider);

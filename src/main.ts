@@ -43,6 +43,7 @@ import { startIpcServer, broadcastActivity, getActivityLog } from "./ipc/server.
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
+import { getProjectBinding } from "./core/project-router.js";
 import { memoryMaintenance } from "./core/memory-maintenance.js";
 import { initEmbedLlm } from "./memory/qmd.js";
 import { startNewsWatcher, stopNewsWatcher } from "./memory/news-watcher.js";
@@ -98,7 +99,11 @@ function getSession(sessionId: string): Session {
     // loop session 优先用 loop config 里的 agentId（比 bindings 更权威）
     const loopCfg = agentManager.readSessionLoop(sessionId);
     const agentId = loopCfg?.agentId ?? agentManager.resolveAgent(sessionId);
-    s = new Session(sessionId, { agentId });
+    // 读取 .code.project 跳板文件, 恢复 project 绑定
+    const projectSlug = getProjectBinding(sessionId);
+    const sessionOpts: { agentId: string; projectSlug?: string } = { agentId };
+    if (projectSlug) sessionOpts.projectSlug = projectSlug;
+    s = new Session(sessionId, sessionOpts);
     sessions.set(sessionId, s);
   }
   return s;
