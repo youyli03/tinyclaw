@@ -1647,6 +1647,11 @@ export async function runAgent(
     // 序列（导致 400），handler 仅设置 _projectJustSwitched + _pendingProjectTask，
     // 在此处本轮所有 tool_result 写入完成后统一注入 + 重建 system prompt。
     if (session._projectJustSwitched && session._pendingProjectTask) {
+      // 从跳板文件读取 projectSlug(在所有 tool_result 写入完成后才生效)
+      const { getProjectBinding } = await import("../core/project-router.js");
+      const bound = getProjectBinding(session.sessionId);
+      if (bound) session.projectSlug = bound;
+
       session.addUserMessage(session._pendingProjectTask);
       if (isCodeMode && session.projectSlug) {
         const pctx = loadProjectContext(session.agentId, session.projectSlug);

@@ -97,6 +97,23 @@ registerCommand({
       lines.push(`等待态：${waitingStates.join(" / ")}`);
     }
 
+    // ── Project 绑定(Code 模式且已绑定 project 时显示) ──────────────
+    if (session.projectSlug) {
+      const { slugToWorkdir, readLock } = await import("../core/project-router.js");
+      const wd = slugToWorkdir(session.projectSlug);
+      const lock = readLock(session.agentId, session.projectSlug);
+      lines.push("");
+      lines.push("**项目绑定**");
+      lines.push(`  Slug: \`${session.projectSlug}\``);
+      if (wd) lines.push(`  工作目录: \`${wd}\``);
+      if (lock) {
+        const isHolder = lock.holder === session.sessionId;
+        lines.push(`  锁: ${isHolder ? "✅ 当前 session 持有" : `⚠️ \`${lock.holder}\` 持有`}`);
+      } else {
+        lines.push(`  锁: 未锁定`);
+      }
+    }
+
     // ── 后台任务概览 ─────────────────────────────────────────────────────────
     const slaves = slaveManager.listAll();
     if (slaves.length > 0) {

@@ -22,6 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
+import { projectsDir, memoryIndexPath, topicFilesList, aliasesPath } from "./project-memory.js";
 
 /**
  * 跨 session 通信权限配置（存储在 agents/<agentId>/access.toml）。
@@ -382,7 +383,6 @@ export class AgentManager {
    */
   /** Code 模式项目记忆根目录 */
   codeProjectsDir(agentId: string): string {
-    const { projectsDir } = require("./project-memory.js");
     return projectsDir(agentId);
   }
 
@@ -406,19 +406,16 @@ export class AgentManager {
 
   /** 指定项目当月的记忆文件路径（格式：<project>/<YYYY-MM>.md） */
   codeProjectNotesPath(agentId: string, project: string, _date?: Date): string {
-    const { memoryIndexPath } = require("./project-memory.js");
     return memoryIndexPath(agentId, project);
   }
 
   /** 列出指定项目下所有月份记忆文件，按文件名排序（旧→新） */
   codeProjectNotesList(agentId: string, project: string): string[] {
-    const { topicFilesList } = require("./project-memory.js");
     return topicFilesList(agentId, project);
   }
 
   /** project-aliases.json 路径（hostname/IP → 项目 slug 映射） */
   codeProjectAliasesPath(agentId: string): string {
-    const { aliasesPath } = require("./project-memory.js");
     return aliasesPath(agentId);
   }
 

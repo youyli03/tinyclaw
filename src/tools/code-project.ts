@@ -108,7 +108,8 @@ registerTool({
     // 8. 获取 session 对象并更新 projectSlug、注入 task
     const sess = ctx?.masterSession;
     if (sess) {
-      sess.projectSlug = slug;
+      // projectSlug 由 agent.ts 在所有 tool_result 写入完成后从跳板文件读取,
+      // 避免提前设置导致 addToolResultMessage 时 _getJsonlPath 切换到项目文件
       // 暂存 task,agent.ts 在 flushRoundPendingUserMsgs 后统一注入(避免打断 tool_result 序列)
       sess._pendingProjectTask = task;
       // 设置标记,agent.ts 下一轮检测后重建项目 prompt
