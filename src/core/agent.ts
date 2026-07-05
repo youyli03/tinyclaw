@@ -748,9 +748,12 @@ export async function runAgent(
     "memory_write_mem", "memory_write_active", "memory_read_mem",
     "memory_read_active", "memory_append_card", "memory_append",
   ]);
+  const CODE_ONLY_TOOLS = new Set([
+    "restart_tool", "project_switch", "project_status", "project_list",
+  ]);
   const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
     if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
-    if (!isCodeMode && t.function.name === "restart_tool") return false;
+    if (!isCodeMode && CODE_ONLY_TOOLS.has(t.function.name)) return false;
     return true;
   });
   const textMode = !client.supportsToolCalls;
@@ -950,7 +953,7 @@ export async function runAgent(
     const rawTools = [
       ...getAllToolSpecs(session.agentId).filter((t) => {
         if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
-        if (!isCodeMode && t.function.name === "restart_tool") return false;
+        if (!isCodeMode && CODE_ONLY_TOOLS.has(t.function.name)) return false;
         return true;
       }),
       ...(opts.customTools ?? []),

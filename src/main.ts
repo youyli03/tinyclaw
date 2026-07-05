@@ -58,6 +58,7 @@ import "./tools/db-write.js";
 import "./tools/write-report.js";
 import "./tools/loop-exit.js";
 import "./tools/loop-control.js";
+import "./tools/code-project.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 import { setActiveSessionsRef } from "./tools/restart.js";

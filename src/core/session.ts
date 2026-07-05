@@ -63,6 +63,8 @@ interface PendingAskUser {
 export interface SessionOptions {
   systemPrompt?: string;
   agentId?: string;
+  /** Code 模式下的 project slug（从 .code.project 读取，设置后持久化路径改为 projects/<slug>/session.jsonl） */
+  projectSlug?: string;
 }
 
 /**
@@ -135,6 +137,12 @@ export class Session {
   /** Code 模式用户指定的工作目录（null = 使用默认 workspace） */
   codeWorkdir: string | null = null;
 
+  /** 当前绑定的 project slug（code 模式 + 有 .code.project 时设置，切换时更新） */
+  projectSlug?: string;
+
+  /** project_switch tool 设置，agent.ts 检测后清除（重建 project prompt） */
+  _projectJustSwitched?: boolean;
+
   /** Plan 审批：等待用户选择操作或提供反馈的控制柄 */
   pendingPlanApproval: PendingPlanApproval | null = null;
 
@@ -198,19 +206,35 @@ export class Session {
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;
     this.agentId = opts.agentId ?? "default";
+    if (opts.projectSlug) this.projectSlug = opts.projectSlug;
 
-    // 优先检测 code 模式恢复（.code.jsonl + .code.active 同时存在 → 上次 crash 发生在 code 模式下）
-    // .code.active 不存在说明用户主动切回了 chat，不做恢复
-    const codeRestored = Session.loadFromJsonl(sessionId, "code");
+    // 优先检测 code 模式恢复:
+    // 若 projectSlug 已绑定 → 从 project session.jsonl 恢复
+    // 否则 → 从 .code.jsonl + .code.active 恢复
+    // .code.active 不存在说明用户主动切回了 chat,不做恢复
     const codeActive = fs.existsSync(Session.getCodeActivePath(sessionId));
-    if (codeRestored && codeRestored.messages.length > 0 && codeActive) {
-      this.mode = "code";
-      this.messages = codeRestored.messages;
-      this.lastPromptTokens = codeRestored.lastPromptTokens;
-      this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
-      this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
-      this._persistReady = true;
-      return;
+    if (codeActive || this.projectSlug) {
+      let restored: { messages: ChatMessage[]; lastPromptTokens: number } | null = null;
+      if (this.projectSlug) {
+        // 从 project session 恢复
+        const projFile = path.join(
+          os.homedir(), ".tinyclaw", "agents", this.agentId,
+          "code", "projects", this.projectSlug, "session.jsonl",
+        );
+        restored = Session.loadFromFile(projFile);
+      }
+      if (!restored || restored.messages.length === 0) {
+        restored = Session.loadFromJsonl(sessionId, "code");
+      }
+      if (restored && restored.messages.length > 0 && (codeActive || this.projectSlug)) {
+        this.mode = "code";
+        this.messages = restored.messages;
+        this.lastPromptTokens = restored.lastPromptTokens;
+        this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
+        this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
+        this._persistReady = true;
+        return;
+      }
     }
 
     // 尝试从 chat JSONL 恢复（进程崩溃后重启）
@@ -319,7 +343,7 @@ export class Session {
     // 采用"追加覆盖"方式：读文件、找最后匹配的 assistant 行替换、写回。
     if (!this._persistReady) return;
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, this.mode === "code" ? "code" : "chat");
+      const filePath = this._getJsonlPath();
       const raw = fs.readFileSync(filePath, "utf-8");
       const lines = raw.split("\n");
       // 从末尾往前找最后一条 role=assistant 的行并替换其 content
@@ -405,8 +429,7 @@ export class Session {
     msg.content = content;
     // 全量覆写 JSONL，使磁盘与内存一致
     try {
-      const mode = this.mode === "code" ? "code" : "chat";
-      const filePath = Session.getJsonlPath(this.sessionId, mode);
+      const filePath = this._getJsonlPath(this.mode === "code" ? "code" : "chat");
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
@@ -905,8 +928,7 @@ export class Session {
   private _appendMsgToJsonl(msg: ChatMessage): void {
     if (!this._persistReady) return;
     try {
-      const mode = this.mode === "code" ? "code" : "chat";
-      const filePath = Session.getJsonlPath(this.sessionId, mode);
+      const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.appendFileSync(filePath, Session.serializeMsgFull(msg, new Date().toISOString()) + "\n", "utf-8");
     } catch (err) {
@@ -945,7 +967,7 @@ export class Session {
     const lines = msgs.slice(userIdx).map((m) => Session.serializeMsgFull(m, ts)).join("\n") + "\n";
 
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
+      const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.appendFileSync(filePath, lines, "utf-8");
     } catch (err) {
@@ -961,7 +983,7 @@ export class Session {
    */
   private rewriteJsonl(): void {
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
+      const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines =
         this.messages
@@ -985,7 +1007,7 @@ export class Session {
    */
   private rewriteCodeJsonl(): void {
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, "code");
+      const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines =
         this.messages
@@ -1009,139 +1031,154 @@ export class Session {
    * - tool：role + tool_call_id + content
    * tool 与 assistant+tool_calls 必须成对出现，孤立的 tool 消息（缺少对应 tool_call_id）会被跳过。
    */
+  /**
+   * 从任意路径读取 JSONL 文件（供 project session 恢复使用）。
+   * 逻辑与 loadFromJsonl 完全一致，仅路径参数不同。
+   */
+  /**
+   * 解析 JSONL 行数组为 messages + lastPromptTokens。
+   * 由 loadFromFile / loadFromJsonl 共用。
+   */
+  private static _parseJsonlLines(lines: string[]): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+    const messages: ChatMessage[] = [];
+    let lastPromptTokens = 0;
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as Record<string, unknown>;
+        // _meta 行:不加入 messages,只提取元数据
+        if (entry["_meta"] === "promptTokens") {
+          const v = entry["value"];
+          if (typeof v === "number" && v > 0) lastPromptTokens = v;
+          continue;
+        }
+        const role = entry["role"];
+        const content = entry["content"];
+
+        if (role === "tool") {
+          // tool 消息:必须有合法的 tool_call_id 和 string content
+          const toolCallId = entry["tool_call_id"];
+          if (typeof toolCallId === "string" && typeof content === "string") {
+            messages.push({ role: "tool", tool_call_id: toolCallId, content });
+          }
+        } else if (role === "assistant" && (typeof content === "string" || Array.isArray(content))) {
+          // assistant 消息:可选恢复 tool_calls 字段
+          const rawToolCalls = entry["tool_calls"];
+          const msg: ChatMessage = { role: "assistant", content: content as string | ContentPart[] };
+          if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+            const validCalls = (rawToolCalls as unknown[]).filter((tc): tc is OpenAIToolCall => {
+              if (typeof tc !== "object" || tc === null) return false;
+              const t = tc as Record<string, unknown>;
+              const fn = t["function"] as Record<string, unknown> | undefined;
+              return (
+                typeof t["id"] === "string" &&
+                t["type"] === "function" &&
+                typeof fn?.["name"] === "string" &&
+                typeof fn?.["arguments"] === "string"
+              );
+            });
+            if (validCalls.length > 0) {
+              (msg as { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }).tool_calls = validCalls;
+            }
+          }
+          messages.push(msg);
+        } else if (
+          (role === "system" || role === "user") &&
+          (typeof content === "string" || Array.isArray(content))
+        ) {
+          const msgEntry: ChatMessage & { _loopTaskRef?: string } = { role, content: content as string | ContentPart[] };
+          const loopTaskRef = entry["loop_task_ref"];
+          if (role === "user" && typeof loopTaskRef === "string") {
+            msgEntry._loopTaskRef = loopTaskRef;
+          }
+          messages.push(msgEntry);
+        }
+      } catch {
+        // 跳过格式损坏的行
+      }
+    }
+
+    // ── Pass 1:清理孤立的 role=tool 消息 ──────────────────────────────────
+    const validToolCallIds = new Set<string>();
+    const sanitized: ChatMessage[] = [];
+    for (const m of messages) {
+      if (m.role === "tool") {
+        if (validToolCallIds.has(m.tool_call_id)) {
+          sanitized.push(m);
+        }
+      } else {
+        sanitized.push(m);
+        if (m.role === "assistant") {
+          const tc = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
+          if (tc) for (const c of tc) validToolCallIds.add(c.id);
+        }
+      }
+    }
+
+    // ── Pass 2:全量扫描并移除所有不完整的工具调用链 ──────────────────────
+    {
+      const validated: ChatMessage[] = [];
+      let i = 0;
+      while (i < sanitized.length) {
+        const m = sanitized[i]!;
+        const calls = m.role === "assistant"
+          ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
+          : undefined;
+        if (calls && calls.length > 0) {
+          const expectedIds = new Set(calls.map((c) => c.id));
+          let j = i + 1;
+          const gotIds = new Set<string>();
+          while (j < sanitized.length && sanitized[j]!.role === "tool") {
+            gotIds.add((sanitized[j] as { role: "tool"; tool_call_id: string }).tool_call_id);
+            j++;
+          }
+          const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
+          if (missingIds.length > 0) {
+            console.warn(
+              `[session] _parseJsonlLines: 检测到不完整工具调用链(缺少 tool result for ids: ${missingIds.join(", ")}),已丢弃该工具链`
+            );
+            i = j;
+          } else {
+            validated.push(...sanitized.slice(i, j));
+            i = j;
+          }
+        } else {
+          validated.push(m);
+          i++;
+        }
+      }
+      sanitized.length = 0;
+      validated.forEach((m) => sanitized.push(m));
+    }
+
+    return sanitized.length > 0 ? { messages: sanitized, lastPromptTokens } : null;
+  }
+
+  /**
+   * 从任意路径读取 JSONL 文件（供 project session 恢复使用）。
+   */
+  private static loadFromFile(filePath: string): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+      return Session._parseJsonlLines(lines);
+    } catch (err) {
+      console.error("[session] loadFromFile failed:", err);
+      return null;
+    }
+  }
+
   private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): { messages: ChatMessage[]; lastPromptTokens: number } | null {
     const filePath = Session.getJsonlPath(sessionId, mode);
     if (!fs.existsSync(filePath)) return null;
     try {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
-      const messages: ChatMessage[] = [];
-      let lastPromptTokens = 0;
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line) as Record<string, unknown>;
-          // _meta 行：不加入 messages，只提取元数据
-          if (entry["_meta"] === "promptTokens") {
-            const v = entry["value"];
-            if (typeof v === "number" && v > 0) lastPromptTokens = v;
-            continue;
-          }
-          const role = entry["role"];
-          const content = entry["content"];
-
-          if (role === "tool") {
-            // tool 消息：必须有合法的 tool_call_id 和 string content
-            const toolCallId = entry["tool_call_id"];
-            if (typeof toolCallId === "string" && typeof content === "string") {
-              messages.push({ role: "tool", tool_call_id: toolCallId, content });
-            }
-          } else if (role === "assistant" && (typeof content === "string" || Array.isArray(content))) {
-            // assistant 消息：可选恢复 tool_calls 字段
-            const rawToolCalls = entry["tool_calls"];
-            const msg: ChatMessage = { role: "assistant", content: content as string | ContentPart[] };
-            if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
-              // 基本校验：每个 tool_call 需有 id / type / function.name / function.arguments
-              const validCalls = (rawToolCalls as unknown[]).filter((tc): tc is OpenAIToolCall => {
-                if (typeof tc !== "object" || tc === null) return false;
-                const t = tc as Record<string, unknown>;
-                const fn = t["function"] as Record<string, unknown> | undefined;
-                return (
-                  typeof t["id"] === "string" &&
-                  t["type"] === "function" &&
-                  typeof fn?.["name"] === "string" &&
-                  typeof fn?.["arguments"] === "string"
-                );
-              });
-              if (validCalls.length > 0) {
-                (msg as { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }).tool_calls = validCalls;
-              }
-            }
-            messages.push(msg);
-          } else if (
-            (role === "system" || role === "user") &&
-            (typeof content === "string" || Array.isArray(content))
-          ) {
-            const msgEntry: ChatMessage & { _loopTaskRef?: string } = { role, content: content as string | ContentPart[] };
-            const loopTaskRef = entry["loop_task_ref"];
-            if (role === "user" && typeof loopTaskRef === "string") {
-              msgEntry._loopTaskRef = loopTaskRef;
-            }
-            messages.push(msgEntry);
-          }
-        } catch {
-          // 跳过格式损坏的行
-        }
-      }
-      // ── Pass 1：清理孤立的 role=tool 消息 ──────────────────────────────────
-      // 当会话历史被压缩时，可能出现 tool 消息排在最前而其对应的
-      // assistant+tool_calls 已被移除的情况，OpenAI API 会拒绝该序列（400 Bad Request）。
-      const validToolCallIds = new Set<string>();
-      const sanitized: ChatMessage[] = [];
-      for (const m of messages) {
-        if (m.role === "tool") {
-          if (validToolCallIds.has(m.tool_call_id)) {
-            sanitized.push(m);
-            // 使用过的 id 无需继续保留（tool_call_id 一对一匹配）
-            validToolCallIds.delete(m.tool_call_id);
-          }
-          // else: 孤立 tool 消息，静默丢弃
-        } else {
-          sanitized.push(m);
-          if (m.role === "assistant") {
-            const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
-            if (calls) calls.forEach((c) => validToolCallIds.add(c.id));
-          }
-        }
-      }
-
-      // ── Pass 2：全量扫描并移除所有不完整的工具调用链 ──────────────────────
-      // 旧版只检测尾部最后一个 assistant+tool_calls，若中间某个链不完整（如用户新消息
-      // 在工具执行前打断了当前轮），后续 assistant 消息会导致 break 提前退出，漏检该链。
-      // 新版：线性扫描整个数组，对每个 assistant+tool_calls 验证其紧跟的 tool 结果是否完整；
-      // 不完整则移除该 assistant 及其已有的部分 tool result，保留之后的消息。
-      {
-        const validated: ChatMessage[] = [];
-        let i = 0;
-        while (i < sanitized.length) {
-          const m = sanitized[i]!;
-          const calls = m.role === "assistant"
-            ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
-            : undefined;
-          if (calls && calls.length > 0) {
-            const expectedIds = new Set(calls.map((c) => c.id));
-            // 收集紧跟其后的连续 tool 消息
-            let j = i + 1;
-            const gotIds = new Set<string>();
-            while (j < sanitized.length && sanitized[j]!.role === "tool") {
-              gotIds.add((sanitized[j] as { role: "tool"; tool_call_id: string }).tool_call_id);
-              j++;
-            }
-            const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
-            if (missingIds.length > 0) {
-              // 不完整：丢弃该 assistant + 已有的部分 tool result，保留之后的消息
-              console.warn(
-                `[session] loadFromJsonl: 检测到不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
-              );
-              i = j; // 跳过 assistant + 部分 tool result
-            } else {
-              // 完整：保留 assistant + 所有 tool result
-              validated.push(...sanitized.slice(i, j));
-              i = j;
-            }
-          } else {
-            validated.push(m);
-            i++;
-          }
-        }
-        sanitized.length = 0;
-        validated.forEach((m) => sanitized.push(m));
-      }
-
-      return sanitized.length > 0 ? { messages: sanitized, lastPromptTokens } : null;
+      return Session._parseJsonlLines(lines);
     } catch (err) {
       console.error("[session] JSONL load failed:", err);
       return null;
     }
   }
+
 
   /**
    * 将本轮实际 promptTokens 持久化到 JSONL 末尾（_meta 行）。
@@ -1159,6 +1196,26 @@ export class Session {
     }
   }
 
+  /**
+   * 实例级 JSONL 路径解析：code 模式 + projectSlug 非空时走 project session，否则走原逻辑。
+   */
+  private _getJsonlPath(mode?: "chat" | "code"): string {
+    const m = mode ?? (this.mode === "code" ? "code" : "chat");
+    if (this.projectSlug && m === "code") {
+      return path.join(
+        os.homedir(),
+        ".tinyclaw",
+        "agents",
+        this.agentId,
+        "code",
+        "projects",
+        this.projectSlug,
+        "session.jsonl",
+      );
+    }
+    return Session.getJsonlPath(this.sessionId, m);
+  }
+
   static getJsonlPath(sessionId: string, mode: "chat" | "code" = "chat"): string {
     // 将 sessionId 中的 : / \ 替换为 _ 作为合法文件名
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
@@ -1173,7 +1230,7 @@ export class Session {
    */
   deleteJsonl(): void {
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, "chat");
+      const filePath = this._getJsonlPath();
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
@@ -1218,7 +1275,7 @@ export class Session {
     this.messages = [];
     this.lastPromptTokens = 0;
     try {
-      const filePath = Session.getJsonlPath(this.sessionId, this.mode);
+      const filePath = this._getJsonlPath();
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
