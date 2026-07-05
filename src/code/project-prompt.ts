@@ -140,6 +140,36 @@ MEMORY.md 超过约 200 行时,将旧条目详情移到对应 topic 文件,索�
 **发现约束/根因**: 立即调 code_note_write,不等任务完成。`;
 }
 
+// ── Project Switch Tools ─────────────────────────────────────────────────────
+
+/** 渲染「项目切换」指令:教 AI 如何切换到其他项目 */
+export function renderProjectSwitchTools(slug: string): string {
+  return `## 项目切换
+
+你当前绑定在项目 \`${slug}\`。若用户想操作其他项目:
+
+### 切换流程
+
+1. **确定路径** — 从上方 ENV.md 的 \`projects\` 字段查找目标项目路径
+2. **计算 slug** — 根据路径类型转换:
+
+| 类型 | 路径示例 | slug |
+|------|---------|------|
+| 本地 | \`/home/lyy/tinyclaw\` | \`_home_lyy_tinyclaw\`（\`/\` → \`_\`） |
+| SSH 远程 | \`root@m1saka.cc:/opt/app\` | \`ssh_m1saka.cc_opt_app\`（\`ssh_\` + host + path,\`.\`/\`/\` → \`_\`） |
+| WinMCP | \`win:F:/Github/fpgallm\` | \`ssh_win_F_Github_fpgallm\`（\`ssh_win_\` + path,\`:\\/\` → \`_\`） |
+
+3. **调用 project_switch** — 可直接传路径(工具内部自动转 slug),传入用户任务描述:
+   \`project_switch({ project: "路径或slug", task: "用户需求描述" })\`
+
+### 注意事项
+
+- \`project_switch\` 需要 **MFA 确认**,发送前告知用户即将切换
+- 若目标项目被其他 session 占用,切换会失败并返回占用者
+- 切换后 system prompt 自动替换为新项目上下文,AI 继续执行 task
+- 辅助工具:\`project_list\` 列出所有项目、\`project_status\` 查看当前绑定和锁`;
+}
+
 // ── Build Full Prompt ────────────────────────────────────────────────────────
 
 export interface BuildProjectPromptOptions {
@@ -217,6 +247,9 @@ export function buildProjectSystemPrompt(
 
   // 6. 项目记忆指令（精简版）
   parts.push(renderProjectMemoryInstructions(ctx.slug));
+
+  // 6.5 项目切换指令
+  parts.push(renderProjectSwitchTools(ctx.slug));
 
   // 7. 代码任务规范
   parts.push(renderSharedCodeTaskSpecs());

@@ -147,7 +147,7 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
 }
 
 registerTool({
-  requiresMFA: true,
+  requiresMFA: false,
   spec: {
     type: "function",
     function: {
