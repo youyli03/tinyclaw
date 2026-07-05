@@ -22,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { projectsDir, memoryIndexPath, topicFilesList, aliasesPath } from "./project-memory.js";
+import { projectsDir, memoryIndexPath, topicFilesList, aliasesPath, notesPath } from "./project-memory.js";
 
 /**
  * 跨 session 通信权限配置（存储在 agents/<agentId>/access.toml）。
@@ -404,9 +404,9 @@ export class AgentManager {
     return path.join(this.codeSessionsDir(agentId), month, `${day}.md`);
   }
 
-  /** 指定项目当月的记忆文件路径（格式：<project>/<YYYY-MM>.md） */
+  /** 指定项目的笔记文件路径(蒸馏等非结构化内容)（格式：<project>/<YYYY-MM>.md） */
   codeProjectNotesPath(agentId: string, project: string, _date?: Date): string {
-    return memoryIndexPath(agentId, project);
+    return notesPath(agentId, project);
   }
 
   /** 列出指定项目下所有月份记忆文件，按文件名排序（旧→新） */

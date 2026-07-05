@@ -681,7 +681,7 @@ export class Session {
    * 返回 true 表示压缩已执行。
    */
   async compressForCode(): Promise<boolean> {
-    const compressed = await summarizeAndCompressCode(this.messages, this.agentId);
+    const compressed = await summarizeAndCompressCode(this.messages, this.agentId, this.projectSlug);
     // 如果返回原始消息（无足够旧内容可压缩），跳过更新
     const estimateChars = (msgs: typeof this.messages): number =>
       msgs.reduce((sum, m) => {

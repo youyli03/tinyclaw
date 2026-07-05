@@ -103,6 +103,11 @@ export function topicPath(agentId: string, project: string, topic: string): stri
   return path.join(projectDir(agentId, project), `${topic}.md`);
 }
 
+/** NOTES.md 路径（蒸馏/笔记的非结构化文件） */
+export function notesPath(agentId: string, project: string): string {
+  return path.join(projectDir(agentId, project), "NOTES.md");
+}
+
 /** project-aliases.json 路径 */
 export function aliasesPath(agentId: string): string {
   return path.join(AGENTS_ROOT, agentId, "code", "project-aliases.json");

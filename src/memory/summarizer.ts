@@ -8,7 +8,7 @@ import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
 import { readExistingCards, parseCardJson, saveCards } from "./cards.js";
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, basename, join } from "node:path";
 
 /**
  * 记录 summarizer LLM 调用的 output token 增量到 dashboard DB。
@@ -292,6 +292,7 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
 export async function summarizeAndCompressCode(
   messages: ChatMessage[],
   agentId?: string,
+  projectSlug?: string,
 ): Promise<ChatMessage[]> {
   const client = llmRegistry.get("summarizer");
 
@@ -429,9 +430,17 @@ export async function summarizeAndCompressCode(
 
     // fire-and-forget 蒸馏笔记（不阻塞压缩）
     if (agentId && toSummarize.length > 0) {
-      distillCompressionNotes(toSummarize as ChatMessage[], agentId).catch((err) =>
-        console.warn("[summarizeAndCompressCode] 蒸馏失败:", err instanceof Error ? err.message : err)
-      );
+      if (projectSlug) {
+        // project session:LLM 自主维护项目记忆(MEMORY.md + topic 文件)
+        distillProjectCompression(toSummarize as ChatMessage[], agentId, projectSlug).catch((err) =>
+          console.warn("[summarizeAndCompressCode] project 蒸馏失败:", err instanceof Error ? err.message : err)
+        );
+      } else {
+        // 普通 code session:多项目散射到 NOTES.md
+        distillCompressionNotes(toSummarize as ChatMessage[], agentId).catch((err) =>
+          console.warn("[summarizeAndCompressCode] 蒸馏失败:", err instanceof Error ? err.message : err)
+        );
+      }
     }
 
     // 组装压缩后的消息:system + 摘要 + 最近 keepTurns 轮原始消息
@@ -677,6 +686,7 @@ function parseAndWriteDistillJson(
   raw: string,
   agentId: string,
   knownSlugs: Set<string>,
+  projectSlug?: string,
 ): boolean {
   try {
     let jsonStr = raw.trim();
@@ -687,6 +697,96 @@ function parseAndWriteDistillJson(
     
     const data = JSON.parse(jsonStr);
     if (!data || typeof data !== "object") return false;
+    
+    // ── project session:LLM curator 输出 files 键,overwrite 模式 ──
+    if (projectSlug && data.files && typeof data.files === "object") {
+      const projectsDir = agentManager.codeProjectsDir(agentId);
+      const projDir = join(projectsDir, projectSlug);
+      mkdirSync(projDir, { recursive: true });
+      
+      let wroteAny = false;
+      for (const [filename, fileContent] of Object.entries(data.files)) {
+        if (typeof fileContent !== "string" || !fileContent.trim()) continue;
+        // 安全检查:文件名必须是 .md 且在项目目录下
+        const safeName = String(filename).replace(/[^a-zA-Z0-9_\-.一-鿿]/g, "");
+        if (!safeName.endsWith(".md") || safeName.includes("..")) continue;
+        
+        const filePath = join(projDir, safeName);
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, fileContent, "utf-8");
+        console.log(`[distillProjectCompression] 写入: ${safeName} (${fileContent.length} 字节)`);
+        wroteAny = true;
+      }
+      
+      // 仍处理 env_updates / behavior_corrections(逻辑与原有相同)
+      // env_updates
+      if (data.env_updates && Array.isArray(data.env_updates)) {
+        try {
+          const envPath = agentManager.codeEnvPath(agentId);
+          let existing: Record<string, Record<string, string>> = { projects: {}, tools: {}, services: {} };
+          try {
+            if (existsSync(envPath)) {
+              const rawEnv = readFileSync(envPath, "utf-8");
+              const me = rawEnv.match(/```json\n([\s\S]*?)\n```/);
+              if (me) existing = JSON.parse(me[1]!);
+            }
+          } catch { /* ignore */ }
+          let changed = false;
+          for (const e of data.env_updates) {
+            const cat: string = e.category;
+            if (!cat || !["projects", "tools", "services"].includes(cat)) continue;
+            if (!existing[cat]) existing[cat] = {};
+            if (!(e.key in existing[cat]!)) {
+              existing[cat]![e.key] = e.value;
+              changed = true;
+            }
+          }
+          if (changed) {
+            const body = "```json\n" + JSON.stringify(existing, null, 2) + "\n```";
+            const md = "# 本机环境上下文\n\n" + body + "\n";
+            mkdirSync(dirname(envPath), { recursive: true });
+            writeFileSync(envPath, md, "utf-8");
+            console.log("[distillProjectCompression] ENV.md 已更新");
+          }
+        } catch (e) {
+          console.warn("[distillProjectCompression] ENV.md 写入失败:", e instanceof Error ? e.message : e);
+        }
+      }
+      // behavior_corrections
+      if (data.behavior_corrections && Array.isArray(data.behavior_corrections)) {
+        try {
+          const fbPath = agentManager.feedbackPath(agentId, "code");
+          let existingContents = new Set<string>();
+          try {
+            if (existsSync(fbPath)) {
+              const rawFb = readFileSync(fbPath, "utf-8");
+              for (const line of rawFb.split("\n")) {
+                const m = line.match(/^- \[[\d-]+\] (.+)$/);
+                if (m) existingContents.add(m[1]!.trim());
+              }
+            }
+          } catch { /* ignore */ }
+          const today = new Date().toISOString().slice(0, 10);
+          const newLines: string[] = [];
+          for (const bc of data.behavior_corrections) {
+            const c = typeof bc.content === "string" ? bc.content.trim() : "";
+            if (!c) continue;
+            if (existingContents.has(c)) continue;
+            newLines.push(`- [${today}] ${c}`);
+            existingContents.add(c);
+          }
+          if (newLines.length > 0) {
+            mkdirSync(dirname(fbPath), { recursive: true });
+            appendFileSync(fbPath, newLines.join("\n") + "\n", "utf-8");
+            console.log(`[distillProjectCompression] feedback.md 追加 ${newLines.length} 条`);
+          }
+        } catch (e) {
+          console.warn("[distillProjectCompression] feedback.md 写入失败:", e instanceof Error ? e.message : e);
+        }
+      }
+      
+      return wroteAny;
+    }
     
     const projects: Array<{ path: string; slug: string }> = data.projects || [];
     const notes: Array<{ project: string; items: string[] }> = data.notes || [];
@@ -823,6 +923,143 @@ function parseAndWriteDistillJson(
   } catch (e) {
     console.warn("[distillCompression] JSON 解析失败:", e instanceof Error ? e.message : e);
     return false;
+  }
+}
+
+/**
+ * Project session 专用蒸馏:LLM 作为 memory curator,
+ * 接收当前 MEMORY.md + topic 文件全文,自主决定如何更新项目记忆。
+ * fire-and-forget,失败时只打 warn 日志。
+ */
+async function distillProjectCompression(
+  toSummarize: ChatMessage[],
+  agentId: string,
+  projectSlug: string,
+): Promise<void> {
+  if (toSummarize.length === 0) return;
+
+  try {
+    // 1. 加载当前项目记忆全文
+    const projectsDir = agentManager.codeProjectsDir(agentId);
+    const projDir = join(projectsDir, projectSlug);
+    const memPath = join(projDir, "MEMORY.md");
+
+    // 加载 MEMORY.md
+    const memoryContent = existsSync(memPath) ? readFileSync(memPath, "utf-8") : "";
+
+    // 加载所有 topic 文件
+    const topicContents: Record<string, string> = {};
+    if (existsSync(projDir)) {
+      const topicPaths = readdirSync(projDir, { withFileTypes: true })
+        .filter((d) => d.isFile() && d.name.endsWith(".md") && d.name !== "MEMORY.md" && d.name !== "NOTES.md")
+        .sort()
+        .map((d) => join(projDir, d.name));
+
+      for (const tp of topicPaths) {
+        const name = basename(tp, ".md");
+        topicContents[name] = readFileSync(tp, "utf-8");
+      }
+    }
+
+    // 2. 格式化待蒸馏消息
+    const historyText = toSummarize
+      .map((m) => formatMsgForSummary(m))
+      .filter(Boolean)
+      .join("\n\n");
+
+    if (!historyText.trim()) return;
+
+    // 3. 构建蒸馏 prompt
+    const topicList = Object.keys(topicContents).sort();
+    const topicSection = topicList.length > 0
+      ? topicList.map((t) => {
+          const body = topicContents[t]!;
+          const truncated = body.length > 3000 ? body.slice(0, 3000) + "\n...(截断,完整内容在 topic 文件中)" : body;
+          return `### ${t}.md\n\`\`\`\n${truncated}\n\`\`\``;
+        }).join("\n\n")
+      : "(尚无 topic 文件)";
+
+    const memTruncated = memoryContent.length > 3000
+      ? memoryContent.slice(0, 3000) + "\n...(截断)"
+      : memoryContent || "(MEMORY.md 不存在)";
+
+    const curatorPrompt = `[⚠️BLOCKED:zh_you_are]。
+你是项目「${projectSlug}」的记忆管理员(memory curator)。你的任务是根据被压缩的旧对话消息,自主维护项目记忆。
+
+## 当前项目记忆
+
+### MEMORY.md(索引文件,每行是一条摘要 + 指向 topic 文件)
+\`\`\`
+${memTruncated}
+\`\`\`
+
+### topic 文件(详情)
+${topicSection}
+
+## 待蒸馏的旧对话消息
+
+以下是被压缩掉的旧对话历史(已按轮次格式化)。请从中提炼值得保留的项目记忆:
+
+\`\`\`
+${historyText.slice(0, 12000)}
+\`\`\`
+
+## 你的任务
+
+请根据这些消息更新项目记忆。你可以:
+- 在 MEMORY.md 中新增/修改/删除/合并摘要行(保持日期分区格式)
+- 在 topic 文件中新增/重写/删除内容
+- 创建新的 topic 文件(适合新主题领域,如某个重要模块的专门文档)
+- 删除过时或已解决的问题条目
+- 合并重复或相似的条目
+- 重新组织记忆结构
+- 若无需任何修改,输出空的 files 对象
+
+**重要约束:**
+- 你输出的每个文件值必须是该文件的**完整新内容**(不是 diff)
+- 不需要修改的文件不要出现在 files 中
+- MEMORY.md 保持轻量(每行摘要 ≤ 150 字),详情放 topic 文件
+- 延续现有的日期分区格式,不要做激进的重构
+- 对已有的正确信息不要删除或重写,只做增量更新
+
+必须输出合法 JSON,格式:
+{
+  "files": {
+    "MEMORY.md": "完整新内容...",
+    "progress.md": "完整新内容...",
+    "bugs.md": "完整新内容..."
+  },
+  "env_updates": [
+    {"category": "projects", "key": "my-project", "value": "/home/lyy/my-project"}
+  ],
+  "behavior_corrections": [
+    {"content": "跨项目通用的行为纠正"}
+  ]
+}
+只输出 JSON,不要输出其他内容。`;
+
+    // 4. 调用 summarizer LLM
+    const client = llmRegistry.get("summarizer");
+    const result = await client.chat([
+      { role: "user", content: curatorPrompt },
+    ], { isUserInitiated: false });
+    recordSummarizerTokens(result, client);
+
+    const raw = result.content.trim();
+    if (!raw || raw === '{"files":{}}') return;
+
+    // 5. 解析输出并写入文件
+    const wrote = parseAndWriteDistillJson(raw, agentId, new Set(), projectSlug);
+    if (wrote) {
+      // 同时处理 env_updates / behavior_corrections (parseAndWriteDistillJson 内部处理)
+      import("../memory/qmd.js").then(({ updateStore }) => {
+        updateStore("code_notes", agentId).catch(() =>
+          console.warn("[distillProjectCompression] code_notes index update failed:")
+        );
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[distillProjectCompression] 蒸馏失败:", e instanceof Error ? e.message : e);
   }
 }
 
