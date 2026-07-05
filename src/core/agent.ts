@@ -71,7 +71,8 @@ import { buildVisionContent } from "../connectors/utils/media-parser.js";
  */
 async function describeImageWithVisionFallback(
   imgPath: string,
-  visionClientOrChain: import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[],
+  visionClientOrChain:
+    import("../llm/registry.js").AnyLLMClient | import("../llm/registry.js").AnyLLMClient[],
   customPrompt?: string
 ): Promise<{ description: string; usage: ChatResult["usage"] } | null> {
   const chain = Array.isArray(visionClientOrChain) ? visionClientOrChain : [visionClientOrChain];
@@ -82,16 +83,23 @@ async function describeImageWithVisionFallback(
   if (!nodeFs.existsSync(resolved)) return null;
   const ext = path.extname(resolved).toLowerCase().slice(1);
   const mime =
-    ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
-    ext === "png" ? "image/png" :
-    ext === "gif" ? "image/gif" :
-    ext === "webp" ? "image/webp" :
-    "image/png";
+    ext === "jpg" || ext === "jpeg"
+      ? "image/jpeg"
+      : ext === "png"
+        ? "image/png"
+        : ext === "gif"
+          ? "image/gif"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
   const buf = nodeFs.readFileSync(resolved);
-  const dataUrl = pathToDataUrlCompressed(resolved) ?? `data:${mime};base64,${buf.toString("base64")}`;
+  const dataUrl =
+    pathToDataUrlCompressed(resolved) ?? `data:${mime};base64,${buf.toString("base64")}`;
   const VISION_MAX_BASE64 = 1 * 1024 * 1024;
   if (dataUrl.length > VISION_MAX_BASE64) {
-    console.warn(`[visionFallback] 图片 base64 仍超限(${(dataUrl.length / 1024).toFixed(0)} KB),跳过描述`);
+    console.warn(
+      `[visionFallback] 图片 base64 仍超限(${(dataUrl.length / 1024).toFixed(0)} KB),跳过描述`
+    );
     return null;
   }
   for (let i = 0; i < chain.length; i++) {
@@ -100,11 +108,23 @@ async function describeImageWithVisionFallback(
     try {
       let description = "";
       const result = await client.streamChat(
-        [{ role: "user", content: [
-          { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
-          { type: "text", text: (customPrompt ? customPrompt + "\n" : "") + "Describe the image in detail, including all elements, text, and charts. Note the approximate position of each element (e.g., top-left, center, bottom-right). Only describe what you can see — do not infer or guess. Reply in Chinese." }
-        ] }],
-        (chunk) => { description += chunk; },
+        [
+          {
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
+              {
+                type: "text",
+                text:
+                  (customPrompt ? customPrompt + "\n" : "") +
+                  "Describe the image in detail, including all elements, text, and charts. Note the approximate position of each element (e.g., top-left, center, bottom-right). Only describe what you can see — do not infer or guess. Reply in Chinese.",
+              },
+            ],
+          },
+        ],
+        (chunk) => {
+          description += chunk;
+        },
         { includeReasoningInStream: true }
       );
       if (result.content.trim()) {
@@ -112,8 +132,11 @@ async function describeImageWithVisionFallback(
         return { description: result.content.trim(), usage: result.usage };
       }
     } catch (e: any) {
-      const isRateLimit = e?.status === 429 || (typeof e?.message === "string" && e.message.includes("429"));
-      console.warn(`[visionFallback] client[${i}] 失败(${isRateLimit ? "429/RPD" : e?.message ?? e})${i < chain.length - 1 ? ",尝试下一个..." : ""}`);
+      const isRateLimit =
+        e?.status === 429 || (typeof e?.message === "string" && e.message.includes("429"));
+      console.warn(
+        `[visionFallback] client[${i}] 失败(${isRateLimit ? "429/RPD" : (e?.message ?? e)})${i < chain.length - 1 ? ",尝试下一个..." : ""}`
+      );
     }
   }
   console.error("[visionFallback] 所有 vision 后端均失败");
@@ -124,7 +147,7 @@ setBuiltinAgentFilter((toolName: string, agentId: string): boolean => {
   const cfg = agentManager.readToolsConfig(agentId);
   if (!cfg) return true; // 文件不存在 → 不限制
   if (cfg.mode === "allowlist") return cfg.tools.includes(toolName);
-  if (cfg.mode === "denylist")  return !cfg.tools.includes(toolName);
+  if (cfg.mode === "denylist") return !cfg.tools.includes(toolName);
   return true;
 });
 
@@ -146,7 +169,7 @@ function isToolAvailable(toolName: string, agentId: string): boolean {
   const cfg = agentManager.readToolsConfig(agentId);
   if (!cfg) return true;
   if (cfg.mode === "allowlist") return cfg.tools.includes(toolName);
-  if (cfg.mode === "denylist")  return !cfg.tools.includes(toolName);
+  if (cfg.mode === "denylist") return !cfg.tools.includes(toolName);
   return true;
 }
 
@@ -154,48 +177,57 @@ function isToolAvailable(toolName: string, agentId: string): boolean {
  * 内置系统提示词（动态生成，含 code_assist 次数限制）。
  * agentId 仅用于读取 tools.toml 以决定 MEM.md 操作说明的措辞，与记忆的操作对象无关。
  */
-function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, supportsVision = false, agentId = "default"): string {
+function buildBuiltinSystem(
+  maxCodeAssistCalls: number,
+  workspacePath: string,
+  supportsVision = false,
+  agentId = "default"
+): string {
   const limitNote =
     maxCodeAssistCalls > 0
       ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
-      : 'code_assist 调用次数不限制';
-  const agentDir = join(workspacePath, '..');
-  const memFilePath = join(agentDir, 'MEM.md');
-  const activeFilePath = join(agentDir, 'ACTIVE.md');
-  const skillsFilePath = join(agentDir, 'SKILLS.md');
+      : "code_assist 调用次数不限制";
+  const agentDir = join(workspacePath, "..");
+  const memFilePath = join(agentDir, "MEM.md");
+  const activeFilePath = join(agentDir, "ACTIVE.md");
+  const skillsFilePath = join(agentDir, "SKILLS.md");
   const chatFeedbackPath = agentManager.feedbackPath(agentId, "chat");
 
   // ── chat feedback.md（跨 session 用户行为纠正，若存在则注入） ───────────────
   const chatFeedbackContent = readFeedback(agentId, "chat");
 
   // ── MEM.md 操作说明（动态，根据 agent tools.toml 决定使用哪种工具描述） ──────
-  const hasWriteFile     = isToolAvailable("write_file",      agentId);
-  const hasExecShell     = isToolAvailable("exec_shell",      agentId);
-  const hasMemWriteTool  = isToolAvailable("memory_write_mem", agentId);
-  const hasMemReadTool   = isToolAvailable("memory_read_mem",  agentId);
+  const hasWriteFile = isToolAvailable("write_file", agentId);
+  const hasExecShell = isToolAvailable("exec_shell", agentId);
+  const hasMemWriteTool = isToolAvailable("memory_write_mem", agentId);
+  const hasMemReadTool = isToolAvailable("memory_read_mem", agentId);
 
   let memWriteDesc: string;
   let memReadDesc: string;
   if (hasWriteFile && hasMemWriteTool) {
     // 两者均可用：优先推荐 memory_write_mem（无需 MFA），write_file 作备选
     memWriteDesc = `优先调用 memory_write_mem 工具（无需 MFA）；也可用 write_file 写入 ${memFilePath}`;
-    memReadDesc  = hasMemReadTool
+    memReadDesc = hasMemReadTool
       ? `调用 memory_read_mem；也可用 exec_shell 执行 cat ${memFilePath}`
-      : (hasExecShell ? `用 exec_shell 执行 cat ${memFilePath}` : `调用 memory_read_mem`);
+      : hasExecShell
+        ? `用 exec_shell 执行 cat ${memFilePath}`
+        : `调用 memory_read_mem`;
   } else if (hasWriteFile) {
     // 只有 write_file 可用（默认/无限制 agent 且未配置 memory_write_mem）
     memWriteDesc = `直接用 write_file 写入 ${memFilePath}`;
-    memReadDesc  = hasExecShell
+    memReadDesc = hasExecShell
       ? `用 exec_shell 执行 cat ${memFilePath}`
-      : (hasMemReadTool ? `调用 memory_read_mem 工具` : `（暂无可用方式）`);
+      : hasMemReadTool
+        ? `调用 memory_read_mem 工具`
+        : `（暂无可用方式）`;
   } else if (hasMemWriteTool) {
     // 受限 agent：write_file/exec_shell 被禁，仅有 memory_write_mem 可用
     memWriteDesc = `调用 memory_write_mem 工具（支持 overwrite 覆盖 / append 追加两种模式）`;
-    memReadDesc  = hasMemReadTool ? `调用 memory_read_mem 工具` : `（暂无可用方式）`;
+    memReadDesc = hasMemReadTool ? `调用 memory_read_mem 工具` : `（暂无可用方式）`;
   } else {
     // 两者均不可用（极度受限 agent）
     memWriteDesc = `（当前 Agent 无写入权限，MEM.md 由管理员维护）`;
-    memReadDesc  = hasMemReadTool ? `调用 memory_read_mem 工具` : `（当前 Agent 无读取权限）`;
+    memReadDesc = hasMemReadTool ? `调用 memory_read_mem 工具` : `（当前 Agent 无读取权限）`;
   }
 
   return `你是 tinyclaw，一个简洁高效的 AI 助手。
@@ -325,22 +357,31 @@ function buildBuiltinSystem(maxCodeAssistCalls: number, workspacePath: string, s
 1. 调用 agent_fork(task="完整任务描述") → 立即返回 slave_id，继续响应用户
 2. 告知用户后台任务已启动，将在完成后自动通知
 3. 可随时调用 agent_status() 列出全部后台任务及进度（status_filter="running" 只看运行中），或 agent_status(slave_id="xxx") 查询特定任务
-4. 若需取消，调用 agent_abort(slave_id="xxx")${supportsVision ? `
+4. 若需取消，调用 agent_abort(slave_id="xxx")${
+    supportsVision
+      ? `
 
 ## 视觉能力
 - 你当前使用的模型支持直接读取图片，不需要 OCR 工具
 - 用户发送的图片会被自动附加到消息中，你可以直接描述和分析图片内容
-- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具` : ''}${chatFeedbackContent ? `
+- 收到含图片的消息时，直接观察并回答，不要建议安装 tesseract 或其他 OCR 工具`
+      : ""
+  }${
+    chatFeedbackContent
+      ? `
 
 ## 行为约束（来自历史反馈）
 以下是用户过去纠正过的行为，请严格遵守：
 
 ${chatFeedbackContent}
 
-> 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\`` : `
+> 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+      : `
 
 ## 行为反馈记录
-当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``}`;}
+当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+  }`;
+}
 
 /**
  * 为不支持 function calling 的模型生成文字版工具描述和调用格式说明（追加到 system prompt）。
@@ -354,10 +395,12 @@ function buildTextBasedToolInstructions(tools: ChatCompletionTool[]): string {
   const descs = tools
     .map((t) => {
       const fn = t.function;
-      const params = fn.parameters as {
-        properties?: Record<string, { type?: string; description?: string }>;
-        required?: string[];
-      } | undefined;
+      const params = fn.parameters as
+        | {
+            properties?: Record<string, { type?: string; description?: string }>;
+            required?: string[];
+          }
+        | undefined;
       const lines = [`### ${fn.name}`, `说明：${fn.description ?? ""}`];
       if (params?.properties) {
         lines.push("参数：");
@@ -435,7 +478,13 @@ function buildSkillReminder(agentId: string): string | null {
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  * opts.systemPromptSuffix 追加到 Agent 提示之后（不替换）。
  */
-function buildSystemPrompt(agentId = "default", extra?: string, supportsVision = false, suffix?: string, currentProvider?: string): string {
+function buildSystemPrompt(
+  agentId = "default",
+  extra?: string,
+  supportsVision = false,
+  suffix?: string,
+  currentProvider?: string
+): string {
   const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
   const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision, agentId)];
@@ -477,7 +526,10 @@ export interface AgentRunOptions {
    * 返回 true = 确认，false = 取消，reject = 超时。
    * 未提供时（CLI 模式）自动通过。
    */
-  onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
+  onMFARequest?: (
+    warningMessage: string,
+    verifyCode?: (code: string) => boolean
+  ) => Promise<boolean>;
   /**
    * Interface B MFA / 状态通知：展示文字消息的回调
    */
@@ -620,7 +672,12 @@ function toolCallSummary(name: string, args: Record<string, unknown>): string {
     const cmd = String(args["command"] ?? "").replace(/\n/g, " ");
     return `${name}: ${cmd.slice(0, 80)}${cmd.length > 80 ? "…" : ""}`;
   }
-  if (name === "write_file" || name === "read_file" || name === "delete_file" || name === "edit_file") {
+  if (
+    name === "write_file" ||
+    name === "read_file" ||
+    name === "delete_file" ||
+    name === "edit_file"
+  ) {
     return `${name}: ${args["path"] ?? ""}`;
   }
   if (name === "cron_add") return `${name}: ${args["name"] ?? ""} (${args["schedule"] ?? ""})`;
@@ -680,9 +737,9 @@ export async function runAgent(
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
   const visionClient = !client.supportsVision ? llmRegistry.getVisionClientChain() : undefined;
-  let totalVisionPromptTokens = 0;      // vision 模型 input token 累计
-  let totalVisionCompletionTokens = 0;  // vision 模型 output token 累计
-  let totalVisionCacheReadTokens = 0;   // vision 模型 cache read token 累计
+  let totalVisionPromptTokens = 0; // vision 模型 input token 累计
+  let totalVisionCompletionTokens = 0; // vision 模型 output token 累计
+  let totalVisionCacheReadTokens = 0; // vision 模型 cache read token 累计
   let totalVisionCacheCreationTokens = 0; // vision 模型 cache creation token 累计
 
   // 恢复该 session 上次已启用的 MCP server
@@ -703,7 +760,7 @@ export async function runAgent(
         const reason = inSessionAllowlist ? "非 code 模式" : "session 不在白名单";
         console.warn(
           `[premiumGuard] session=${session.sessionId} ${reason}，` +
-          `降级 ${client.model} → ${allowlist.fallbackModel}`
+            `降级 ${client.model} → ${allowlist.fallbackModel}`
         );
         const fallback = await buildFallbackClient();
         if (fallback) client = fallback;
@@ -718,14 +775,13 @@ export async function runAgent(
   const logPrefix = isSlave ? `[slave:${sid}]` : `[agent] ${sid}`;
   const msgPreview = userContent.replace(/\n/g, " ").slice(0, 60);
   if (!opts.skipAddUserMessage || userContent) {
-    console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "..." : ""}"`)
+    console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "..." : ""}"`);
   }
   const startMs = Date.now();
 
   // code 模式工具调用节流：每分钟汇总一次通知
-  const toolThrottler = (isCodeMode && opts.onNotify)
-    ? new ToolCallThrottler((msg) => void opts.onNotify!(msg))
-    : null;
+  const toolThrottler =
+    isCodeMode && opts.onNotify ? new ToolCallThrottler((msg) => void opts.onNotify!(msg)) : null;
 
   // ── 前置：重置并发控制状态，创建新 AbortController ───────────────────────
   session.abortRequested = false;
@@ -743,14 +799,26 @@ export async function runAgent(
   // 非 code 模式过滤 restart_tool（该工具仅 code 模式下有意义）
   // code 模式过滤 agent fork 系列（code 模式本身是子 agent，不应再向下 fork）
   const CODE_MODE_EXCLUDED = new Set([
-    "code_assist", "code_assist_run", "skill_run",
-    "agent_fork", "agent_status", "agent_wait", "agent_abort",
+    "code_assist",
+    "code_assist_run",
+    "skill_run",
+    "agent_fork",
+    "agent_status",
+    "agent_wait",
+    "agent_abort",
     // chat 专属记忆工具（code 模式用 code_note_read/code_note 替代）
-    "memory_write_mem", "memory_write_active", "memory_read_mem",
-    "memory_read_active", "memory_append_card", "memory_append",
+    "memory_write_mem",
+    "memory_write_active",
+    "memory_read_mem",
+    "memory_read_active",
+    "memory_append_card",
+    "memory_append",
   ]);
   const CODE_ONLY_TOOLS = new Set([
-    "restart_tool", "project_switch", "project_status", "project_list",
+    "restart_tool",
+    "project_switch",
+    "project_status",
+    "project_list",
   ]);
   const initialTools = getAllToolSpecs(session.agentId).filter((t) => {
     if (isCodeMode && CODE_MODE_EXCLUDED.has(t.function.name)) return false;
@@ -769,22 +837,50 @@ export async function runAgent(
       let sysPrompt: string;
       if (isCodeMode) {
         // code 模式：使用代码专注 prompt，忽略 MEM.md / SKILLS.md / 用户自定义 prompt
-        const _codeProvider = (() => { try { return loadConfig().llm.backends["code"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
+        const _codeProvider =
+          (() => {
+            try {
+              return loadConfig().llm.backends["code"]?.model.split("/")[0];
+            } catch {
+              return undefined;
+            }
+          })() ?? undefined;
         if (session.projectSlug) {
           // project session: MEMORY.md + topic table injection
           const pctx = loadProjectContext(session.agentId, session.projectSlug);
-          const projOpts: { sessionId: string; supportsVision: boolean; currentProvider?: string } = {
-            sessionId: session.sessionId,
-            supportsVision: client.supportsVision,
-          };
+          const projOpts: { sessionId: string; supportsVision: boolean; currentProvider?: string } =
+            {
+              sessionId: session.sessionId,
+              supportsVision: client.supportsVision,
+            };
           if (_codeProvider) projOpts.currentProvider = _codeProvider;
           sysPrompt = buildProjectSystemPrompt(session.agentId, pctx, projOpts);
         } else {
-          sysPrompt = buildCodeSystemPrompt(session.agentId, client.supportsVision, "plan", session.codeWorkdir ?? undefined, session.sessionId, _codeProvider);
+          sysPrompt = buildCodeSystemPrompt(
+            session.agentId,
+            client.supportsVision,
+            "plan",
+            session.codeWorkdir ?? undefined,
+            session.sessionId,
+            _codeProvider
+          );
         }
       } else {
-        const _provider = (() => { try { return loadConfig().llm.backends[isCodeMode ? "code" : "daily"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
-        sysPrompt = buildSystemPrompt(session.agentId, opts.systemPrompt, client.supportsVision, opts.systemPromptSuffix, _provider);
+        const _provider =
+          (() => {
+            try {
+              return loadConfig().llm.backends[isCodeMode ? "code" : "daily"]?.model.split("/")[0];
+            } catch {
+              return undefined;
+            }
+          })() ?? undefined;
+        sysPrompt = buildSystemPrompt(
+          session.agentId,
+          opts.systemPrompt,
+          client.supportsVision,
+          opts.systemPromptSuffix,
+          _provider
+        );
       }
       if (textMode && initialTools.length > 0) {
         sysPrompt += "\n\n" + buildTextBasedToolInstructions(initialTools);
@@ -854,11 +950,14 @@ export async function runAgent(
           try {
             const _memResult = await searchMemory(_rawText.slice(0, 200), session.agentId, 5);
             if (_memResult && _memResult.trim()) {
-              const _truncated = _memResult.length > 1000 ? _memResult.slice(0, 1000) + "..." : _memResult;
+              const _truncated =
+                _memResult.length > 1000 ? _memResult.slice(0, 1000) + "..." : _memResult;
               session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
             }
             session.lastMemorySearchPromptTokens = _curTokens;
-          } catch { /* 静默跳过,不阻断主流程 */ }
+          } catch {
+            /* 静默跳过,不阻断主流程 */
+          }
         }
       }
     }
@@ -895,7 +994,9 @@ export async function runAgent(
         // code 模式：pre-flight 检测 session 是否已超限（如上次 run 400 后 session 未清理）
         // 用 lastPromptTokens（API 实测值）或字符估算进行判断；若超限则先压缩再执行
         const codeCtx = llmRegistry.getContextWindow("code");
-        const exceedsWindowThreshold = codeCtx > 0 && shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
+        const exceedsWindowThreshold =
+          codeCtx > 0 &&
+          shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
         if (exceedsWindowThreshold) {
           console.log(`${logPrefix} ℹ️ Code session pre-flight：上下文超限，执行滑动窗口压缩`);
           await session.compressForCode();
@@ -915,7 +1016,9 @@ export async function runAgent(
         if (visionClient) {
           const visionContent = buildVisionContent(sanitizedContent);
           const imageParts = Array.isArray(visionContent)
-            ? visionContent.filter((p: import("../llm/client.js").ContentPart) => p.type === "image_path")
+            ? visionContent.filter(
+                (p: import("../llm/client.js").ContentPart) => p.type === "image_path"
+              )
             : [];
           for (const imgPart of imageParts) {
             if (imgPart.type === "image_path") {
@@ -938,8 +1041,8 @@ export async function runAgent(
   let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let totalCompletionTokens = 0; // 本次 runAgent 所有 LLM 轮次的 output token 累计
-  let totalPromptTokens = 0;     // input token 累计
-  let totalCacheReadTokens = 0;  // cache read token 累计
+  let totalPromptTokens = 0; // input token 累计
+  let totalCacheReadTokens = 0; // cache read token 累计
   let totalCacheCreationTokens = 0; // cache creation token 累计
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
@@ -957,7 +1060,7 @@ export async function runAgent(
   // Copilot 服务端据此将整次 agent 运行识别为同一任务，只对首轮（X-Initiator: user）计费。
   const agentTaskId = opts.agentTaskIdOverride ?? crypto.randomUUID();
   session.currentAgentTaskId = agentTaskId;
-  let promptExceededRetried = false;  // guard: compress+retry at most once per run
+  let promptExceededRetried = false; // guard: compress+retry at most once per run
   for (let round = 0; round < maxToolRounds; round++) {
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
@@ -983,16 +1086,21 @@ export async function runAgent(
     // round 0 不需要检查（pre-flight 已处理），从 round 1 起才有 tool results 写入
     // Code 模式轮间压缩:95% 时提前触发,防止下一轮 LLM 调用时直接超限
     if (round > 0 && isCodeMode && !session.abortRequested && codeContextWindow > 0) {
-      const estimatedNow = session.lastPromptTokens > 0
-        ? session.lastPromptTokens
-        : session.estimatedTokens();
+      const estimatedNow =
+        session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
       if (estimatedNow / codeContextWindow >= 0.95) {
-        console.log(`${logPrefix} ⚠️ Code 轮间检测到上下文达 ${Math.round(estimatedNow / codeContextWindow * 100)}%(round ${round}),执行压缩`);
+        console.log(
+          `${logPrefix} ⚠️ Code 轮间检测到上下文达 ${Math.round((estimatedNow / codeContextWindow) * 100)}%(round ${round}),执行压缩`
+        );
         await session.compressForCode();
       }
     }
-    if (round > 0 && !isCodeMode && !session.abortRequested
-        && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
+    if (
+      round > 0 &&
+      !isCodeMode &&
+      !session.abortRequested &&
+      shouldSummarize(session.getMessages(), session.lastPromptTokens)
+    ) {
       console.log(`${logPrefix} ℹ️ Chat session 轮间检测到上下文超限（round ${round}），执行压缩`);
       opts.onCompress?.("start");
       await session.compress();
@@ -1050,16 +1158,17 @@ export async function runAgent(
             }
           },
           {
-            ...(tools.length > 0 && client.supportsToolCalls
-              ? { tools, tool_choice: "auto" }
-              : {}),
+            ...(tools.length > 0 && client.supportsToolCalls ? { tools, tool_choice: "auto" } : {}),
             signal: llmAc.signal,
             isUserInitiated: round === 0 && !opts.skipPreamble && !opts.continueAsAgentRound,
             taskId: agentTaskId,
             _retryHooks: {
               onRetryWait: () => {
                 // 进入重试等待：归还 slot，其他请求可趁机推进
-                if (slotHeld) { releaseLLMSlot(); slotHeld = false; }
+                if (slotHeld) {
+                  releaseLLMSlot();
+                  slotHeld = false;
+                }
               },
               onRetryResume: async () => {
                 // 重试等待结束：重新排队获取 slot（若 abort 则 throw）
@@ -1070,7 +1179,9 @@ export async function runAgent(
             // code 模式：首 chunk 后禁用 idle timeout（长代码生成 token 间隔可 >60s）
             ...(isCodeMode ? { disableIdleAfterFirstChunk: true } : {}),
             // /retry 命令传入的 requestId override（首轮才有意义）
-            ...(round === 0 && opts.turnRequestIdOverride ? { turnRequestIdOverride: opts.turnRequestIdOverride } : {}),
+            ...(round === 0 && opts.turnRequestIdOverride
+              ? { turnRequestIdOverride: opts.turnRequestIdOverride }
+              : {}),
           }
         );
         // 清除流式进度行，后续日志正常换行输出
@@ -1098,7 +1209,7 @@ export async function runAgent(
             toolThrottler?.stop();
             throw err;
           }
-          round--;  // 重新执行本轮
+          round--; // 重新执行本轮
           continue;
         }
         // LLM 调用失败（连接错误、400/500、限流等）：回滚本次注入的消息，保持 session 状态干净
@@ -1113,7 +1224,10 @@ export async function runAgent(
         throw err;
       } finally {
         // LLM 请求已结束（无论成功/失败），释放 slot（若尚未被 onRetryWait 释放）
-        if (slotHeld) { releaseLLMSlot(); slotHeld = false; }
+        if (slotHeld) {
+          releaseLLMSlot();
+          slotHeld = false;
+        }
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
     }
@@ -1125,27 +1239,41 @@ export async function runAgent(
     totalCacheCreationTokens += lastUsage.cacheCreationTokens ?? 0;
     // 记录到 session,供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
-    Session.persistPromptTokens(session.sessionId, session.mode === "code" ? "code" : "chat", lastUsage.promptTokens);
+    Session.persistPromptTokens(
+      session.sessionId,
+      session.mode === "code" ? "code" : "chat",
+      lastUsage.promptTokens
+    );
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值
     if (isCodeMode && !session.abortRequested) {
       // 实际值为 0（极少见）时 fallback 到字符估算
-      const actualTokens = session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
+      const actualTokens =
+        session.lastPromptTokens > 0 ? session.lastPromptTokens : session.estimatedTokens();
       if (codeContextWindow > 0) {
         const usageRatio = actualTokens / codeContextWindow;
         if (usageRatio >= CODE_CONTEXT_WARN_THRESHOLD) {
-          console.log(`${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`);
+          console.log(
+            `${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`
+          );
           const compressed = await session.compressForCode();
           if (compressed) {
             const msgCount = session.getMessages().length;
             console.log(`${logPrefix} ✅ 压缩完成,消息数:${msgCount}`);
-            void opts.onNotify?.(`⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，已自动压缩/截断历史工具结果以继续执行（当前消息数:${msgCount}）。`);
+            void opts.onNotify?.(
+              `⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，已自动压缩/截断历史工具结果以继续执行（当前消息数:${msgCount}）。`
+            );
           } else {
             console.log(`${logPrefix} ⚠️ 压缩无效果(轮次不足或已最小化),上下文可能继续增长`);
-            void opts.onNotify?.(`⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，压缩无效果，请考虑开启新会话。`);
-          }        } else if (usageRatio >= 0.75) {
-          console.log(`${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`);
+            void opts.onNotify?.(
+              `⚠️ 上下文已达 ${Math.round(usageRatio * 100)}%，压缩无效果，请考虑开启新会话。`
+            );
+          }
+        } else if (usageRatio >= 0.75) {
+          console.log(
+            `${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`
+          );
           await session.compressForCode();
         }
       }
@@ -1163,7 +1291,8 @@ export async function runAgent(
         // 已纠错一次，模型仍未使用正确格式 → 直接把原始输出返回给用户
         console.log(
           `${logPrefix} ❌ 格式纠错重试仍失败（textMode=${textMode}），返回原始输出：` +
-          content.slice(0, 60).replace(/\n/g, " ") + (content.length > 60 ? "…" : "")
+            content.slice(0, 60).replace(/\n/g, " ") +
+            (content.length > 60 ? "…" : "")
         );
         finalContent = content;
         session.addAssistantMessage(finalContent);
@@ -1178,15 +1307,15 @@ export async function runAgent(
       if (looksLikeToolAttempt) {
         console.log(
           `${logPrefix} ⚠️ 格式错误：无 tool_call（textMode=${textMode}，round=${round}），` +
-          `内容：${trimmedContent.slice(0, 60).replace(/\n/g, " ")}${trimmedContent.length > 60 ? "…" : ""}`
+            `内容：${trimmedContent.slice(0, 60).replace(/\n/g, " ")}${trimmedContent.length > 60 ? "…" : ""}`
         );
         console.log(`${logPrefix} ⚠️ 注入格式纠错提示，重试本轮`);
         session.addAssistantMessage(content);
         session.addSystemMessage(
           "[格式纠错] 工具调用格式不正确。请严格使用以下格式，整条回复只包含此块，不附加任何其他文字：\n" +
-          "<tool_call>\n" +
-          '{"name": "工具名", "args": {"参数名": "值"}}\n' +
-          "</tool_call>"
+            "<tool_call>\n" +
+            '{"name": "工具名", "args": {"参数名": "值"}}\n' +
+            "</tool_call>"
         );
         formatRetryPending = true;
         continue;
@@ -1274,14 +1403,20 @@ export async function runAgent(
     /** 同一轮 LLM 输出中只允许一次 ask_user（强制串行单次）*/
     let hasAskedUser = false;
     const SERIAL_TOOLS = new Set([
-      "ask_user", "ask_master", "notify_user", "send_report", "render_diagram",
-      "code_assist", "code_assist_run",
-      "agent_fork", "run_code_subagent",
+      "ask_user",
+      "ask_master",
+      "notify_user",
+      "send_report",
+      "render_diagram",
+      "code_assist",
+      "code_assist_run",
+      "agent_fork",
+      "run_code_subagent",
       "exit_plan_mode",
       "create_skill",
       "session_send",
-      "restart_tool",  // 触发 process.exit，必须串行且需提前写 tool result
-      "read_image",    // 读图后需注入 image_path/vision描述，必须串行避免穿插在 tool_result 之间
+      "restart_tool", // 触发 process.exit，必须串行且需提前写 tool result
+      "read_image", // 读图后需注入 image_path/vision描述，必须串行避免穿插在 tool_result 之间
     ]);
 
     /**
@@ -1302,15 +1437,25 @@ export async function runAgent(
       const currentDepth = opts.slaveDepth ?? 0;
       try {
         result = await executeTool(call.name, call.args, {
-          cwd: (isCodeMode && session.codeWorkdir) ? session.codeWorkdir : agentManager.workspaceDir(session.agentId),
+          cwd:
+            isCodeMode && session.codeWorkdir
+              ? session.codeWorkdir
+              : agentManager.workspaceDir(session.agentId),
           sessionId: session.sessionId,
           mode: isCodeMode ? "code" : "chat",
           agentId: session.agentId,
           masterSession: session,
           ...(session.currentAgentTaskId ? { agentTaskId: session.currentAgentTaskId } : {}),
-          ...(!textMode && call.callId ? { currentCallId: call.callId } : {}),  // function calling 模式下注入 callId，供 restart_tool 等在 process.exit 前写 tool result
+          ...(!textMode && call.callId ? { currentCallId: call.callId } : {}), // function calling 模式下注入 callId，供 restart_tool 等在 process.exit 前写 tool result
           ...(currentDepth < MAX_SLAVE_DEPTH
-            ? { slaveRunFn: (s, c, o) => runAgent(s, c, { ...o, slaveDepth: currentDepth + 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) }) }
+            ? {
+                slaveRunFn: (s, c, o) =>
+                  runAgent(s, c, {
+                    ...o,
+                    slaveDepth: currentDepth + 1,
+                    ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
+                  }),
+              }
             : {}),
           ...(opts.onSlaveComplete ? { onSlaveComplete: opts.onSlaveComplete } : {}),
           ...(opts.onProgressNotify ? { onProgressNotify: opts.onProgressNotify } : {}),
@@ -1354,13 +1499,15 @@ export async function runAgent(
       // ── Prompt Injection 检测 ────────────────────────────────────────────
       const injAlert = detectPromptInjection(call.name, result, loadConfig());
       if (injAlert) {
-        console.warn(`[security] prompt injection detected in tool "${call.name}": ${injAlert.pattern} | snippet: ${injAlert.snippet}`);
+        console.warn(
+          `[security] prompt injection detected in tool "${call.name}": ${injAlert.pattern} | snippet: ${injAlert.snippet}`
+        );
         void opts.onNotify?.(
           `⚠️ **[安全警告] 检测到疑似提示词注入！**\n` +
-          `工具: \`${call.name}\`\n` +
-          `规则: ${injAlert.pattern}\n` +
-          `片段: \`${injAlert.snippet}\`\n\n` +
-          `可疑内容已自动屏蔽，建议检查该工具的数据来源。`
+            `工具: \`${call.name}\`\n` +
+            `规则: ${injAlert.pattern}\n` +
+            `片段: \`${injAlert.snippet}\`\n\n` +
+            `可疑内容已自动屏蔽，建议检查该工具的数据来源。`
         );
         result = injAlert.sanitized;
       }
@@ -1395,7 +1542,9 @@ export async function runAgent(
     };
 
     /** 将 (call, result) 列表按顺序写入 session */
-    const flushResults = async (pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>) => {
+    const flushResults = async (
+      pairs: Array<{ call: (typeof validToolCalls)[number]; result: string }>
+    ) => {
       // 注意：此函数只写 tool_result，不追加 user 消息。
       // image_path 等延迟消息统一收集到外部 roundPendingUserMsgs，
       // 由调用方在所有工具执行完毕后调用 flushRoundPendingUserMsgs() 统一注入。
@@ -1405,17 +1554,25 @@ export async function runAgent(
           // 从 call.args 取原始路径,tool result 存路径占位,注入 image_path 供 resolveMessagesForApi 按需编码
           if (call.name === "read_image" && result.startsWith("data:image/")) {
             const origPath = String((call.args as Record<string, unknown>)["path"] ?? "");
-            session.addToolResultMessage(call.callId, origPath ? `[图片已加载: ${origPath}]` : result);
+            session.addToolResultMessage(
+              call.callId,
+              origPath ? `[图片已加载: ${origPath}]` : result
+            );
             if (origPath) {
               // 仅当主模型支持视觉时才注入 image_path,避免将图片传给不支持视觉的模型(如 deepseek)
               if (client.supportsVision) {
                 roundPendingUserMsgs.push([{ type: "image_path" as const, path: origPath }]);
               }
               if (visionClient) {
-                const customPrompt = typeof (call.args as Record<string, unknown>)["prompt"] === "string"
-                  ? (call.args as Record<string, unknown>)["prompt"] as string
-                  : undefined;
-                const visResult = await describeImageWithVisionFallback(origPath, visionClient, customPrompt);
+                const customPrompt =
+                  typeof (call.args as Record<string, unknown>)["prompt"] === "string"
+                    ? ((call.args as Record<string, unknown>)["prompt"] as string)
+                    : undefined;
+                const visResult = await describeImageWithVisionFallback(
+                  origPath,
+                  visionClient,
+                  customPrompt
+                );
                 if (visResult) {
                   roundPendingUserMsgs.push(`[图片描述 ${origPath}]:\n${visResult.description}`);
                   totalVisionPromptTokens += visResult.usage.promptTokens;
@@ -1472,7 +1629,7 @@ export async function runAgent(
         await flushResults([{ call: batch[0]!, result }]);
       } else {
         // 并发执行，结果按原始顺序收集
-        const results = await Promise.all(batch.map(c => runOneTool(c)));
+        const results = await Promise.all(batch.map((c) => runOneTool(c)));
         await flushResults(batch.map((call, i) => ({ call, result: results[i]! })));
       }
     };
@@ -1484,7 +1641,9 @@ export async function runAgent(
         if (!textMode) {
           session.addToolResultMessage(call.callId, "操作被用户新消息中断，此工具调用未执行");
         } else {
-          session.addSystemMessage(`[tool_result:${call.name}]\n操作被用户新消息中断，此工具调用未执行`);
+          session.addSystemMessage(
+            `[tool_result:${call.name}]\n操作被用户新消息中断，此工具调用未执行`
+          );
         }
         continue;
       }
@@ -1517,7 +1676,11 @@ export async function runAgent(
 
       // ── MFA 检查（需要用户交互，先 flush 并发批次再串行）────────────
       const mfaCfg = loadConfig().auth.mfa;
-      if ((toolNeedsMFA(call.name, call.args, mfaCfg) || getTool(call.name)?.requiresMFA) && !session.mfaApprovedForThisRun && !session.mfaPreApproved) {
+      if (
+        (toolNeedsMFA(call.name, call.args, mfaCfg) || getTool(call.name)?.requiresMFA) &&
+        !session.mfaApprovedForThisRun &&
+        !session.mfaPreApproved
+      ) {
         await flushConcurrentBatch();
         let mfaPassed = false;
         try {
@@ -1599,8 +1762,9 @@ export async function runAgent(
           try {
             const parsed = JSON.parse(result) as { image_paths?: string[] };
             if (parsed.image_paths && parsed.image_paths.length > 0) {
-              const imgParts: import("../llm/client.js").ContentPart[] =
-                parsed.image_paths.map((p) => ({ type: "image_path" as const, path: p }));
+              const imgParts: import("../llm/client.js").ContentPart[] = parsed.image_paths.map(
+                (p) => ({ type: "image_path" as const, path: p })
+              );
               session.addUserMessage(imgParts);
               if (!client.supportsVision && visionClient) {
                 for (const p of parsed.image_paths) {
@@ -1615,7 +1779,9 @@ export async function runAgent(
                 }
               }
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           for (const remaining of validToolCalls.slice(validToolCalls.indexOf(call) + 1)) {
             if (!remaining) continue;
             const skipMsg = "skipped: ask_user is pending, waiting for user reply";
@@ -1655,7 +1821,14 @@ export async function runAgent(
       session.addUserMessage(session._pendingProjectTask);
       if (isCodeMode && session.projectSlug) {
         const pctx = loadProjectContext(session.agentId, session.projectSlug);
-        const _codeProvider = (() => { try { return loadConfig().llm.backends["code"]?.model.split("/")[0]; } catch { return undefined; } })() ?? undefined;
+        const _codeProvider =
+          (() => {
+            try {
+              return loadConfig().llm.backends["code"]?.model.split("/")[0];
+            } catch {
+              return undefined;
+            }
+          })() ?? undefined;
         const projOpts = {
           sessionId: session.sessionId,
           supportsVision: client.supportsVision,
@@ -1684,12 +1857,16 @@ export async function runAgent(
         Date.now() - startMs > threshold
       ) {
         const continuationRunFn = (s: Session, c: string, o?: Record<string, unknown>) =>
-          runAgent(s, c, { ...(o as AgentRunOptions), slaveDepth: 1, ...(opts.onNotify ? { onNotify: opts.onNotify } : {}) });
+          runAgent(s, c, {
+            ...(o as AgentRunOptions),
+            slaveDepth: 1,
+            ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
+          });
         const slaveId = slaveManager.forkContinuation(
           session,
           continuationRunFn,
           opts.onSlaveComplete,
-          opts.onProgressNotify,
+          opts.onProgressNotify
         );
         finalContent =
           `⏱️ 任务已运行超过 ${Math.round(threshold / 60_000)} 分钟，` +
@@ -1745,17 +1922,21 @@ export async function runAgent(
 
   // Code 模式：无论是否被用户中断，run 结束时都尝试压缩，防止下次运行时 context 超限
   if (isCodeMode && !isSlave) {
-    await session.compressForCode().catch((e) =>
-      console.warn("[agent] post-run code compress failed:", e instanceof Error ? e.message : e)
-    );
+    await session
+      .compressForCode()
+      .catch((e) =>
+        console.warn("[agent] post-run code compress failed:", e instanceof Error ? e.message : e)
+      );
   }
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily");
-  const fmtK = (n: number) => n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n);
+  const fmtK = (n: number) => (n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n));
   const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {
-    console.log(`${logPrefix} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`);
+    console.log(
+      `${logPrefix} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`
+    );
   } else {
     console.log(`${logPrefix} → done in ${elapsed}s [${tokenInfo}]`);
   }
@@ -1783,7 +1964,10 @@ export async function runAgent(
       }
       if (lastUser && lastAssistant) {
         distillTurnToDiary(lastUser, lastAssistant, session.agentId).catch((err) =>
-          console.warn("[agent] chat diary distill failed:", err instanceof Error ? err.message : err)
+          console.warn(
+            "[agent] chat diary distill failed:",
+            err instanceof Error ? err.message : err
+          )
         );
       }
     }
@@ -1810,7 +1994,7 @@ export async function runAgent(
   // 写本次 runAgent token 到 dashboard DB(仅非 copilot 模型,按来源分类写增量)
   // 每个来源(chat/code/cron)写三条 key: input / output / cache
   try {
-    const _isNotCopilot = !('isCopilot' in client) || !client.isCopilot;
+    const _isNotCopilot = !("isCopilot" in client) || !client.isCopilot;
     if (_isNotCopilot && (totalCompletionTokens > 0 || totalPromptTokens > 0)) {
       const LLM_CAT = "llm";
       const source = session.sessionId.startsWith("cron:")
@@ -1821,9 +2005,21 @@ export async function runAgent(
 
       // source 下三个 key: token/<source>/input, token/<source>/output, token/<source>/cache
       const entries: Array<{ key: string; value: number; desc: string }> = [
-        { key: `token/${source}/input`,  value: totalPromptTokens,         desc: `${source} input token 增量` },
-        { key: `token/${source}/output`, value: totalCompletionTokens,     desc: `${source} output token 增量` },
-        { key: `token/${source}/cache`,  value: totalCacheReadTokens + totalCacheCreationTokens, desc: `${source} cache token 增量` },
+        {
+          key: `token/${source}/input`,
+          value: totalPromptTokens,
+          desc: `${source} input token 增量`,
+        },
+        {
+          key: `token/${source}/output`,
+          value: totalCompletionTokens,
+          desc: `${source} output token 增量`,
+        },
+        {
+          key: `token/${source}/cache`,
+          value: totalCacheReadTokens + totalCacheCreationTokens,
+          desc: `${source} cache token 增量`,
+        },
       ];
 
       for (const e of entries) {
@@ -1836,9 +2032,21 @@ export async function runAgent(
       if (totalVisionPromptTokens > 0 || totalVisionCompletionTokens > 0) {
         const visSource = "vision";
         const visEntries: Array<{ key: string; value: number; desc: string }> = [
-          { key: `token/${visSource}/input`,  value: totalVisionPromptTokens,                            desc: `${visSource} input token 增量` },
-          { key: `token/${visSource}/output`, value: totalVisionCompletionTokens,                        desc: `${visSource} output token 增量` },
-          { key: `token/${visSource}/cache`,  value: totalVisionCacheReadTokens + totalVisionCacheCreationTokens, desc: `${visSource} cache token 增量` },
+          {
+            key: `token/${visSource}/input`,
+            value: totalVisionPromptTokens,
+            desc: `${visSource} input token 增量`,
+          },
+          {
+            key: `token/${visSource}/output`,
+            value: totalVisionCompletionTokens,
+            desc: `${visSource} output token 增量`,
+          },
+          {
+            key: `token/${visSource}/cache`,
+            value: totalVisionCacheReadTokens + totalVisionCacheCreationTokens,
+            desc: `${visSource} cache token 增量`,
+          },
         ];
         for (const e of visEntries) {
           if (e.value <= 0) continue;
@@ -1847,7 +2055,9 @@ export async function runAgent(
         }
       }
     }
-  } catch { /* 写 db 失败不影响主流程 */ }
+  } catch {
+    /* 写 db 失败不影响主流程 */
+  }
 
   return { content: finalContent, toolsUsed };
 }
@@ -1872,7 +2082,11 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
     if (result.toolCalls && result.toolCalls.length > 0) {
       return {
         content: result.content,
-        toolCalls: result.toolCalls.map((tc) => ({ name: tc.name, args: tc.args, callId: tc.callId })),
+        toolCalls: result.toolCalls.map((tc) => ({
+          name: tc.name,
+          args: tc.args,
+          callId: tc.callId,
+        })),
       };
     }
     return { content: result.content };
@@ -1896,7 +2110,7 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
         toolCalls.push({
           name: (parsed as Record<string, unknown>)["name"] as string,
           args: ((parsed as Record<string, unknown>)["args"] ?? {}) as Record<string, unknown>,
-          callId: "",  // 文本模式无 ID
+          callId: "", // 文本模式无 ID
         });
       }
     } catch {

@@ -45,7 +45,11 @@ export async function run(_args: string[]): Promise<void> {
   } catch {
     running = false;
     console.log(yellow(`PID ${pid} 的进程不存在，直接启动新实例...`));
-    try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(SERVICE_PID_FILE);
+    } catch {
+      /* ignore */
+    }
   }
 
   if (running) {
@@ -61,20 +65,32 @@ export async function run(_args: string[]): Promise<void> {
     let exited = false;
     for (let i = 0; i < 25; i++) {
       await new Promise<void>((r) => setTimeout(r, 200));
-      try { process.kill(pid, 0); } catch { exited = true; break; }
+      try {
+        process.kill(pid, 0);
+      } catch {
+        exited = true;
+        break;
+      }
     }
 
     if (!exited) {
       console.log(yellow("旧进程未在 5s 内退出，强制终止..."));
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
       await new Promise<void>((r) => setTimeout(r, 300));
     }
 
     // 清理残留 PID 文件（main.ts 退出时会自己删，但防竞争再删一次）
-    try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(SERVICE_PID_FILE);
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── 启动新进程 ──────────────────────────────────────────────────────────────
   await startRun([]);
 }
-

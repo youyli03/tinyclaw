@@ -89,7 +89,6 @@ const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份
 - 后续 user / assistant / system 消息是 Master 最近的对话历史（只读，含工具调用结果）
 - **最后一条 user 消息是你的具体任务**，请直接执行`;
 
-
 // ── SlaveManager ──────────────────────────────────────────────────────────────
 
 class SlaveManager {
@@ -117,7 +116,7 @@ class SlaveManager {
     reportIntervalSecs?: number,
     onProgressNotify?: SlaveProgressNotifyFn,
     resultMode: "inject" | "wait" = "inject",
-    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean },
+    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean }
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
 
@@ -147,7 +146,9 @@ class SlaveManager {
         (m) => typeof m.content === "string" && m.content.includes("[对话历史摘要]")
       );
       if (!summaryInSlice) {
-        slaveSession.addSystemMessage(`## Master 对话历史摘要（背景信息）\n\n${masterSession.lastSummary}`);
+        slaveSession.addSystemMessage(
+          `## Master 对话历史摘要（背景信息）\n\n${masterSession.lastSummary}`
+        );
       }
     }
 
@@ -159,12 +160,24 @@ class SlaveManager {
       else if (msg.role === "assistant") slaveSession.addAssistantMessage(text);
     }
 
-    console.log(`[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, task="${task.slice(0, 60)}"`);
+    console.log(
+      `[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, task="${task.slice(0, 60)}"`
+    );
 
     // 后台运行（fire-and-forget）
     // wait 模式：Slave 完成后不触发 onComplete，Master 通过 agent_wait 主动拉取
     const effectiveOnComplete = resultMode === "wait" ? undefined : onComplete;
-    void this._run(slaveId, slaveSession, task, runFn, effectiveOnComplete, reportIntervalSecs, onProgressNotify, false, extraRunOpts);
+    void this._run(
+      slaveId,
+      slaveSession,
+      task,
+      runFn,
+      effectiveOnComplete,
+      reportIntervalSecs,
+      onProgressNotify,
+      false,
+      extraRunOpts
+    );
 
     return slaveId;
   }
@@ -183,7 +196,7 @@ class SlaveManager {
     masterSession: Session,
     runFn: SlaveRunFn,
     onComplete?: (notif: SlaveNotification) => Promise<void>,
-    onProgressNotify?: SlaveProgressNotifyFn,
+    onProgressNotify?: SlaveProgressNotifyFn
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
 
@@ -208,15 +221,26 @@ class SlaveManager {
     // Append a brief continuation hint so the Slave knows it's running headless
     slaveSession.addSystemMessage(
       "## ⚠️ Sub-Agent 后台续跑提示\n\n" +
-      "你是一个在后台继续执行的 Sub-Agent（Slave）。" +
-      "上方对话历史是原 Master 会话的完整上下文（含已执行工具的结果）。\n" +
-      "请直接从当前状态继续完成任务，无需重复已完成的步骤，无用户在线，自主决策。\n" +
-      "禁止调用 agent_fork 工具（不得嵌套 fork）。"
+        "你是一个在后台继续执行的 Sub-Agent（Slave）。" +
+        "上方对话历史是原 Master 会话的完整上下文（含已执行工具的结果）。\n" +
+        "请直接从当前状态继续完成任务，无需重复已完成的步骤，无用户在线，自主决策。\n" +
+        "禁止调用 agent_fork 工具（不得嵌套 fork）。"
     );
 
-    console.log(`[slave:${slaveId}] auto-fork continuation from ${masterSession.sessionId.slice(-12)}`);
+    console.log(
+      `[slave:${slaveId}] auto-fork continuation from ${masterSession.sessionId.slice(-12)}`
+    );
 
-    void this._run(slaveId, slaveSession, "(auto-fork continuation)", runFn, onComplete, undefined, onProgressNotify, true);
+    void this._run(
+      slaveId,
+      slaveSession,
+      "(auto-fork continuation)",
+      runFn,
+      onComplete,
+      undefined,
+      onProgressNotify,
+      true
+    );
 
     return slaveId;
   }
@@ -225,7 +249,8 @@ class SlaveManager {
   abort(slaveId: string): string {
     const state = this.states.get(slaveId);
     if (!state) return `Slave "${slaveId}" 不存在`;
-    if (state.status !== "running") return `Slave "${slaveId}" 当前状态为 ${state.status}，无需中断`;
+    if (state.status !== "running")
+      return `Slave "${slaveId}" 当前状态为 ${state.status}，无需中断`;
 
     const session = this.sessions.get(slaveId);
     if (session) {
@@ -256,7 +281,10 @@ class SlaveManager {
    * @param timeoutMs        等待超时（毫秒），超时后将仍 running 的 slave 标记为 error
    * @returns Map<slaveId, SlaveState>  所有属于该 master 的 slave 最终状态
    */
-  async waitForByMaster(masterSessionId: string, timeoutMs: number): Promise<Map<string, SlaveState>> {
+  async waitForByMaster(
+    masterSessionId: string,
+    timeoutMs: number
+  ): Promise<Map<string, SlaveState>> {
     const deadline = Date.now() + timeoutMs;
     const POLL_INTERVAL_MS = 200;
 
@@ -323,11 +351,16 @@ class SlaveManager {
     for (const [id, state] of this.states) {
       if (state.status !== "running" && state.finishedAt) {
         const age = now - new Date(state.finishedAt).getTime();
-        if (age > 24 * 60 * 60 * 1000) { // 24h 后清理
+        if (age > 24 * 60 * 60 * 1000) {
+          // 24h 后清理
           // 兜底：清理内存状态前确保 JSONL 已删除
           const session = this.sessions.get(id);
           if (session) {
-            try { session.deleteJsonl(); } catch { /* 静默忽略 */ }
+            try {
+              session.deleteJsonl();
+            } catch {
+              /* 静默忽略 */
+            }
           }
           this.states.delete(id);
           this.sessions.delete(id);
@@ -349,12 +382,16 @@ class SlaveManager {
               try {
                 fs.unlinkSync(path.join(sessDir, entry));
                 console.log(`[slave:gc] 清理孤立 JSONL: ${entry}`);
-              } catch { /* 静默忽略 */ }
+              } catch {
+                /* 静默忽略 */
+              }
             }
           }
         }
       }
-    } catch { /* 静默忽略，GC 失败不影响正常运行 */ }
+    } catch {
+      /* 静默忽略，GC 失败不影响正常运行 */
+    }
 
     // 扫描 sessions 目录，清理孤立的 cron_*.jsonl
     // Stateful / pipeline cron job 使用固定 sessionId `cron:<jobId>`，
@@ -368,7 +405,8 @@ class SlaveManager {
       if (fs.existsSync(sessDir) && fs.existsSync(cronJobsDir)) {
         // 收集现存 job ID（文件名去掉 .json 后缀）
         const existingJobIds = new Set(
-          fs.readdirSync(cronJobsDir)
+          fs
+            .readdirSync(cronJobsDir)
             .filter((f) => f.endsWith(".json"))
             .map((f) => f.slice(0, -5))
         );
@@ -382,11 +420,15 @@ class SlaveManager {
             try {
               fs.unlinkSync(path.join(sessDir, entry));
               console.log(`[cron:gc] 清理孤立 session JSONL: ${entry}`);
-            } catch { /* 静默忽略 */ }
+            } catch {
+              /* 静默忽略 */
+            }
           }
         }
       }
-    } catch { /* 静默忽略，GC 失败不影响正常运行 */ }
+    } catch {
+      /* 静默忽略，GC 失败不影响正常运行 */
+    }
   }
 
   // ── 内部实现 ────────────────────────────────────────────────────────────────
@@ -400,7 +442,7 @@ class SlaveManager {
     reportIntervalSecs?: number,
     onProgressNotify?: SlaveProgressNotifyFn,
     skipPreamble?: boolean,
-    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean },
+    extraRunOpts?: { systemPromptSuffix?: string; skipPreamble?: boolean }
   ): Promise<void> {
     const state = this.states.get(slaveId)!;
 
@@ -418,9 +460,11 @@ class SlaveManager {
     try {
       const runOpts = skipPreamble
         ? { skipPreamble: true }
-        : { systemPromptSuffix: extraRunOpts?.systemPromptSuffix
+        : {
+            systemPromptSuffix: extraRunOpts?.systemPromptSuffix
               ? `${SLAVE_SYSTEM_PROMPT}\n\n${extraRunOpts.systemPromptSuffix}`
-              : SLAVE_SYSTEM_PROMPT };
+              : SLAVE_SYSTEM_PROMPT,
+          };
       const result = await runFn(session, task, runOpts);
 
       // 更新完成状态
@@ -436,7 +480,10 @@ class SlaveManager {
       if (state.status !== "aborted") {
         state.status = "error";
       }
-      state.result = `执行失败：${err instanceof Error ? err.message : String(err)}`.slice(0, MAX_RESULT_LEN);
+      state.result = `执行失败：${err instanceof Error ? err.message : String(err)}`.slice(
+        0,
+        MAX_RESULT_LEN
+      );
       console.error(`[slave:${slaveId}] error:`, err);
     }
 

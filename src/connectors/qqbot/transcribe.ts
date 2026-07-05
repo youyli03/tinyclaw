@@ -12,10 +12,7 @@ import * as url from "node:url";
 
 const execFileAsync = promisify(execFile);
 
-const SCRIPTS_DIR = path.join(
-  path.dirname(url.fileURLToPath(import.meta.url)),
-  "../../../scripts"
-);
+const SCRIPTS_DIR = path.join(path.dirname(url.fileURLToPath(import.meta.url)), "../../../scripts");
 
 const SENSEVOICE_SCRIPT = path.join(SCRIPTS_DIR, "transcribe_sensevoice.py");
 const WHISPER_SCRIPT = path.join(SCRIPTS_DIR, "transcribe.py");
@@ -49,7 +46,10 @@ export async function transcribeAudio(
       return text;
     }
   } catch (svErr) {
-    console.warn("[transcribe] SenseVoice 失败，降级到 faster-whisper:", svErr instanceof Error ? svErr.message : svErr);
+    console.warn(
+      "[transcribe] SenseVoice 失败，降级到 faster-whisper:",
+      svErr instanceof Error ? svErr.message : svErr
+    );
   }
 
   // ── 2. 降级到 faster-whisper ─────────────────────────────────────────────

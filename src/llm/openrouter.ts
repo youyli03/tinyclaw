@@ -166,9 +166,15 @@ export class AutoFreeClient {
     return this._currentModelId;
   }
 
-  get supportsToolCalls(): boolean { return true; }
-  get supportsVision(): boolean { return false; }
-  get supportsParallelToolCalls(): boolean { return false; }
+  get supportsToolCalls(): boolean {
+    return true;
+  }
+  get supportsVision(): boolean {
+    return false;
+  }
+  get supportsParallelToolCalls(): boolean {
+    return false;
+  }
 
   async chat(messages: LLMChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
     const models = await fetchFreeModels(this.cfg.apiKey, this.cfg.freeCacheTtlMs);

@@ -204,13 +204,22 @@ export async function run(args: string[]): Promise<void> {
 
   // ── chat -s <id> bind <agentId> ────────────────────────────────────────────
   if (sessionId && rest[0] === "bind") {
-    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("bind"); return; }
-    if (rest[1]) { runBind(sessionId, rest[1]); return; }
+    if (rest.includes("-h") || rest.includes("--help")) {
+      printSubHelp("bind");
+      return;
+    }
+    if (rest[1]) {
+      runBind(sessionId, rest[1]);
+      return;
+    }
   }
 
   // ── 无 -s 时拒绝（不自动生成）────────────────────────────────────────────
   if (!sessionId) {
-    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("send"); return; }
+    if (rest.includes("-h") || rest.includes("--help")) {
+      printSubHelp("send");
+      return;
+    }
     console.error(red("错误：必须通过 -s 指定会话 ID"));
     console.error(dim("  新建会话：tinyclaw chat new"));
     console.error(dim("  查看会话：tinyclaw chat list"));
@@ -218,7 +227,10 @@ export async function run(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("send"); return; }
+  if (rest.includes("-h") || rest.includes("--help")) {
+    printSubHelp("send");
+    return;
+  }
 
   const message = rest.join(" ").trim();
   if (!message) {
@@ -279,9 +291,13 @@ function scanDiskSessions(): DiskSession[] {
           if (entry.role === "user" && typeof entry.content === "string") {
             lastUserMessage = entry.content.slice(0, 80);
           }
-        } catch { /* skip malformed */ }
+        } catch {
+          /* skip malformed */
+        }
       }
-    } catch { /* skip unreadable */ }
+    } catch {
+      /* skip unreadable */
+    }
     return { sessionId, messageCount, lastUserMessage };
   });
 }
@@ -295,16 +311,22 @@ async function runList(): Promise<void> {
   if (serverRunning) {
     try {
       memory = await listSessions();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
   const memoryMap = new Map<string, SessionInfo>(memory.map((s) => [s.sessionId, s]));
 
   const allIds = [
-    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter((id) => id.startsWith("qqbot:")).sort(),
-    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter((id) => id.startsWith("cli:")).sort(),
-    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])].filter(
-      (id) => !id.startsWith("qqbot:") && !id.startsWith("cli:")
-    ).sort(),
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])]
+      .filter((id) => id.startsWith("qqbot:"))
+      .sort(),
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])]
+      .filter((id) => id.startsWith("cli:"))
+      .sort(),
+    ...[...new Set([...diskMap.keys(), ...memoryMap.keys()])]
+      .filter((id) => !id.startsWith("qqbot:") && !id.startsWith("cli:"))
+      .sort(),
   ];
 
   if (allIds.length === 0) {
@@ -313,7 +335,9 @@ async function runList(): Promise<void> {
     return;
   }
 
-  const statusSuffix = serverRunning ? dim("（服务运行中）") : dim("（服务未运行，仅显示持久化记录）");
+  const statusSuffix = serverRunning
+    ? dim("（服务运行中）")
+    : dim("（服务未运行，仅显示持久化记录）");
   console.log(`\n${bold("会话列表")}  ${statusSuffix}\n`);
 
   for (const id of allIds) {
@@ -328,7 +352,9 @@ async function runList(): Promise<void> {
     else statusTag = dim("持久化");
 
     console.log(`  ${cyan(id)}`);
-    const preview = lastMsg ? `  ${dim(`"${lastMsg.slice(0, 50)}${lastMsg.length > 50 ? "…" : ""}"`)}` : "";
+    const preview = lastMsg
+      ? `  ${dim(`"${lastMsg.slice(0, 50)}${lastMsg.length > 50 ? "…" : ""}"`)}`
+      : "";
     console.log(`    ${statusTag}  ${dim(`${msgCount} 条消息`)}${preview}`);
   }
 

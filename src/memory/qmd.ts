@@ -15,7 +15,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { QMDStore, UpdateProgress, UpdateResult, EmbedProgress, EmbedResult, SearchResult } from "@tobilu/qmd";
+import type {
+  QMDStore,
+  UpdateProgress,
+  UpdateResult,
+  EmbedProgress,
+  EmbedResult,
+  SearchResult,
+} from "@tobilu/qmd";
 import { loadConfig, loadMemStoresConfig } from "../config/loader.js";
 import { agentManager } from "../core/agent-manager.js";
 import { CARD_TYPES, type MemoryCardType } from "./cards.js";
@@ -33,15 +40,37 @@ const ACTIVE_COLLECTION = "active";
 const CARDS_COLLECTION = "cards";
 const CODE_NOTES_COLLECTION = "code_notes";
 
-const EVERGREEN_PATH_KEYWORDS = ["MEM.md", "ACTIVE.md", "MEMORY.md", "patterns.md", "/cards/", "mem.md", "active.md", "memory.md"];
+const EVERGREEN_PATH_KEYWORDS = [
+  "MEM.md",
+  "ACTIVE.md",
+  "MEMORY.md",
+  "patterns.md",
+  "/cards/",
+  "mem.md",
+  "active.md",
+  "memory.md",
+];
 
-type MemoryQueryKind = "preference_query" | "active_context_query" | "decision_query" | "profile_query" | "general_query";
-type MemorySource = "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆" | "会话记录";
-type SearchCandidate = SearchResult & { blendedScore: number; decayedScore: number; memorySource: MemorySource };
+type MemoryQueryKind =
+  | "preference_query"
+  | "active_context_query"
+  | "decision_query"
+  | "profile_query"
+  | "general_query";
+type MemorySource =
+  "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆" | "会话记录";
+type SearchCandidate = SearchResult & {
+  blendedScore: number;
+  decayedScore: number;
+  memorySource: MemorySource;
+};
 
 function classifyMemoryQuery(query: string): MemoryQueryKind {
   const q = query.toLowerCase();
-  if (/(喜欢|偏好|默认|不要|每次都要|习惯|风格|简洁|详细)/.test(query) || /(prefer|default|don't|style|habit)/.test(q)) {
+  if (
+    /(喜欢|偏好|默认|不要|每次都要|习惯|风格|简洁|详细)/.test(query) ||
+    /(prefer|default|don't|style|habit)/.test(q)
+  ) {
     return "preference_query";
   }
   if (/(最近|当前|现在|做到哪了|还在跟进吗|未完成|正在做|近况)/.test(query)) {
@@ -101,7 +130,10 @@ function decayFactor(r: SearchResult, now: Date): number {
 
 function tokenize(text: string): Set<string> {
   const tokens = new Set<string>();
-  const words = text.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  const words = text
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
   for (const w of words) tokens.add(w);
   for (let i = 0; i + 3 <= text.length; i++) tokens.add(text.slice(i, i + 3));
   return tokens;
@@ -226,16 +258,19 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
         if (actualDim !== null) {
           // 读 sqlite_master 获取已存储的 vec0 dim（使用 better-sqlite3，无需 vec0 扩展）
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { default: BetterSqlite3 } = await import("better-sqlite3") as any;
+          const { default: BetterSqlite3 } = (await import("better-sqlite3")) as any;
           const db = new BetterSqlite3(dbPath, { readonly: true });
-          const row = db.prepare("SELECT sql FROM sqlite_master WHERE name='vectors_vec'").get() as { sql?: string } | undefined;
+          const row = db.prepare("SELECT sql FROM sqlite_master WHERE name='vectors_vec'").get() as
+            { sql?: string } | undefined;
           db.close();
           if (row?.sql) {
             const m = /float\[(\d+)\]/.exec(row.sql);
             if (m && Number(m[1]) !== actualDim) {
               // vec0 是虚拟表，better-sqlite3 不加载 sqlite-vec 扩展，无法用 DROP TABLE
               // 直接删除 sqlite 文件，让 createStore 重建（最可靠）
-              console.log(`[qmd] embed dim mismatch: stored=${m[1]} actual=${actualDim}, removing sqlite for full rebuild`);
+              console.log(
+                `[qmd] embed dim mismatch: stored=${m[1]} actual=${actualDim}, removing sqlite for full rebuild`
+              );
               fs.unlinkSync(dbPath);
               const shmPath = dbPath + "-shm";
               const walPath = dbPath + "-wal";
@@ -254,10 +289,16 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
     fs.mkdirSync(codeProjectsDir, { recursive: true });
     const collections: Record<string, { path: string; pattern: string }> = {
       [MEMORY_COLLECTION]: { path: agentMemDir, pattern: "**/*.md" },
-      [ACTIVE_COLLECTION]: { path: path.dirname(agentManager.activePath(agentId)), pattern: "ACTIVE.md" },
+      [ACTIVE_COLLECTION]: {
+        path: path.dirname(agentManager.activePath(agentId)),
+        pattern: "ACTIVE.md",
+      },
       [CARDS_COLLECTION]: { path: agentManager.cardsDir(agentId), pattern: "**/*.md" },
       [CODE_NOTES_COLLECTION]: { path: codeProjectsDir, pattern: "**/*.md" },
-      ["code_sessions"]: { path: path.join(os.homedir(), ".tinyclaw", "agents", agentId, "code", "sessions"), pattern: "**/*.md" },
+      ["code_sessions"]: {
+        path: path.join(os.homedir(), ".tinyclaw", "agents", agentId, "code", "sessions"),
+        pattern: "**/*.md",
+      },
     };
 
     const memStoresCfg = loadMemStoresConfig();
@@ -278,8 +319,10 @@ async function getQMDStore(agentId = "default"): Promise<QMDStore | null> {
     // 若启用 rkllmEmbed，直接覆盖 per-store llm，使 generateEmbeddings 走 HTTP embed（1024 维）。
     const cfg3 = loadConfig();
     if (cfg3.memory.rkllmEmbed.enabled) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (s as unknown as { internal: { llm: unknown } }).internal.llm = makeRkllmEmbedLlm(cfg3.memory.rkllmEmbed.port);
+       
+      (s as unknown as { internal: { llm: unknown } }).internal.llm = makeRkllmEmbedLlm(
+        cfg3.memory.rkllmEmbed.port
+      );
       console.log("[qmd] per-store llm overridden with rkllm HTTP embed (1024 dim)");
     }
 
@@ -306,7 +349,9 @@ async function hybridSearchCollection(
   const [vecResults, lexResults] = await Promise.all([
     Promise.race([
       s.searchVector(query, { limit: fetchLimit, collection }),
-      new Promise<SearchResult[]>((_, reject) => setTimeout(() => reject(new Error("embed timeout")), 15_000)),
+      new Promise<SearchResult[]>((_, reject) =>
+        setTimeout(() => reject(new Error("embed timeout")), 15_000)
+      ),
     ]).catch(() => [] as SearchResult[]),
     s.searchLex(query, { limit: fetchLimit, collection }).catch(() => [] as SearchResult[]),
   ]);
@@ -317,7 +362,8 @@ async function hybridSearchCollection(
     const key = r.filepath ?? r.displayPath;
     const weighted = r.score * WEIGHT_VECTOR;
     const existing = blendMap.get(key);
-    if (!existing || existing.blendedScore < weighted) blendMap.set(key, { ...r, blendedScore: weighted });
+    if (!existing || existing.blendedScore < weighted)
+      blendMap.set(key, { ...r, blendedScore: weighted });
   }
   for (const r of lexResults) {
     const key = r.filepath ?? r.displayPath;
@@ -328,19 +374,37 @@ async function hybridSearchCollection(
   }
 
   const now = new Date();
-  return Array.from(blendMap.values()).map((r) => ({
-    ...r,
-    decayedScore: r.blendedScore * decayFactor(r, now),
-    memorySource: source,
-  })).sort((a, b) => b.decayedScore - a.decayedScore);
+  return Array.from(blendMap.values())
+    .map((r) => ({
+      ...r,
+      decayedScore: r.blendedScore * decayFactor(r, now),
+      memorySource: source,
+    }))
+    .sort((a, b) => b.decayedScore - a.decayedScore);
 }
 
-async function searchCardsByType(s: QMDStore, query: string, limit: number, types: MemoryCardType[], includeObsolete = false): Promise<SearchCandidate[]> {
-  const results = await hybridSearchCollection(s, CARDS_COLLECTION, query, Math.max(limit * 2, limit), "相关卡片");
+async function searchCardsByType(
+  s: QMDStore,
+  query: string,
+  limit: number,
+  types: MemoryCardType[],
+  includeObsolete = false
+): Promise<SearchCandidate[]> {
+  const results = await hybridSearchCollection(
+    s,
+    CARDS_COLLECTION,
+    query,
+    Math.max(limit * 2, limit),
+    "相关卡片"
+  );
   return results.filter((r) => {
     const body = (r.body ?? "").toLowerCase();
     // 默认过滤掉已过期/已解决的卡片
-    if (!includeObsolete && (body.includes("status: obsolete") || body.includes("status: resolved"))) return false;
+    if (
+      !includeObsolete &&
+      (body.includes("status: obsolete") || body.includes("status: resolved"))
+    )
+      return false;
     return types.some((type) => body.includes(`type: ${type}`));
   });
 }
@@ -354,7 +418,14 @@ function formatMemorySections(results: SearchCandidate[]): string {
     groups.set(r.memorySource, existing);
   }
 
-  const orderedSources: MemorySource[] = ["长期记忆", "当前活跃上下文", "相关卡片", "近期日记", "项目记忆", "会话记录"];
+  const orderedSources: MemorySource[] = [
+    "长期记忆",
+    "当前活跃上下文",
+    "相关卡片",
+    "近期日记",
+    "项目记忆",
+    "会话记录",
+  ];
   const sections: string[] = [];
   for (const source of orderedSources) {
     const group = groups.get(source);
@@ -370,22 +441,36 @@ function formatMemorySections(results: SearchCandidate[]): string {
   return sections.join("\n\n");
 }
 
-export async function searchMemory(query: string, agentId = "default", limit = 5, mode: "chat" | "code" = "chat", includeObsolete = false): Promise<string | null> {
+export async function searchMemory(
+  query: string,
+  agentId = "default",
+  limit = 5,
+  mode: "chat" | "code" = "chat",
+  includeObsolete = false
+): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
 
   const kind = classifyMemoryQuery(query);
   if (kind === "general_query") {
-    const generalResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
+    const generalResults = await hybridSearchCollection(
+      s,
+      MEMORY_COLLECTION,
+      query,
+      limit,
+      "近期日记"
+    );
     if (generalResults.length === 0) return "";
     const reranked = applyMMR(generalResults, limit);
     if (reranked.length === 0) return "";
-    return `## 近期日记\n\n${reranked.map((r) => {
-      const score = Math.round(r.blendedScore * 100);
-      const evergreen = isEvergreen(r) ? " 🌿" : "";
-      const preview = (r.body ?? "").trim();
-      return `[${score}%${evergreen}] ${r.title || r.displayPath}\n${preview}`.trim();
-    }).join("\n\n---\n\n")}`;
+    return `## 近期日记\n\n${reranked
+      .map((r) => {
+        const score = Math.round(r.blendedScore * 100);
+        const evergreen = isEvergreen(r) ? " 🌿" : "";
+        const preview = (r.body ?? "").trim();
+        return `[${score}%${evergreen}] ${r.title || r.displayPath}\n${preview}`.trim();
+      })
+      .join("\n\n---\n\n")}`;
   }
 
   const candidates: SearchCandidate[] = [];
@@ -394,27 +479,55 @@ export async function searchMemory(query: string, agentId = "default", limit = 5
     candidates.push(...memResults.filter((r) => isEvergreen(r)));
   }
   if (kind === "active_context_query" || kind === "preference_query") {
-    const activeResults = await hybridSearchCollection(s, ACTIVE_COLLECTION, query, limit, "当前活跃上下文");
+    const activeResults = await hybridSearchCollection(
+      s,
+      ACTIVE_COLLECTION,
+      query,
+      limit,
+      "当前活跃上下文"
+    );
     candidates.push(...activeResults);
   }
 
-  const cardResults = await searchCardsByType(s, query, limit, queryCardTypes(kind), includeObsolete);
+  const cardResults = await searchCardsByType(
+    s,
+    query,
+    limit,
+    queryCardTypes(kind),
+    includeObsolete
+  );
   candidates.push(...cardResults.slice(0, limit));
 
   const diaryResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
-  if (kind === "active_context_query") candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
+  if (kind === "active_context_query")
+    candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
   else candidates.push(...diaryResults.slice(0, limit));
 
   // Code 模式项目记忆（NOTES.md 向量+词法检索），chat 模式跳过
   if (mode === "code") {
-    const codeNotesResults = await hybridSearchCollection(s, CODE_NOTES_COLLECTION, query, limit, "项目记忆");
+    const codeNotesResults = await hybridSearchCollection(
+      s,
+      CODE_NOTES_COLLECTION,
+      query,
+      limit,
+      "项目记忆"
+    );
     candidates.push(...codeNotesResults.slice(0, limit));
-    const codeSessionResults = await hybridSearchCollection(s, "code_sessions", query, limit, "会话记录");
+    const codeSessionResults = await hybridSearchCollection(
+      s,
+      "code_sessions",
+      query,
+      limit,
+      "会话记录"
+    );
     candidates.push(...codeSessionResults.slice(0, limit));
   }
 
   if (candidates.length === 0) return "";
-  const reranked = applyMMR(candidates.sort((a, b) => b.decayedScore - a.decayedScore), limit);
+  const reranked = applyMMR(
+    candidates.sort((a, b) => b.decayedScore - a.decayedScore),
+    limit
+  );
   if (reranked.length === 0) return "";
   return formatMemorySections(reranked);
 }
@@ -444,12 +557,21 @@ export async function rebuildMemoryIndex(
 
   // 清空所有已有的 embedding（content_vectors + vectors_vec）
   // 确保 embed 时会重新向量化所有文档，使用最新的 embed 模型（避免 dim 不一致）
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   // 清空所有已有的 embedding(content_vectors + vectors_vec)，强制按当前 embed 模型重建
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (s as any).internal.clearAllEmbeddings();
   const updateResult = await s.update({
-    collections: [MEMORY_COLLECTION, ACTIVE_COLLECTION, CARDS_COLLECTION, CODE_NOTES_COLLECTION, "code_sessions", ...loadMemStoresConfig().stores.filter((st) => st.enabled).map((st) => st.name)],
+    collections: [
+      MEMORY_COLLECTION,
+      ACTIVE_COLLECTION,
+      CARDS_COLLECTION,
+      CODE_NOTES_COLLECTION,
+      "code_sessions",
+      ...loadMemStoresConfig()
+        .stores.filter((st) => st.enabled)
+        .map((st) => st.name),
+    ],
     ...(onUpdateProgress ? { onProgress: onUpdateProgress } : {}),
   });
   const embedResult = await s.embed(onEmbedProgress ? { onProgress: onEmbedProgress } : undefined);
@@ -463,12 +585,19 @@ export async function closeQMDStore(): Promise<void> {
   storeMap.clear();
 }
 
-export async function searchStore(name: string, query: string, agentId = "default", limit = 8): Promise<string | null> {
+export async function searchStore(
+  name: string,
+  query: string,
+  agentId = "default",
+  limit = 8
+): Promise<string | null> {
   const s = await getQMDStore(agentId);
   if (!s) return null;
   const results = await Promise.race([
     s.searchVector(query, { limit, collection: name }),
-    new Promise<SearchResult[]>((_, reject) => setTimeout(() => reject(new Error("embed timeout")), 15_000)),
+    new Promise<SearchResult[]>((_, reject) =>
+      setTimeout(() => reject(new Error("embed timeout")), 15_000)
+    ),
   ]);
   if (results.length === 0) return "";
   const lines = results.map((r) => {
@@ -484,8 +613,15 @@ export async function updateStore(name: string, agentId = "default"): Promise<vo
   if (!s) return;
   await s.update({ collections: [name] });
   // debug: print which llm will be used for embed
-  const llmMod = await import("@tobilu/qmd/dist/llm.js" as string) as any;
+  const llmMod = (await import("@tobilu/qmd/dist/llm.js" as string)) as any;
   const currentLlm = llmMod.getDefaultLlamaCpp();
-  console.log("[qmd] updateStore embed llm type:", typeof currentLlm, "keys:", Object.keys(currentLlm).slice(0, 5).join(","), "__rkllm:", currentLlm.__rkllm);
+  console.log(
+    "[qmd] updateStore embed llm type:",
+    typeof currentLlm,
+    "keys:",
+    Object.keys(currentLlm).slice(0, 5).join(","),
+    "__rkllm:",
+    currentLlm.__rkllm
+  );
   await s.embed();
 }

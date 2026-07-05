@@ -82,7 +82,7 @@ function cmdList(): void {
   }
   printTable(
     ["分类", "指标键", "描述", "注册时间"],
-    keys.map(k => [
+    keys.map((k) => [
       cyan(k.category),
       bold(k.key),
       k.description ?? dim("—"),
@@ -107,7 +107,7 @@ function cmdAdd(args: string[]): void {
 
   const slashIdx = slug.indexOf("/");
   const category = slug.slice(0, slashIdx);
-  const key      = slug.slice(slashIdx + 1);
+  const key = slug.slice(slashIdx + 1);
 
   // 从剩余 args 里提取 --chart 参数
   const rest = [...args.slice(1)];
@@ -130,9 +130,11 @@ function cmdAdd(args: string[]): void {
 
   try {
     addMetricKey(category, key, description, chartType);
-    console.log(green(`✓ 已注册指标 ${bold(`${category}/${key}`)}`) +
-      (description ? dim(`  (${description})`) : "") +
-      (chartType ? dim(`  [${chartType}]`) : ""));
+    console.log(
+      green(`✓ 已注册指标 ${bold(`${category}/${key}`)}`) +
+        (description ? dim(`  (${description})`) : "") +
+        (chartType ? dim(`  [${chartType}]`) : "")
+    );
   } catch (e) {
     console.error(red(`注册失败: ${String(e)}`));
     process.exit(1);
@@ -183,12 +185,14 @@ function cmdRemove(args: string[]): void {
 
   const slashIdx = slug.indexOf("/");
   const category = slug.slice(0, slashIdx);
-  const key      = slug.slice(slashIdx + 1);
+  const key = slug.slice(slashIdx + 1);
 
   try {
     const { deleted } = removeMetricKey(category, key);
-    console.log(green(`✓ 已删除指标 ${bold(`${category}/${key}`)}`) +
-      (deleted > 0 ? dim(`，同时清除历史数据 ${deleted} 条`) : ""));
+    console.log(
+      green(`✓ 已删除指标 ${bold(`${category}/${key}`)}`) +
+        (deleted > 0 ? dim(`，同时清除历史数据 ${deleted} 条`) : "")
+    );
   } catch (e) {
     console.error(red(`删除失败: ${String(e)}`));
     process.exit(1);

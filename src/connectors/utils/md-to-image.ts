@@ -162,18 +162,29 @@ ${mdHtml}
 function markdownToHtml(mdText: string): Promise<string> {
   return new Promise((resolve, reject) => {
     // 使用 commonmark preset 并启用 table 扩展（支持 GFM 风格表格）
-    const py = spawn("python3", ["-c", `
+    const py = spawn(
+      "python3",
+      [
+        "-c",
+        `
 import sys
 from markdown_it import MarkdownIt
 md = MarkdownIt("commonmark", {"html": False, "typographer": True}).enable("table")
 content = sys.stdin.read()
 print(md.render(content), end="")
-`], { stdio: ["pipe", "pipe", "pipe"] });
+`,
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] }
+    );
 
     let out = "";
     let err = "";
-    py.stdout.on("data", (d: Buffer) => { out += d.toString("utf-8"); });
-    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.stdout.on("data", (d: Buffer) => {
+      out += d.toString("utf-8");
+    });
+    py.stderr.on("data", (d: Buffer) => {
+      err += d.toString("utf-8");
+    });
     py.on("close", (code) => {
       if (code === 0) resolve(out);
       else reject(new Error(`markdown-it-py 失败 (code=${code}): ${err.trim()}`));
@@ -203,7 +214,9 @@ function chromiumScreenshot(htmlPath: string, outPng: string): Promise<void> {
     const child = spawn("chromium-browser", args, { stdio: ["ignore", "pipe", "pipe"] });
 
     let stderr = "";
-    child.stderr.on("data", (d: Buffer) => { stderr += d.toString("utf-8"); });
+    child.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString("utf-8");
+    });
 
     child.on("close", (code) => {
       if (existsSync(outPng)) {
@@ -221,7 +234,11 @@ function chromiumScreenshot(htmlPath: string, outPng: string): Promise<void> {
 
 function cropImage(inPng: string, outPng: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const py = spawn("python3", ["-c", `
+    const py = spawn(
+      "python3",
+      [
+        "-c",
+        `
 import sys
 import numpy as np
 from PIL import Image
@@ -240,10 +257,17 @@ if len(non_white_rows) == 0:
 bottom = min(img.height, int(non_white_rows[-1]) + 20)
 cropped = img.crop((0, 0, img.width, bottom))
 cropped.save(sys.argv[2])
-`, inPng, outPng], { stdio: ["ignore", "pipe", "pipe"] });
+`,
+        inPng,
+        outPng,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
 
     let err = "";
-    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.stderr.on("data", (d: Buffer) => {
+      err += d.toString("utf-8");
+    });
     py.on("close", (code) => {
       if (code === 0 && existsSync(outPng)) resolve();
       else reject(new Error(`PIL 裁剪失败 (code=${code}): ${err.trim()}`));
@@ -256,16 +280,28 @@ cropped.save(sys.argv[2])
 
 function pngToJpeg(inPng: string, outJpg: string, quality = 85): Promise<void> {
   return new Promise((resolve, reject) => {
-    const py = spawn("python3", ["-c", `
+    const py = spawn(
+      "python3",
+      [
+        "-c",
+        `
 import sys
 from PIL import Image
 
 img = Image.open(sys.argv[1]).convert("RGB")
 img.save(sys.argv[2], "JPEG", quality=int(sys.argv[3]), optimize=True)
-`, inPng, outJpg, String(quality)], { stdio: ["ignore", "pipe", "pipe"] });
+`,
+        inPng,
+        outJpg,
+        String(quality),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
 
     let err = "";
-    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.stderr.on("data", (d: Buffer) => {
+      err += d.toString("utf-8");
+    });
     py.on("close", (code) => {
       if (code === 0 && existsSync(outJpg)) resolve();
       else reject(new Error(`PIL JPEG 转换失败 (code=${code}): ${err.trim()}`));
@@ -285,16 +321,13 @@ let _counter = 0;
  * @param mdText    Markdown 原文
  * @param outputDir 输出目录（默认系统 tmp）
  */
-export async function mdToImage(
-  mdText: string,
-  outputDir?: string
-): Promise<string> {
+export async function mdToImage(mdText: string, outputDir?: string): Promise<string> {
   const dir = outputDir ?? tmpdir();
   mkdirSync(dir, { recursive: true });
 
   const id = `md_${Date.now()}_${++_counter}`;
   const htmlPath = join(dir, `${id}.html`);
-  const rawPng   = join(dir, `${id}_raw.png`);
+  const rawPng = join(dir, `${id}_raw.png`);
   const finalPng = join(dir, `${id}.png`);
   const finalJpg = join(dir, `${id}.jpg`);
 
@@ -322,7 +355,11 @@ export async function mdToImage(
     await pngToJpeg(croppedPath, finalJpg);
     // 删除中间 PNG 临时文件
     for (const f of [rawPng, finalPng]) {
-      try { unlinkSync(f); } catch { /* ignore */ }
+      try {
+        unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
     }
     return finalJpg;
   } catch {

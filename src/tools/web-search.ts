@@ -96,13 +96,15 @@ registerTool({
 
     if (data.results && data.results.length > 0) {
       parts.push(
-        "**搜索结果**（共 " + data.results.length + " 条）\n" +
+        "**搜索结果**（共 " +
+          data.results.length +
+          " 条）\n" +
           data.results
             .map((r, i) => {
               const content = r.content?.slice(0, MAX_CONTENT_PER_RESULT) ?? "";
-              return (i + 1) + ". **" + r.title + "**\n   URL: " + r.url + "\n   " + content;
+              return i + 1 + ". **" + r.title + "**\n   URL: " + r.url + "\n   " + content;
             })
-            .join("\n\n"),
+            .join("\n\n")
       );
     }
 

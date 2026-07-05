@@ -17,11 +17,7 @@ import { spawnSync } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 
 const CACHE_DIR = path.join(os.homedir(), ".tinyclaw", "cache", "web");
-const SCRIPT = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "scripts",
-  "read-url.mjs"
-);
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "scripts", "read-url.mjs");
 
 function urlToFilename(url: string, ext: string): string {
   const u = new URL(url);
@@ -65,7 +61,8 @@ registerTool({
           },
           offset: {
             type: "number",
-            description: "截图模式:起始 Y 像素(设置后只截 offset~offset+900px 区域)；文字模式:字符偏移量(从第 offset 个字符开始返回)",
+            description:
+              "截图模式:起始 Y 像素(设置后只截 offset~offset+900px 区域)；文字模式:字符偏移量(从第 offset 个字符开始返回)",
           },
         },
         required: ["url"],
@@ -99,11 +96,16 @@ registerTool({
 
     const spawnArgs = [
       SCRIPT,
-      "--url", url,
-      "--mode", mode,
-      "--wait-ms", String(wait_ms),
-      "--width", String(vp_width),
-      "--offset", String(offset),
+      "--url",
+      url,
+      "--mode",
+      mode,
+      "--wait-ms",
+      String(wait_ms),
+      "--width",
+      String(vp_width),
+      "--offset",
+      String(offset),
     ];
     if (textPath) spawnArgs.push("--text-out", textPath);
     if (imgPath) spawnArgs.push("--img-out", imgPath);

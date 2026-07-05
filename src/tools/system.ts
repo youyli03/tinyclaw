@@ -33,12 +33,11 @@ function parseExecTimeoutSec(raw: unknown): number | string {
 }
 
 function formatExecOutput(stdout: string, stderr: string): string {
-  let output = [stdout, stderr ? `[stderr] ${stderr}` : ""]
-    .filter(Boolean)
-    .join("\n");
+  let output = [stdout, stderr ? `[stderr] ${stderr}` : ""].filter(Boolean).join("\n");
   const originalLength = output.length;
   if (originalLength > MAX_EXEC_OUTPUT) {
-    output = output.slice(0, MAX_EXEC_OUTPUT) +
+    output =
+      output.slice(0, MAX_EXEC_OUTPUT) +
       `\n[…输出已截断：共 ${originalLength} 字符，仅显示前 ${MAX_EXEC_OUTPUT} 字符]`;
   }
   return output;
@@ -58,7 +57,7 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
     if (ctx?.onAskUser) {
       const { answer } = await ctx.onAskUser(
         `⚠️ AI 请求追加写入系统文件 "${execCheck.path}"，是否允许？此操作可能影响系统网络/安全配置。`,
-        [{ label: "允许" }, { label: "拒绝", recommended: true }],
+        [{ label: "允许" }, { label: "拒绝", recommended: true }]
       );
       if (answer !== "允许") {
         return `已拒绝：不允许追加写入系统文件 "${execCheck.path}"`;
@@ -75,7 +74,6 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
-    let timeoutHandle: NodeJS.Timeout | undefined;
     let killHandle: NodeJS.Timeout | undefined;
     let timedOut = false;
     let settled = false;
@@ -90,26 +88,33 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
 
     const child = spawn("bash", ["-c", command], {
       stdio: ["ignore", "pipe", "pipe"],
-      detached: true,   // 让 bash 成为新进程组 leader，kill 时可杀整组
+      detached: true, // 让 bash 成为新进程组 leader，kill 时可杀整组
       ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
     });
 
     // 若是 slave session，打印子进程 PID（便于追踪或手动 kill）
     if (ctx?.sessionId?.startsWith("slave:") && child.pid != null) {
       const slaveId = ctx.sessionId.slice("slave:".length);
-      console.log(`[slave:${slaveId}] exec pid=${child.pid}: ${command.slice(0, 80)}${command.length > 80 ? "…" : ""}`);
+      console.log(
+        `[slave:${slaveId}] exec pid=${child.pid}: ${command.slice(0, 80)}${command.length > 80 ? "…" : ""}`
+      );
     }
 
     child.stdout.on("data", (d: Buffer) => chunks.push(d));
     child.stderr.on("data", (d: Buffer) => errChunks.push(d));
 
-    timeoutHandle = setTimeout(() => {
+    const timeoutHandle = setTimeout(() => {
       timedOut = true;
       // detached=true 时 bash 是进程组 leader，用 -pid 向整个进程组发信号
       // 这样 bash 下 spawn 的子进程（如 sleep 1800000）也会被一并杀掉
       const killGroup = (sig: NodeJS.Signals) => {
         if (child.pid != null) {
-          try { process.kill(-child.pid, sig); return; } catch { /* pgid 可能已消失 */ }
+          try {
+            process.kill(-child.pid, sig);
+            return;
+          } catch {
+            /* pgid 可能已消失 */
+          }
         }
         child.kill(sig);
       };
@@ -176,10 +181,14 @@ registerTool({
  */
 async function handleOutOfBoundPath(
   resolvedPath: string,
-  ctx?: ToolContext,
+  ctx?: ToolContext
 ): Promise<string | null> {
   const mode = (() => {
-    try { return loadConfig().auth?.mfa?.path_guard_mode ?? "mfa"; } catch { return "mfa"; }
+    try {
+      return loadConfig().auth?.mfa?.path_guard_mode ?? "mfa";
+    } catch {
+      return "mfa";
+    }
   })();
 
   if (mode === "deny") {
@@ -189,14 +198,14 @@ async function handleOutOfBoundPath(
   if (mode === "ask" && ctx?.onAskUser) {
     const { answer } = await ctx.onAskUser(
       `AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`,
-      [{ label: "允许" }, { label: "拒绝", recommended: true }],
+      [{ label: "允许" }, { label: "拒绝", recommended: true }]
     );
     if (answer !== "允许") {
       return `已拒绝：不允许写入 "${resolvedPath}"`;
     }
   } else if ((mode === "simple" || mode === "totp" || mode === "msal") && ctx?.onMFARequest) {
     const ok = await ctx.onMFARequest(
-      `⚠️ AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`,
+      `⚠️ AI 请求写入 "${resolvedPath}"（超出 workspace 范围），是否允许？`
     );
     if (!ok) {
       return `已拒绝：不允许写入 "${resolvedPath}"`;
@@ -332,7 +341,8 @@ async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): P
   const content = fs.readFileSync(resolved, "utf-8");
   const count = content.split(oldStr).length - 1;
   if (count === 0) return `错误：old_str 在文件中未找到，请检查是否完全匹配（含空格/换行）`;
-  if (count > 1) return `错误：old_str 在文件中出现 ${count} 次，必须唯一才能安全替换。请提供更多上下文使其唯一`;
+  if (count > 1)
+    return `错误：old_str 在文件中出现 ${count} 次，必须唯一才能安全替换。请提供更多上下文使其唯一`;
 
   const updated = content.replace(oldStr, newStr);
   fs.writeFileSync(resolved, updated, "utf-8");
@@ -345,12 +355,17 @@ registerTool({
     type: "function",
     function: {
       name: "edit_file",
-      description: "精确替换文件中的一段文本（需要 MFA 确认）。old_str 必须在文件中唯一出现。适合局部修改，避免 write_file 覆写整个文件。",
+      description:
+        "精确替换文件中的一段文本（需要 MFA 确认）。old_str 必须在文件中唯一出现。适合局部修改，避免 write_file 覆写整个文件。",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "文件路径" },
-          old_str: { type: "string", description: "要被替换的原始文本，必须与文件内容完全匹配（含空格、换行），且在文件中唯一出现" },
+          old_str: {
+            type: "string",
+            description:
+              "要被替换的原始文本，必须与文件内容完全匹配（含空格、换行），且在文件中唯一出现",
+          },
           new_str: { type: "string", description: "替换后的新文本" },
         },
         required: ["path", "old_str", "new_str"],
@@ -384,13 +399,11 @@ async function extractFileText(resolved: string): Promise<string> {
   if (ext === ".xlsx" || ext === ".xls") {
     const XLSX = _require("xlsx") as typeof import("xlsx");
     const wb = XLSX.readFile(resolved);
-    return wb.SheetNames
-      .map((name) => {
-        const sheet = wb.Sheets[name];
-        const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
-        return `=== Sheet: ${name} ===\n${csv}`;
-      })
-      .join("\n\n");
+    return wb.SheetNames.map((name) => {
+      const sheet = wb.Sheets[name];
+      const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
+      return `=== Sheet: ${name} ===\n${csv}`;
+    }).join("\n\n");
   }
 
   // 普通文本文件
@@ -419,7 +432,9 @@ async function readFileImpl(args: Record<string, unknown>): Promise<string> {
     // 原有简洁路径：直接读取返回
     const text = fs.readFileSync(resolved, "utf-8");
     if (text.length <= 50_000) return text;
-    return text.slice(0, 50_000) + `\n[...已截断,共 ${text.length} 字符,可传 offset=50000 继续读取]`;
+    return (
+      text.slice(0, 50_000) + `\n[...已截断,共 ${text.length} 字符,可传 offset=50000 继续读取]`
+    );
   }
 
   let fullText: string;
@@ -434,9 +449,10 @@ async function readFileImpl(args: Record<string, unknown>): Promise<string> {
   const remaining = Math.max(0, total - offset - slice.length);
 
   const header = `[偏移: ${offset}, 返回: ${slice.length}, 总长: ${total}]`;
-  const footer = remaining > 0
-    ? `\n[还有 ${remaining} 字符，可传 offset=${offset + slice.length} 继续读取]`
-    : "";
+  const footer =
+    remaining > 0
+      ? `\n[还有 ${remaining} 字符，可传 offset=${offset + slice.length} 继续读取]`
+      : "";
 
   return `${header}\n${slice}${footer}`;
 }
@@ -485,7 +501,11 @@ registerTool({
         type: "object",
         properties: {
           path: { type: "string", description: "图片的绝对路径（支持 png/jpg/webp/gif）" },
-          prompt: { type: "string", description: "可选的视觉模型提问指令,会拼接到默认描述 prompt 前面。例如:请重点关注杯子里的液体颜色" },
+          prompt: {
+            type: "string",
+            description:
+              "可选的视觉模型提问指令,会拼接到默认描述 prompt 前面。例如:请重点关注杯子里的液体颜色",
+          },
         },
         required: ["path"],
       },
@@ -496,14 +516,19 @@ registerTool({
     if (!fs.existsSync(imgPath)) return `文件不存在: ${imgPath}`;
     const stat = fs.statSync(imgPath);
     const MAX = 8 * 1024 * 1024;
-    if (stat.size > MAX) return `文件过大(${(stat.size / 1024 / 1024).toFixed(1)} MB)，超过 8 MB 限制`;
+    if (stat.size > MAX)
+      return `文件过大(${(stat.size / 1024 / 1024).toFixed(1)} MB)，超过 8 MB 限制`;
     const ext = path.extname(imgPath).toLowerCase().slice(1);
     const mime =
-      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
-      ext === "png"  ? "image/png"  :
-      ext === "gif"  ? "image/gif"  :
-      ext === "webp" ? "image/webp" :
-      "image/png";
+      ext === "jpg" || ext === "jpeg"
+        ? "image/jpeg"
+        : ext === "png"
+          ? "image/png"
+          : ext === "gif"
+            ? "image/gif"
+            : ext === "webp"
+              ? "image/webp"
+              : "image/png";
     const buf = fs.readFileSync(imgPath);
     const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
     return dataUrl;

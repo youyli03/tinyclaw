@@ -99,7 +99,9 @@ class SkillRegistry {
   refresh(agentId: string): void {
     this.cache.delete(agentId);
     this._getOrLoad(agentId);
-    console.log(`[skills] registry refreshed for agent="${agentId}" entries=${this.cache.get(agentId)?.entries.length ?? 0}`);
+    console.log(
+      `[skills] registry refreshed for agent="${agentId}" entries=${this.cache.get(agentId)?.entries.length ?? 0}`
+    );
   }
 
   /** 失效所有 agent 的缓存 */
@@ -183,7 +185,8 @@ class SkillRegistry {
 
     let subdirs: string[];
     try {
-      subdirs = fs.readdirSync(skillsDir, { withFileTypes: true })
+      subdirs = fs
+        .readdirSync(skillsDir, { withFileTypes: true })
         .filter((d) => d.isDirectory() && !d.name.endsWith(".disabled"))
         .map((d) => d.name);
     } catch {
@@ -339,9 +342,7 @@ class SkillRegistry {
       const headerLine = lines[0] ?? "";
 
       const nameMatch = headerLine.match(/`([^`]+)`/);
-      const name = nameMatch
-        ? nameMatch[1]!
-        : headerLine.trim().toLowerCase().replace(/\s+/g, "-");
+      const name = nameMatch ? nameMatch[1]! : headerLine.trim().toLowerCase().replace(/\s+/g, "-");
       if (!name) continue;
 
       let docPath = "";
@@ -357,7 +358,9 @@ class SkillRegistry {
 
       let description = "";
       for (const line of lines) {
-        const sceneMatch = line.match(/[-*]\s*(?:使用场景|场景|描述|description|when.to.use):\s*(.+)/i);
+        const sceneMatch = line.match(
+          /[-*]\s*(?:使用场景|场景|描述|description|when.to.use):\s*(.+)/i
+        );
         if (sceneMatch) {
           description = sceneMatch[1]!.trim();
           break;
@@ -403,14 +406,13 @@ class SkillRegistry {
       "",
       "**[Skill 调用规则 — 严格遵守]**",
       "1. 当用户意图与 <description> 或 <trigger_phrases> **相关**（含模糊匹配、语义相近）时即可触发，无需精确匹配",
-      "2. **触发前必须先调用 read_file 读取 <doc_path> 获取完整文档**，禁止凭记忆回答 skill 相关问题（包括\"你会怎么做\"这类询问）",
+      '2. **触发前必须先调用 read_file 读取 <doc_path> 获取完整文档**，禁止凭记忆回答 skill 相关问题（包括"你会怎么做"这类询问）',
       "3. 读完文档后再判断：执行请求 → skill_run；仅询问行为 → 按文档如实回答，不要编造路径/步骤",
       "4. 使用 skill_run 工具执行实际操作，禁止绕过 skill_run 自行实现步骤",
       "5. 未找到匹配 skill 时，告知用户并询问是否继续",
     ].join("\n");
 
-    let snapshot =
-      `<available_skills>\n${skillBlocks.join("\n")}\n</available_skills>` + rules;
+    let snapshot = `<available_skills>\n${skillBlocks.join("\n")}\n</available_skills>` + rules;
 
     // 字符上限截断
     if (snapshot.length > MAX_SKILLS_PROMPT_CHARS) {

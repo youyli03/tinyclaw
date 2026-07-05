@@ -52,7 +52,11 @@ async function runCodeAssist(args: Record<string, unknown>, ctx?: ToolContext): 
 
   // CLI backends 保持不变
   if (backend === "copilot") {
-    return runCli("copilot", ["-p", task, "--allow-all", "-s", ...(model ? ["--model", model] : [])], "copilot");
+    return runCli(
+      "copilot",
+      ["-p", task, "--allow-all", "-s", ...(model ? ["--model", model] : [])],
+      "copilot"
+    );
   }
   if (backend === "codex") {
     return runCli("codex", ["--quiet", ...(model ? ["--model", model] : []), task], "codex");
@@ -80,7 +84,7 @@ async function runInternal(task: string, ctx?: ToolContext): Promise<string> {
     try {
       mfaPassed = await ctx.onMFARequest(
         "⚠️ code_assist 将在后台启动两个子 Agent 执行代码操作（exec_shell / write_file 等）。\n" +
-        "请完成一次授权，两个子 Agent 将在整个任务期间免再次验证。"
+          "请完成一次授权，两个子 Agent 将在整个任务期间免再次验证。"
       );
     } catch {
       mfaPassed = false;
@@ -115,7 +119,7 @@ async function runInternal(task: string, ctx?: ToolContext): Promise<string> {
   // ── 构建 codeRunFn 闭包（daily → code 的同步调用） ───────────────────
   const codeRunFn = async (instruction: string): Promise<string> => {
     const result = await runAgent(codeSession, instruction, {
-      slaveDepth: 2,  // code subagent 是深度 2，彻底禁止再 fork
+      slaveDepth: 2, // code subagent 是深度 2，彻底禁止再 fork
       systemPromptSuffix: CODE_SUBAGENT_SYSTEM,
       ...(ctx.onNotify ? { onNotify: ctx.onNotify } : {}),
     });
@@ -123,7 +127,11 @@ async function runInternal(task: string, ctx?: ToolContext): Promise<string> {
   };
 
   // ── 构建 onAskMaster 回调 ────────────────────────────────────────────
-  const onAskMaster = createAskMasterCallback(masterSession, ctx.onNotify ?? (async () => {}), agentId);
+  const onAskMaster = createAskMasterCallback(
+    masterSession,
+    ctx.onNotify ?? (async () => {}),
+    agentId
+  );
 
   // ── 获取 hidden 工具的 spec（注入给 daily subagent） ────────────────
   const customTools: ChatCompletionTool[] = [
@@ -137,7 +145,7 @@ async function runInternal(task: string, ctx?: ToolContext): Promise<string> {
   const dailyRunFn: SlaveRunFn = async (session, content, opts) => {
     return runAgent(session, content, {
       ...opts,
-      systemPromptSuffix: DAILY_SUBAGENT_SYSTEM,  // 覆盖 slaveManager 传入的默认 suffix
+      systemPromptSuffix: DAILY_SUBAGENT_SYSTEM, // 覆盖 slaveManager 传入的默认 suffix
       slaveDepth: 1,
       customTools,
       onAskMaster,
@@ -156,7 +164,7 @@ async function runInternal(task: string, ctx?: ToolContext): Promise<string> {
     dailyRunFn,
     ctx.onSlaveComplete,
     undefined,
-    ctx.onProgressNotify,
+    ctx.onProgressNotify
   );
 
   console.log(`[code_assist] daily slave:${slaveId} started for task="${task.slice(0, 60)}"`);
@@ -205,7 +213,7 @@ function runCli(bin: string, argv: string[], label: string): Promise<string> {
 
 registerTool({
   requiresMFA: false,
-  hidden: true,  // chat 模式下暂时禁用，用户不可见
+  hidden: true, // chat 模式下暂时禁用，用户不可见
   spec: {
     type: "function",
     function: {

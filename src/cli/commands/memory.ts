@@ -13,7 +13,14 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { bold, dim, green, red, cyan, yellow, section } from "../ui.js";
 import { listSessions, memorizeSession, rebuildMemoryViaIPC } from "../../ipc/client.js";
-import { searchMemory, updateMemoryIndex, rebuildMemoryIndex, initEmbedLlm, type UpdateProgress, type EmbedProgress } from "../../memory/qmd.js";
+import {
+  searchMemory,
+  updateMemoryIndex,
+  rebuildMemoryIndex,
+  initEmbedLlm,
+  type UpdateProgress,
+  type EmbedProgress,
+} from "../../memory/qmd.js";
 import { loadConfig } from "../../config/loader.js";
 import { select, closeRl } from "../ui.js";
 import { memoryMaintenance } from "../../core/memory-maintenance.js";
@@ -95,7 +102,8 @@ function cmdList(args: string[]): void {
   section(`记忆文件 — agent: ${agentId}`);
 
   // 遍历 YYYY-MM 子目录
-  const months = fs.readdirSync(baseDir)
+  const months = fs
+    .readdirSync(baseDir)
     .filter((d) => /^\d{4}-\d{2}$/.test(d))
     .sort();
 
@@ -107,7 +115,10 @@ function cmdList(args: string[]): void {
   let total = 0;
   for (const month of months) {
     const monthDir = path.join(baseDir, month);
-    const files = fs.readdirSync(monthDir).filter((f) => f.endsWith(".md")).sort();
+    const files = fs
+      .readdirSync(monthDir)
+      .filter((f) => f.endsWith(".md"))
+      .sort();
     console.log(`\n${bold(month)}`);
     for (const file of files) {
       const fullPath = path.join(monthDir, file);
@@ -174,7 +185,9 @@ async function cmdIndex(args: string[]): Promise<void> {
     process.stdout.write(dim("正在通过服务进程重建索引...") + "\n");
     const ipcResult = await rebuildMemoryViaIPC(agentId);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log(`\n✅ 索引重建完成 (via IPC) — ${ipcResult.files} 文件 · ${ipcResult.chunksEmbedded} chunks · ${elapsed}s`);
+    console.log(
+      `\n✅ 索引重建完成 (via IPC) — ${ipcResult.files} 文件 · ${ipcResult.chunksEmbedded} chunks · ${elapsed}s`
+    );
     return;
   } catch {
     process.stdout.write(dim("服务进程未运行，直接本地重建...") + "\n");
@@ -202,7 +215,8 @@ async function cmdIndex(args: string[]): Promise<void> {
       embedHeaderPrinted = true;
       process.stdout.write(`\n${dim("阶段 2/2  生成向量...")}\n`);
     }
-    const pct = info.totalChunks > 0 ? Math.round((info.chunksEmbedded / info.totalChunks) * 100) : 100;
+    const pct =
+      info.totalChunks > 0 ? Math.round((info.chunksEmbedded / info.totalChunks) * 100) : 100;
     const filled = Math.floor(pct / 5);
     const bar = "█".repeat(filled) + "░".repeat(20 - filled);
     process.stdout.write(
@@ -223,10 +237,14 @@ async function cmdIndex(args: string[]): Promise<void> {
   const ms = Date.now() - t0;
   console.log(`\n${green("✅ 索引已更新")}  耗时 ${ms}ms`);
   console.log(
-    dim(`  文件：已索引 ${result.update.indexed}  更新 ${result.update.updated}  未变 ${result.update.unchanged}  移除 ${result.update.removed}`)
+    dim(
+      `  文件：已索引 ${result.update.indexed}  更新 ${result.update.updated}  未变 ${result.update.unchanged}  移除 ${result.update.removed}`
+    )
   );
   console.log(
-    dim(`  向量：${result.embed.chunksEmbedded} chunks  文档 ${result.embed.docsProcessed}  耗时 ${result.embed.durationMs}ms`)
+    dim(
+      `  向量：${result.embed.chunksEmbedded} chunks  文档 ${result.embed.docsProcessed}  耗时 ${result.embed.durationMs}ms`
+    )
   );
   console.log();
 }
@@ -241,7 +259,7 @@ async function cmdMaintain(args: string[]): Promise<void> {
 
   // 若显式指定了 -a <id>（且无 --all），只处理该 agent；否则处理全部
   const hasAgentFlag = args.some((a) => a === "-a" || a === "--agent");
-  const targetId: string | undefined = (!hasAll && hasAgentFlag) ? agentId : undefined;
+  const targetId: string | undefined = !hasAll && hasAgentFlag ? agentId : undefined;
 
   // CLI 独立运行时需要手动初始化 LLM 注册表（主服务已在 start 时初始化）
   await llmRegistry.init();
@@ -361,23 +379,38 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "save":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("save"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("save");
+        break;
+      }
       await cmdSave(rest);
       break;
     case "list":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("list");
+        break;
+      }
       cmdList(rest);
       break;
     case "search":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("search"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("search");
+        break;
+      }
       await cmdSearch(rest);
       break;
     case "index":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("index"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("index");
+        break;
+      }
       await cmdIndex(rest);
       break;
     case "maintain":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("maintain"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("maintain");
+        break;
+      }
       await cmdMaintain(rest);
       break;
     case "--help":

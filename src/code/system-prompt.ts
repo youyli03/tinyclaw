@@ -21,10 +21,10 @@ import { loadConfig } from "../config/loader.js";
 export function buildCodeSystemPrompt(
   agentId = "default",
   supportsVision = false,
-  _subMode: "auto" | "plan" = "plan",  // auto 已移除，统一使用 plan
+  _subMode: "auto" | "plan" = "plan", // auto 已移除，统一使用 plan
   workdir?: string,
   sessionId?: string,
-  currentProvider?: string,
+  currentProvider?: string
 ): string {
   const workspacePath = workdir ?? agentManager.workspaceDir(agentId);
   const agentDir = agentManager.agentDir(agentId);
@@ -37,11 +37,13 @@ export function buildCodeSystemPrompt(
     ? `\n- 默认 workspace（文件输出备用）：${agentManager.workspaceDir(agentId)}`
     : "";
 
-  const visionSection = supportsVision ? `
+  const visionSection = supportsVision
+    ? `
 
 ## 视觉能力
 
-当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。` : "";
+当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。`
+    : "";
 
   // 读取 code/feedback.md（跨 session 永久有效的行为约束）
   const feedbackContent = readFeedback(agentId, "code");
@@ -57,7 +59,9 @@ export function buildCodeSystemPrompt(
       const ec = readFileSync(envPath, "utf-8").trim();
       if (ec.length > 0) envContent = ec;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Code 模式统一使用 Plan 模式(已移除 Auto)
   // Response hook:按 provider 注入到 code 模式 system prompt
@@ -66,7 +70,19 @@ export function buildCodeSystemPrompt(
     const hookText = loadConfig().agent.responseHooks?.[currentProvider];
     if (hookText) codeHookText = hookText;
   }
-  return buildPlanModePrompt({ workspacePath, agentDir, workspaceDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText });
+  return buildPlanModePrompt({
+    workspacePath,
+    agentDir,
+    workspaceDir,
+    planPath,
+    workdirNote,
+    visionSection,
+    existingPlan,
+    feedbackContent,
+    sessionId,
+    envContent,
+    codeHookText,
+  });
 }
 
 interface PromptParts {
@@ -88,8 +104,19 @@ interface PromptParts {
   codeHookText?: string | undefined;
 }
 
-function buildAutoModePrompt({ workspacePath, agentDir, workspaceDir, workdirNote, visionSection, feedbackContent, planPath, sessionId }: PromptParts): string {
-  const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
+function buildAutoModePrompt({
+  workspacePath,
+  agentDir,
+  workspaceDir,
+  workdirNote,
+  visionSection,
+  feedbackContent,
+  planPath,
+  sessionId,
+}: PromptParts): string {
+  const feedbackSection = feedbackContent
+    ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`
+    : "";
   const planNote = planPath
     ? `\n- PLAN.md（本 session 计划与执行日志）：\`${planPath}\`，用 \`edit_file\` 追加执行进度`
     : "";
@@ -178,12 +205,26 @@ function buildAutoModePrompt({ workspacePath, agentDir, workspaceDir, workdirNot
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式${visionSection}${feedbackSection}`;
 }
 
-function buildPlanModePrompt({ workspacePath, agentDir, workspaceDir, planPath, workdirNote, visionSection, existingPlan, feedbackContent, sessionId, envContent, codeHookText }: PromptParts): string {
+function buildPlanModePrompt({
+  workspacePath,
+  agentDir,
+  workspaceDir,
+  planPath,
+  workdirNote,
+  visionSection,
+  existingPlan,
+  feedbackContent,
+  sessionId,
+  envContent,
+  codeHookText,
+}: PromptParts): string {
   const envSection = envContent ? `\n\n## 本机环境上下文（ENV.md）\n\n${envContent}` : "";
   const existingPlanSection = existingPlan
     ? `\n\n## 已有计划（上次会话遗留）\n\n> ⚠️ PLAN.md 已有内容，**禁止用 write_file 覆盖**。无论是新任务还是续接，都只能用 \`edit_file\` 追加或修改相关部分，保留历史轨迹。\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
     : "";
-  const feedbackSection = feedbackContent ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}` : "";
+  const feedbackSection = feedbackContent
+    ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`
+    : "";
   const feedbackNote = planPath
     ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
     : "";

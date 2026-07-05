@@ -29,7 +29,9 @@ async function flushPendingUpdates(agentId: string): Promise<void> {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   if (names.length === 0) {
     names = ["news"];
@@ -45,7 +47,9 @@ async function flushPendingUpdates(agentId: string): Promise<void> {
 
   try {
     fs.unlinkSync(PENDING_MARKER);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // ── 注册时读取配置，构建 spec ────────────────────────────────────────────────
@@ -80,9 +84,7 @@ if (enabledStores.length === 0) {
   });
 } else {
   const storeNames = enabledStores.map((s) => s.name);
-  const storeTitles = enabledStores
-    .map((s) => `- \`${s.name}\`：${s.title}`)
-    .join("\n");
+  const storeTitles = enabledStores.map((s) => `- \`${s.name}\`：${s.title}`).join("\n");
 
   registerTool({
     requiresMFA: false,

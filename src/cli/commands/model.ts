@@ -14,9 +14,20 @@ import { getCopilotModels } from "../../llm/copilot.js";
 import { fetchFreeModels } from "../../llm/openrouter.js";
 import { patchTomlField } from "../../config/writer.js";
 import {
-  printTable, select, confirm, prompt,
-  singleSelect, searchableSelect,
-  bold, dim, green, yellow, cyan, red, magenta, section,
+  printTable,
+  select,
+  confirm,
+  prompt,
+  singleSelect,
+  searchableSelect,
+  bold,
+  dim,
+  green,
+  yellow,
+  cyan,
+  red,
+  magenta,
+  section,
 } from "../ui.js";
 
 type BackendName = "daily" | "code" | "summarizer" | "vision";
@@ -31,10 +42,13 @@ async function cmdShow(): Promise<void> {
   const rows: string[][] = [];
   for (const name of BACKEND_NAMES) {
     const role =
-      name === "daily"       ? cfg.llm.backends.daily
-      : name === "code"      ? cfg.llm.backends.code
-      : name === "vision"    ? cfg.llm.backends.vision
-      : cfg.llm.backends.summarizer;
+      name === "daily"
+        ? cfg.llm.backends.daily
+        : name === "code"
+          ? cfg.llm.backends.code
+          : name === "vision"
+            ? cfg.llm.backends.vision
+            : cfg.llm.backends.summarizer;
 
     if (!role) {
       rows.push([name, dim("(未配置，回退到 daily)")]);
@@ -60,13 +74,17 @@ async function listCopilot(githubToken: string, showAll: boolean): Promise<void>
     display.map((m, i) => [
       String(i + 1),
       cyan(`copilot/${m.id}`),
-      m.multiplier === undefined ? "-"
-        : m.multiplier === 0 ? green("free")
-        : yellow(`×${m.multiplier}`),
+      m.multiplier === undefined
+        ? "-"
+        : m.multiplier === 0
+          ? green("free")
+          : yellow(`×${m.multiplier}`),
     ])
   );
   if (!showAll) {
-    console.log(dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`));
+    console.log(
+      dim(`\n显示 ${display.length} 个可选模型（总计 ${models.length} 个，-a 查看全部）`)
+    );
   }
 }
 
@@ -120,7 +138,9 @@ async function listOpenRouter(apiKey: string, showAll: boolean): Promise<void> {
         console.error(red(`  HTTP ${resp.status} ${resp.statusText}`));
         return;
       }
-      const data = (await resp.json()) as { data?: { id: string; context_length?: number; pricing?: { prompt?: string } }[] };
+      const data = (await resp.json()) as {
+        data?: { id: string; context_length?: number; pricing?: { prompt?: string } }[];
+      };
       const list = data.data ?? [];
       console.log(` ${green("OK")}`);
       section(`OpenRouter 全量模型(共 ${list.length} 个)`);
@@ -128,11 +148,12 @@ async function listOpenRouter(apiKey: string, showAll: boolean): Promise<void> {
         ["#", "Symbol", "CTX", "定价(prompt/1M)"],
         list.map((m, i) => {
           const ctx = m.context_length ? `${Math.round(m.context_length / 1000)}k` : "-";
-          const price = m.pricing?.prompt != null
-            ? (parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2) === "0.00"
-              ? green("free")
-              : yellow(`$${(parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2)}`)
-            : "-";
+          const price =
+            m.pricing?.prompt != null
+              ? (parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2) === "0.00"
+                ? green("free")
+                : yellow(`$${(parseFloat(m.pricing.prompt) * 1_000_000).toFixed(2)}`)
+              : "-";
           return [String(i + 1), cyan(`openrouter/${m.id}`), ctx, price];
         })
       );
@@ -169,14 +190,16 @@ async function listOpenRouter(apiKey: string, showAll: boolean): Promise<void> {
 async function listDeepSeek(baseUrl: string, apiKey: string, showAll: boolean): Promise<void> {
   if (!showAll) {
     // DeepSeek 目前只有两个模型，直接显示
-    console.log(dim(`
-[providers.deepseek] ${baseUrl}`));
+    console.log(
+      dim(`
+[providers.deepseek] ${baseUrl}`)
+    );
     section("DeepSeek 可用模型");
     printTable(
       ["#", "Symbol", "说明"],
       [
         ["1", cyan("deepseek/deepseek-v4-flash"), "DeepSeek-V4 Flash（低价对话/代码）"],
-        ["2", cyan("deepseek/deepseek-v4-pro"),   "DeepSeek-V4 Pro（高级推理）"],
+        ["2", cyan("deepseek/deepseek-v4-pro"), "DeepSeek-V4 Pro（高级推理）"],
       ]
     );
     return;
@@ -209,18 +232,19 @@ async function listDeepSeek(baseUrl: string, apiKey: string, showAll: boolean): 
   }
 }
 
-
 async function listMimo(baseUrl: string, apiKey: string, showAll: boolean): Promise<void> {
   if (!showAll) {
-    console.log(dim(`
-[providers.mimo] ${baseUrl}`));
+    console.log(
+      dim(`
+[providers.mimo] ${baseUrl}`)
+    );
     section("MiMo 可用模型");
     printTable(
       ["#", "Symbol", "说明"],
       [
         ["1", cyan("mimo/mimo-v2.5-pro"), "MiMo V2.5 Pro(高级推理)"],
-        ["2", cyan("mimo/mimo-v2.5"),     "MiMo V2.5"],
-        ["3", cyan("mimo/mimo-v2-pro"),   "MiMo V2 Pro"],
+        ["2", cyan("mimo/mimo-v2.5"), "MiMo V2.5"],
+        ["3", cyan("mimo/mimo-v2-pro"), "MiMo V2 Pro"],
       ]
     );
     return;
@@ -257,7 +281,9 @@ async function cmdList(args: string[]): Promise<void> {
   const showAll = args.includes("--all") || args.includes("-a");
 
   // 支持 provider 筛选：model list [copilot|openrouter|openai] [-a]
-  const filterArg = args.find((a) => ["copilot", "openrouter", "openai", "deepseek", "mimo"].includes(a));
+  const filterArg = args.find((a) =>
+    ["copilot", "openrouter", "openai", "deepseek", "mimo"].includes(a)
+  );
   const { copilot, openai, openrouter, deepseek, mimo } = cfg.providers;
 
   if (!copilot && !openai && !openrouter && !deepseek && !mimo) {
@@ -288,7 +314,6 @@ async function cmdList(args: string[]): Promise<void> {
   }
 }
 
-
 async function cmdSet(args: string[]): Promise<void> {
   const cfg = loadConfig();
 
@@ -303,23 +328,36 @@ async function cmdSet(args: string[]): Promise<void> {
   }
 
   const currentRole =
-    backendName === "daily"       ? cfg.llm.backends.daily
-    : backendName === "code"      ? cfg.llm.backends.code
-    : backendName === "vision"    ? cfg.llm.backends.vision
-    : cfg.llm.backends.summarizer;
+    backendName === "daily"
+      ? cfg.llm.backends.daily
+      : backendName === "code"
+        ? cfg.llm.backends.code
+        : backendName === "vision"
+          ? cfg.llm.backends.vision
+          : cfg.llm.backends.summarizer;
 
   const currentSymbol = currentRole?.model ?? "(未配置)";
   console.log(`\n后端 [${bold(backendName)}] 当前模型：${cyan(currentSymbol)}`);
 
   // ── 第一级：选 provider ────────────────────────────────────────────────
   const { copilot, openai, openrouter, deepseek, mimo } = cfg.providers;
-  interface ProviderItem { label: string; value: string; note?: string }
+  interface ProviderItem {
+    label: string;
+    value: string;
+    note?: string;
+  }
   const providerItems: ProviderItem[] = [];
-  if (copilot)     providerItems.push({ label: "Copilot",     value: "copilot",     note: "GitHub Copilot" });
-  if (openrouter)  providerItems.push({ label: "OpenRouter",  value: "openrouter",  note: "免费/付费模型" });
-  if (openai)      providerItems.push({ label: "OpenAI",      value: "openai",      note: "手动输入" });
-  if (deepseek)    providerItems.push({ label: "DeepSeek",    value: "deepseek",    note: "deepseek-chat / deepseek-reasoner" });
-  if (mimo)        providerItems.push({ label: "MiMo",        value: "mimo",        note: "mimo-v2.5-pro / mimo-v2.5" });
+  if (copilot) providerItems.push({ label: "Copilot", value: "copilot", note: "GitHub Copilot" });
+  if (openrouter)
+    providerItems.push({ label: "OpenRouter", value: "openrouter", note: "免费/付费模型" });
+  if (openai) providerItems.push({ label: "OpenAI", value: "openai", note: "手动输入" });
+  if (deepseek)
+    providerItems.push({
+      label: "DeepSeek",
+      value: "deepseek",
+      note: "deepseek-chat / deepseek-reasoner",
+    });
+  if (mimo) providerItems.push({ label: "MiMo", value: "mimo", note: "mimo-v2.5-pro / mimo-v2.5" });
 
   if (providerItems.length === 0) {
     console.error(red("未配置任何 provider，无法选择模型"));
@@ -337,7 +375,11 @@ async function cmdSet(args: string[]): Promise<void> {
     const picker = models.filter((m) => m.isPickerEnabled);
     console.log(` ${green("OK")} (${picker.length} 个)`);
 
-    interface PickItem { label: string; value: string; note?: string }
+    interface PickItem {
+      label: string;
+      value: string;
+      note?: string;
+    }
     const items: PickItem[] = picker.map((m) => {
       const symbol = `copilot/${m.id}`;
       return {
@@ -347,12 +389,16 @@ async function cmdSet(args: string[]): Promise<void> {
           cyan(symbol),
           m.vendor,
           m.category ?? "",
-          m.multiplier === undefined ? ""
-            : m.multiplier === 0 ? green("free")
-            : yellow(`×${m.multiplier}`),
+          m.multiplier === undefined
+            ? ""
+            : m.multiplier === 0
+              ? green("free")
+              : yellow(`×${m.multiplier}`),
           m.preview ? dim("[preview]") : "",
           currentSymbol === symbol ? magenta("← 当前") : "",
-        ].filter(Boolean).join(" · "),
+        ]
+          .filter(Boolean)
+          .join(" · "),
       };
     });
     items.push({
@@ -361,13 +407,16 @@ async function cmdSet(args: string[]): Promise<void> {
       note: currentSymbol === "copilot/auto" ? magenta("← 当前") : "",
     });
     newSymbol = await searchableSelect("选择 Copilot 模型", items);
-
   } else if (provider === "openrouter" && openrouter) {
     process.stdout.write("\n正在获取 OpenRouter 免费模型榜单......");
     const freeModels = await fetchFreeModels(openrouter.apiKey);
     console.log(` ${green("OK")} (${freeModels.length} 个)`);
 
-    interface PickItem { label: string; value: string; note?: string }
+    interface PickItem {
+      label: string;
+      value: string;
+      note?: string;
+    }
     const items: PickItem[] = [
       {
         label: "openrouter/auto-free  " + dim("自动路由免费模型"),
@@ -383,7 +432,9 @@ async function cmdSet(args: string[]): Promise<void> {
         return {
           label: m.id,
           value: symbol,
-          note: [green("free"), ctx, maxOut, currentSymbol === symbol ? magenta("← 当前") : ""].filter(Boolean).join(" · "),
+          note: [green("free"), ctx, maxOut, currentSymbol === symbol ? magenta("← 当前") : ""]
+            .filter(Boolean)
+            .join(" · "),
         };
       }),
       {
@@ -396,53 +447,73 @@ async function cmdSet(args: string[]): Promise<void> {
     if (picked === "__openrouter_manual__") {
       const input = await prompt("输入 OpenRouter model ID（如 google/gemma-3-27b-it:free）: ");
       const trimmed = input.trim();
-      if (!trimmed) { console.log(dim("已取消")); return; }
+      if (!trimmed) {
+        console.log(dim("已取消"));
+        return;
+      }
       newSymbol = `openrouter/${trimmed}`;
     } else {
       newSymbol = picked;
     }
-
   } else if (provider === "openai" && openai) {
     const input = await prompt("输入 OpenAI model ID（如 gpt-4o-mini）: ");
     const trimmed = input.trim();
-    if (!trimmed) { console.log(dim("已取消")); return; }
+    if (!trimmed) {
+      console.log(dim("已取消"));
+      return;
+    }
     newSymbol = `openai/${trimmed}`;
-
   } else if (provider === "deepseek" && deepseek) {
-    interface DsItem { label: string; value: string; note?: string }
+    interface DsItem {
+      label: string;
+      value: string;
+      note?: string;
+    }
     const dsItems: DsItem[] = [
-      { label: "deepseek-v4-flash", value: "deepseek/deepseek-v4-flash", note: green("低价对话/代码") },
-      { label: "deepseek-v4-pro",   value: "deepseek/deepseek-v4-pro",   note: yellow("高级推理") },
+      {
+        label: "deepseek-v4-flash",
+        value: "deepseek/deepseek-v4-flash",
+        note: green("低价对话/代码"),
+      },
+      { label: "deepseek-v4-pro", value: "deepseek/deepseek-v4-pro", note: yellow("高级推理") },
       { label: dim("[手动输入 model ID]"), value: "__deepseek_manual__", note: "" },
     ];
     const dsPicked = await searchableSelect("选择 DeepSeek 模型", dsItems);
     if (dsPicked === "__deepseek_manual__") {
       const dsInput = await prompt("输入 DeepSeek model ID(如 deepseek-chat): ");
       const dsTrimmed = dsInput.trim();
-      if (!dsTrimmed) { console.log(dim("已取消")); return; }
+      if (!dsTrimmed) {
+        console.log(dim("已取消"));
+        return;
+      }
       newSymbol = `deepseek/${dsTrimmed}`;
     } else {
       newSymbol = dsPicked;
     }
-
   } else if (provider === "mimo" && mimo) {
-    interface MimoItem { label: string; value: string; note?: string }
+    interface MimoItem {
+      label: string;
+      value: string;
+      note?: string;
+    }
     const mimoItems: MimoItem[] = [
       { label: "mimo-v2.5-pro", value: "mimo/mimo-v2.5-pro", note: yellow("高级推理") },
-      { label: "mimo-v2.5",     value: "mimo/mimo-v2.5",     note: green("标准对话") },
-      { label: "mimo-v2-pro",   value: "mimo/mimo-v2-pro",   note: "" },
+      { label: "mimo-v2.5", value: "mimo/mimo-v2.5", note: green("标准对话") },
+      { label: "mimo-v2-pro", value: "mimo/mimo-v2-pro", note: "" },
       { label: dim("[手动输入 model ID]"), value: "__mimo_manual__", note: "" },
     ];
     const mimoPicked = await searchableSelect("选择 MiMo 模型", mimoItems);
     if (mimoPicked === "__mimo_manual__") {
       const mimoInput = await prompt("输入 MiMo model ID(如 mimo-v2.5): ");
       const mimoTrimmed = mimoInput.trim();
-      if (!mimoTrimmed) { console.log(dim("已取消")); return; }
+      if (!mimoTrimmed) {
+        console.log(dim("已取消"));
+        return;
+      }
       newSymbol = `mimo/${mimoTrimmed}`;
     } else {
       newSymbol = mimoPicked;
     }
-
   } else {
     console.error(red("所选 provider 未配置"));
     return;
@@ -457,8 +528,6 @@ async function cmdSet(args: string[]): Promise<void> {
     await restartRun([]);
   }
 }
-
-
 
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
@@ -533,21 +602,30 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "show":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("show");
+        return;
+      }
       return cmdShow();
     case "list":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("list");
+        return;
+      }
       return cmdList(rest);
     case "set":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("set"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("set");
+        return;
+      }
       return cmdSet(rest);
     case "--help":
     case "-h":
-    case "help":   printHelp(); return;
+    case "help":
+      printHelp();
+      return;
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();
   }
 }
-
-

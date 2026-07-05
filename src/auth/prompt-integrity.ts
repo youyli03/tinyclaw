@@ -25,7 +25,7 @@ export class PromptIntegrityError extends Error {
   constructor(
     message: string,
     public readonly kind: "baseline" | "canary",
-    public readonly backend?: string,
+    public readonly backend?: string
   ) {
     super(message);
     this.name = "PromptIntegrityError";
@@ -96,7 +96,11 @@ export function verifyPromptBaseline(key: string, prompt: string): BaselineVerif
   const existing = baseline[key];
 
   if (!existing) {
-    baseline[key] = { hash: newHash, sample: prompt.slice(0, 80), updatedAt: new Date().toISOString() };
+    baseline[key] = {
+      hash: newHash,
+      sample: prompt.slice(0, 80),
+      updatedAt: new Date().toISOString(),
+    };
     saveBaseline(baseline);
     return { firstSeen: true, match: true, newHash };
   }
@@ -111,7 +115,11 @@ export function verifyPromptBaseline(key: string, prompt: string): BaselineVerif
 /** 显式更新基线(用户确认 prompt 变更合法后调用)。 */
 export function updateBaseline(key: string, prompt: string): void {
   const baseline = loadBaseline();
-  baseline[key] = { hash: computePromptHash(prompt), sample: prompt.slice(0, 80), updatedAt: new Date().toISOString() };
+  baseline[key] = {
+    hash: computePromptHash(prompt),
+    sample: prompt.slice(0, 80),
+    updatedAt: new Date().toISOString(),
+  };
   saveBaseline(baseline);
 }
 
@@ -166,7 +174,10 @@ export function checkCanary(content: string, nonce: string): CanaryCheckResult {
 
 /** 从最终展示内容中移除 canary 标记(避免泄露给用户)。 */
 export function stripCanary(content: string): string {
-  return content.replace(new RegExp(CANARY_RE.source, "gi"), "").replace(/\n{3,}$/, "\n").trimEnd();
+  return content
+    .replace(new RegExp(CANARY_RE.source, "gi"), "")
+    .replace(/\n{3,}$/, "\n")
+    .trimEnd();
 }
 
 // ── 统一入口 ────────────────────────────────────────────────────────────────

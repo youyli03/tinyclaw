@@ -72,7 +72,10 @@ function chunkText(text: string): string[] {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 0) {
-    if (remaining.length <= CHUNK_LIMIT) { chunks.push(remaining); break; }
+    if (remaining.length <= CHUNK_LIMIT) {
+      chunks.push(remaining);
+      break;
+    }
     let splitAt = remaining.lastIndexOf("\n", CHUNK_LIMIT);
     if (splitAt <= 0) splitAt = CHUNK_LIMIT;
     chunks.push(remaining.slice(0, splitAt));
@@ -106,8 +109,8 @@ export interface MediaError {
  */
 export function extractTextContent(text: string): string {
   return parseMediaTags(text)
-    .filter(seg => seg.type === "text")
-    .map(seg => seg.content)
+    .filter((seg) => seg.type === "text")
+    .map((seg) => seg.content)
     .join("")
     .trim();
 }
@@ -147,7 +150,8 @@ function isTimeoutError(err: unknown): boolean {
   // TypeError("fetch failed"), so we must check err.cause.code, not just err.code.
   let cur: unknown = err;
   while (cur != null) {
-    if (cur instanceof DOMException && (cur.code === 23 || cur.name === "TimeoutError")) return true;
+    if (cur instanceof DOMException && (cur.code === 23 || cur.name === "TimeoutError"))
+      return true;
     if (cur instanceof Error) {
       if (cur.name === "TimeoutError") return true;
       const code = (cur as NodeJS.ErrnoException & { code?: string }).code ?? "";
@@ -190,7 +194,8 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
       if (segment.content.length > AUTO_RENDER_THRESHOLD && type !== "guild") {
         try {
           const imgPath = await mdToImage(segment.content);
-          const mediaReplyToId2 = replyToId && checkLimit(replyToId).allowed ? replyToId : undefined;
+          const mediaReplyToId2 =
+            replyToId && checkLimit(replyToId).allowed ? replyToId : undefined;
           await doSendMedia(token, type, peerId, "img", imgPath, mediaReplyToId2);
           if (replyToId) recordReply(replyToId);
           continue;
@@ -203,7 +208,7 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
       const chunks = chunkText(segment.content);
       for (const chunk of chunks) {
         let backoffMs = 2_000;
-        // eslint-disable-next-line no-constant-condition
+         
         while (true) {
           try {
             await doSend(token, appId, type, peerId, chunk, replyToId);
@@ -242,16 +247,32 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
         if (!allowed) mediaReplyToId = undefined;
       }
       let backoffMs = 2_000;
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         try {
-          await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId, segment.filename);
+          await doSendMedia(
+            token,
+            type,
+            peerId,
+            segment.type,
+            segment.content,
+            mediaReplyToId,
+            segment.filename
+          );
           break;
         } catch (err) {
           if (isTokenError(err)) {
             clearTokenCache(appId);
             token = await getAccessToken(appId, clientSecret);
-            await doSendMedia(token, type, peerId, segment.type, segment.content, mediaReplyToId, segment.filename);
+            await doSendMedia(
+              token,
+              type,
+              peerId,
+              segment.type,
+              segment.content,
+              mediaReplyToId,
+              segment.filename
+            );
             break;
           } else if (isTimeoutError(err)) {
             console.warn(`[qqbot] 媒体发送超时，${backoffMs / 1000}s 后重试...`);
@@ -287,15 +308,27 @@ function convertPngToJpeg(pngPath: string, quality = 85): Promise<string> {
     `qqbot_${Date.now()}_${path.basename(pngPath, ".png")}.jpg`
   );
   return new Promise((resolve, reject) => {
-    const py = spawn("python3", ["-c", `
+    const py = spawn(
+      "python3",
+      [
+        "-c",
+        `
 import sys
 from PIL import Image
 img = Image.open(sys.argv[1]).convert("RGB")
 img.save(sys.argv[2], "JPEG", quality=int(sys.argv[3]), optimize=True)
-`, pngPath, jpgPath, String(quality)], { stdio: ["ignore", "pipe", "pipe"] });
+`,
+        pngPath,
+        jpgPath,
+        String(quality),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
 
     let err = "";
-    py.stderr.on("data", (d: Buffer) => { err += d.toString("utf-8"); });
+    py.stderr.on("data", (d: Buffer) => {
+      err += d.toString("utf-8");
+    });
     py.on("close", (code) => {
       if (code === 0 && fs.existsSync(jpgPath)) resolve(jpgPath);
       else reject(new Error(`PNG→JPEG 转换失败 (code=${code}): ${err.trim()}`));
@@ -314,11 +347,11 @@ async function doSendMedia(
   filename?: string
 ): Promise<void> {
   // 自动从路径提取文件名
-  const resolvedFilename = filename ?? (
-    !pathOrUrl.startsWith("http://") && !pathOrUrl.startsWith("https://")
+  const resolvedFilename =
+    filename ??
+    (!pathOrUrl.startsWith("http://") && !pathOrUrl.startsWith("https://")
       ? path.basename(pathOrUrl)
-      : undefined
-  );
+      : undefined);
   let source: { url?: string; fileData?: string; filename?: string };
 
   if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
@@ -346,11 +379,18 @@ async function doSendMedia(
         throw new Error(`文件过大 (${stat.size} bytes): ${uploadPath}`);
       }
       const data = fs.readFileSync(uploadPath);
-      source = { fileData: data.toString("base64"), ...(resolvedFilename ? { filename: resolvedFilename } : {}) };
+      source = {
+        fileData: data.toString("base64"),
+        ...(resolvedFilename ? { filename: resolvedFilename } : {}),
+      };
     } finally {
       // 清理临时 JPEG 文件
       if (tempJpg) {
-        try { fs.unlinkSync(tempJpg); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(tempJpg);
+        } catch {
+          /* ignore */
+        }
       }
     }
   }

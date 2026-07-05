@@ -7,7 +7,14 @@ import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/d
 import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
 import { readExistingCards, parseCardJson, saveCards } from "./cards.js";
-import { mkdirSync, appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  appendFileSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { dirname, basename, join } from "node:path";
 
 /**
@@ -16,16 +23,17 @@ import { dirname, basename, join } from "node:path";
  */
 function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void {
   try {
-    const isNotCopilot = !('isCopilot' in client) || !(client as { isCopilot?: boolean }).isCopilot;
-    const inputTok  = result.usage?.promptTokens ?? 0;
+    const isNotCopilot = !("isCopilot" in client) || !(client as { isCopilot?: boolean }).isCopilot;
+    const inputTok = result.usage?.promptTokens ?? 0;
     const outputTok = result.usage?.completionTokens ?? 0;
-    const cacheTok  = (result.usage?.cacheReadTokens ?? 0) + (result.usage?.cacheCreationTokens ?? 0);
+    const cacheTok =
+      (result.usage?.cacheReadTokens ?? 0) + (result.usage?.cacheCreationTokens ?? 0);
     if (isNotCopilot && (outputTok > 0 || inputTok > 0)) {
       const CAT = "llm";
       const entries = [
-        { key: "token/summarizer/input",  value: inputTok,  desc: "summarizer input token 增量" },
+        { key: "token/summarizer/input", value: inputTok, desc: "summarizer input token 增量" },
         { key: "token/summarizer/output", value: outputTok, desc: "summarizer output token 增量" },
-        { key: "token/summarizer/cache",  value: cacheTok,  desc: "summarizer cache token 增量" },
+        { key: "token/summarizer/cache", value: cacheTok, desc: "summarizer cache token 增量" },
       ];
       for (const e of entries) {
         if (e.value <= 0) continue;
@@ -33,7 +41,9 @@ function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void 
         insertMetric({ category: CAT, key: e.key, value: e.value, note: client.model });
       }
     }
-  } catch { /* 写 db 失败不影响主流程 */ }
+  } catch {
+    /* 写 db 失败不影响主流程 */
+  }
 }
 
 const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给定的对话历史压缩为结构化摘要（不超过 20000 token），
@@ -73,7 +83,7 @@ const CODE_SUMMARIZE_SYSTEM = `你是一个代码会话摘要助手。你的任�
 使用中文，直接输出摘要内容，不要使用"摘要："等前缀。`;
 
 /** Code 模式 context window 触发压缩的阈值（75%） */
-const CODE_SUMMARIZE_THRESHOLD = 0.60;
+const CODE_SUMMARIZE_THRESHOLD = 0.6;
 
 /**
  * 将单条消息格式化为摘要 LLM 的可读文本。
@@ -93,32 +103,35 @@ const CODE_SUMMARIZE_THRESHOLD = 0.60;
  */
 function stripMediaTags(text: string): string {
   return text
-    .replace(/<file\b[^>]*\bname="([^"]*)"[^>]*\/?>/gi, '[附件: $1（已发送）]')
-    .replace(/<file\b[^>]*\/?>/gi, '[附件（已发送）]')
-    .replace(/<img\b[^>]*\/?>/gi, '[图片（已发送）]')
-    .replace(/<audio\b[^>]*\/?>/gi, '[音频（已发送）]')
-    .replace(/<video\b[^>]*\/?>/gi, '[视频（已发送）]');
+    .replace(/<file\b[^>]*\bname="([^"]*)"[^>]*\/?>/gi, "[附件: $1（已发送）]")
+    .replace(/<file\b[^>]*\/?>/gi, "[附件（已发送）]")
+    .replace(/<img\b[^>]*\/?>/gi, "[图片（已发送）]")
+    .replace(/<audio\b[^>]*\/?>/gi, "[音频（已发送）]")
+    .replace(/<video\b[^>]*\/?>/gi, "[视频（已发送）]");
 }
 
 function formatMsgForSummary(m: ChatMessage): string {
   if (m.role === "assistant") {
-    const calls = (m as { role: "assistant"; content: unknown; tool_calls?: OpenAIToolCall[] }).tool_calls;
+    const calls = (m as { role: "assistant"; content: unknown; tool_calls?: OpenAIToolCall[] })
+      .tool_calls;
     if (calls && calls.length > 0) {
       // 展开工具调用:显示工具名 + 参数摘要(单个参数值超过 200 字符时截断)
-      const callsDesc = calls.map((tc) => {
-        let argsStr: string;
-        try {
-          const parsed = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-          const entries = Object.entries(parsed).map(([k, v]) => {
-            const vs = typeof v === "string" ? v : JSON.stringify(v);
-            return `${k}: ${vs.length > 200 ? vs.slice(0, 200) + "..." : vs}`;
-          });
-          argsStr = entries.join(", ");
-        } catch {
-          argsStr = tc.function.arguments.slice(0, 200);
-        }
-        return `${tc.function.name}(${argsStr})`;
-      }).join("; ");
+      const callsDesc = calls
+        .map((tc) => {
+          let argsStr: string;
+          try {
+            const parsed = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+            const entries = Object.entries(parsed).map(([k, v]) => {
+              const vs = typeof v === "string" ? v : JSON.stringify(v);
+              return `${k}: ${vs.length > 200 ? vs.slice(0, 200) + "..." : vs}`;
+            });
+            argsStr = entries.join(", ");
+          } catch {
+            argsStr = tc.function.arguments.slice(0, 200);
+          }
+          return `${tc.function.name}(${argsStr})`;
+        })
+        .join("; ");
       // 若 content 非空(思考链/前言文本),一并保留并剥离媒体标签
       const textContent = stripMediaTags(typeof m.content === "string" ? m.content.trim() : "");
       return `[助手调用工具]:${callsDesc}${textContent ? `\n${textContent}` : ""}`;
@@ -223,15 +236,21 @@ export function shouldSummarize(messages: ChatMessage[], actualTokens?: number):
     const toolCallsChars =
       m.role === "assistant" &&
       (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
-        ? JSON.stringify((m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls).length
+        ? JSON.stringify(
+            (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
+          ).length
         : 0;
     if (typeof m.content === "string") return sum + m.content.length + toolCallsChars;
     if (Array.isArray(m.content)) {
-      return sum + m.content.reduce((cs: number, p: unknown) => {
-        const part = p as { type?: string; text?: string };
-        if (part.type === "text") return cs + (part.text?.length ?? 0);
-        return cs + 500;
-      }, 0) + toolCallsChars;
+      return (
+        sum +
+        m.content.reduce((cs: number, p: unknown) => {
+          const part = p as { type?: string; text?: string };
+          if (part.type === "text") return cs + (part.text?.length ?? 0);
+          return cs + 500;
+        }, 0) +
+        toolCallsChars
+      );
     }
     return sum + toolCallsChars;
   }, 0);
@@ -248,7 +267,11 @@ export function shouldSummarize(messages: ChatMessage[], actualTokens?: number):
  * @param contextWindow code 模型的上下文窗口大小（tokens）
  * @param actualTokens LLM 上次响应报告的实际 prompt token 数（0 或 undefined = 使用估算）
  */
-export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: number, actualTokens?: number): boolean {
+export function shouldSummarizeCode(
+  messages: ChatMessage[],
+  contextWindow: number,
+  actualTokens?: number
+): boolean {
   const threshold = Math.floor(contextWindow * CODE_SUMMARIZE_THRESHOLD);
 
   if (actualTokens && actualTokens > 0) {
@@ -260,7 +283,9 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
     const toolCallsChars =
       m.role === "assistant" &&
       (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
-        ? JSON.stringify((m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls).length
+        ? JSON.stringify(
+            (m as { role: "assistant"; content: unknown; tool_calls?: unknown[] }).tool_calls
+          ).length
         : 0;
     const content = m.content;
     let contentChars = 0;
@@ -268,7 +293,8 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
       contentChars = content.length;
     } else if (Array.isArray(content)) {
       contentChars = content.reduce((cs, p) => {
-        if (typeof p === "object" && p !== null && "text" in p) return cs + String((p as { text: string }).text).length;
+        if (typeof p === "object" && p !== null && "text" in p)
+          return cs + String((p as { text: string }).text).length;
         return cs + 200; // 非文本部分（图片等）估算
       }, 0);
     }
@@ -292,7 +318,7 @@ export function shouldSummarizeCode(messages: ChatMessage[], contextWindow: numb
 export async function summarizeAndCompressCode(
   messages: ChatMessage[],
   agentId?: string,
-  projectSlug?: string,
+  projectSlug?: string
 ): Promise<ChatMessage[]> {
   const client = llmRegistry.get("summarizer");
 
@@ -307,9 +333,7 @@ export async function summarizeAndCompressCode(
   // 从 CODE_KEEP_TURNS 开始，逐步减小保留轮次，直到找到可压缩的旧内容
   for (let keepTurns = CODE_KEEP_TURNS; keepTurns >= 1; keepTurns--) {
     const keepFromIdx =
-      userIndices.length > keepTurns
-        ? userIndices[userIndices.length - keepTurns]!
-        : 0;
+      userIndices.length > keepTurns ? userIndices[userIndices.length - keepTurns]! : 0;
 
     const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
     let toKeep = nonSystemMessages.slice(keepFromIdx);
@@ -328,7 +352,10 @@ export async function summarizeAndCompressCode(
       let keepStart = 0;
       while (keepStart < toKeep.length) {
         const m = toKeep[keepStart]!;
-        if (m.role === "tool" && !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)) {
+        if (
+          m.role === "tool" &&
+          !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)
+        ) {
           keepStart++;
         } else {
           break;
@@ -344,7 +371,10 @@ export async function summarizeAndCompressCode(
       // 找最后一个 user 消息的起始位置
       let lastUserStart = -1;
       for (let k = toKeep.length - 1; k >= 0; k--) {
-        if (toKeep[k]!.role === "user") { lastUserStart = k; break; }
+        if (toKeep[k]!.role === "user") {
+          lastUserStart = k;
+          break;
+        }
       }
       if (lastUserStart <= 0) {
         // 只有一个（或零个）user 轮次，直接保留全部，不做 strip
@@ -362,7 +392,9 @@ export async function summarizeAndCompressCode(
       if (stripped.length < messages.length) return stripped;
       // strip-only 无效果：尝试用更少的保留轮次（紧急回退）
       if (keepTurns > 1) {
-        console.log(`[summarizeAndCompressCode] strip-only 无效果，尝试紧急压缩（keepTurns ${keepTurns} → ${keepTurns - 1}）`);
+        console.log(
+          `[summarizeAndCompressCode] strip-only 无效果，尝试紧急压缩（keepTurns ${keepTurns} → ${keepTurns - 1}）`
+        );
         continue;
       }
       // keepTurns 已降至 1 仍无可压缩内容:强制从前往后截断 tool 结果，目标 40% 原始体积
@@ -371,11 +403,18 @@ export async function summarizeAndCompressCode(
           msgs.reduce((sum, m) => {
             const c = m.content;
             if (typeof c === "string") return sum + c.length;
-            if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+            if (Array.isArray(c))
+              return (
+                sum +
+                (c as { text?: string }[]).reduce(
+                  (cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200),
+                  0
+                )
+              );
             return sum;
           }, 0);
         const originalTotalChars = estimateCharsForce(messages);
-        const target = Math.floor(originalTotalChars * 0.40);
+        const target = Math.floor(originalTotalChars * 0.4);
         const systemChars = estimateCharsForce(systemMessages);
         const targetKeepChars = Math.max(target - systemChars, 200);
         const allNonSys: ChatMessage[] = [...toKeep];
@@ -390,14 +429,19 @@ export async function summarizeAndCompressCode(
               const canTrim = Math.max(0, orig.length - MIN_TOOL_RESULT);
               if (canTrim > 0) {
                 const trimAmt = Math.min(canTrim, overBudget);
-                allNonSys[ti] = { ...m, content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已强制截断]" };
+                allNonSys[ti] = {
+                  ...m,
+                  content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已强制截断]",
+                };
                 overBudget -= trimAmt;
               }
             }
           }
           const afterChars = estimateCharsForce(allNonSys);
           if (afterChars < beforeChars) {
-            console.log(`[summarizeAndCompressCode] 强制截断单轮超大上下文: ${beforeChars} → ${afterChars} chars (target ${targetKeepChars})`);
+            console.log(
+              `[summarizeAndCompressCode] 强制截断单轮超大上下文: ${beforeChars} → ${afterChars} chars (target ${targetKeepChars})`
+            );
             return [...systemMessages, ...allNonSys];
           }
         }
@@ -408,7 +452,9 @@ export async function summarizeAndCompressCode(
 
     // 有可压缩的旧内容：调用 LLM 生成摘要
     if (keepTurns < CODE_KEEP_TURNS) {
-      console.log(`[summarizeAndCompressCode] 紧急压缩模式（keepTurns=${keepTurns}），压缩 ${toSummarize.length} 条旧消息`);
+      console.log(
+        `[summarizeAndCompressCode] 紧急压缩模式（keepTurns=${keepTurns}），压缩 ${toSummarize.length} 条旧消息`
+      );
     }
 
     // 构建待摘要的历史文本，使用 formatMsgForSummary 展开 tool_calls 字段，
@@ -422,10 +468,13 @@ export async function summarizeAndCompressCode(
       .filter(Boolean)
       .join("\n\n");
 
-    const result = await client.chat([
-      { role: "system", content: CODE_SUMMARIZE_SYSTEM },
-      { role: "user", content: historyText },
-    ], { isUserInitiated: false });
+    const result = await client.chat(
+      [
+        { role: "system", content: CODE_SUMMARIZE_SYSTEM },
+        { role: "user", content: historyText },
+      ],
+      { isUserInitiated: false }
+    );
     recordSummarizerTokens(result, client);
 
     // fire-and-forget 蒸馏笔记（不阻塞压缩）
@@ -433,18 +482,24 @@ export async function summarizeAndCompressCode(
       if (projectSlug) {
         // project session:LLM 自主维护项目记忆(MEMORY.md + topic 文件)
         distillProjectCompression(toSummarize as ChatMessage[], agentId, projectSlug).catch((err) =>
-          console.warn("[summarizeAndCompressCode] project 蒸馏失败:", err instanceof Error ? err.message : err)
+          console.warn(
+            "[summarizeAndCompressCode] project 蒸馏失败:",
+            err instanceof Error ? err.message : err
+          )
         );
       } else {
         // 普通 code session:多项目散射到 NOTES.md
         distillCompressionNotes(toSummarize as ChatMessage[], agentId).catch((err) =>
-          console.warn("[summarizeAndCompressCode] 蒸馏失败:", err instanceof Error ? err.message : err)
+          console.warn(
+            "[summarizeAndCompressCode] 蒸馏失败:",
+            err instanceof Error ? err.message : err
+          )
         );
       }
     }
 
     // 组装压缩后的消息:system + 摘要 + 最近 keepTurns 轮原始消息
-    let compressedKeep: ChatMessage[] = [...toKeep];
+    const compressedKeep: ChatMessage[] = [...toKeep];
 
     // 第二阶段:若 LLM 摘要 + toKeep 之和仍超过原始的 40%,
     // 找最后一个 user 轮次，只截断该轮次里的 role=tool 消息（从最老到最新），直到达到目标大小。
@@ -453,12 +508,19 @@ export async function summarizeAndCompressCode(
         msgs.reduce((sum, m) => {
           const c = m.content;
           if (typeof c === "string") return sum + c.length;
-          if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+          if (Array.isArray(c))
+            return (
+              sum +
+              (c as { text?: string }[]).reduce(
+                (cs, p) => cs + (typeof p.text === "string" ? p.text.length : 200),
+                0
+              )
+            );
           return sum;
         }, 0);
 
       const originalTotalChars = estimateChars2(messages);
-      const target = Math.floor(originalTotalChars * 0.40);
+      const target = Math.floor(originalTotalChars * 0.4);
       const systemChars = estimateChars2(systemMessages);
       const summaryChars = result.content.length + 20;
       const targetKeepChars = Math.max(target - systemChars - summaryChars, 200);
@@ -468,7 +530,10 @@ export async function summarizeAndCompressCode(
         // 找最后一个 user 轮次的起始位置，只截断该轮次里的 tool 消息
         let lastUserStart = -1;
         for (let k = compressedKeep.length - 1; k >= 0; k--) {
-          if (compressedKeep[k]!.role === "user") { lastUserStart = k; break; }
+          if (compressedKeep[k]!.role === "user") {
+            lastUserStart = k;
+            break;
+          }
         }
         const truncateFrom = lastUserStart >= 0 ? lastUserStart : 0;
         let overBudget = currentKeepChars - targetKeepChars;
@@ -480,12 +545,17 @@ export async function summarizeAndCompressCode(
             const canTrim = Math.max(0, orig.length - MIN_TOOL_RESULT);
             if (canTrim > 0) {
               const trimAmt = Math.min(canTrim, overBudget);
-              compressedKeep[ti] = { ...m, content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已截断]" };
+              compressedKeep[ti] = {
+                ...m,
+                content: orig.slice(0, orig.length - trimAmt) + "\n[工具结果已截断]",
+              };
               overBudget -= trimAmt;
             }
           }
         }
-        console.log(`[summarizeAndCompressCode] 二阶段截断(最后一轮 tool 消息): ${currentKeepChars} → ${estimateChars2(compressedKeep)} chars (target ${targetKeepChars})`);
+        console.log(
+          `[summarizeAndCompressCode] 二阶段截断(最后一轮 tool 消息): ${currentKeepChars} → ${estimateChars2(compressedKeep)} chars (target ${targetKeepChars})`
+        );
       }
     }
 
@@ -517,9 +587,15 @@ const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
  * 压缩时蒸馏系统 prompt（模板）。
  * 调用前调用方应注入已知 project 清单到 prompt 末尾。
  */
-function buildCompressDistillPrompt(knownProjects: string, envKeys?: string, feedbackKeys?: string): string {
+function buildCompressDistillPrompt(
+  knownProjects: string,
+  envKeys?: string,
+  feedbackKeys?: string
+): string {
   const envSection = envKeys ? `\n⚠️ 以下环境 key 已存在 ENV.md,请勿重复输出:\n${envKeys}` : "";
-  const fbSection = feedbackKeys ? `\n⚠️ 以下行为约束已记录在 feedback.md,请勿重复输出:\n  - ${feedbackKeys}` : "";
+  const fbSection = feedbackKeys
+    ? `\n⚠️ 以下行为约束已记录在 feedback.md,请勿重复输出:\n  - ${feedbackKeys}`
+    : "";
   return `[⚠️BLOCKED:zh_you_are]。
 你看到的是一批被压缩掉的旧对话消息（包含用户消息和 AI 的工具调用/回复）。
 从这些消息中提炼出值得写入各项目长期记忆的要点。
@@ -574,8 +650,6 @@ const CODE_DISTILL_SYSTEM = `[⚠️BLOCKED:zh_you_are]。
   - 不要把 workdir 当成改动路径，也不要省略实际项目路径
   - 本地路径可用 ~/xxx 缩写；SSH 远程路径必须用 host:/path 或 user@host:/path 绝对格式，不能写 ~`;
 
-
-
 /**
  * 扫描 code/projects/ 目录，生成已知 project slug 清单，
  * 注入到 distill prompt 中供 LLM 参考。
@@ -586,9 +660,9 @@ function injectKnownProjects(agentId: string): string {
     const dirs = readdirSync(projectsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
-    
+
     if (dirs.length === 0) return "";
-    
+
     const lines: string[] = ["已知项目 slug（请复用，不要新建）："];
     for (const slug of dirs) {
       if (slug.startsWith("ssh_win_")) {
@@ -686,7 +760,7 @@ function parseAndWriteDistillJson(
   raw: string,
   agentId: string,
   knownSlugs: Set<string>,
-  projectSlug?: string,
+  projectSlug?: string
 ): boolean {
   try {
     let jsonStr = raw.trim();
@@ -694,43 +768,49 @@ function parseAndWriteDistillJson(
     if (codeBlockMatch) {
       jsonStr = codeBlockMatch[1]!.trim();
     }
-    
+
     const data = JSON.parse(jsonStr);
     if (!data || typeof data !== "object") return false;
-    
+
     // ── project session:LLM curator 输出 files 键,overwrite 模式 ──
     if (projectSlug && data.files && typeof data.files === "object") {
       const projectsDir = agentManager.codeProjectsDir(agentId);
       const projDir = join(projectsDir, projectSlug);
       mkdirSync(projDir, { recursive: true });
-      
+
       let wroteAny = false;
       for (const [filename, fileContent] of Object.entries(data.files)) {
         if (typeof fileContent !== "string" || !fileContent.trim()) continue;
         // 安全检查:文件名必须是 .md 且在项目目录下
         const safeName = String(filename).replace(/[^a-zA-Z0-9_\-.一-鿿]/g, "");
         if (!safeName.endsWith(".md") || safeName.includes("..")) continue;
-        
+
         const filePath = join(projDir, safeName);
         mkdirSync(dirname(filePath), { recursive: true });
         writeFileSync(filePath, fileContent, "utf-8");
         console.log(`[distillProjectCompression] 写入: ${safeName} (${fileContent.length} 字节)`);
         wroteAny = true;
       }
-      
+
       // 仍处理 env_updates / behavior_corrections(逻辑与原有相同)
       // env_updates
       if (data.env_updates && Array.isArray(data.env_updates)) {
         try {
           const envPath = agentManager.codeEnvPath(agentId);
-          let existing: Record<string, Record<string, string>> = { projects: {}, tools: {}, services: {} };
+          let existing: Record<string, Record<string, string>> = {
+            projects: {},
+            tools: {},
+            services: {},
+          };
           try {
             if (existsSync(envPath)) {
               const rawEnv = readFileSync(envPath, "utf-8");
               const me = rawEnv.match(/```json\n([\s\S]*?)\n```/);
               if (me) existing = JSON.parse(me[1]!);
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           let changed = false;
           for (const e of data.env_updates) {
             const cat: string = e.category;
@@ -749,14 +829,17 @@ function parseAndWriteDistillJson(
             console.log("[distillProjectCompression] ENV.md 已更新");
           }
         } catch (e) {
-          console.warn("[distillProjectCompression] ENV.md 写入失败:", e instanceof Error ? e.message : e);
+          console.warn(
+            "[distillProjectCompression] ENV.md 写入失败:",
+            e instanceof Error ? e.message : e
+          );
         }
       }
       // behavior_corrections
       if (data.behavior_corrections && Array.isArray(data.behavior_corrections)) {
         try {
           const fbPath = agentManager.feedbackPath(agentId, "code");
-          let existingContents = new Set<string>();
+          const existingContents = new Set<string>();
           try {
             if (existsSync(fbPath)) {
               const rawFb = readFileSync(fbPath, "utf-8");
@@ -765,7 +848,9 @@ function parseAndWriteDistillJson(
                 if (m) existingContents.add(m[1]!.trim());
               }
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           const today = new Date().toISOString().slice(0, 10);
           const newLines: string[] = [];
           for (const bc of data.behavior_corrections) {
@@ -781,30 +866,33 @@ function parseAndWriteDistillJson(
             console.log(`[distillProjectCompression] feedback.md 追加 ${newLines.length} 条`);
           }
         } catch (e) {
-          console.warn("[distillProjectCompression] feedback.md 写入失败:", e instanceof Error ? e.message : e);
+          console.warn(
+            "[distillProjectCompression] feedback.md 写入失败:",
+            e instanceof Error ? e.message : e
+          );
         }
       }
-      
+
       return wroteAny;
     }
-    
+
     const projects: Array<{ path: string; slug: string }> = data.projects || [];
     const notes: Array<{ project: string; items: string[] }> = data.notes || [];
-    
+
     if (notes.length === 0) return false;
-    
+
     const pathToSlug = new Map<string, string>();
     for (const p of projects) {
-      let slug = p.slug || pathToProjectSlug(p.path);
+      const slug = p.slug || pathToProjectSlug(p.path);
       pathToSlug.set(p.path, slug);
     }
-    
+
     const resolveSlug = (project: string): string | null => {
       if (project === "分析") return null;
       if (pathToSlug.has(project)) return pathToSlug.get(project)!;
-      
+
       const slug = pathToProjectSlug(project);
-      
+
       // 尾段模糊匹配
       const tail = project.replace(/^.*[\\\/]/, "").toLowerCase();
       for (const ks of knownSlugs) {
@@ -812,54 +900,60 @@ function parseAndWriteDistillJson(
           return ks;
         }
       }
-      
+
       return slug;
     };
-    
+
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
     const timeStr = now.toTimeString().slice(0, 8);
-    
+
     let wroteAny = false;
-    
+
     for (const note of notes) {
       if (!note.items || note.items.length === 0) continue;
-      
+
       const itemsText = note.items.join("\n");
       const header = `### ${dateStr} ${timeStr}  [压缩蒸馏]`;
       const entry = `\n${header}\n\n${itemsText}\n`;
-      
+
       const resolvedSlug = resolveSlug(note.project);
-      
+
       if (resolvedSlug) {
         const notesPath = agentManager.codeProjectNotesPath(agentId, resolvedSlug);
         mkdirSync(dirname(notesPath), { recursive: true });
         appendFileSync(notesPath, entry, "utf-8");
         console.log(`[distillCompression] 项目归档: ${resolvedSlug} → ${notesPath}`);
       }
-      
+
       const sessionDailyPath = agentManager.codeSessionDailyPath(agentId);
       mkdirSync(dirname(sessionDailyPath), { recursive: true });
       const dailyEntry = resolvedSlug
         ? `\n${header} [${resolvedSlug}]\n\n${itemsText}\n`
         : `\n${header} [分析]\n\n${itemsText}\n`;
       appendFileSync(sessionDailyPath, dailyEntry, "utf-8");
-      
+
       wroteAny = true;
     }
-    
+
     // 处理 env_updates:写入 ENV.md
     if (data.env_updates && Array.isArray(data.env_updates)) {
       try {
         const envPath = agentManager.codeEnvPath(agentId);
-        let existing: Record<string, Record<string, string>> = { projects: {}, tools: {}, services: {} };
+        let existing: Record<string, Record<string, string>> = {
+          projects: {},
+          tools: {},
+          services: {},
+        };
         try {
           if (existsSync(envPath)) {
             const rawEnv = readFileSync(envPath, "utf-8");
             const me = rawEnv.match(/```json\n([\s\S]*?)\n```/);
             if (me) existing = JSON.parse(me[1]!);
           }
-        } catch { /* ENV.md 不存在或格式异常,使用空对象 */ }
+        } catch {
+          /* ENV.md 不存在或格式异常,使用空对象 */
+        }
 
         let changed = false;
         for (const e of data.env_updates) {
@@ -888,7 +982,7 @@ function parseAndWriteDistillJson(
     if (data.behavior_corrections && Array.isArray(data.behavior_corrections)) {
       try {
         const fbPath = agentManager.feedbackPath(agentId, "code");
-        let existingContents = new Set<string>();
+        const existingContents = new Set<string>();
         try {
           if (existsSync(fbPath)) {
             const rawFb = readFileSync(fbPath, "utf-8");
@@ -897,7 +991,9 @@ function parseAndWriteDistillJson(
               if (m) existingContents.add(m[1]!.trim());
             }
           }
-        } catch { /* feedback.md 不存在或格式异常,使用空集合 */ }
+        } catch {
+          /* feedback.md 不存在或格式异常,使用空集合 */
+        }
 
         const today = new Date().toISOString().slice(0, 10);
         const newLines: string[] = [];
@@ -915,7 +1011,10 @@ function parseAndWriteDistillJson(
           console.log(`[distillCompression] feedback.md 追加 ${newLines.length} 条`);
         }
       } catch (e) {
-        console.warn("[distillCompression] feedback.md 写入失败:", e instanceof Error ? e.message : e);
+        console.warn(
+          "[distillCompression] feedback.md 写入失败:",
+          e instanceof Error ? e.message : e
+        );
       }
     }
 
@@ -934,7 +1033,7 @@ function parseAndWriteDistillJson(
 async function distillProjectCompression(
   toSummarize: ChatMessage[],
   agentId: string,
-  projectSlug: string,
+  projectSlug: string
 ): Promise<void> {
   if (toSummarize.length === 0) return;
 
@@ -951,7 +1050,10 @@ async function distillProjectCompression(
     const topicContents: Record<string, string> = {};
     if (existsSync(projDir)) {
       const topicPaths = readdirSync(projDir, { withFileTypes: true })
-        .filter((d) => d.isFile() && d.name.endsWith(".md") && d.name !== "MEMORY.md" && d.name !== "NOTES.md")
+        .filter(
+          (d) =>
+            d.isFile() && d.name.endsWith(".md") && d.name !== "MEMORY.md" && d.name !== "NOTES.md"
+        )
         .sort()
         .map((d) => join(projDir, d.name));
 
@@ -971,17 +1073,24 @@ async function distillProjectCompression(
 
     // 3. 构建蒸馏 prompt
     const topicList = Object.keys(topicContents).sort();
-    const topicSection = topicList.length > 0
-      ? topicList.map((t) => {
-          const body = topicContents[t]!;
-          const truncated = body.length > 3000 ? body.slice(0, 3000) + "\n...(截断,完整内容在 topic 文件中)" : body;
-          return `### ${t}.md\n\`\`\`\n${truncated}\n\`\`\``;
-        }).join("\n\n")
-      : "(尚无 topic 文件)";
+    const topicSection =
+      topicList.length > 0
+        ? topicList
+            .map((t) => {
+              const body = topicContents[t]!;
+              const truncated =
+                body.length > 3000
+                  ? body.slice(0, 3000) + "\n...(截断,完整内容在 topic 文件中)"
+                  : body;
+              return `### ${t}.md\n\`\`\`\n${truncated}\n\`\`\``;
+            })
+            .join("\n\n")
+        : "(尚无 topic 文件)";
 
-    const memTruncated = memoryContent.length > 3000
-      ? memoryContent.slice(0, 3000) + "\n...(截断)"
-      : memoryContent || "(MEMORY.md 不存在)";
+    const memTruncated =
+      memoryContent.length > 3000
+        ? memoryContent.slice(0, 3000) + "\n...(截断)"
+        : memoryContent || "(MEMORY.md 不存在)";
 
     const curatorPrompt = `[⚠️BLOCKED:zh_you_are]。
 你是项目「${projectSlug}」的记忆管理员(memory curator)。你的任务是根据被压缩的旧对话消息,自主维护项目记忆。
@@ -1040,9 +1149,9 @@ ${historyText.slice(0, 12000)}
 
     // 4. 调用 summarizer LLM
     const client = llmRegistry.get("summarizer");
-    const result = await client.chat([
-      { role: "user", content: curatorPrompt },
-    ], { isUserInitiated: false });
+    const result = await client.chat([{ role: "user", content: curatorPrompt }], {
+      isUserInitiated: false,
+    });
     recordSummarizerTokens(result, client);
 
     const raw = result.content.trim();
@@ -1052,11 +1161,13 @@ ${historyText.slice(0, 12000)}
     const wrote = parseAndWriteDistillJson(raw, agentId, new Set(), projectSlug);
     if (wrote) {
       // 同时处理 env_updates / behavior_corrections (parseAndWriteDistillJson 内部处理)
-      import("../memory/qmd.js").then(({ updateStore }) => {
-        updateStore("code_notes", agentId).catch(() =>
-          console.warn("[distillProjectCompression] code_notes index update failed:")
-        );
-      }).catch(() => {});
+      import("../memory/qmd.js")
+        .then(({ updateStore }) => {
+          updateStore("code_notes", agentId).catch(() =>
+            console.warn("[distillProjectCompression] code_notes index update failed:")
+          );
+        })
+        .catch(() => {});
     }
   } catch (e) {
     console.warn("[distillProjectCompression] 蒸馏失败:", e instanceof Error ? e.message : e);
@@ -1067,22 +1178,19 @@ ${historyText.slice(0, 12000)}
  * 压缩时蒸馏：将待压缩的旧消息批量提炼为多项目要点。
  * fire-and-forget，失败时只打 warn 日志。
  */
-async function distillCompressionNotes(
-  toSummarize: ChatMessage[],
-  agentId: string,
-): Promise<void> {
+async function distillCompressionNotes(toSummarize: ChatMessage[], agentId: string): Promise<void> {
   if (toSummarize.length === 0) return;
-  
+
   try {
     const historyText = toSummarize
       .map((m) => formatMsgForSummary(m))
       .filter(Boolean)
       .join("\n\n");
-    
+
     if (!historyText.trim()) return;
-    
+
     const knownProjects = injectKnownProjects(agentId);
-    
+
     const knownSlugs = new Set<string>();
     try {
       const projectsDir = agentManager.codeProjectsDir(agentId);
@@ -1091,38 +1199,42 @@ async function distillCompressionNotes(
         .map((d) => d.name);
       for (const d of dirs) knownSlugs.add(d);
     } catch {}
-    
+
     const envKeys = loadEnvKeys(agentId);
     const feedbackKeys = loadFeedbackKeys(agentId);
     const prompt = buildCompressDistillPrompt(knownProjects, envKeys, feedbackKeys);
-    
+
     const client = llmRegistry.get("summarizer");
-    const result = await client.chat([
-      { role: "system", content: prompt },
-      { role: "user", content: historyText.slice(0, 20000) },
-    ], { isUserInitiated: false });
-    
+    const result = await client.chat(
+      [
+        { role: "system", content: prompt },
+        { role: "user", content: historyText.slice(0, 20000) },
+      ],
+      { isUserInitiated: false }
+    );
+
     recordSummarizerTokens(result, client);
-    
+
     const raw = result.content.trim();
     if (!raw || raw === '{"projects":[],"notes":[]}') return;
-    
+
     const wrote = parseAndWriteDistillJson(raw, agentId, knownSlugs);
     if (wrote) {
-      import("../memory/qmd.js").then(({ updateStore }) => {
-        updateStore("code_notes", agentId).catch((e) =>
-          console.warn("[distillCompression] code_notes index update failed:", e)
-        );
-        updateStore("code_sessions", agentId).catch((e) =>
-          console.warn("[distillCompression] code_sessions index update failed:", e)
-        );
-      }).catch(() => {});
+      import("../memory/qmd.js")
+        .then(({ updateStore }) => {
+          updateStore("code_notes", agentId).catch((e) =>
+            console.warn("[distillCompression] code_notes index update failed:", e)
+          );
+          updateStore("code_sessions", agentId).catch((e) =>
+            console.warn("[distillCompression] code_sessions index update failed:", e)
+          );
+        })
+        .catch(() => {});
     }
   } catch (e) {
     console.warn("[distillCompression] 蒸馏失败:", e instanceof Error ? e.message : e);
   }
 }
-
 
 /**
  * Code 模式:将单轮交互提炼为项目 NOTES.md 要点，fire-and-forget。
@@ -1137,7 +1249,7 @@ export async function distillCodeTurnToNotes(
   agentId: string,
   codeWorkdir: string,
   /** 从 userMsg 到 assistantMsg 之间的完整工具调用链消息(含中间 assistant + tool 消息) */
-  turnMessages?: ChatMessage[],
+  turnMessages?: ChatMessage[]
 ): Promise<void> {
   const client = llmRegistry.get("summarizer");
 
@@ -1154,10 +1266,13 @@ export async function distillCodeTurnToNotes(
   }
   if (!turnText.trim()) return;
 
-  const result = await client.chat([
-    { role: "system", content: CODE_DISTILL_SYSTEM },
-    { role: "user", content: turnText.slice(0, 10000) },
-  ], { isUserInitiated: false });
+  const result = await client.chat(
+    [
+      { role: "system", content: CODE_DISTILL_SYSTEM },
+      { role: "user", content: turnText.slice(0, 10000) },
+    ],
+    { isUserInitiated: false }
+  );
 
   recordSummarizerTokens(result, client);
   const notes = result.content.trim();
@@ -1201,7 +1316,6 @@ export async function distillCodeTurnToNotes(
   }
 }
 
-
 /**
  * 将单轮 user+assistant 交互提炼为 diary 片段并持久化。
  * fire-and-forget 使用，调用方不 await，失败时只打 warn 日志。
@@ -1223,10 +1337,13 @@ export async function distillTurnToDiary(
 
   const turnText = [userText, assistantText].filter(Boolean).join("\n\n");
 
-  const result = await client.chat([
-    { role: "system", content: DISTILL_TURN_SYSTEM },
-    { role: "user", content: turnText.slice(0, 4000) },
-  ], { isUserInitiated: false });
+  const result = await client.chat(
+    [
+      { role: "system", content: DISTILL_TURN_SYSTEM },
+      { role: "user", content: turnText.slice(0, 4000) },
+    ],
+    { isUserInitiated: false }
+  );
 
   recordSummarizerTokens(result, client);
   if (result.content.trim()) {
@@ -1254,8 +1371,8 @@ export async function summarizeAndCompress(
   const systemMessages = messages.filter((m) => {
     if (m.role !== "system") return false;
     const c = typeof m.content === "string" ? m.content : "";
-    const isMain   = !c.startsWith("##") && !c.startsWith("<!-- memory:");  // 主 prompt 或 skill-reminder
-    const isMarked = c.startsWith("<!-- memory:");                           // 新格式记忆注入
+    const isMain = !c.startsWith("##") && !c.startsWith("<!-- memory:"); // 主 prompt 或 skill-reminder
+    const isMarked = c.startsWith("<!-- memory:"); // 新格式记忆注入
     return isMain || isMarked;
   });
   const nonSystemMessages = messages.filter((m) => m.role !== "system");
@@ -1265,9 +1382,7 @@ export async function summarizeAndCompress(
     .map((m, i) => (m.role === "user" ? i : -1))
     .filter((i) => i >= 0);
   const keepFromIdx =
-    userIndices.length > CHAT_KEEP_TURNS
-      ? userIndices[userIndices.length - CHAT_KEEP_TURNS]!
-      : 0;
+    userIndices.length > CHAT_KEEP_TURNS ? userIndices[userIndices.length - CHAT_KEEP_TURNS]! : 0;
 
   const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
   let toKeep = nonSystemMessages.slice(keepFromIdx);
@@ -1291,7 +1406,10 @@ export async function summarizeAndCompress(
     let keepStart = 0;
     while (keepStart < toKeep.length) {
       const m = toKeep[keepStart]!;
-      if (m.role === "tool" && !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)) {
+      if (
+        m.role === "tool" &&
+        !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)
+      ) {
         keepStart++;
       } else {
         break;
@@ -1312,10 +1430,13 @@ export async function summarizeAndCompress(
     .filter(Boolean)
     .join("\n\n");
 
-  const result = await client.chat([
-    { role: "system", content: SUMMARIZE_SYSTEM },
-    { role: "user", content: historyText },
-  ], { isUserInitiated: false });
+  const result = await client.chat(
+    [
+      { role: "system", content: SUMMARIZE_SYSTEM },
+      { role: "user", content: historyText },
+    ],
+    { isUserInitiated: false }
+  );
 
   recordSummarizerTokens(result, client);
   // 将摘要持久化到 QMD
@@ -1333,7 +1454,10 @@ export async function summarizeAndCompress(
   // ── Chat 蒸馏:fire-and-forget 提炼 cards + 更新 MEM.md ──
   if (agentId && toSummarize.length > 0) {
     distillChatCompression(toSummarize as ChatMessage[], agentId).catch((err) =>
-      console.warn("[summarizeAndCompress] chat 蒸馏失败:", err instanceof Error ? err.message : err)
+      console.warn(
+        "[summarizeAndCompress] chat 蒸馏失败:",
+        err instanceof Error ? err.message : err
+      )
     );
   }
 
@@ -1359,7 +1483,11 @@ export function summarizeMemSections(agentId: string): string {
   for (const line of lines) {
     if (line.startsWith("## ")) {
       if (currentHeading && currentItems.length > 0) {
-        sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+        sections.push({
+          heading: currentHeading,
+          count: currentItems.length,
+          samples: currentItems.slice(0, 3),
+        });
       }
       currentHeading = line.slice(3).trim();
       currentItems = [];
@@ -1369,15 +1497,24 @@ export function summarizeMemSections(agentId: string): string {
     }
   }
   if (currentHeading && currentItems.length > 0) {
-    sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+    sections.push({
+      heading: currentHeading,
+      count: currentItems.length,
+      samples: currentItems.slice(0, 3),
+    });
   }
 
   if (sections.length === 0) return "(MEM.md 为空)";
 
-  return sections.map((s) => {
-    const sampleStr = s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
-    return `- ${s.heading}: ${s.count} 条${sampleStr}`;
-  }).join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`;
+  return (
+    sections
+      .map((s) => {
+        const sampleStr =
+          s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
+        return `- ${s.heading}: ${s.count} 条${sampleStr}`;
+      })
+      .join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`
+  );
 }
 
 /** 对 ACTIVE.md 做同样的章节摘要,供 distillActive 使用 */
@@ -1394,7 +1531,11 @@ export function summarizeActiveSections(agentId: string): string {
   for (const line of lines) {
     if (line.startsWith("## ")) {
       if (currentHeading && currentItems.length > 0) {
-        sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+        sections.push({
+          heading: currentHeading,
+          count: currentItems.length,
+          samples: currentItems.slice(0, 3),
+        });
       }
       currentHeading = line.slice(3).trim();
       currentItems = [];
@@ -1404,15 +1545,24 @@ export function summarizeActiveSections(agentId: string): string {
     }
   }
   if (currentHeading && currentItems.length > 0) {
-    sections.push({ heading: currentHeading, count: currentItems.length, samples: currentItems.slice(0, 3) });
+    sections.push({
+      heading: currentHeading,
+      count: currentItems.length,
+      samples: currentItems.slice(0, 3),
+    });
   }
 
   if (sections.length === 0) return "(ACTIVE.md 为空)";
 
-  return sections.map((s) => {
-    const sampleStr = s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
-    return `- ${s.heading}: ${s.count} 条${sampleStr}`;
-  }).join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`;
+  return (
+    sections
+      .map((s) => {
+        const sampleStr =
+          s.samples.length > 0 ? `\n  示例: ${s.samples.map((x) => `"${x}"`).join("; ")}` : "";
+        return `- ${s.heading}: ${s.count} 条${sampleStr}`;
+      })
+      .join("\n") + `\n(共 ${sections.reduce((a, s) => a + s.count, 0)} 条)`
+  );
 }
 
 /**
@@ -1495,7 +1645,7 @@ function applyMemPatches(memUpdates: Record<string, string[]>, agentId: string):
 
   // 读取当前 MEM.md 用于去重
   let existingContent = "";
-  let existingLines = new Set<string>();
+  const existingLines = new Set<string>();
   try {
     if (existsSync(memPath)) {
       existingContent = readFileSync(memPath, "utf-8");
@@ -1507,7 +1657,9 @@ function applyMemPatches(memUpdates: Record<string, string[]>, agentId: string):
         }
       }
     }
-  } catch { /* 忽略 */ }
+  } catch {
+    /* 忽略 */
+  }
 
   for (const [section, items] of Object.entries(memUpdates)) {
     if (!Array.isArray(items) || items.length === 0) continue;
@@ -1521,7 +1673,10 @@ function applyMemPatches(memUpdates: Record<string, string[]>, agentId: string):
       // 检查是否与已有条目重复
       let isDuplicate = false;
       for (const existing of existingLines) {
-        if (existing.includes(normalized.slice(0, 30)) || normalized.includes(existing.slice(0, 30))) {
+        if (
+          existing.includes(normalized.slice(0, 30)) ||
+          normalized.includes(existing.slice(0, 30))
+        ) {
           isDuplicate = true;
           break;
         }
@@ -1585,35 +1740,48 @@ function regenerateCardIndex(agentId: string): void {
     }
 
     // constraint: 全收
-    const constraints = (byType.get("constraint") || []).sort((a, b) => b.importance - a.importance);
+    const constraints = (byType.get("constraint") || []).sort(
+      (a, b) => b.importance - a.importance
+    );
     for (const c of constraints) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
 
     // decision: 最近 5 条
-    const decisions = (byType.get("decision") || []).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 5);
+    const decisions = (byType.get("decision") || [])
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, 5);
     for (const c of decisions) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
 
     // open_loop: 最近 5 条
-    const openLoops = (byType.get("open_loop") || []).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 5);
+    const openLoops = (byType.get("open_loop") || [])
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, 5);
     for (const c of openLoops) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
 
     // routine: 合并摘要
-    const routines = (byType.get("routine") || []);
+    const routines = byType.get("routine") || [];
     if (routines.length > 0) {
       const titles = routines.map((c) => c.title.slice(0, 30)).join("; ");
       indexLines.push(`- 例行: ${titles}`);
     }
 
     // 其他类型:合并为摘要,提示用 memory_search 检索
-    const otherTypes = ["relationship", "life_event", "project_fact", "task_state", "pattern", "profile"];
+    const otherTypes = [
+      "relationship",
+      "life_event",
+      "project_fact",
+      "task_state",
+      "pattern",
+      "profile",
+    ];
     let hasOther = false;
     for (const t of otherTypes) {
       const items = byType.get(t);
@@ -1627,8 +1795,16 @@ function regenerateCardIndex(agentId: string): void {
     }
 
     const indexContent = indexLines.join("\n");
-    upsertMemSection(agentManager.memPath(agentId), "🗂️ 记忆卡片索引", indexContent, "upsert", agentId);
-    console.log(`[distillChat] 卡片索引已刷新: ${active.length} active → ${indexLines.length} 条目`);
+    upsertMemSection(
+      agentManager.memPath(agentId),
+      "🗂️ 记忆卡片索引",
+      indexContent,
+      "upsert",
+      agentId
+    );
+    console.log(
+      `[distillChat] 卡片索引已刷新: ${active.length} active → ${indexLines.length} 条目`
+    );
   } catch (e) {
     console.warn("[distillChat] 卡片索引生成失败:", e);
   }
@@ -1638,10 +1814,7 @@ function regenerateCardIndex(agentId: string): void {
  * 压缩时蒸馏:将待压缩的旧消息提炼为 chat cards + MEM.md 章节更新。
  * fire-and-forget,失败时只打 warn 日志。
  */
-async function distillChatCompression(
-  toSummarize: ChatMessage[],
-  agentId: string,
-): Promise<void> {
+async function distillChatCompression(toSummarize: ChatMessage[], agentId: string): Promise<void> {
   if (toSummarize.length === 0) return;
 
   try {
@@ -1655,15 +1828,19 @@ async function distillChatCompression(
     const memSummary = summarizeMemSections(agentId);
     const cardInventory = summarizeCardInventory(agentId);
 
-    const prompt = CHAT_DISTILL_PROMPT
-      .replace("{{mem_summary}}", memSummary)
-      .replace("{{card_inventory}}", cardInventory);
+    const prompt = CHAT_DISTILL_PROMPT.replace("{{mem_summary}}", memSummary).replace(
+      "{{card_inventory}}",
+      cardInventory
+    );
 
     const client = llmRegistry.get("summarizer");
-    const result = await client.chat([
-      { role: "system", content: prompt },
-      { role: "user", content: historyText.slice(0, 15000) },
-    ], { isUserInitiated: false });
+    const result = await client.chat(
+      [
+        { role: "system", content: prompt },
+        { role: "user", content: historyText.slice(0, 15000) },
+      ],
+      { isUserInitiated: false }
+    );
 
     recordSummarizerTokens(result, client);
     const raw = result.content.trim();
@@ -1705,14 +1882,16 @@ async function distillChatCompression(
       regenerateCardIndex(agentId);
 
       // 更新向量索引
-      import("../memory/qmd.js").then(({ updateStore }) => {
-        updateStore("cards", agentId).catch((e) =>
-          console.warn("[distillChat] cards index update failed:", e)
-        );
-        updateStore("memory", agentId).catch((e) =>
-          console.warn("[distillChat] memory index update failed:", e)
-        );
-      }).catch(() => {});
+      import("../memory/qmd.js")
+        .then(({ updateStore }) => {
+          updateStore("cards", agentId).catch((e) =>
+            console.warn("[distillChat] cards index update failed:", e)
+          );
+          updateStore("memory", agentId).catch((e) =>
+            console.warn("[distillChat] memory index update failed:", e)
+          );
+        })
+        .catch(() => {});
     }
   } catch (e) {
     console.warn("[distillChat] 蒸馏失败:", e instanceof Error ? e.message : e);
@@ -1765,7 +1944,7 @@ const COMPACTABLE_TOOLS = new Set([
 export function microCompactMessages(
   messages: ChatMessage[],
   contextWindow: number,
-  actualTokens: number,
+  actualTokens: number
 ): ChatMessage[] | null {
   if (contextWindow <= 0) return null;
 
@@ -1777,9 +1956,12 @@ export function microCompactMessages(
     const totalChars = messages.reduce((sum, m) => {
       if (typeof m.content === "string") return sum + m.content.length;
       if (Array.isArray(m.content)) {
-        return sum + (m.content as Array<{ type?: string; text?: string }>).reduce((cs, p) => {
-          return cs + (p.type === "text" ? (p.text?.length ?? 0) : 200);
-        }, 0);
+        return (
+          sum +
+          (m.content as Array<{ type?: string; text?: string }>).reduce((cs, p) => {
+            return cs + (p.type === "text" ? (p.text?.length ?? 0) : 200);
+          }, 0)
+        );
       }
       return sum;
     }, 0);
@@ -1794,7 +1976,9 @@ export function microCompactMessages(
   const callIdToName = new Map<string, string>();
   for (const m of messages) {
     if (m.role === "assistant") {
-      const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string; function: { name: string } }> }).tool_calls;
+      const calls = (
+        m as { role: "assistant"; tool_calls?: Array<{ id: string; function: { name: string } }> }
+      ).tool_calls;
       if (calls) {
         for (const c of calls) {
           callIdToName.set(c.id, c.function.name);
@@ -1837,10 +2021,8 @@ export function microCompactMessages(
 
   console.log(
     `[microcompact] 截断 ${toClearIndices.size} 条工具结果` +
-    `（tokens: ${tokens}/${contextWindow}，阈值: ${threshold}）`
+      `（tokens: ${tokens}/${contextWindow}，阈值: ${threshold}）`
   );
 
   return result;
 }
-
-

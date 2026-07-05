@@ -80,14 +80,16 @@ const GoogleProviderSchema = z.object({
 });
 export type GoogleProviderConfig = z.infer<typeof GoogleProviderSchema>;
 
-const ProvidersSchema = z.object({
-  openai: OpenAIProviderSchema.optional(),
-  copilot: CopilotProviderSchema.optional(),
-  openrouter: OpenRouterProviderSchema.optional(),
-  deepseek: DeepSeekProviderSchema.optional(),
-  mimo: MimoProviderSchema.optional(),
-  google: GoogleProviderSchema.optional(),
-}).default({});
+const ProvidersSchema = z
+  .object({
+    openai: OpenAIProviderSchema.optional(),
+    copilot: CopilotProviderSchema.optional(),
+    openrouter: OpenRouterProviderSchema.optional(),
+    deepseek: DeepSeekProviderSchema.optional(),
+    mimo: MimoProviderSchema.optional(),
+    google: GoogleProviderSchema.optional(),
+  })
+  .default({});
 export type ProvidersConfig = z.infer<typeof ProvidersSchema>;
 
 // ── 后端角色配置 ──────────────────────────────────────────────────────────────
@@ -184,37 +186,39 @@ const LLMBackendsSchema = z.object({
  * allowedCronJobs = []
  * ```
  */
-const PremiumAllowlistSchema = z.object({
-  /** 是否启用白名单守卫，默认 false（不限制） */
-  enabled: z.boolean().default(false),
-  /**
-   * 不在白名单时使用的替代模型（格式同后端 model 字段，如 "copilot/gpt-4o-mini"）。
-   * 必须是不消耗 Premium Interactions 的模型。
-   */
-  fallbackModel: z.string().default("copilot/gpt-4o-mini"),
-  /**
-   * 哪些 modelId（不含 provider 前缀）视为"高级模型"，消耗 Premium Interactions。
-   * 精确匹配 modelId 部分（如 "claude-sonnet-4.6"，而非完整的 "copilot/claude-sonnet-4.6"）。
-   */
-  premiumModels: z.array(z.string()).default([]),
-  /**
-   * 允许使用高级模型的 sessionId 白名单（精确匹配）。
-   * chat 模式和 code 模式的 sessionId 相同，通过 isCodeMode 区分。
-   * 示例：["qqbot:c2c:5E93DFF4A42AFE45D206DEA724E5ECD2"]
-   */
-  allowedSessions: z.array(z.string()).default([]),
-  /**
-   * 仅允许白名单 session 在 code 模式下使用高级模型（默认 true）。
-   * true：白名单 session 仅 code 模式允许用高级模型，chat 模式也降级
-   * false：白名单 session 的 chat 和 code 模式均允许使用高级模型
-   */
-  codeOnly: z.boolean().default(true),
-  /**
-   * 允许使用高级模型的 cron job id 白名单。
-   * 示例：["2quff5jh", "hs5xjebl"]
-   */
-  allowedCronJobs: z.array(z.string()).default([]),
-}).default({});
+const PremiumAllowlistSchema = z
+  .object({
+    /** 是否启用白名单守卫，默认 false（不限制） */
+    enabled: z.boolean().default(false),
+    /**
+     * 不在白名单时使用的替代模型（格式同后端 model 字段，如 "copilot/gpt-4o-mini"）。
+     * 必须是不消耗 Premium Interactions 的模型。
+     */
+    fallbackModel: z.string().default("copilot/gpt-4o-mini"),
+    /**
+     * 哪些 modelId（不含 provider 前缀）视为"高级模型"，消耗 Premium Interactions。
+     * 精确匹配 modelId 部分（如 "claude-sonnet-4.6"，而非完整的 "copilot/claude-sonnet-4.6"）。
+     */
+    premiumModels: z.array(z.string()).default([]),
+    /**
+     * 允许使用高级模型的 sessionId 白名单（精确匹配）。
+     * chat 模式和 code 模式的 sessionId 相同，通过 isCodeMode 区分。
+     * 示例：["qqbot:c2c:5E93DFF4A42AFE45D206DEA724E5ECD2"]
+     */
+    allowedSessions: z.array(z.string()).default([]),
+    /**
+     * 仅允许白名单 session 在 code 模式下使用高级模型（默认 true）。
+     * true：白名单 session 仅 code 模式允许用高级模型，chat 模式也降级
+     * false：白名单 session 的 chat 和 code 模式均允许使用高级模型
+     */
+    codeOnly: z.boolean().default(true),
+    /**
+     * 允许使用高级模型的 cron job id 白名单。
+     * 示例：["2quff5jh", "hs5xjebl"]
+     */
+    allowedCronJobs: z.array(z.string()).default([]),
+  })
+  .default({});
 
 export type PremiumAllowlistConfig = z.infer<typeof PremiumAllowlistSchema>;
 
@@ -234,9 +238,7 @@ const LLMSchema = z.object({
 
 const ExecShellPatternsSchema = z.object({
   /** exec_shell 命令中包含这些关键词时触发 MFA（word-boundary 匹配） */
-  patterns: z
-    .array(z.string())
-    .default(["rm", "sudo", "chmod", "chown", "dd", "mv"]),
+  patterns: z.array(z.string()).default(["rm", "sudo", "chmod", "chown", "dd", "mv"]),
 });
 
 const MFASchema = z.object({
@@ -351,7 +353,11 @@ const SubmitterNotifyTargetSchema = z.object({
 
 const SubmitterSchema = z.object({
   /** 自动提交间隔（秒），默认 4 小时 */
-  intervalSecs: z.number().int().positive().default(4 * 60 * 60),
+  intervalSecs: z
+    .number()
+    .int()
+    .positive()
+    .default(4 * 60 * 60),
   /**
    * 提交成功后通知的 QQ session 列表。
    * 示例：[{ peerId = "5E93DFF4A42AFE45D206DEA724E5ECD2", type = "c2c" }]
@@ -373,9 +379,7 @@ const MemorySchema = z.object({
    */
   embedModel: z
     .string()
-    .default(
-      "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
-    ),
+    .default("hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"),
   /**
    * 触发摘要的 token 使用率阈值（0-1），默认 0.8
    * 达到模型上下文长度的该比例时，自动压缩对话历史
@@ -409,9 +413,7 @@ const MemorySchema = z.object({
    * 这些"常青记忆"文件代表长期稳定的核心知识，不随时间衰减。
    * 默认：MEM.md、MEMORY.md、patterns.md
    */
-  evergreenPatterns: z
-    .array(z.string())
-    .default(["MEM.md", "MEMORY.md", "patterns.md"]),
+  evergreenPatterns: z.array(z.string()).default(["MEM.md", "MEMORY.md", "patterns.md"]),
 
   // ── MMR 多样性重排（去除冗余结果） ───────────────────────────────────────
   /**
@@ -447,7 +449,10 @@ const MemorySchema = z.object({
   /**
    * 内置每日维护的触发时间（本地时间 HH:MM，默认 "04:00"）。
    */
-  dailyMaintenanceTime: z.string().regex(/^\d{2}:\d{2}$/).default("04:00"),
+  dailyMaintenanceTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .default("04:00"),
 
   // ── RKLLM NPU Embedding ────────────────────────────────────────────────────
   /**
@@ -487,57 +492,65 @@ const CodeAssistSchema = z.object({
 });
 export type CodeAssistConfig = z.infer<typeof CodeAssistSchema>;
 
-const ToolsSchema = z.object({
-  code_assist: CodeAssistSchema.default({}),
-  /**
-   * Code 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
-   * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
-   * 复杂代码任务（重构、调试、多文件修改）建议使用无限制。
-   * chat 模式轮次由 maxChatToolRounds 控制。
-   */
-  maxCodeToolRounds: z.number().int().min(0).default(0),
-  /**
-   * Chat/Cron 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
-   * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
-   * 若需限制轮次（如节省 token），可设为正整数（如 20）。
-   * cron 任务无人值守，推荐保持 0（无限制）确保复杂工作流能完整执行。
-   */
-  maxChatToolRounds: z.number().int().min(0).default(0),
-  /**
-   * 工具执行结果的最大字符数，超出时自动截断并附加说明，默认 20000。
-   * 防止大文件读取或冗长命令输出占满 context window。
-   * 0 = 不限制。
-   */
-  maxToolResultChars: z.number().int().min(0).default(20_000),
-  /**
-   * 工具调用参数中单个字符串字段值的最大字符数，超出时截断该字段值（保留合法 JSON），默认 8000。
-   * 防止 edit_file 等工具的大 old_str/new_str 参数写入 messages[] 后撑爆 context window。
-   * 截断只影响存储副本（message history），工具实际执行仍使用 LLM 返回的完整参数。
-   * 注意：必须按字段值截断再重新序列化，而非截断整个 JSON 字符串（后者产生不合法 JSON）。
-   * 0 = 不限制。
-   */
-  maxToolCallArgChars: z.number().int().min(0).default(8_000),
-  /** http_request 工具的 SSRF 防护配置 */
-  http_request: z.object({
+const ToolsSchema = z
+  .object({
+    code_assist: CodeAssistSchema.default({}),
     /**
-     * 允许请求私网 / 环回 / 云元数据地址(默认 false)。
-     * 默认拒绝 127/8、10/8、172.16/12、192.168/16、169.254/16(云元数据)等,
-     * 防止 prompt 注入诱导访问内网服务。需访问本地服务时设为 true。
+     * Code 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
+     * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
+     * 复杂代码任务（重构、调试、多文件修改）建议使用无限制。
+     * chat 模式轮次由 maxChatToolRounds 控制。
      */
-    allowPrivateHosts: z.boolean().default(false),
-  }).default({}),
-  /** 工具返回值安全检测配置 */
-  security: z.object({
+    maxCodeToolRounds: z.number().int().min(0).default(0),
     /**
-     * Prompt Injection 检测：扫描工具返回值中是否含有提示词注入特征。
-     * 检测到后会：打印安全日志、通过 onNotify 推送报警、将可疑内容替换为占位符。
-     * 默认开启（true），可设为 false 关闭。
+     * Chat/Cron 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
+     * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。
+     * 若需限制轮次（如节省 token），可设为正整数（如 20）。
+     * cron 任务无人值守，推荐保持 0（无限制）确保复杂工作流能完整执行。
      */
-    injectionDetect: z.object({
-      enabled: z.boolean().default(true),
-    }).default({}),
-  }).default({}),
-}).default({});
+    maxChatToolRounds: z.number().int().min(0).default(0),
+    /**
+     * 工具执行结果的最大字符数，超出时自动截断并附加说明，默认 20000。
+     * 防止大文件读取或冗长命令输出占满 context window。
+     * 0 = 不限制。
+     */
+    maxToolResultChars: z.number().int().min(0).default(20_000),
+    /**
+     * 工具调用参数中单个字符串字段值的最大字符数，超出时截断该字段值（保留合法 JSON），默认 8000。
+     * 防止 edit_file 等工具的大 old_str/new_str 参数写入 messages[] 后撑爆 context window。
+     * 截断只影响存储副本（message history），工具实际执行仍使用 LLM 返回的完整参数。
+     * 注意：必须按字段值截断再重新序列化，而非截断整个 JSON 字符串（后者产生不合法 JSON）。
+     * 0 = 不限制。
+     */
+    maxToolCallArgChars: z.number().int().min(0).default(8_000),
+    /** http_request 工具的 SSRF 防护配置 */
+    http_request: z
+      .object({
+        /**
+         * 允许请求私网 / 环回 / 云元数据地址(默认 false)。
+         * 默认拒绝 127/8、10/8、172.16/12、192.168/16、169.254/16(云元数据)等,
+         * 防止 prompt 注入诱导访问内网服务。需访问本地服务时设为 true。
+         */
+        allowPrivateHosts: z.boolean().default(false),
+      })
+      .default({}),
+    /** 工具返回值安全检测配置 */
+    security: z
+      .object({
+        /**
+         * Prompt Injection 检测：扫描工具返回值中是否含有提示词注入特征。
+         * 检测到后会：打印安全日志、通过 onNotify 推送报警、将可疑内容替换为占位符。
+         * 默认开启（true），可设为 false 关闭。
+         */
+        injectionDetect: z
+          .object({
+            enabled: z.boolean().default(true),
+          })
+          .default({}),
+      })
+      .default({}),
+  })
+  .default({});
 
 // ── MemStore 配置（独立文件 ~/.tinyclaw/memstores.toml）──────────────────────────
 
@@ -559,9 +572,11 @@ export const MemStoreSchema = z.object({
 });
 export type MemStoreConfig = z.infer<typeof MemStoreSchema>;
 
-export const MemStoresConfigSchema = z.object({
-  stores: z.array(MemStoreSchema).default([]),
-}).default({ stores: [] });
+export const MemStoresConfigSchema = z
+  .object({
+    stores: z.array(MemStoreSchema).default([]),
+  })
+  .default({ stores: [] });
 export type MemStoresConfig = z.infer<typeof MemStoresConfigSchema>;
 
 // ── MCP 服务器配置（独立文件 ~/.tinyclaw/mcp.toml）────────────────────────────
@@ -591,103 +606,113 @@ export const MCPServerSchema = z.discriminatedUnion("transport", [
 ]);
 export type MCPServerConfig = z.infer<typeof MCPServerSchema>;
 
-export const MCPConfigSchema = z.object({
-  servers: z.record(MCPServerSchema).default({}),
-}).default({ servers: {} });
+export const MCPConfigSchema = z
+  .object({
+    servers: z.record(MCPServerSchema).default({}),
+  })
+  .default({ servers: {} });
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 
 // ── 重试策略配置 ──────────────────────────────────────────────────────────────
 
-const RetryConfigSchema = z.object({
-  /** 最多重试次数（不含首次尝试），默认 3；-1 = 无限重试 */
-  maxAttempts: z.number().int().min(-1).default(-1),
-  /** 5xx 服务端错误的最大连续重试次数（独立于 maxAttempts），默认 15；-1 = 无限重试 */
-  max5xxAttempts: z.number().int().min(-1).default(15),
-  /**
-   * 5xx 重试单次等待时长上限（毫秒），默认 30000。
-   * 防止指数退避在重试次数多时产生超长等待（如第 10 次 = 512s）。
-   * 实际等待 = min(exponential_backoff, max5xxDelayMs)。
-   */
-  max5xxDelayMs: z.number().int().positive().default(30_000),
-  /** 传输层错误（socket closed / ECONNRESET 等）的最大连续重试次数，默认 -1（无限，由 maxRetryDurationMs 封顶）；
-   *  正整数 = 超过此数后提示用户简化请求。 */
-  maxTransportAttempts: z.number().int().min(-1).default(-1),
-  /** 每次重试等待的固定延迟（毫秒），默认 1000 */
-  baseDelayMs: z.number().int().positive().default(1000),
-  /** 429 限流是否重试，默认 true */
-  retry429: z.boolean().default(true),
-  /** 5xx 服务端错误是否重试，默认 true */
-  retry5xx: z.boolean().default(true),
-  /** 传输层错误（ECONNRESET / socket 等）是否重试，默认 true */
-  retryTransport: z.boolean().default(true),
-  /** 请求超时是否重试，默认 false（保持现有行为） */
-  retryTimeout: z.boolean().default(false),
-  /**
-   * 流式（streamChat）chunk 间空闲超时（毫秒），默认 60000。
-   * 超过该时间无 chunk 到达则中断流并触发重试；0 = 禁用。
-   * 设为 60s 是因为复杂推理任务（o1/claude 等）首个 chunk 可能延迟较长。
-   */
-  streamIdleTimeoutMs: z.number().int().min(0).default(90_000),
-  /**
-   * 整个重试循环的最大总时长（毫秒）；0 = 不限制。
-   * 超过后抛出 LLMConnectionError，用于配合 maxAttempts=-1 避免无限等待。
-   * 例：120000 表示无论重试多少次，最多累计等待 2 分钟。
-   */
-  maxRetryDurationMs: z.number().int().min(0).default(0),
-}).default({});
+const RetryConfigSchema = z
+  .object({
+    /** 最多重试次数（不含首次尝试），默认 3；-1 = 无限重试 */
+    maxAttempts: z.number().int().min(-1).default(-1),
+    /** 5xx 服务端错误的最大连续重试次数（独立于 maxAttempts），默认 15；-1 = 无限重试 */
+    max5xxAttempts: z.number().int().min(-1).default(15),
+    /**
+     * 5xx 重试单次等待时长上限（毫秒），默认 30000。
+     * 防止指数退避在重试次数多时产生超长等待（如第 10 次 = 512s）。
+     * 实际等待 = min(exponential_backoff, max5xxDelayMs)。
+     */
+    max5xxDelayMs: z.number().int().positive().default(30_000),
+    /** 传输层错误（socket closed / ECONNRESET 等）的最大连续重试次数，默认 -1（无限，由 maxRetryDurationMs 封顶）；
+     *  正整数 = 超过此数后提示用户简化请求。 */
+    maxTransportAttempts: z.number().int().min(-1).default(-1),
+    /** 每次重试等待的固定延迟（毫秒），默认 1000 */
+    baseDelayMs: z.number().int().positive().default(1000),
+    /** 429 限流是否重试，默认 true */
+    retry429: z.boolean().default(true),
+    /** 5xx 服务端错误是否重试，默认 true */
+    retry5xx: z.boolean().default(true),
+    /** 传输层错误（ECONNRESET / socket 等）是否重试，默认 true */
+    retryTransport: z.boolean().default(true),
+    /** 请求超时是否重试，默认 false（保持现有行为） */
+    retryTimeout: z.boolean().default(false),
+    /**
+     * 流式（streamChat）chunk 间空闲超时（毫秒），默认 60000。
+     * 超过该时间无 chunk 到达则中断流并触发重试；0 = 禁用。
+     * 设为 60s 是因为复杂推理任务（o1/claude 等）首个 chunk 可能延迟较长。
+     */
+    streamIdleTimeoutMs: z.number().int().min(0).default(90_000),
+    /**
+     * 整个重试循环的最大总时长（毫秒）；0 = 不限制。
+     * 超过后抛出 LLMConnectionError，用于配合 maxAttempts=-1 避免无限等待。
+     * 例：120000 表示无论重试多少次，最多累计等待 2 分钟。
+     */
+    maxRetryDurationMs: z.number().int().min(0).default(0),
+  })
+  .default({});
 export type RetryConfig = z.infer<typeof RetryConfigSchema>;
 
 // ── 并发控制配置 ──────────────────────────────────────────────────────────────
 
-const ConcurrencySchema = z.object({
-  /**
-   * 全局 LLM 推理最大并发数。
-   * 仅统计正在进行 LLM HTTP 请求的 session 数，工具执行期间不占用槽位。
-   * 0 = 不限制（默认），设为正整数（如 3~5）可防止高并发时触发 API Rate Limit。
-   * 推荐值：Copilot Pro/Pro+ 用户设 3，企业用户可按套餐设更大值。
-   */
-  maxConcurrentLLMRequests: z.number().int().min(0).default(0),
-}).default({});
+const ConcurrencySchema = z
+  .object({
+    /**
+     * 全局 LLM 推理最大并发数。
+     * 仅统计正在进行 LLM HTTP 请求的 session 数，工具执行期间不占用槽位。
+     * 0 = 不限制（默认），设为正整数（如 3~5）可防止高并发时触发 API Rate Limit。
+     * 推荐值：Copilot Pro/Pro+ 用户设 3，企业用户可按套餐设更大值。
+     */
+    maxConcurrentLLMRequests: z.number().int().min(0).default(0),
+  })
+  .default({});
 export type ConcurrencyConfig = z.infer<typeof ConcurrencySchema>;
 
 // ── Agent 行为配置 ────────────────────────────────────────────────────────────
 
-const AgentSchema = z.object({
-  /**
-   * LLM 流式调用期间的心跳推送间隔（秒）。
-   * 模型思考时间较长时，每隔该时间向用户推送"仍在处理中"提示，避免用户误以为卡死。
-   * 0 = 关闭心跳。默认 120（2 分钟）。
-   */
-  heartbeatIntervalSecs: z.number().int().min(0).default(120),
-  /**
-   * 按 LLM provider 配置的 response hook 文本。
-   * 键为 provider 名称(如 "copilot"、"openai"、"openrouter"),值为追加到 system prompt 末尾的指令。
-   * 每次构建 system prompt 时,若当前后端 provider 匹配,自动 append 对应文本。
-   *
-   * 示例 agent.toml 配置:
-   * [agent.responseHooks]
-   * copilot = "完成后请用askuser问用户下一步"
-   */
-  responseHooks: z.record(z.string()).optional(),
-}).default({});
+const AgentSchema = z
+  .object({
+    /**
+     * LLM 流式调用期间的心跳推送间隔（秒）。
+     * 模型思考时间较长时，每隔该时间向用户推送"仍在处理中"提示，避免用户误以为卡死。
+     * 0 = 关闭心跳。默认 120（2 分钟）。
+     */
+    heartbeatIntervalSecs: z.number().int().min(0).default(120),
+    /**
+     * 按 LLM provider 配置的 response hook 文本。
+     * 键为 provider 名称(如 "copilot"、"openai"、"openrouter"),值为追加到 system prompt 末尾的指令。
+     * 每次构建 system prompt 时,若当前后端 provider 匹配,自动 append 对应文本。
+     *
+     * 示例 agent.toml 配置:
+     * [agent.responseHooks]
+     * copilot = "完成后请用askuser问用户下一步"
+     */
+    responseHooks: z.record(z.string()).optional(),
+  })
+  .default({});
 export type AgentConfig = z.infer<typeof AgentSchema>;
 
 // ── 语音识别配置 ──────────────────────────────────────────────────────────────
 
-const VoiceSchema = z.object({
-  /**
-   * faster-whisper 模型大小。
-   * 越大越准确但首次下载和推理越慢。
-   * 推荐：中文内容用 "small" 或 "medium"；纯英文可用 "tiny"。
-   * 可选值：tiny / base / small / medium / large-v2 / large-v3
-   */
-  model: z.string().default("small"),
-  /**
-   * 语言代码（ISO 639-1），留空则自动检测。
-   * 示例：zh / en / ja / ko
-   */
-  language: z.string().default(""),
-}).default({});
+const VoiceSchema = z
+  .object({
+    /**
+     * faster-whisper 模型大小。
+     * 越大越准确但首次下载和推理越慢。
+     * 推荐：中文内容用 "small" 或 "medium"；纯英文可用 "tiny"。
+     * 可选值：tiny / base / small / medium / large-v2 / large-v3
+     */
+    model: z.string().default("small"),
+    /**
+     * 语言代码（ISO 639-1），留空则自动检测。
+     * 示例：zh / en / ja / ko
+     */
+    language: z.string().default(""),
+  })
+  .default({});
 export type VoiceConfig = z.infer<typeof VoiceSchema>;
 
 // ── Web Dashboard ─────────────────────────────────────────────────────────────

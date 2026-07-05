@@ -6,7 +6,13 @@
 
 import { connect } from "net";
 import { createInterface } from "node:readline";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo } from "./protocol.js";
+import {
+  IPC_SOCKET_PATH,
+  type IpcRequest,
+  type IpcResponse,
+  type IpcClientMessage,
+  type SessionInfo,
+} from "./protocol.js";
 import type { InboundMessage } from "../connectors/base.js";
 
 export interface SendOptions {
@@ -50,7 +56,11 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "chunk") {
           fullContent += resp.delta;
@@ -58,7 +68,8 @@ export async function sendToAgent(opts: SendOptions): Promise<string> {
         } else if (resp.type === "mfa_request") {
           // 终端提示用户确认/取消（或输入 TOTP 码）
           const rl = createInterface({ input: process.stdin, output: process.stdout });
-          const warningMsg = (resp as { type: "mfa_request"; warningMessage: string }).warningMessage;
+          const warningMsg = (resp as { type: "mfa_request"; warningMessage: string })
+            .warningMessage;
           process.stdout.write(`\n${warningMsg}\n> `);
           rl.once("line", (answer) => {
             rl.close();
@@ -122,7 +133,11 @@ export async function createSession(agentId?: string): Promise<string> {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "created") {
           settle(() => resolve(resp.sessionId));
@@ -167,7 +182,11 @@ export async function listSessions(): Promise<SessionInfo[]> {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "sessions") {
           settle(() => resolve(resp.sessions));
@@ -212,7 +231,11 @@ export async function memorizeSession(sessionId: string): Promise<string> {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "memorized") {
           settle(() => resolve(resp.summary));
@@ -232,7 +255,9 @@ export async function memorizeSession(sessionId: string): Promise<string> {
  * @param idOrSuffix 完整 sessionId 或其末尾子串（日志中显示的 12 位短 ID 也可）
  * @returns { found: boolean, sessionId: string }
  */
-export async function abortSession(idOrSuffix: string): Promise<{ found: boolean; sessionId: string }> {
+export async function abortSession(
+  idOrSuffix: string
+): Promise<{ found: boolean; sessionId: string }> {
   return new Promise((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
@@ -258,7 +283,11 @@ export async function abortSession(idOrSuffix: string): Promise<{ found: boolean
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "session_aborted") {
           settle(() => resolve({ found: resp.found, sessionId: resp.sessionId }));
@@ -303,7 +332,11 @@ export async function triggerLoop(sessionId: string): Promise<{ found: boolean }
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "loop_triggered") {
           settle(() => resolve({ found: resp.found }));
@@ -334,7 +367,12 @@ export async function getLoopStatus(sessionId: string): Promise<{ status: string
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
 
     socket.on("connect", () => {
       const req: IpcRequest = { type: "loop_status", sessionId };
@@ -347,7 +385,11 @@ export async function getLoopStatus(sessionId: string): Promise<{ status: string
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === "loop_status_result") {
           settle(() => resolve({ status: resp.status }));
         } else if (resp.type === "error") {
@@ -361,12 +403,19 @@ export async function getLoopStatus(sessionId: string): Promise<{ status: string
 }
 
 /** 列出所有已调度 loop session 的实时状态（含 agentId / tickSeconds）。 */
-export async function listLoopStatus(): Promise<Array<{ sessionId: string; status: string; agentId: string; tickSeconds: number }>> {
+export async function listLoopStatus(): Promise<
+  Array<{ sessionId: string; status: string; agentId: string; tickSeconds: number }>
+> {
   return new Promise((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
 
     socket.on("connect", () => {
       const req: IpcRequest = { type: "loop_list_status" };
@@ -379,7 +428,11 @@ export async function listLoopStatus(): Promise<Array<{ sessionId: string; statu
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === "loop_list_status_result") {
           settle(() => resolve(resp.items));
         } else if (resp.type === "error") {
@@ -393,14 +446,24 @@ export async function listLoopStatus(): Promise<Array<{ sessionId: string; statu
 }
 
 /** 通用辅助：发送一个带 sessionId 的 loop 请求，等待指定 found 响应类型 */
-function simpleLoopRequest(req: IpcRequest, responseType: "loop_paused" | "loop_resumed"): Promise<{ found: boolean }> {
+function simpleLoopRequest(
+  req: IpcRequest,
+  responseType: "loop_paused" | "loop_resumed"
+): Promise<{ found: boolean }> {
   return new Promise((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
 
-    socket.on("connect", () => { socket.write(JSON.stringify(req) + "\n"); });
+    socket.on("connect", () => {
+      socket.write(JSON.stringify(req) + "\n");
+    });
     socket.on("data", (data) => {
       buf += data.toString("utf-8");
       const lines = buf.split("\n");
@@ -408,7 +471,11 @@ function simpleLoopRequest(req: IpcRequest, responseType: "loop_paused" | "loop_
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === responseType) {
           settle(() => resolve({ found: (resp as { found: boolean }).found }));
         } else if (resp.type === "error") {
@@ -433,10 +500,22 @@ export async function sendQQBotMessage(opts: {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
 
     socket.on("connect", () => {
-      const req: IpcRequest = { type: "qqbot_send", peerId, msgType, text, ...(replyToId ? { replyToId } : {}), ...(botId ? { botId } : {}) };
+      const req: IpcRequest = {
+        type: "qqbot_send",
+        peerId,
+        msgType,
+        text,
+        ...(replyToId ? { replyToId } : {}),
+        ...(botId ? { botId } : {}),
+      };
       socket.write(JSON.stringify(req) + "\n");
     });
     socket.on("data", (data) => {
@@ -446,7 +525,11 @@ export async function sendQQBotMessage(opts: {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === "qqbot_sent") {
           settle(() => resolve());
         } else if (resp.type === "error") {
@@ -470,7 +553,12 @@ export async function requestQQBotUserInput(opts: {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; socket.destroy(); fn(); };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
 
     socket.on("connect", () => {
       const req: IpcRequest = { type: "qqbot_prompt", peerId, msgType, prompt, timeoutMs };
@@ -483,7 +571,11 @@ export async function requestQQBotUserInput(opts: {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === "qqbot_prompt_result") {
           settle(() => resolve(resp.answer));
         } else if (resp.type === "error") {
@@ -495,7 +587,6 @@ export async function requestQQBotUserInput(opts: {
     socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
   });
 }
-
 
 export interface OneshotOptions {
   prompt: string;
@@ -537,7 +628,11 @@ export async function sendOneshot(opts: OneshotOptions): Promise<string> {
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
 
         if (resp.type === "chunk") {
           fullContent += resp.delta;
@@ -551,10 +646,12 @@ export async function sendOneshot(opts: OneshotOptions): Promise<string> {
     });
 
     socket.on("error", (err) => settle(() => reject(err)));
-    socket.on("close", () => settle(() => {
-      if (fullContent) resolve(fullContent);
-      else reject(new Error("Connection closed unexpectedly"));
-    }));
+    socket.on("close", () =>
+      settle(() => {
+        if (fullContent) resolve(fullContent);
+        else reject(new Error("Connection closed unexpectedly"));
+      })
+    );
   });
 }
 
@@ -563,7 +660,9 @@ export async function sendOneshot(opts: OneshotOptions): Promise<string> {
  * @param agentId 目标 Agent，默认 "default"
  * @returns 重建结果（文件数、chunk 数）
  */
-export async function rebuildMemoryViaIPC(agentId = "default"): Promise<{ chunksEmbedded: number; files: number }> {
+export async function rebuildMemoryViaIPC(
+  agentId = "default"
+): Promise<{ chunksEmbedded: number; files: number }> {
   return new Promise((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
@@ -588,7 +687,11 @@ export async function rebuildMemoryViaIPC(agentId = "default"): Promise<{ chunks
       for (const line of lines) {
         if (!line.trim()) continue;
         let resp: IpcResponse;
-        try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
         if (resp.type === "memory_rebuilt") {
           settle(() => resolve({ chunksEmbedded: resp.chunksEmbedded, files: resp.files }));
         } else if (resp.type === "error") {
@@ -598,6 +701,8 @@ export async function rebuildMemoryViaIPC(agentId = "default"): Promise<{ chunks
     });
 
     socket.on("error", (err) => settle(() => reject(err)));
-    socket.on("close", () => settle(() => reject(new Error("Connection closed before rebuild completed"))));
+    socket.on("close", () =>
+      settle(() => reject(new Error("Connection closed before rebuild completed")))
+    );
   });
 }

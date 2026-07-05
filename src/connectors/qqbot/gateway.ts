@@ -5,7 +5,13 @@
 
 import WebSocket from "ws";
 import { getAccessToken, clearTokenCache, getGatewayUrl } from "./api.js";
-import type { InboundMessage, WSPayload, C2CMessageEvent, GroupMessageEvent, GuildMessageEvent } from "../base.js";
+import type {
+  InboundMessage,
+  WSPayload,
+  C2CMessageEvent,
+  GroupMessageEvent,
+  GuildMessageEvent,
+} from "../base.js";
 
 // ── QQ Gateway 协议常量 ──────────────────────────────────────────────────────
 
@@ -100,14 +106,18 @@ function saveSession(s: SessionState): void {
     const p = getSessionPath(s.appId);
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify(s, null, 2));
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 function clearSession(appId: string): void {
   try {
     const p = getSessionPath(appId);
     fs.rmSync(p, { force: true });
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 // ── 入口 ─────────────────────────────────────────────────────────────────────
@@ -154,7 +164,10 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     if (activeUsers.size >= MAX_CONCURRENT_USERS) return;
 
     const queue = userQueues.get(peerId);
-    if (!queue || queue.length === 0) { userQueues.delete(peerId); return; }
+    if (!queue || queue.length === 0) {
+      userQueues.delete(peerId);
+      return;
+    }
 
     activeUsers.add(peerId);
     try {
@@ -181,7 +194,10 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
   const enqueue = (msg: InboundMessage): void => {
     let q = userQueues.get(msg.peerId);
-    if (!q) { q = []; userQueues.set(msg.peerId, q); }
+    if (!q) {
+      q = [];
+      userQueues.set(msg.peerId, q);
+    }
     if (q.length >= PER_USER_QUEUE_SIZE) q.shift();
     q.push(msg);
     drainUserQueue(msg.peerId);
@@ -190,8 +206,14 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   // ── 重连辅助 ────────────────────────────────────────────────────────────────
 
   const cleanup = () => {
-    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-    if (currentWs?.readyState === WebSocket.OPEN || currentWs?.readyState === WebSocket.CONNECTING) {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    if (
+      currentWs?.readyState === WebSocket.OPEN ||
+      currentWs?.readyState === WebSocket.CONNECTING
+    ) {
       currentWs.close();
     }
     currentWs = null;
@@ -199,11 +221,20 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
   const scheduleReconnect = (delay?: number) => {
     if (isAborted || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    const d = delay ?? RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)] ?? RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]!;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const d =
+      delay ??
+      RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)] ??
+      RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]!;
     reconnectAttempts++;
     log?.debug?.(`[qqbot] Reconnecting in ${d}ms (attempt ${reconnectAttempts})`);
-    reconnectTimer = setTimeout(() => { reconnectTimer = null; if (!isAborted) connect(); }, d);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!isAborted) connect();
+    }, d);
   };
 
   // ── WebSocket 连接 ──────────────────────────────────────────────────────────
@@ -243,14 +274,20 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
           if (s !== undefined && s !== null) {
             lastSeq = s;
             if (sessionId) {
-              saveSession({ sessionId, lastSeq, intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel), appId });
+              saveSession({
+                sessionId,
+                lastSeq,
+                intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel),
+                appId,
+              });
             }
           }
 
           log?.debug?.(`[qqbot] op=${op} t=${t ?? "-"}`);
 
           switch (op) {
-            case 10: { // Hello
+            case 10: {
+              // Hello
               const hb = (d as { heartbeat_interval: number }).heartbeat_interval;
               if (heartbeatInterval) clearInterval(heartbeatInterval);
               heartbeatInterval = setInterval(() => {
@@ -262,17 +299,29 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
               if (sessionId && lastSeq !== null) {
                 log?.debug?.(`[qqbot] Resuming session ${sessionId}`);
-                ws.send(JSON.stringify({ op: 6, d: { token: `QQBot ${token}`, session_id: sessionId, seq: lastSeq } }));
+                ws.send(
+                  JSON.stringify({
+                    op: 6,
+                    d: { token: `QQBot ${token}`, session_id: sessionId, seq: lastSeq },
+                  })
+                );
               } else {
-                const lvlIdx = lastSuccessfulIntentLevel >= 0 ? lastSuccessfulIntentLevel : intentLevelIndex;
+                const lvlIdx =
+                  lastSuccessfulIntentLevel >= 0 ? lastSuccessfulIntentLevel : intentLevelIndex;
                 const lvl = INTENT_LEVELS[Math.min(lvlIdx, INTENT_LEVELS.length - 1)]!;
                 log?.info(`[qqbot] Identify with intents: ${lvl.description}`);
-                ws.send(JSON.stringify({ op: 2, d: { token: `QQBot ${token}`, intents: lvl.intents, shard: [0, 1] } }));
+                ws.send(
+                  JSON.stringify({
+                    op: 2,
+                    d: { token: `QQBot ${token}`, intents: lvl.intents, shard: [0, 1] },
+                  })
+                );
               }
               break;
             }
 
-            case 0: { // Dispatch
+            case 0: {
+              // Dispatch
               if (t === "READY") {
                 sessionId = (d as { session_id: string }).session_id;
                 lastSuccessfulIntentLevel = intentLevelIndex;
@@ -282,7 +331,13 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                 onReady?.();
               } else if (t === "RESUMED") {
                 log?.debug?.("[qqbot] Session resumed");
-                if (sessionId) saveSession({ sessionId, lastSeq, intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel), appId });
+                if (sessionId)
+                  saveSession({
+                    sessionId,
+                    lastSeq,
+                    intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel),
+                    appId,
+                  });
                 onReady?.(); // RESUMED 也视为就绪,触发 restart_tool 续接等逻辑
               } else if (t === "C2C_MESSAGE_CREATE") {
                 const ev = d as C2CMessageEvent;
@@ -293,7 +348,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                   content: ev.content,
                   messageId: ev.id,
                   timestamp: ev.timestamp,
-                  ...(ev.attachments ? { attachments: ev.attachments.map(a => ({ contentType: a.content_type, url: a.url, ...(a.filename !== undefined ? { filename: a.filename } : {}) })) } : {}),
+                  ...(ev.attachments
+                    ? {
+                        attachments: ev.attachments.map((a) => ({
+                          contentType: a.content_type,
+                          url: a.url,
+                          ...(a.filename !== undefined ? { filename: a.filename } : {}),
+                        })),
+                      }
+                    : {}),
                 });
               } else if (t === "AT_MESSAGE_CREATE") {
                 const ev = d as GuildMessageEvent;
@@ -306,7 +369,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                   timestamp: ev.timestamp,
                   channelId: ev.channel_id,
                   guildId: ev.guild_id,
-                  ...(ev.attachments ? { attachments: ev.attachments.map(a => ({ contentType: a.content_type, url: a.url, ...(a.filename !== undefined ? { filename: a.filename } : {}) })) } : {}),
+                  ...(ev.attachments
+                    ? {
+                        attachments: ev.attachments.map((a) => ({
+                          contentType: a.content_type,
+                          url: a.url,
+                          ...(a.filename !== undefined ? { filename: a.filename } : {}),
+                        })),
+                      }
+                    : {}),
                 });
               } else if (t === "DIRECT_MESSAGE_CREATE") {
                 const ev = d as GuildMessageEvent;
@@ -318,7 +389,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                   messageId: ev.id,
                   timestamp: ev.timestamp,
                   guildId: ev.guild_id,
-                  ...(ev.attachments ? { attachments: ev.attachments.map(a => ({ contentType: a.content_type, url: a.url, ...(a.filename !== undefined ? { filename: a.filename } : {}) })) } : {}),
+                  ...(ev.attachments
+                    ? {
+                        attachments: ev.attachments.map((a) => ({
+                          contentType: a.content_type,
+                          url: a.url,
+                          ...(a.filename !== undefined ? { filename: a.filename } : {}),
+                        })),
+                      }
+                    : {}),
                 });
               } else if (t === "GROUP_AT_MESSAGE_CREATE") {
                 const ev = d as GroupMessageEvent;
@@ -330,7 +409,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                   messageId: ev.id,
                   timestamp: ev.timestamp,
                   groupOpenid: ev.group_openid,
-                  ...(ev.attachments ? { attachments: ev.attachments.map(a => ({ contentType: a.content_type, url: a.url, ...(a.filename !== undefined ? { filename: a.filename } : {}) })) } : {}),
+                  ...(ev.attachments
+                    ? {
+                        attachments: ev.attachments.map((a) => ({
+                          contentType: a.content_type,
+                          url: a.url,
+                          ...(a.filename !== undefined ? { filename: a.filename } : {}),
+                        })),
+                      }
+                    : {}),
                 });
               }
               break;
@@ -342,22 +429,29 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
             case 7: // Server-requested reconnect
               log?.info("[qqbot] Server requested reconnect");
-              cleanup(); scheduleReconnect(0);
+              cleanup();
+              scheduleReconnect(0);
               break;
 
-            case 9: { // Invalid session
+            case 9: {
+              // Invalid session
               const canResume = d as boolean;
               log?.error(`[qqbot] Invalid session, can resume: ${canResume}`);
               if (!canResume) {
-                sessionId = null; lastSeq = null; clearSession(appId);
+                sessionId = null;
+                lastSeq = null;
+                clearSession(appId);
                 if (intentLevelIndex < INTENT_LEVELS.length - 1) {
                   intentLevelIndex++;
-                  log?.info(`[qqbot] Downgrading to: ${INTENT_LEVELS[intentLevelIndex]!.description}`);
+                  log?.info(
+                    `[qqbot] Downgrading to: ${INTENT_LEVELS[intentLevelIndex]!.description}`
+                  );
                 } else {
                   shouldRefreshToken = true;
                 }
               }
-              cleanup(); scheduleReconnect(3000);
+              cleanup();
+              scheduleReconnect(3000);
               break;
             }
           }
@@ -374,12 +468,23 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
         }
         isConnecting = false;
 
-        if (code === 4914) { log?.error("[qqbot] Bot offline/sandbox-only. Not reconnecting."); return; }
-        if (code === 4915) { log?.error("[qqbot] Bot is banned. Not reconnecting."); return; }
+        if (code === 4914) {
+          log?.error("[qqbot] Bot offline/sandbox-only. Not reconnecting.");
+          return;
+        }
+        if (code === 4915) {
+          log?.error("[qqbot] Bot is banned. Not reconnecting.");
+          return;
+        }
 
-        if (code === 4004) { shouldRefreshToken = true; }
+        if (code === 4004) {
+          shouldRefreshToken = true;
+        }
         if (code === 4006 || code === 4007 || code === 4009 || (code >= 4900 && code <= 4913)) {
-          sessionId = null; lastSeq = null; clearSession(appId); shouldRefreshToken = true;
+          sessionId = null;
+          lastSeq = null;
+          clearSession(appId);
+          shouldRefreshToken = true;
         }
 
         const dur = Date.now() - lastConnectTime;
@@ -407,17 +512,24 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       isConnecting = false;
       const msg = String(e);
       log?.error(`[qqbot] Connection failed: ${e}`);
-      scheduleReconnect(msg.includes("Too many requests") || msg.includes("100001") ? RATE_LIMIT_DELAY : undefined);
+      scheduleReconnect(
+        msg.includes("Too many requests") || msg.includes("100001") ? RATE_LIMIT_DELAY : undefined
+      );
     }
   };
 
   abortSignal.addEventListener("abort", () => {
     isAborted = true;
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     cleanup();
   });
 
   await connect();
 
-  return new Promise((resolve) => { abortSignal.addEventListener("abort", () => resolve()); });
+  return new Promise((resolve) => {
+    abortSignal.addEventListener("abort", () => resolve());
+  });
 }

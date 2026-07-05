@@ -94,11 +94,8 @@ export function persistTokenToConfig(token: string): void {
   }
 
   let changed = false;
-  const backends = (
-    (doc["llm"] as Record<string, unknown> | undefined)?.["backends"] as
-      | Record<string, unknown>
-      | undefined
-  );
+  const backends = (doc["llm"] as Record<string, unknown> | undefined)?.["backends"] as
+    Record<string, unknown> | undefined;
   if (!backends) return;
 
   for (const [name, backend] of Object.entries(backends)) {
@@ -127,8 +124,8 @@ interface DeviceCodeResponse {
   device_code: string;
   user_code: string;
   verification_uri: string;
-  expires_in: number;   // 秒
-  interval: number;     // 轮询间隔（秒）
+  expires_in: number; // 秒
+  interval: number; // 轮询间隔（秒）
 }
 
 interface TokenPollResponse {

@@ -77,7 +77,7 @@ registerTool({
 export function createAskMasterCallback(
   masterSession: import("../core/session.js").Session,
   onNotify: (message: string) => Promise<void>,
-  agentId: string,
+  agentId: string
 ): (question: string, context: string, planPath?: string) => Promise<string> {
   return async (question: string, context: string, planPath?: string): Promise<string> => {
     // 构建消息文本
@@ -93,18 +93,34 @@ export function createAskMasterCallback(
     if (planPath && existsSync(planPath)) {
       try {
         const mdText = readFileSync(planPath, "utf-8");
-        const outDir = join(homedir(), ".tinyclaw", "agents", agentId, "workspace", "output", "plans");
+        const outDir = join(
+          homedir(),
+          ".tinyclaw",
+          "agents",
+          agentId,
+          "workspace",
+          "output",
+          "plans"
+        );
         const imgPath = await mdToImage(mdText, outDir);
         lines.push("", `📄 **当前计划**：<img src="${imgPath}"/>`);
       } catch (err) {
         // 渲染失败，降级为内嵌文本
         try {
           const mdText = readFileSync(planPath, "utf-8");
-          lines.push("", "📄 **当前计划**（渲染失败，以文本展示）：", "```", mdText.slice(0, 2000), "```");
+          lines.push(
+            "",
+            "📄 **当前计划**（渲染失败，以文本展示）：",
+            "```",
+            mdText.slice(0, 2000),
+            "```"
+          );
         } catch {
           // 文件读取也失败，忽略
         }
-        console.warn(`[ask_master] 计划文件渲染失败：${err instanceof Error ? err.message : String(err)}`);
+        console.warn(
+          `[ask_master] 计划文件渲染失败：${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
 
@@ -124,11 +140,14 @@ export function createAskMasterCallback(
           resolve(content.trim());
         },
       });
-      masterSession.pendingSlaveQuestion = { question, resolve: (answer) => {
-        unregister();
-        masterSession.pendingSlaveQuestion = null;
-        resolve(answer);
-      }};
+      masterSession.pendingSlaveQuestion = {
+        question,
+        resolve: (answer) => {
+          unregister();
+          masterSession.pendingSlaveQuestion = null;
+          resolve(answer);
+        },
+      };
     });
   };
 }

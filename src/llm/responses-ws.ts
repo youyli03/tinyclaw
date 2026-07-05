@@ -22,7 +22,13 @@ import type {
   FunctionTool,
   Response as OpenAIResponse,
 } from "openai/resources/responses/responses";
-import { getContentParts, getTextContent, type ChatResult, type LLMChatMessage, type ToolCallResult } from "./client.js";
+import {
+  getContentParts,
+  getTextContent,
+  type ChatResult,
+  type LLMChatMessage,
+  type ToolCallResult,
+} from "./client.js";
 
 // ============================================================
 // Message format converters (Chat Completions ↔ Responses API)
@@ -144,7 +150,8 @@ export function responsesCompletedToResult(response: OpenAIResponse): ChatResult
 
   for (const item of response.output ?? []) {
     if (item.type === "message") {
-      for (const c of (item as { type: "message"; content: { type: string; text?: string }[] }).content ?? []) {
+      for (const c of (item as { type: "message"; content: { type: string; text?: string }[] })
+        .content ?? []) {
         if (c.type === "output_text" && c.text) content += c.text;
       }
     } else if (item.type === "function_call") {
@@ -255,8 +262,8 @@ export class ResponsesWsConnection {
       const text = Buffer.isBuffer(data)
         ? data.toString("utf-8")
         : typeof data === "string"
-        ? data
-        : Buffer.concat(data as Buffer[]).toString("utf-8");
+          ? data
+          : Buffer.concat(data as Buffer[]).toString("utf-8");
 
       if (this.waiting) {
         const { resolve, cleanup } = this.waiting;
@@ -355,7 +362,9 @@ export class ResponsesWsConnection {
   async *receiveEvents(signal?: AbortSignal): AsyncGenerator<ResponseStreamEvent> {
     for (;;) {
       const text = await this.receiveMessage(signal);
-      let event: ResponseStreamEvent & { error?: { code?: string; message?: string; http_status?: number } };
+      let event: ResponseStreamEvent & {
+        error?: { code?: string; message?: string; http_status?: number };
+      };
       try {
         event = JSON.parse(text) as typeof event;
       } catch {

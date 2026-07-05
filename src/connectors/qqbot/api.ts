@@ -32,9 +32,7 @@ function buildBody(
   appId?: string
 ): Record<string, unknown> {
   const mdSupport = appId !== undefined ? (markdownSupportMap.get(appId) ?? false) : false;
-  const base = mdSupport
-    ? { markdown: { content }, msg_type: 2 }
-    : { content, msg_type: 0 };
+  const base = mdSupport ? { markdown: { content }, msg_type: 2 } : { content, msg_type: 0 };
   return extras ? { ...base, ...extras } : base;
 }
 
@@ -58,14 +56,17 @@ export async function getAccessToken(appId: string, clientSecret: string): Promi
   if (inflight) return inflight;
 
   const fetchPromise = (async () => {
-    const resp = await fetch(TOKEN_URL, withCA({
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ appId, clientSecret }),
-      signal: AbortSignal.timeout(60_000),
-    }));
+    const resp = await fetch(
+      TOKEN_URL,
+      withCA({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appId, clientSecret }),
+        signal: AbortSignal.timeout(60_000),
+      })
+    );
     if (!resp.ok) throw new Error(`Token fetch failed: ${resp.status}`);
-    const data = await resp.json() as { access_token: string; expires_in: number };
+    const data = (await resp.json()) as { access_token: string; expires_in: number };
     tokenCache.set(appId, {
       token: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
@@ -79,27 +80,33 @@ export async function getAccessToken(appId: string, clientSecret: string): Promi
 }
 
 export async function getGatewayUrl(token: string): Promise<string> {
-  const resp = await fetch(`${API_BASE}/gateway`, withCA({
-    headers: { Authorization: `QQBot ${token}` },
-    signal: AbortSignal.timeout(60_000),
-  }));
+  const resp = await fetch(
+    `${API_BASE}/gateway`,
+    withCA({
+      headers: { Authorization: `QQBot ${token}` },
+      signal: AbortSignal.timeout(60_000),
+    })
+  );
   if (!resp.ok) throw new Error(`Gateway fetch failed: ${resp.status}`);
-  const data = await resp.json() as { url: string };
+  const data = (await resp.json()) as { url: string };
   return data.url;
 }
 
 // ── 发送消息 ──────────────────────────────────────────────────────────────────
 
 async function post(path: string, token: string, body: unknown): Promise<unknown> {
-  const resp = await fetch(`${API_BASE}${path}`, withCA({
-    method: "POST",
-    headers: {
-      Authorization: `QQBot ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  }));
+  const resp = await fetch(
+    `${API_BASE}${path}`,
+    withCA({
+      method: "POST",
+      headers: {
+        Authorization: `QQBot ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    })
+  );
   if (!resp.ok) {
     const detail = await resp.text().catch(() => "");
     throw new Error(`API ${path} failed ${resp.status}: ${detail.slice(0, 200)}`);
@@ -116,7 +123,11 @@ export async function sendC2CMessage(
   msgId: string
 ): Promise<void> {
   const msg_seq = nextMsgSeq(msgId);
-  await post(`/v2/users/${userOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }, appId));
+  await post(
+    `/v2/users/${userOpenid}/messages`,
+    token,
+    buildBody(content, { msg_id: msgId, msg_seq }, appId)
+  );
 }
 
 /** 群消息被动回复 */
@@ -128,7 +139,11 @@ export async function sendGroupMessage(
   msgId: string
 ): Promise<void> {
   const msg_seq = nextMsgSeq(msgId);
-  await post(`/v2/groups/${groupOpenid}/messages`, token, buildBody(content, { msg_id: msgId, msg_seq }, appId));
+  await post(
+    `/v2/groups/${groupOpenid}/messages`,
+    token,
+    buildBody(content, { msg_id: msgId, msg_seq }, appId)
+  );
 }
 
 /** 频道消息回复 */
@@ -153,8 +168,11 @@ export async function sendProactiveC2CMessage(
   content: string,
   eventId?: string
 ): Promise<void> {
-  await post(`/v2/users/${userOpenid}/messages`, token,
-    buildBody(content, eventId ? { event_id: eventId } : undefined, appId));
+  await post(
+    `/v2/users/${userOpenid}/messages`,
+    token,
+    buildBody(content, eventId ? { event_id: eventId } : undefined, appId)
+  );
 }
 
 /** 群主动消息（不依赖 msgId，需申请权限） */
@@ -165,8 +183,11 @@ export async function sendProactiveGroupMessage(
   content: string,
   eventId?: string
 ): Promise<void> {
-  await post(`/v2/groups/${groupOpenid}/messages`, token,
-    buildBody(content, eventId ? { event_id: eventId } : undefined, appId));
+  await post(
+    `/v2/groups/${groupOpenid}/messages`,
+    token,
+    buildBody(content, eventId ? { event_id: eventId } : undefined, appId)
+  );
 }
 
 // ── 富媒体发送 ─────────────────────────────────────────────────────────────

@@ -21,17 +21,35 @@ export interface MediaSegment {
 // 别名 → 规范类型
 const ALIAS_MAP: Record<string, "img" | "audio" | "video" | "file"> = {
   // 图片
-  img: "img", image: "img", pic: "img", photo: "img", picture: "img",
-  qqimg: "img", qq_img: "img", qqimage: "img", qq_image: "img",
-  qqpic: "img", qqphoto: "img",
+  img: "img",
+  image: "img",
+  pic: "img",
+  photo: "img",
+  picture: "img",
+  qqimg: "img",
+  qq_img: "img",
+  qqimage: "img",
+  qq_image: "img",
+  qqpic: "img",
+  qqphoto: "img",
   // 音频
-  audio: "audio", voice: "audio",
-  qqvoice: "audio", qq_voice: "audio", qqaudio: "audio", qq_audio: "audio",
+  audio: "audio",
+  voice: "audio",
+  qqvoice: "audio",
+  qq_voice: "audio",
+  qqaudio: "audio",
+  qq_audio: "audio",
   // 视频
-  video: "video", qqvideo: "video", qq_video: "video",
+  video: "video",
+  qqvideo: "video",
+  qq_video: "video",
   // 文件
-  file: "file", doc: "file", document: "file",
-  qqfile: "file", qq_file: "file", qqdoc: "file",
+  file: "file",
+  doc: "file",
+  document: "file",
+  qqfile: "file",
+  qq_file: "file",
+  qqdoc: "file",
 };
 
 function extractAttr(attrStr: string, name: string): string | undefined {
@@ -46,7 +64,7 @@ function extractAttr(attrStr: string, name: string): string | undefined {
 function maskCodeBlocks(text: string): { masked: string; restore: (s: string) => string } {
   const placeholders: string[] = [];
   // 先处理围栏式代码块（```...```），再处理行内代码（`...`）
-  let masked = text
+  const masked = text
     .replace(/```[\s\S]*?```/g, (m) => {
       const idx = placeholders.push(m) - 1;
       return `\x00CODE${idx}\x00`;
@@ -93,8 +111,7 @@ export function parseMediaTags(text: string): MediaSegment[] {
     const innerContent = match[3]?.trim() ?? "";
     // src 属性或标签内容作为路径/URL
     const src = extractAttr(attrStr, "src") ?? innerContent;
-    const filename =
-      extractAttr(attrStr, "name") ?? extractAttr(attrStr, "filename");
+    const filename = extractAttr(attrStr, "name") ?? extractAttr(attrStr, "filename");
 
     if (src) {
       segments.push({

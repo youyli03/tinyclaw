@@ -22,7 +22,11 @@ import { searchMemory, searchStore, updateStore } from "../memory/qmd.js";
 import { persistSummary } from "../memory/store.js";
 import { CARD_STATUSES, CARD_TYPES, appendCard } from "../memory/cards.js";
 
-function readTextFileOrMissing(filePath: string, missingMessage: string, emptyMessage: string): string {
+function readTextFileOrMissing(
+  filePath: string,
+  missingMessage: string,
+  emptyMessage: string
+): string {
   if (!fs.existsSync(filePath)) return missingMessage;
   const content = fs.readFileSync(filePath, "utf-8");
   return content || emptyMessage;
@@ -51,7 +55,11 @@ registerTool({
   },
   execute: async (_args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
-    return readTextFileOrMissing(agentManager.memPath(agentId), "(MEM.md 尚不存在,可调用 memory_write_mem 创建)", "(MEM.md 为空)");
+    return readTextFileOrMissing(
+      agentManager.memPath(agentId),
+      "(MEM.md 尚不存在,可调用 memory_write_mem 创建)",
+      "(MEM.md 为空)"
+    );
   },
 });
 
@@ -62,7 +70,13 @@ registerTool({
  * - 章节不存在时:在文件末尾追加新章节
  * 操作完成后触发向量索引更新(fire-and-forget)。
  */
-export function upsertMemSection(filePath: string, section: string, content: string, mode: "upsert" | "append", agentId: string): string {
+export function upsertMemSection(
+  filePath: string,
+  section: string,
+  content: string,
+  mode: "upsert" | "append",
+  agentId: string
+): string {
   const heading = `## ${section}`;
 
   // 文件不存在时直接创建
@@ -75,15 +89,17 @@ export function upsertMemSection(filePath: string, section: string, content: str
   const lines = fileContent.split("\n");
 
   // 查找章节起始行(## section)
-  const startLineIdx = lines.findIndex(l => l.trimEnd() === heading);
+  const startLineIdx = lines.findIndex((l) => l.trimEnd() === heading);
 
   if (startLineIdx === -1) {
     // 章节不存在,追加到文件末尾
     const trimmed = fileContent.trimEnd();
     fs.writeFileSync(filePath, `${trimmed}\n\n${heading}\n\n${content.trimEnd()}\n`, "utf-8");
-    import("../memory/qmd.js").then(({ updateStore }) => {
-      updateStore("memory", agentId).catch(() => {});
-    }).catch(() => {});
+    import("../memory/qmd.js")
+      .then(({ updateStore }) => {
+        updateStore("memory", agentId).catch(() => {});
+      })
+      .catch(() => {});
     return `已在 MEM.md 末尾追加新章节"${section}"(${content.length} 字节)`;
   }
 
@@ -117,9 +133,11 @@ export function upsertMemSection(filePath: string, section: string, content: str
   const joined = newLines.join("\n").trimEnd() + "\n";
   fs.writeFileSync(filePath, joined, "utf-8");
 
-  import("../memory/qmd.js").then(({ updateStore }) => {
-    updateStore("memory", agentId).catch(() => {});
-  }).catch(() => {});
+  import("../memory/qmd.js")
+    .then(({ updateStore }) => {
+      updateStore("memory", agentId).catch(() => {});
+    })
+    .catch(() => {});
 
   const action = mode === "append" ? "已追加内容到" : "已更新";
   return `${action} MEM.md 章节"${section}"(${content.length} 字节):${filePath}`;
@@ -143,13 +161,14 @@ registerTool({
         properties: {
           section: {
             type: "string",
-            description: "目标章节标题,不含 ## 前缀,例如「👤 用户偏好」或「📝 行为反馈记录」。MEM.md 现有章节:👤 用户偏好 / 🎯 当前任务 / 🗂️ 常用技能与任务 / 🐛 踩坑记录 / ✅ 已完成大事 / 📝 行为反馈记录 / 📝 近期变更"
+            description:
+              "目标章节标题,不含 ## 前缀,例如「👤 用户偏好」或「📝 行为反馈记录」。MEM.md 现有章节:👤 用户偏好 / 🎯 当前任务 / 🗂️ 常用技能与任务 / 🐛 踩坑记录 / ✅ 已完成大事 / 📝 行为反馈记录 / 📝 近期变更",
           },
           content: { type: "string", description: "章节的新内容(不含 ## 标题行本身)" },
           mode: {
             type: "string",
             enum: ["upsert", "append"],
-            description: "upsert(默认):替换章节全部内容;append:追加到章节末尾"
+            description: "upsert(默认):替换章节全部内容;append:追加到章节末尾",
           },
         },
         required: ["section", "content"],
@@ -160,7 +179,7 @@ registerTool({
     const agentId = ctx?.agentId ?? "default";
     const section = String(args["section"] ?? "").trim();
     const content = String(args["content"] ?? "");
-    const mode = (String(args["mode"] ?? "upsert") === "append") ? "append" : "upsert";
+    const mode = String(args["mode"] ?? "upsert") === "append" ? "append" : "upsert";
     if (!section) return "错误:缺少 section 参数,请指定目标章节标题(如「👤 用户偏好」)";
     return upsertMemSection(agentManager.memPath(agentId), section, content, mode, agentId);
   },
@@ -210,11 +229,14 @@ registerTool({
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" +
-              "传此参数时 upsert 该章节内容,而非操作整个文件。",
+              "分点/章节标题(不含 ## 前缀)。" + "传此参数时 upsert 该章节内容,而非操作整个文件。",
           },
           content: { type: "string", description: "要写入的内容" },
-          mode: { type: "string", enum: ["overwrite", "append"], description: "写入模式:overwrite 覆盖全文(默认),append 追加到末尾" },
+          mode: {
+            type: "string",
+            enum: ["overwrite", "append"],
+            description: "写入模式:overwrite 覆盖全文(默认),append 追加到末尾",
+          },
         },
         required: ["content"],
       },
@@ -222,7 +244,12 @@ registerTool({
   },
   execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
-    return writeTextFile(agentManager.activePath(agentId), String(args["content"] ?? ""), String(args["mode"] ?? "overwrite"), "ACTIVE.md");
+    return writeTextFile(
+      agentManager.activePath(agentId),
+      String(args["content"] ?? ""),
+      String(args["mode"] ?? "overwrite"),
+      "ACTIVE.md"
+    );
   },
 });
 
@@ -247,7 +274,11 @@ registerTool({
           importance: { type: "number", description: "重要性 0~1,默认 0.7" },
           ts: { type: "string", description: "ISO 时间,可选" },
           tags: { type: "array", items: { type: "string" }, description: "标签数组,可选" },
-          supersedes: { type: "array", items: { type: "string" }, description: "覆盖的旧卡 ID,可选" },
+          supersedes: {
+            type: "array",
+            items: { type: "string" },
+            description: "覆盖的旧卡 ID,可选",
+          },
         },
         required: ["type", "scope", "facet", "title", "summary"],
       },
@@ -255,19 +286,26 @@ registerTool({
   },
   execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
     const agentId = ctx?.agentId ?? "default";
-    const message = appendCard({
-      id: String(args["id"] ?? ""),
-      type: String(args["type"] ?? "") as typeof CARD_TYPES[number],
-      scope: String(args["scope"] ?? "general"),
-      facet: String(args["facet"] ?? "general"),
-      status: String(args["status"] ?? "active") as typeof CARD_STATUSES[number],
-      importance: Number(args["importance"] ?? 0.7),
-      ts: String(args["ts"] ?? new Date().toISOString()),
-      title: String(args["title"] ?? ""),
-      summary: String(args["summary"] ?? ""),
-      tags: Array.isArray(args["tags"]) ? args["tags"].filter((x): x is string => typeof x === "string") : [],
-      supersedes: Array.isArray(args["supersedes"]) ? args["supersedes"].filter((x): x is string => typeof x === "string") : [],
-    }, agentId);
+    const message = appendCard(
+      {
+        id: String(args["id"] ?? ""),
+        type: String(args["type"] ?? "") as (typeof CARD_TYPES)[number],
+        scope: String(args["scope"] ?? "general"),
+        facet: String(args["facet"] ?? "general"),
+        status: String(args["status"] ?? "active") as (typeof CARD_STATUSES)[number],
+        importance: Number(args["importance"] ?? 0.7),
+        ts: String(args["ts"] ?? new Date().toISOString()),
+        title: String(args["title"] ?? ""),
+        summary: String(args["summary"] ?? ""),
+        tags: Array.isArray(args["tags"])
+          ? args["tags"].filter((x): x is string => typeof x === "string")
+          : [],
+        supersedes: Array.isArray(args["supersedes"])
+          ? args["supersedes"].filter((x): x is string => typeof x === "string")
+          : [],
+      },
+      agentId
+    );
     await updateStore("cards", agentId).catch(() => {});
     return message;
   },
@@ -288,7 +326,11 @@ registerTool({
         properties: {
           query: { type: "string", description: "搜索查询词(自然语言,支持中英文)" },
           limit: { type: "number", description: "最多返回条数,默认 5,最大 20" },
-          include_obsolete: { type: "boolean", description: "是否包含已过期(obsolete/resolved)的卡片,默认 false。设为 true 可翻查历史记忆" },
+          include_obsolete: {
+            type: "boolean",
+            description:
+              "是否包含已过期(obsolete/resolved)的卡片,默认 false。设为 true 可翻查历史记忆",
+          },
         },
         required: ["query"],
       },
@@ -402,8 +444,7 @@ registerTool({
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" +
-              "传此参数时仅返回该章节内容,而非整个文件。",
+              "分点/章节标题(不含 ## 前缀)。" + "传此参数时仅返回该章节内容,而非整个文件。",
           },
         },
         required: [],
@@ -417,7 +458,7 @@ registerTool({
     if (!args["project"]) {
       const projects = projectMemory.listProjects(agentId);
       if (projects.length === 0) return "(暂无已知项目记忆,可通过 code_note_write 创建)";
-      return "已知项目列表:\n" + projects.map(d => "- " + d).join("\n");
+      return "已知项目列表:\n" + projects.map((d) => "- " + d).join("\n");
     }
 
     const project = String(args["project"]).trim();
@@ -426,11 +467,14 @@ registerTool({
     const extractSection = (fileContent: string, secName: string): string | null => {
       const heading = `## ${secName}`;
       const lines = fileContent.split("\n");
-      const startIdx = lines.findIndex(l => l.trimEnd() === heading);
+      const startIdx = lines.findIndex((l) => l.trimEnd() === heading);
       if (startIdx === -1) return null;
       let endIdx = lines.length;
       for (let i = startIdx + 1; i < lines.length; i++) {
-        if ((lines[i] ?? "").startsWith("## ")) { endIdx = i; break; }
+        if ((lines[i] ?? "").startsWith("## ")) {
+          endIdx = i;
+          break;
+        }
       }
       return lines.slice(startIdx, endIdx).join("\n").trim();
     };
@@ -440,7 +484,7 @@ registerTool({
       const topic = String(args["topic"]).trim();
       const topicFilePath = projectMemory.topicPath(agentId, project, topic);
       if (!fs.existsSync(topicFilePath)) {
-        return "topic 文件 \"" + topic + ".md\" 不存在。可用 code_note_write 创建: " + topicFilePath;
+        return 'topic 文件 "' + topic + '.md" 不存在。可用 code_note_write 创建: ' + topicFilePath;
       }
       const age = projectMemory.getTopicAge(agentId, project, topic);
       let prefix = "";
@@ -454,7 +498,15 @@ registerTool({
         const sec = String(args["section"]).trim();
         const extracted = extractSection(topicContent, sec);
         if (extracted === null) {
-          return prefix + "topic \"" + topic + ".md\" 中未找到分点 \"" + sec + "\"。\n\n> 文件路径: " + topicFilePath;
+          return (
+            prefix +
+            'topic "' +
+            topic +
+            '.md" 中未找到分点 "' +
+            sec +
+            '"。\n\n> 文件路径: ' +
+            topicFilePath
+          );
         }
         return prefix + extracted + "\n\n> 文件路径: " + topicFilePath;
       }
@@ -465,7 +517,7 @@ registerTool({
     // 传 project,不传 topic → 读 MEMORY.md
     const memPath = projectMemory.memoryIndexPath(agentId, project);
     if (!fs.existsSync(memPath)) {
-      return "项目 \"" + project + "\" 暂无记忆索引,可通过 code_note_write 创建。";
+      return '项目 "' + project + '" 暂无记忆索引,可通过 code_note_write 创建。';
     }
 
     const rawContent = fs.readFileSync(memPath, "utf-8");
@@ -475,7 +527,7 @@ registerTool({
       const sec = String(args["section"]).trim();
       const extracted = extractSection(rawContent, sec);
       if (extracted === null) {
-        return "项目 \"" + project + "\" 的 MEMORY.md 中未找到分区 \"" + sec + "\"。";
+        return '项目 "' + project + '" 的 MEMORY.md 中未找到分区 "' + sec + '"。';
       }
       return extracted;
     }
@@ -486,9 +538,8 @@ registerTool({
     }
 
     // 摘要模式: 解析 ## Section 标题 + 每节前 2 条
-    const maxEntries = typeof args["limit"] === "number" && args["limit"] > 0
-      ? Math.floor(args["limit"])
-      : 50;
+    const maxEntries =
+      typeof args["limit"] === "number" && args["limit"] > 0 ? Math.floor(args["limit"]) : 50;
     const lines = rawContent.split("\n");
     const sections: Array<{ heading: string; pointers: string[] }> = [];
     let currentSection: { heading: string; pointers: string[] } | null = null;
@@ -507,7 +558,7 @@ registerTool({
     if (currentSection) sections.push(currentSection);
 
     if (sections.length === 0) {
-      return "项目 \"" + project + "\" 的 MEMORY.md 为空。";
+      return '项目 "' + project + '" 的 MEMORY.md 为空。';
     }
 
     const output: string[] = [];
@@ -523,7 +574,7 @@ registerTool({
       }
     }
 
-    return output.join("\n") || "项目 \"" + project + "\" 的 MEMORY.md 暂无条目。";
+    return output.join("\n") || '项目 "' + project + '" 的 MEMORY.md 暂无条目。';
   },
 });
 
@@ -536,10 +587,10 @@ registerTool({
       description:
         "向指定项目的跨 session 记忆（MEMORY.md）写入或追加内容。\n" +
         "在以下情况立即调用（不要等 session 结束）：\n" +
-        "1. 发现跨 session 有价值的约束（如\"此进程不能自行 kill\"）\n" +
-        "2. 完成重要里程碑（如\"pathname 路由已完成\"）\n" +
+        '1. 发现跨 session 有价值的约束（如"此进程不能自行 kill"）\n' +
+        '2. 完成重要里程碑（如"pathname 路由已完成"）\n' +
         "3. 定位到非显而易见的根因\n" +
-        "4. 任务完成（说\"已完成\"）前更新进度\n" +
+        '4. 任务完成（说"已完成"）前更新进度\n' +
         "mode=append 追加新行；mode=overwrite 全量覆写（谨慎使用）。",
       parameters: {
         type: "object",
@@ -559,8 +610,7 @@ registerTool({
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" +
-              "传此参数时 upsert 该章节内容,而非操作整个文件。",
+              "分点/章节标题(不含 ## 前缀)。" + "传此参数时 upsert 该章节内容,而非操作整个文件。",
           },
           content: { type: "string", description: "要写入的内容（Markdown 格式）" },
           mode: {
@@ -600,7 +650,13 @@ registerTool({
 
     // 有 section → 章节级 upsert
     if (section) {
-      const result = upsertMemSection(targetPath, section, content, mode === "append" ? "append" : "upsert", agentId);
+      const result = upsertMemSection(
+        targetPath,
+        section,
+        content,
+        mode === "append" ? "append" : "upsert",
+        agentId
+      );
       if (topic) {
         projectMemory.refreshTopicMeta(agentId, project, topic);
       } else {
@@ -635,11 +691,13 @@ registerTool({
     fs.appendFileSync(targetPath, entry, "utf-8");
     projectMemory.refreshIndexMeta(agentId, project);
     // 写入后立即触发增量索引(fire-and-forget)
-    import("../memory/qmd.js").then(({ updateStore }) => {
-      updateStore("code_notes", agentId).catch((e) => {
-        console.warn("[code_note_write] post-write index update failed:", e);
-      });
-    }).catch(() => {});
+    import("../memory/qmd.js")
+      .then(({ updateStore }) => {
+        updateStore("code_notes", agentId).catch((e) => {
+          console.warn("[code_note_write] post-write index update failed:", e);
+        });
+      })
+      .catch(() => {});
     return `已追加到项目 "${project}" ${fileLabel}(${content.length} 字节):${targetPath}`;
   },
 });
@@ -707,7 +765,8 @@ registerTool({
           },
           ssh_host: {
             type: "string",
-            description: "若当前操作涉及 SSH，传入 hostname（如 m1saka.cc），工具会自动 DNS 解析比对",
+            description:
+              "若当前操作涉及 SSH，传入 hostname（如 m1saka.cc），工具会自动 DNS 解析比对",
           },
         },
         required: [],
@@ -722,7 +781,11 @@ registerTool({
     // 读取别名表
     let aliases: Record<string, string> = {};
     if (fs.existsSync(aliasesPath)) {
-      try { aliases = JSON.parse(fs.readFileSync(aliasesPath, "utf-8")); } catch { /* ignore */ }
+      try {
+        aliases = JSON.parse(fs.readFileSync(aliasesPath, "utf-8"));
+      } catch {
+        /* ignore */
+      }
     }
 
     // SSH DNS 解析：先查是否已有映射
@@ -747,9 +810,10 @@ registerTool({
     // 列出已知项目
     let knownProjects: string[] = [];
     if (fs.existsSync(projectsDir)) {
-      knownProjects = fs.readdirSync(projectsDir, { withFileTypes: true })
-        .filter(d => d.isDirectory())
-        .map(d => d.name);
+      knownProjects = fs
+        .readdirSync(projectsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
     }
 
     const hint = String(args["hint"] ?? "").trim();
@@ -757,8 +821,11 @@ registerTool({
 
     // 构建选项
     const options = [
-      ...knownProjects.map(p => ({ label: p, description: "已有项目" })),
-      { label: "（新建项目）", description: "输入新项目名（格式如 _home_lyy_myrepo 或 ssh_host_path）" },
+      ...knownProjects.map((p) => ({ label: p, description: "已有项目" })),
+      {
+        label: "（新建项目）",
+        description: "输入新项目名（格式如 _home_lyy_myrepo 或 ssh_host_path）",
+      },
     ];
 
     // 通过 ask_user 工具机制无法在这里直接调用，返回结构化信息让 AI 调用 ask_user
@@ -766,7 +833,8 @@ registerTool({
       action: "ask_user",
       question: `请确认当前操作属于哪个项目？${hintText}`,
       options,
-      instruction: "请调用 ask_user 工具，将上面的 question 和 options 展示给用户，获得确认后：\n1. 若用户选择已有项目，直接使用该 slug\n2. 若用户输入新项目名，用 code_note_write 写入初始记忆，并用下面的方式更新别名表",
+      instruction:
+        "请调用 ask_user 工具，将上面的 question 和 options 展示给用户，获得确认后：\n1. 若用户选择已有项目，直接使用该 slug\n2. 若用户输入新项目名，用 code_note_write 写入初始记忆，并用下面的方式更新别名表",
       aliasesPath,
       resolvedIP: sshHost ? "（DNS 解析失败或未提供）" : undefined,
     });

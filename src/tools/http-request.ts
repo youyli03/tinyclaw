@@ -18,13 +18,13 @@ function isPrivateIP(ip: string): boolean {
     const parts = ip.split(".").map(Number);
     const [a, b] = parts;
     if (a === undefined || b === undefined) return true;
-    if (a === 0) return true;                          // 0.0.0.0/8
-    if (a === 10) return true;                          // 10/8
-    if (a === 127) return true;                         // 127/8 环回
-    if (a === 169 && b === 254) return true;            // 169.254/16 链路本地 + 云元数据
-    if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16/12
-    if (a === 192 && b === 168) return true;            // 192.168/16
-    if (a === 100 && b >= 64 && b <= 127) return true;  // 100.64/10 CGNAT
+    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 10) return true; // 10/8
+    if (a === 127) return true; // 127/8 环回
+    if (a === 169 && b === 254) return true; // 169.254/16 链路本地 + 云元数据
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+    if (a === 192 && b === 168) return true; // 192.168/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
     return false;
   }
   if (fam === 6) {
@@ -34,8 +34,13 @@ function isPrivateIP(ip: string): boolean {
     const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
     if (mapped && mapped[1]) return isPrivateIP(mapped[1]);
     if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 ULA
-    if (lower.startsWith("fe8") || lower.startsWith("fe9") ||
-        lower.startsWith("fea") || lower.startsWith("feb")) return true; // fe80::/10
+    if (
+      lower.startsWith("fe8") ||
+      lower.startsWith("fe9") ||
+      lower.startsWith("fea") ||
+      lower.startsWith("feb")
+    )
+      return true; // fe80::/10
     return false;
   }
   return false;
@@ -58,14 +63,22 @@ async function assertPublicHost(hostname: string): Promise<void> {
 
   // 明显的本地主机名直接拒绝
   const lowerHost = hostname.toLowerCase();
-  if (lowerHost === "localhost" || lowerHost.endsWith(".localhost") || lowerHost.endsWith(".local")) {
-    throw new Error(`拒绝访问本地主机名 "${hostname}"(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`);
+  if (
+    lowerHost === "localhost" ||
+    lowerHost.endsWith(".localhost") ||
+    lowerHost.endsWith(".local")
+  ) {
+    throw new Error(
+      `拒绝访问本地主机名 "${hostname}"(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`
+    );
   }
 
   // hostname 本身就是 IP 字面量
   if (isIP(hostname)) {
     if (isPrivateIP(hostname)) {
-      throw new Error(`拒绝访问私网/环回 IP "${hostname}"(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`);
+      throw new Error(
+        `拒绝访问私网/环回 IP "${hostname}"(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`
+      );
     }
     return;
   }
@@ -75,11 +88,15 @@ async function assertPublicHost(hostname: string): Promise<void> {
   try {
     addrs = await lookup(hostname, { all: true });
   } catch (err) {
-    throw new Error(`DNS 解析失败 "${hostname}":${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `DNS 解析失败 "${hostname}":${err instanceof Error ? err.message : String(err)}`
+    );
   }
   for (const { address } of addrs) {
     if (isPrivateIP(address)) {
-      throw new Error(`"${hostname}" 解析到私网/环回地址 ${address},拒绝访问(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`);
+      throw new Error(
+        `"${hostname}" 解析到私网/环回地址 ${address},拒绝访问(SSRF 防护;如需访问内网请设置 tools.http_request.allowPrivateHosts = true)`
+      );
     }
   }
 }
@@ -102,7 +119,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 function resolveSecretHeaders(
   headers: Record<string, string>,
-  hostname: string,
+  hostname: string
 ): Record<string, string> {
   const secrets = loadSecretsConfig();
   const SECRET_RE = /\$([A-Z][A-Z0-9_]*)/g;
@@ -114,12 +131,12 @@ function resolveSecretHeaders(
       if (!entry) {
         throw new Error(
           `未知 secret "$${key}"，请在 ~/.tinyclaw/secrets.toml 中配置\n` +
-          `格式：\n[${key}]\nvalue = "实际值"\nallowed_hosts = ["目标域名"]`,
+            `格式：\n[${key}]\nvalue = "实际值"\nallowed_hosts = ["目标域名"]`
         );
       }
       if (entry.allowed_hosts.length > 0 && !entry.allowed_hosts.includes(hostname)) {
         throw new Error(
-          `secret "$${key}" 不允许发送到 "${hostname}"（allowed_hosts: [${entry.allowed_hosts.map(h => `"${h}"`).join(", ")}]）`,
+          `secret "$${key}" 不允许发送到 "${hostname}"（allowed_hosts: [${entry.allowed_hosts.map((h) => `"${h}"`).join(", ")}]）`
         );
       }
       return entry.value;
@@ -155,7 +172,7 @@ registerTool({
             type: "object",
             description:
               "请求头 KV 对象（可选）。value 可使用 `$SECRET_NAME` 占位符引用 secrets.toml 中的凭证，" +
-              "例如：{ \"Authorization\": \"$TB_TOKEN\", \"Content-Type\": \"application/json\" }",
+              '例如：{ "Authorization": "$TB_TOKEN", "Content-Type": "application/json" }',
             additionalProperties: { type: "string" },
           },
           body: {

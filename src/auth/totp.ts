@@ -72,9 +72,7 @@ export function verifyTOTP(code: string, secretPath?: string): boolean {
   const filePath = getSecretPath(secretPath);
 
   if (!fs.existsSync(filePath)) {
-    throw new MFAError(
-      "TOTP 未初始化：请先运行 `tinyclaw auth mfa-setup` 进行绑定"
-    );
+    throw new MFAError("TOTP 未初始化：请先运行 `tinyclaw auth mfa-setup` 进行绑定");
   }
 
   const raw = fs.readFileSync(filePath, "utf-8").trim();

@@ -80,13 +80,19 @@ export async function run(args: string[]): Promise<void> {
   }
 
   if (sub === "list") {
-    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
+    if (rest.includes("-h") || rest.includes("--help")) {
+      printSubHelp("list");
+      return;
+    }
     await cmdList();
     return;
   }
 
   if (sub === "abort") {
-    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("abort"); return; }
+    if (rest.includes("-h") || rest.includes("--help")) {
+      printSubHelp("abort");
+      return;
+    }
     const id = args[1];
     if (!id) {
       console.error(red("用法：tinyclaw session abort <sessionId|suffix>"));
@@ -98,7 +104,10 @@ export async function run(args: string[]): Promise<void> {
   }
 
   if (sub === "memory") {
-    if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("memory"); return; }
+    if (rest.includes("-h") || rest.includes("--help")) {
+      printSubHelp("memory");
+      return;
+    }
     await cmdMemory(args[1]);
     return;
   }
@@ -136,7 +145,9 @@ async function cmdList(): Promise<void> {
   for (const s of sessions) {
     const status = s.running ? green("运行中") : dim("空闲");
     const lastMsg = s.lastUserMessage
-      ? (s.lastUserMessage.length > 48 ? s.lastUserMessage.slice(0, 45) + "…" : s.lastUserMessage)
+      ? s.lastUserMessage.length > 48
+        ? s.lastUserMessage.slice(0, 45) + "…"
+        : s.lastUserMessage
       : dim("—");
     const row = [
       cyan(s.sessionId.length > 48 ? s.sessionId.slice(0, 45) + "…" : s.sessionId),
@@ -215,5 +226,3 @@ async function cmdMemory(sessionId?: string): Promise<void> {
   console.log(summary);
   console.log();
 }
-
-

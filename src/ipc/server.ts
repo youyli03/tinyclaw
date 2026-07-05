@@ -9,7 +9,14 @@
 import { createServer, type Server } from "net";
 import { unlinkSync, existsSync } from "fs";
 import { randomUUID } from "node:crypto";
-import { IPC_SOCKET_PATH, type IpcRequest, type IpcResponse, type IpcClientMessage, type SessionInfo, type ActivityEvent } from "./protocol.js";
+import {
+  IPC_SOCKET_PATH,
+  type IpcRequest,
+  type IpcResponse,
+  type IpcClientMessage,
+  type SessionInfo,
+  type ActivityEvent,
+} from "./protocol.js";
 import { Session } from "../core/session.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { cronScheduler } from "../cron/scheduler.js";
@@ -49,13 +56,12 @@ export function getActivityLog(sessionId: string): ActivityEntry[] {
 /** 广播 ActivityEvent 给所有订阅该 session 的客户端 */
 export function broadcastActivity(sessionId: string, event: ActivityEvent) {
   // 记录 tool_call / tool_result / error 到 activity log（最新在前）
-  if (
-    event.kind === "tool_call" ||
-    event.kind === "tool_result" ||
-    event.kind === "error"
-  ) {
+  if (event.kind === "tool_call" || event.kind === "tool_result" || event.kind === "error") {
     let log = activityLogMap.get(sessionId);
-    if (!log) { log = []; activityLogMap.set(sessionId, log); }
+    if (!log) {
+      log = [];
+      activityLogMap.set(sessionId, log);
+    }
     log.unshift({ ts: Date.now(), event });
     if (log.length > ACTIVITY_LOG_MAX) log.pop();
   }
@@ -63,7 +69,11 @@ export function broadcastActivity(sessionId: string, event: ActivityEvent) {
   const subs = subscriberMap.get(sessionId);
   if (subs) {
     for (const fn of subs) {
-      try { fn(event); } catch { /* ignore closed socket */ }
+      try {
+        fn(event);
+      } catch {
+        /* ignore closed socket */
+      }
     }
   }
 }
@@ -79,7 +89,11 @@ export function startIpcServer(
   }
   // 清理上次遗留的 socket 文件
   if (existsSync(IPC_SOCKET_PATH)) {
-    try { unlinkSync(IPC_SOCKET_PATH); } catch { /* ignore */ }
+    try {
+      unlinkSync(IPC_SOCKET_PATH);
+    } catch {
+      /* ignore */
+    }
   }
 
   const server = createServer((socket) => {
@@ -99,7 +113,11 @@ export function startIpcServer(
         if (!line.trim()) continue;
         // 先尝试解析为 IpcClientMessage（包含 mfa_response）
         let msg: IpcClientMessage;
-        try { msg = JSON.parse(line) as IpcClientMessage; } catch { continue; }
+        try {
+          msg = JSON.parse(line) as IpcClientMessage;
+        } catch {
+          continue;
+        }
 
         if (msg.type === "mfa_response") {
           if (pendingMFA) {
@@ -116,7 +134,16 @@ export function startIpcServer(
           }
           continue;
         }
-        void handleRequest(line, socket, sessions, connector, (pMFA) => { pendingMFA = pMFA; }, resolveConnector);
+        void handleRequest(
+          line,
+          socket,
+          sessions,
+          connector,
+          (pMFA) => {
+            pendingMFA = pMFA;
+          },
+          resolveConnector
+        );
       }
     });
 
@@ -141,7 +168,13 @@ async function handleRequest(
   socket: import("net").Socket,
   sessions: Map<string, Session>,
   connector: QQBotConnector | null,
-  setPendingMFA: (p: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } | null) => void,
+  setPendingMFA: (
+    p: {
+      resolve: (v: boolean) => void;
+      reject: (e: Error) => void;
+      verifyCode?: (code: string) => boolean;
+    } | null
+  ) => void,
   resolveConnector: (botId?: string) => QQBotConnector | null = () => connector
 ): Promise<void> {
   const send = (resp: IpcResponse): void => {
@@ -290,7 +323,10 @@ async function handleRequest(
       }
       send({ type: "memorized", summary });
     } catch (e) {
-      send({ type: "error", message: `记忆整理失败：${e instanceof Error ? e.message : String(e)}` });
+      send({
+        type: "error",
+        message: `记忆整理失败：${e instanceof Error ? e.message : String(e)}`,
+      });
     }
     return;
   }
@@ -313,8 +349,7 @@ async function handleRequest(
         const msgs = sess.getMessages();
         const userMsgs = msgs.filter((m) => m.role === "user");
         const lastContent = userMsgs.at(-1)?.content;
-        const lastUserMessage =
-          typeof lastContent === "string" ? lastContent.slice(0, 80) : "";
+        const lastUserMessage = typeof lastContent === "string" ? lastContent.slice(0, 80) : "";
         return {
           sessionId: id,
           messageCount: msgs.filter((m) => m.role !== "system").length,
@@ -369,8 +404,9 @@ async function handleRequest(
 
     // 尝试匹配 slave 子 agent（slave:<slaveId> 或末尾 suffix 匹配）
     const slaveId = idOrSuffix.startsWith("slave:") ? idOrSuffix.slice(6) : idOrSuffix;
-    const slaveState = slaveManager.status(slaveId)
-      ?? slaveManager.listAll().find((s) => `slave:${s.slaveId}`.endsWith(idOrSuffix));
+    const slaveState =
+      slaveManager.status(slaveId) ??
+      slaveManager.listAll().find((s) => `slave:${s.slaveId}`.endsWith(idOrSuffix));
     if (slaveState) {
       slaveManager.abort(slaveState.slaveId);
       send({ type: "session_aborted", sessionId: `slave:${slaveState.slaveId}`, found: true });
@@ -383,12 +419,18 @@ async function handleRequest(
 
   // ── llm_oneshot 请求:一次性 LLM 调用(无 session 历史，无工具权限)─────────────
   if (req.type === "llm_oneshot") {
-    const { prompt, backend = "daily" } = req as { type: "llm_oneshot"; prompt: string; backend?: "daily" | "code" | "summarizer" };
+    const { prompt, backend = "daily" } = req as {
+      type: "llm_oneshot";
+      prompt: string;
+      backend?: "daily" | "code" | "summarizer";
+    };
     const client = llmRegistry.get(backend);
     let slotHeld = false;
     const oneshotId = Math.random().toString(36).slice(2, 7);
     const oneshotStart = Date.now();
-    console.log(`[llm_oneshot] id=${oneshotId} backend=${backend} prompt_len=${prompt.length} 开始`);
+    console.log(
+      `[llm_oneshot] id=${oneshotId} backend=${backend} prompt_len=${prompt.length} 开始`
+    );
     try {
       await acquireLLMSlot();
       slotHeld = true;
@@ -396,13 +438,17 @@ async function handleRequest(
       if (slotWait > 100) console.log(`[llm_oneshot] id=${oneshotId} 等待slot ${slotWait}ms`);
       await client.streamChat(
         [{ role: "user", content: prompt }],
-        (delta) => { send({ type: "chunk", delta }); },
-        { tools: [], isUserInitiated: true },
+        (delta) => {
+          send({ type: "chunk", delta });
+        },
+        { tools: [], isUserInitiated: true }
       );
       send({ type: "done" });
       console.log(`[llm_oneshot] id=${oneshotId} 完成 耗时=${Date.now() - oneshotStart}ms`);
     } catch (err) {
-      console.log(`[llm_oneshot] id=${oneshotId} 失败 耗时=${Date.now() - oneshotStart}ms err=${err instanceof Error ? err.message : String(err)}`);
+      console.log(
+        `[llm_oneshot] id=${oneshotId} 失败 耗时=${Date.now() - oneshotStart}ms err=${err instanceof Error ? err.message : String(err)}`
+      );
       send({ type: "error", message: err instanceof Error ? err.message : String(err) });
     } finally {
       if (slotHeld) releaseLLMSlot();
@@ -413,12 +459,16 @@ async function handleRequest(
   // ── memory_rebuild 请求:委托服务进程在内部执行向量索引重建 ──────────────
   if (req.type === "memory_rebuild") {
     const { agentId = "default" } = req as { type: "memory_rebuild"; agentId?: string };
-    memoryMaintenance.runOne(agentId)
+    memoryMaintenance
+      .runOne(agentId)
       .then(() => {
         send({ type: "memory_rebuilt", agentId, chunksEmbedded: -1, files: -1 });
       })
       .catch((err: unknown) => {
-        send({ type: "error", message: `memory_rebuild failed: ${err instanceof Error ? err.message : String(err)}` });
+        send({
+          type: "error",
+          message: `memory_rebuild failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
       });
     return;
   }
@@ -432,7 +482,10 @@ async function handleRequest(
       targetId = idOrSuffix;
     } else {
       for (const id of sessions.keys()) {
-        if (id.endsWith(idOrSuffix)) { targetId = id; break; }
+        if (id.endsWith(idOrSuffix)) {
+          targetId = id;
+          break;
+        }
       }
     }
     if (!targetId) {
@@ -444,7 +497,9 @@ async function handleRequest(
     const handler = (event: ActivityEvent) => {
       try {
         send({ type: "activity", sessionId: sid, event });
-      } catch { /* socket already closed */ }
+      } catch {
+        /* socket already closed */
+      }
     };
     if (!subscriberMap.has(sid)) subscriberMap.set(sid, new Set());
     subscriberMap.get(sid)!.add(handler);
@@ -507,7 +562,11 @@ async function handleRequest(
     onMFARequest: (warningMessage, verifyCode) =>
       new Promise<boolean>((resolve, reject) => {
         // 保存 verifyCode，TOTP 模式下 mfa_response 时用其验证 6 位码
-        const mfaEntry: { resolve: (v: boolean) => void; reject: (e: Error) => void; verifyCode?: (code: string) => boolean } = { resolve, reject };
+        const mfaEntry: {
+          resolve: (v: boolean) => void;
+          reject: (e: Error) => void;
+          verifyCode?: (code: string) => boolean;
+        } = { resolve, reject };
         if (verifyCode) mfaEntry.verifyCode = verifyCode;
         setPendingMFA(mfaEntry);
         send({ type: "mfa_request", warningMessage });
@@ -520,10 +579,18 @@ async function handleRequest(
       }
     },
     onToolCall: (name, args) => {
-      broadcastActivity(session!.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+      broadcastActivity(session!.sessionId, {
+        kind: "tool_call",
+        name,
+        argsSummary: JSON.stringify(args).slice(0, 200),
+      });
     },
     onToolResult: (name, result) => {
-      broadcastActivity(session!.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+      broadcastActivity(session!.sessionId, {
+        kind: "tool_result",
+        name,
+        resultSummary: result.slice(0, 300),
+      });
     },
   });
   session.currentRunPromise = runPromise;

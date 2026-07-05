@@ -66,21 +66,15 @@ registerTool({
       return "⚠️ 当前 Slave 不允许嵌套 fork（已达最大嵌套深度 1）。请在 Master 会话中调用 agent_fork。";
     }
 
-    const contextWindow = Math.min(
-      Math.max(1, Number(args["context_window"] ?? 10)),
-      30
-    );
+    const contextWindow = Math.min(Math.max(1, Number(args["context_window"] ?? 10)), 30);
 
     // 定期进度汇报间隔：限制在 30s - 3600s 之间
     const rawInterval = args["progress_interval_secs"];
     const reportIntervalSecs =
-      rawInterval !== undefined
-        ? Math.min(3600, Math.max(30, Number(rawInterval)))
-        : undefined;
+      rawInterval !== undefined ? Math.min(3600, Math.max(30, Number(rawInterval))) : undefined;
 
     // 结果交付模式
-    const resultMode: "inject" | "wait" =
-      args["result_mode"] === "wait" ? "wait" : "inject";
+    const resultMode: "inject" | "wait" = args["result_mode"] === "wait" ? "wait" : "inject";
 
     const slaveId = slaveManager.fork(
       task,
@@ -90,7 +84,7 @@ registerTool({
       ctx.onSlaveComplete,
       reportIntervalSecs,
       ctx.onProgressNotify,
-      resultMode,
+      resultMode
     );
 
     const progressNote =
@@ -110,8 +104,10 @@ registerTool({
       `任务：${task.slice(0, 100)}${task.length > 100 ? "…" : ""}\n` +
       `上下文窗口：最近 ${contextWindow} 条消息\n` +
       `交付模式：${resultMode}` +
-      progressNote + `\n\n` +
-      modeNote + `\n` +
+      progressNote +
+      `\n\n` +
+      modeNote +
+      `\n` +
       `用 \`agent_status(slave_id="${slaveId}")\` 查询进度。`
     );
   },
@@ -189,21 +185,23 @@ registerTool({
       description:
         "等待后台 Slave agent 完成并返回结果。\n\n" +
         "**两种用法**：\n" +
-        "1. `agent_wait(slave_id=\"xxx\")`：等待指定单个 Slave 完成，返回其结果。" +
-        "适合用 `result_mode=\"wait\"` fork 出的 Slave。\n" +
+        '1. `agent_wait(slave_id="xxx")`：等待指定单个 Slave 完成，返回其结果。' +
+        '适合用 `result_mode="wait"` fork 出的 Slave。\n' +
         "2. `agent_wait()`（不传 slave_id）：等待**当前会话**创建的所有 Slave 完成，返回全部结果。\n\n" +
-        "**注意**：`result_mode=\"inject\"` 的 Slave 完成后已自动注入 Master，" +
+        '**注意**：`result_mode="inject"` 的 Slave 完成后已自动注入 Master，' +
         "对其调用 agent_wait 时若已完成则立即返回已有结果，若仍运行中则阻塞等待。",
       parameters: {
         type: "object",
         properties: {
           slave_id: {
             type: "string",
-            description: "要等待的单个 Slave ID（agent_fork 返回的 slave_id）。不传则等待当前会话的所有 Slave。",
+            description:
+              "要等待的单个 Slave ID（agent_fork 返回的 slave_id）。不传则等待当前会话的所有 Slave。",
           },
           timeout_secs: {
             type: "number",
-            description: "等待超时秒数（默认 300 秒）。超时后将未完成的 Slave 标记为 error 并返回。",
+            description:
+              "等待超时秒数（默认 300 秒）。超时后将未完成的 Slave 标记为 error 并返回。",
           },
         },
       },
@@ -214,10 +212,7 @@ registerTool({
       return "错误：agent_wait 需要在交互式 Agent 会话中调用（masterSession 未提供）";
     }
 
-    const timeoutSecs = Math.min(
-      3600,
-      Math.max(1, Number(args["timeout_secs"] ?? 300))
-    );
+    const timeoutSecs = Math.min(3600, Math.max(1, Number(args["timeout_secs"] ?? 300)));
 
     const slaveId = args["slave_id"] ? String(args["slave_id"]).trim() : undefined;
 
@@ -228,11 +223,17 @@ registerTool({
 
       const MAX_RESULT_CHARS = 10000;
       const statusIcon =
-        state.status === "done"    ? "✅" :
-        state.status === "error"   ? "❌" :
-        state.status === "aborted" ? "⛔" : "❓";
+        state.status === "done"
+          ? "✅"
+          : state.status === "error"
+            ? "❌"
+            : state.status === "aborted"
+              ? "⛔"
+              : "❓";
       const duration = state.finishedAt
-        ? Math.round((new Date(state.finishedAt).getTime() - new Date(state.startedAt).getTime()) / 1000)
+        ? Math.round(
+            (new Date(state.finishedAt).getTime() - new Date(state.startedAt).getTime()) / 1000
+          )
         : null;
       const durationStr = duration !== null ? ` (耗时 ${duration}s)` : "";
 
@@ -245,7 +246,9 @@ registerTool({
       if (result) {
         const truncated = result.slice(0, MAX_RESULT_CHARS);
         const isTruncated = result.length > MAX_RESULT_CHARS;
-        lines.push(`**结果**：\n${truncated}${isTruncated ? `\n…（已截断，原长 ${result.length} 字）` : ""}`);
+        lines.push(
+          `**结果**：\n${truncated}${isTruncated ? `\n…（已截断，原长 ${result.length} 字）` : ""}`
+        );
       } else {
         lines.push("**结果**：（无输出）");
       }
@@ -255,7 +258,7 @@ registerTool({
     // ── 等待当前会话所有 Slave ─────────────────────────────────────────────────
     const states = await slaveManager.waitForByMaster(
       ctx.masterSession.sessionId,
-      timeoutSecs * 1000,
+      timeoutSecs * 1000
     );
 
     if (states.size === 0) {
@@ -267,11 +270,17 @@ registerTool({
 
     for (const [sid, state] of states) {
       const statusIcon =
-        state.status === "done"    ? "✅" :
-        state.status === "error"   ? "❌" :
-        state.status === "aborted" ? "⛔" : "❓";
+        state.status === "done"
+          ? "✅"
+          : state.status === "error"
+            ? "❌"
+            : state.status === "aborted"
+              ? "⛔"
+              : "❓";
       const duration = state.finishedAt
-        ? Math.round((new Date(state.finishedAt).getTime() - new Date(state.startedAt).getTime()) / 1000)
+        ? Math.round(
+            (new Date(state.finishedAt).getTime() - new Date(state.startedAt).getTime()) / 1000
+          )
         : null;
       const durationStr = duration !== null ? ` (耗时 ${duration}s)` : "";
 
@@ -283,7 +292,9 @@ registerTool({
       if (result) {
         const truncated = result.slice(0, MAX_RESULT_CHARS);
         const isTruncated = result.length > MAX_RESULT_CHARS;
-        lines.push(`**结果**：\n${truncated}${isTruncated ? `\n…（已截断，原长 ${result.length} 字）` : ""}`);
+        lines.push(
+          `**结果**：\n${truncated}${isTruncated ? `\n…（已截断，原长 ${result.length} 字）` : ""}`
+        );
       } else {
         lines.push("**结果**：（无输出）");
       }
@@ -326,9 +337,13 @@ registerTool({
 
 function formatSlaveState(state: ReturnType<typeof slaveManager.status> & object): string {
   const statusIcon =
-    state.status === "running" ? "⏳" :
-    state.status === "done"    ? "✅" :
-    state.status === "error"   ? "❌" : "⛔";
+    state.status === "running"
+      ? "⏳"
+      : state.status === "done"
+        ? "✅"
+        : state.status === "error"
+          ? "❌"
+          : "⛔";
 
   const lines = [
     `${statusIcon} Slave \`${state.slaveId}\` — ${state.status}`,

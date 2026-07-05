@@ -99,7 +99,7 @@ async function buildOverrideClient(job: CronJob): Promise<AnyLLMClient | undefin
       if (isPremiumModel(dailyModelId) && !allowlist.allowedCronJobs.includes(job.id)) {
         console.warn(
           `[cron][premiumGuard] job=${job.id} 不在 cron 白名单，` +
-          `daily 模型 ${cfg.llm.backends.daily.model} → ${allowlist.fallbackModel}`
+            `daily 模型 ${cfg.llm.backends.daily.model} → ${allowlist.fallbackModel}`
         );
         return buildFallbackClient();
       }
@@ -116,7 +116,7 @@ async function buildOverrideClient(job: CronJob): Promise<AnyLLMClient | undefin
       if (!allowlist.allowedCronJobs.includes(job.id)) {
         console.warn(
           `[cron][premiumGuard] job=${job.id} 不在 cron 白名单，` +
-          `降级 ${job.model} → ${allowlist.fallbackModel}`
+            `降级 ${job.model} → ${allowlist.fallbackModel}`
         );
         return buildFallbackClient();
       }
@@ -174,9 +174,15 @@ async function runPipelineJob(
   session: Session,
   onMFARequest: (msg: string, verify?: (code: string) => boolean) => Promise<boolean>,
   notifyFn: ((message: string) => Promise<void>) | undefined,
-  onAskUserFn: ((question: string, options?: Array<{ label: string; description?: string; recommended?: boolean }>, allowFreeform?: boolean) => Promise<{ answer: string; isFreeform: boolean }>) | undefined,
+  onAskUserFn:
+    | ((
+        question: string,
+        options?: Array<{ label: string; description?: string; recommended?: boolean }>,
+        allowFreeform?: boolean
+      ) => Promise<{ answer: string; isFreeform: boolean }>)
+    | undefined,
   overrideClient: AnyLLMClient | undefined,
-  systemPrompt: string,
+  systemPrompt: string
 ): Promise<string> {
   const steps = job.steps!;
   let lastResult = "";
@@ -196,7 +202,9 @@ async function runPipelineJob(
         ...(notifyFn ? { onNotify: notifyFn } : {}),
       }),
     // cron pipeline 用 result_mode="wait" + agent_wait 汇总结果，inject 回调保持 no-op
-    onSlaveComplete: async (_notif) => { /* no-op */ },
+    onSlaveComplete: async (_notif) => {
+      /* no-op */
+    },
     // 透传推送回调，SubAgent 内部调用 notify_user 时可正常推送
     ...(notifyFn ? { onNotify: notifyFn } : {}),
   };
@@ -207,23 +215,30 @@ async function runPipelineJob(
 
     if (step.type === "tool") {
       console.log(`[cron] job=${job.id} ${stepLabel} 执行工具: ${step.name}`);
-      const toolResult = await executeTool(step.name, step.args as Record<string, unknown>, toolCtx);
+      const toolResult = await executeTool(
+        step.name,
+        step.args as Record<string, unknown>,
+        toolCtx
+      );
       lastResult = toolResult;
 
       // 将工具输出以合成 tool call 对注入 session：
       // assistant(tool_calls) + tool(result)，使后续 LLM 步骤以原生工具结果格式感知数据
       const syntheticCallId = `pipeline_step${i + 1}_${step.name}_${Date.now()}`;
-      session.addAssistantWithToolCalls("", [{
-        callId: syntheticCallId,
-        name: step.name,
-        args: step.args as Record<string, unknown>,
-      }]);
+      session.addAssistantWithToolCalls("", [
+        {
+          callId: syntheticCallId,
+          name: step.name,
+          args: step.args as Record<string, unknown>,
+        },
+      ]);
       session.addToolResultMessage(syntheticCallId, toolResult);
       console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${toolResult.length}`);
-
     } else {
       // msg step：触发 LLM
-      console.log(`[cron] job=${job.id} ${stepLabel} 触发 LLM，msg: "${step.content.slice(0, 60)}"`);
+      console.log(
+        `[cron] job=${job.id} ${stepLabel} 触发 LLM，msg: "${step.content.slice(0, 60)}"`
+      );
       const result = await runAgent(session, step.content, {
         onMFARequest,
         systemPrompt: systemPrompt,
@@ -234,7 +249,9 @@ async function runPipelineJob(
         // Pipeline 中需要 fork 请改用 type:"tool", name:"agent_fork" 的 tool step 显式触发
         slaveDepth: 1,
         // cron 场景下 inject 模式的 slave 完成不额外推送用户（wait 模式 slave 本就不触发此回调）
-        onSlaveComplete: async (_notif) => { /* no-op for cron pipeline: use result_mode="wait" + agent_wait instead */ },
+        onSlaveComplete: async (_notif) => {
+          /* no-op for cron pipeline: use result_mode="wait" + agent_wait instead */
+        },
       });
       lastResult = result.content;
       console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${result.content.length}`);
@@ -251,9 +268,7 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
 
   // Pipeline 模式强制使用 stateful session（步骤间需共享上下文）
   const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;
-  const sessionId = (job.stateful || isPipeline)
-    ? `cron:${job.id}`
-    : `cron:${job.id}:${Date.now()}`;
+  const sessionId = job.stateful || isPipeline ? `cron:${job.id}` : `cron:${job.id}:${Date.now()}`;
 
   // Pipeline 模式：若 clearSessionOnRun !== false（默认 true）且非 stateful，运行前清空 session JSONL，
   // 防止历史消息（含旧行情数据）跨 run 污染当次上下文。必须在 new Session() 之前执行，
@@ -261,7 +276,11 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
   if (isPipeline && !job.stateful && job.clearSessionOnRun !== false) {
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
     const jsonlPath = path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
-    try { fs.unlinkSync(jsonlPath); } catch { /* 文件不存在时忽略 */ }
+    try {
+      fs.unlinkSync(jsonlPath);
+    } catch {
+      /* 文件不存在时忽略 */
+    }
   }
 
   const session = new Session(sessionId, { agentId: job.agentId });
@@ -275,7 +294,7 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
             job.output.peerId!,
             job.output.msgType,
             warningMsg,
-            60_000,
+            60_000
           );
           if (verifyCode) {
             const digits = answer.replace(/\s/g, "");
@@ -290,53 +309,71 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
 
   const overrideClient = await buildOverrideClient(job);
 
-  const notifyFn = bridge && job.output.peerId
-    ? async (message: string) => {
-        const prefixed = message.startsWith("<img") ? message : `📅 [定时]
+  const notifyFn =
+    bridge && job.output.peerId
+      ? async (message: string) => {
+          const prefixed = message.startsWith("<img")
+            ? message
+            : `📅 [定时]
 ${message}`;
-        await bridge.send(job.output.peerId!, job.output.msgType, prefixed);
-      }
-    : undefined;
+          await bridge.send(job.output.peerId!, job.output.msgType, prefixed);
+        }
+      : undefined;
 
   // ask_user 回调:将问题推送到 job 绑定的 connector,等待用户回复(超时 5 分钟)
-  const onAskUserFn = bridge && job.output.peerId && bridge.requestUserInput
-    ? async (
-        question: string,
-        options?: Array<{ label: string; description?: string; recommended?: boolean }>,
-        allowFreeform?: boolean,
-      ): Promise<{ answer: string; isFreeform: boolean }> => {
-        let prompt = `❓ ${question}`;
-        if (options && options.length > 0) {
-          prompt += "\n" + options.map((o, i) => `${i + 1}. ${o.label}${o.description ? " — " + o.description : ""}${o.recommended ? " ✅" : ""}`).join("\n");
+  const onAskUserFn =
+    bridge && job.output.peerId && bridge.requestUserInput
+      ? async (
+          question: string,
+          options?: Array<{ label: string; description?: string; recommended?: boolean }>,
+          allowFreeform?: boolean
+        ): Promise<{ answer: string; isFreeform: boolean }> => {
+          let prompt = `❓ ${question}`;
+          if (options && options.length > 0) {
+            prompt +=
+              "\n" +
+              options
+                .map(
+                  (o, i) =>
+                    `${i + 1}. ${o.label}${o.description ? " — " + o.description : ""}${o.recommended ? " ✅" : ""}`
+                )
+                .join("\n");
+          }
+          const raw = await bridge.requestUserInput!(
+            job.output.peerId!,
+            job.output.msgType,
+            prompt,
+            300_000 // 5 分钟超时
+          );
+          const trimmed = raw.trim();
+          const n = parseInt(trimmed, 10);
+          if (options && options.length > 0 && !isNaN(n) && n >= 1 && n <= options.length) {
+            return { answer: options[n - 1]!.label, isFreeform: false };
+          }
+          if (allowFreeform !== false) {
+            return { answer: trimmed, isFreeform: true };
+          }
+          throw new Error(`INVALID_CHOICE:${trimmed}`);
         }
-        const raw = await bridge.requestUserInput!(
-          job.output.peerId!,
-          job.output.msgType,
-          prompt,
-          300_000, // 5 分钟超时
-        );
-        const trimmed = raw.trim();
-        const n = parseInt(trimmed, 10);
-        if (options && options.length > 0 && !isNaN(n) && n >= 1 && n <= options.length) {
-          return { answer: options[n - 1]!.label, isFreeform: false };
-        }
-        if (allowFreeform !== false) {
-          return { answer: trimmed, isFreeform: true };
-        }
-        throw new Error(`INVALID_CHOICE:${trimmed}`);
-      }
-    : undefined;
+      : undefined;
 
   // notify=llm 时在 system prompt 追加 [NOTIFY] 约定说明
-  const systemPrompt = job.output.notify === "llm"
-    ? CRON_AGENT_SYSTEM + CRON_LLM_NOTIFY_SUFFIX
-    : CRON_AGENT_SYSTEM;
+  const systemPrompt =
+    job.output.notify === "llm" ? CRON_AGENT_SYSTEM + CRON_LLM_NOTIFY_SUFFIX : CRON_AGENT_SYSTEM;
 
   try {
     if (isPipeline) {
       // ── Pipeline 模式 ──────────────────────────────────────────────────────
       console.log(`[cron] job=${job.id} 以 Pipeline 模式运行（${job.steps!.length} 步）`);
-      resultText = await runPipelineJob(job, session, onMFARequest, notifyFn, onAskUserFn, overrideClient, systemPrompt);
+      resultText = await runPipelineJob(
+        job,
+        session,
+        onMFARequest,
+        notifyFn,
+        onAskUserFn,
+        overrideClient,
+        systemPrompt
+      );
     } else {
       // ── 单步模式（向后兼容）────────────────────────────────────────────────
       const result = await runAgent(session, job.message, {
@@ -359,11 +396,16 @@ ${message}`;
   // ── 通知策略 ──────────────────────────────────────────────────────────────
   const shouldNotify = ((): boolean => {
     switch (job.output.notify) {
-      case "always":    return true;
-      case "on_error":  return status === "error";
-      case "on_change": return resultText !== (job.lastRunResult ?? "");
-      case "never":     return false;
-      case "llm":       return false; // llm 模式：由下方单独处理
+      case "always":
+        return true;
+      case "on_error":
+        return status === "error";
+      case "on_change":
+        return resultText !== (job.lastRunResult ?? "");
+      case "never":
+        return false;
+      case "llm":
+        return false; // llm 模式：由下方单独处理
     }
   })();
 
@@ -372,7 +414,9 @@ ${message}`;
     const blocks = extractNotifyBlocks(resultText);
     for (const block of blocks) {
       try {
-        const prefixed = block.startsWith("<img") ? block : `📅 [定时]
+        const prefixed = block.startsWith("<img")
+          ? block
+          : `📅 [定时]
 ${block}`;
         await bridge.send(job.output.peerId, job.output.msgType, prefixed);
       } catch (err) {
@@ -388,7 +432,9 @@ ${block}`;
 
   if (shouldNotify && bridge && job.output.peerId && job.output.sessionId) {
     try {
-      const prefixed = resultText.startsWith("<img") ? resultText : `📅 [定时]
+      const prefixed = resultText.startsWith("<img")
+        ? resultText
+        : `📅 [定时]
 ${resultText}`;
       await bridge.send(job.output.peerId, job.output.msgType, prefixed);
     } catch (err) {
@@ -408,7 +454,11 @@ ${resultText}`;
   if (!job.stateful && !isPipeline) {
     const sanitized = sessionId.replace(/[:/\\]/g, "_");
     const jsonlPath = path.join(os.homedir(), ".tinyclaw", "sessions", `${sanitized}.jsonl`);
-    try { fs.unlinkSync(jsonlPath); } catch { /* 文件可能不存在,忽略 */ }
+    try {
+      fs.unlinkSync(jsonlPath);
+    } catch {
+      /* 文件可能不存在,忽略 */
+    }
   }
 
   // ── 带时间戳 session 同前缀只保最新 1 个 ──────────────────────────────

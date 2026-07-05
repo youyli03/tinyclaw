@@ -11,7 +11,13 @@ export class ChatRuntimeBridge implements CronRuntimeBridge {
     message: string,
     replyToId?: string
   ): Promise<void> {
-    await sendQQBotMessage({ peerId, msgType, text: message, ...(replyToId ? { replyToId } : {}), ...(this.botId ? { botId: this.botId } : {}) });
+    await sendQQBotMessage({
+      peerId,
+      msgType,
+      text: message,
+      ...(replyToId ? { replyToId } : {}),
+      ...(this.botId ? { botId: this.botId } : {}),
+    });
   }
 
   async requestUserInput(

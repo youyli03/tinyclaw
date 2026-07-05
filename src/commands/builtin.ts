@@ -10,7 +10,12 @@ import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry, parseModelSymbol } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
-import { getCachedCopilotInfo, getCopilotRateLimit, getCopilotUserQuota, lookupMultiplier } from "../llm/copilot.js";
+import {
+  getCachedCopilotInfo,
+  getCopilotRateLimit,
+  getCopilotUserQuota,
+  lookupMultiplier,
+} from "../llm/copilot.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -28,9 +33,7 @@ registerCommand({
       const name = args[0]!.replace(/^\//, "").toLowerCase();
       const cmd = getCommand(name);
       if (!cmd) return `❌ 未知命令 \`/${name}\`，发送 \`/help\` 查看全部命令。`;
-      const lines = [
-        `• \`/${cmd.name}\` — ${cmd.description}`,
-      ];
+      const lines = [`• \`/${cmd.name}\` — ${cmd.description}`];
       if (cmd.usage) lines.push(`用法：\`${cmd.usage}\``);
       return lines.join("\n");
     }
@@ -125,7 +128,12 @@ registerCommand({
     if (!isCodeMode) {
       const loops = loopTriggerManager.listStatus();
       if (loops.length > 0) {
-        const icons: Record<string, string> = { running: "⏳", paused: "⏸️", idle: "✅", not_found: "❓" };
+        const icons: Record<string, string> = {
+          running: "⏳",
+          paused: "⏸️",
+          idle: "✅",
+          not_found: "❓",
+        };
         const loopStrs = loops.map((l) => `${icons[l.status] ?? "❓"} \`${l.id}\`(${l.status})`);
         lines.push(`Loop 触发器:${loopStrs.join(" / ")}`);
       }
@@ -135,7 +143,9 @@ registerCommand({
     try {
       const config = loadConfig();
       // config 直接读取 model symbol，避免 init 未完整时报错
-      const modelSymbol = (isCodeMode ? config.llm.backends.code?.model : undefined) ?? config.llm.backends.daily.model;
+      const modelSymbol =
+        (isCodeMode ? config.llm.backends.code?.model : undefined) ??
+        config.llm.backends.daily.model;
       const { provider, modelId } = parseModelSymbol(modelSymbol);
 
       if (provider === "copilot") {
@@ -155,10 +165,11 @@ registerCommand({
             if (pi.unlimited) {
               quotaStr = "无限制";
             } else {
-              const resetSuffix = userQuota.quota_reset_date ? `,${userQuota.quota_reset_date} 重置` : "";
-              const overageSuffix = pi.overage_permitted && pi.overage_count > 0
-                ? `(超额 ${pi.overage_count})`
+              const resetSuffix = userQuota.quota_reset_date
+                ? `,${userQuota.quota_reset_date} 重置`
                 : "";
+              const overageSuffix =
+                pi.overage_permitted && pi.overage_count > 0 ? `(超额 ${pi.overage_count})` : "";
               quotaStr = `${pi.remaining} / ${pi.entitlement} premium 请求${overageSuffix}${resetSuffix}`;
             }
           } else {
@@ -168,9 +179,8 @@ registerCommand({
               const ageSuffix = ageMin < 1 ? "" : `(${ageMin} 分钟前)`;
               quotaStr = `${rl.remaining} / ${rl.limit}${ageSuffix}`;
             } else if (info.quotas) {
-              const chatQuota = (info.quotas["chat_completions"] ?? Object.values(info.quotas)[0]) as
-                | Record<string, unknown>
-                | undefined;
+              const chatQuota = (info.quotas["chat_completions"] ??
+                Object.values(info.quotas)[0]) as Record<string, unknown> | undefined;
               if (chatQuota) {
                 const remaining = chatQuota["remaining"];
                 const limit = chatQuota["monthly_limit"];
@@ -190,7 +200,7 @@ registerCommand({
           }
           lines.push(
             "",
-            `Copilot:\`${modelId}\` · ${multiplierStr} premium/请求 · 剩余配额:${quotaStr} · 计划:${skuStr}`,
+            `Copilot:\`${modelId}\` · ${multiplierStr} premium/请求 · 剩余配额:${quotaStr} · 计划:${skuStr}`
           );
         }
       } else if (provider === "deepseek") {
@@ -205,9 +215,14 @@ registerCommand({
               signal: ctrl.signal,
             });
             clearTimeout(timer);
-            const data = await resp.json() as {
+            const data = (await resp.json()) as {
               is_available: boolean;
-              balance_infos: Array<{ currency: string; total_balance: string; granted_balance: string; topped_up_balance: string }>;
+              balance_infos: Array<{
+                currency: string;
+                total_balance: string;
+                granted_balance: string;
+                topped_up_balance: string;
+              }>;
             };
             const bi = data.balance_infos?.[0];
             if (bi) {
@@ -276,8 +291,6 @@ registerCommand({
   },
 });
 
-
-
 registerCommand({
   name: "slaves",
   description: "列出后台 Slave 任务，可按状态过滤",
@@ -288,9 +301,7 @@ registerCommand({
     type Filter = (typeof validFilters)[number];
 
     const filterArg = args[0]?.toLowerCase();
-    const filter = validFilters.includes(filterArg as Filter)
-      ? (filterArg as Filter)
-      : undefined;
+    const filter = validFilters.includes(filterArg as Filter) ? (filterArg as Filter) : undefined;
 
     let all = slaveManager.listAll();
     if (filter) {
@@ -314,9 +325,13 @@ registerCommand({
 
     const items = sorted.map((s) => {
       const icon =
-        s.status === "running" ? "⏳" :
-        s.status === "done"    ? "✅" :
-        s.status === "error"   ? "❌" : "⛔";
+        s.status === "running"
+          ? "⏳"
+          : s.status === "done"
+            ? "✅"
+            : s.status === "error"
+              ? "❌"
+              : "⛔";
       const elapsed = s.finishedAt
         ? `${Math.round((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000)}s`
         : `运行中 ${Math.round((Date.now() - new Date(s.startedAt).getTime()) / 1000)}s`;
@@ -411,7 +426,7 @@ function runTypecheck(): Promise<{ ok: boolean; output: string }> {
 async function performRestart(
   session: import("../core/session.js").Session,
   noteMsg?: string,
-  skipTypecheck = false,
+  skipTypecheck = false
 ): Promise<string> {
   if (session.running) {
     return "⚠️ 当前有任务正在运行,请等待完成后再重启。";
@@ -420,9 +435,8 @@ async function performRestart(
   if (!skipTypecheck) {
     const { ok, output } = await runTypecheck();
     if (!ok) {
-      const truncated = output.length > 1500
-        ? output.slice(0, 1500) + "\n...(输出已截断)"
-        : output || "(无输出)";
+      const truncated =
+        output.length > 1500 ? output.slice(0, 1500) + "\n...(输出已截断)" : output || "(无输出)";
       return `❌ 类型检查失败,已取消重启:\n\`\`\`\n${truncated}\n\`\`\``;
     }
   }
@@ -438,9 +452,11 @@ async function performRestart(
         fs.writeFileSync(
           markerPath,
           JSON.stringify({ peerId, msgType, ...(noteMsg ? { note: noteMsg } : {}) }),
-          "utf-8",
+          "utf-8"
         );
-      } catch { /* 写失败不影响重启 */ }
+      } catch {
+        /* 写失败不影响重启 */
+      }
     }
   }
 
@@ -509,18 +525,31 @@ async function listProviderModels(provider: string): Promise<string> {
       const models = await getCopilotModels(p.copilot.githubToken);
       const picker = models.filter((m) => m.isPickerEnabled);
       const lines = picker.map((m) => {
-        const mult = m.multiplier === undefined ? "" : m.multiplier === 0 ? " (free)" : " ×" + m.multiplier;
+        const mult =
+          m.multiplier === undefined ? "" : m.multiplier === 0 ? " (free)" : " ×" + m.multiplier;
         return "· `copilot/" + m.id + "`" + mult;
       });
-      return "**Copilot 可用模型(" + picker.length + ")**\n" + lines.join("\n") +
-        "\n\n用 `/model code copilot/<id>` 或 `/model chat copilot/<id>` 切换。";
+      return (
+        "**Copilot 可用模型(" +
+        picker.length +
+        ")**\n" +
+        lines.join("\n") +
+        "\n\n用 `/model code copilot/<id>` 或 `/model chat copilot/<id>` 切换。"
+      );
     }
     if (provider === "openrouter") {
       if (!p.openrouter) return "❌ [providers.openrouter] 未配置。";
       const models = await fetchFreeModels(p.openrouter.apiKey);
       const lines = models.slice(0, 30).map((m) => "· `openrouter/" + m.id + "`");
-      return "**OpenRouter 免费模型(top " + Math.min(30, models.length) + "/" + models.length + ")**\n" +
-        lines.join("\n") + "\n\n另有 `openrouter/auto-free` 自动路由。";
+      return (
+        "**OpenRouter 免费模型(top " +
+        Math.min(30, models.length) +
+        "/" +
+        models.length +
+        ")**\n" +
+        lines.join("\n") +
+        "\n\n另有 `openrouter/auto-free` 自动路由。"
+      );
     }
     if (provider === "deepseek") {
       if (!p.deepseek) return "❌ [providers.deepseek] 未配置。";
@@ -532,7 +561,11 @@ async function listProviderModels(provider: string): Promise<string> {
     }
     if (provider === "openai") {
       if (!p.openai) return "❌ [providers.openai] 未配置。";
-      return "**OpenAI**\nbaseUrl: " + p.openai.baseUrl + "\n用 `/model chat openai/<model-id>` 直接指定。";
+      return (
+        "**OpenAI**\nbaseUrl: " +
+        p.openai.baseUrl +
+        "\n用 `/model chat openai/<model-id>` 直接指定。"
+      );
     }
     return "未知 provider " + provider + ",可选:copilot / openrouter / openai / deepseek / mimo";
   } catch (e) {
@@ -544,10 +577,18 @@ function renderModelOverview(): string {
   const cur = currentBackendModels();
   const aliases = getAliases();
   const lines: string[] = ["**当前模型配置**"];
-  const rows: Array<[string, string]> = [["💬 chat", "chat"], ["🖥️ code", "code"], ["📝 summarizer", "summarizer"], ["👁️ vision", "vision"]];
+  const rows: Array<[string, string]> = [
+    ["💬 chat", "chat"],
+    ["🖥️ code", "code"],
+    ["📝 summarizer", "summarizer"],
+    ["👁️ vision", "vision"],
+  ];
   for (const [label, key] of rows) {
     const sym = cur[key];
-    if (!sym) { lines.push(label + ":_(未配置,回退 chat)_"); continue; }
+    if (!sym) {
+      lines.push(label + ":_(未配置,回退 chat)_");
+      continue;
+    }
     const al = aliasForSymbol(sym);
     lines.push(label + ":`" + sym + "`" + (al ? " (别名 `" + al + "`)" : ""));
   }
@@ -567,7 +608,8 @@ function renderModelOverview(): string {
 registerCommand({
   name: "model",
   description: "查看/切换模型(chat 与 code 分别设置,支持别名,切换后自动重启)",
-  usage: "/model [chat|code|summarizer|vision] <别名|provider/model-id> · /model list [provider] · /model reset",
+  usage:
+    "/model [chat|code|summarizer|vision] <别名|provider/model-id> · /model list [provider] · /model reset",
   modes: ["chat"],
   async execute({ session, args }) {
     if (args.length === 0) return renderModelOverview();
@@ -596,8 +638,12 @@ registerCommand({
 
     const symbol = resolveAlias(modelArg);
     if (!symbol) {
-      return "❌ 无法识别模型 `" + modelArg + "`。\n" +
-        "可用别名见 `/model`,或直接传 `provider/model-id`(如 `copilot/gpt-4o`)。";
+      return (
+        "❌ 无法识别模型 `" +
+        modelArg +
+        "`。\n" +
+        "可用别名见 `/model`,或直接传 `provider/model-id`(如 `copilot/gpt-4o`)。"
+      );
     }
 
     const verr = validateSymbolProvider(symbol);
@@ -615,7 +661,9 @@ registerCommand({
             warn = "\n⚠️ Copilot 模型列表中未找到 `" + id + "`,仍按你的输入写入(可能拼写有误)。";
           }
         }
-      } catch { /* 校验失败不阻断 */ }
+      } catch {
+        /* 校验失败不阻断 */
+      }
     }
 
     patchTomlField(["llm", "backends", backend], "model", '"' + symbol + '"');
@@ -643,8 +691,10 @@ registerCommand({
     }
     // 设置 pendingRetry 信号，main.ts 在命令返回后检测并重新触发 runAgent
     const retryPayload: { requestId?: string; userContent?: string } = {};
-    if (session.lastFailedRequestId !== undefined) retryPayload.requestId = session.lastFailedRequestId;
-    if (session.lastFailedUserContent !== undefined) retryPayload.userContent = session.lastFailedUserContent;
+    if (session.lastFailedRequestId !== undefined)
+      retryPayload.requestId = session.lastFailedRequestId;
+    if (session.lastFailedUserContent !== undefined)
+      retryPayload.userContent = session.lastFailedUserContent;
     session.pendingRetry = retryPayload;
     delete session.lastFailedRequestId;
     delete session.lastFailedUserContent;
@@ -669,11 +719,19 @@ registerCommand({
     if (sub === "list" || !sub) {
       const ltStatus = loopTriggerManager.listStatus();
       const lrStatus = loopRunner.listStatus();
-      if (ltStatus.length === 0 && lrStatus.length === 0) return "ℹ️ 当前没有已加载的 Loop 触发器。";
-      const icons: Record<string, string> = { running: "⏳", paused: "⏸️", idle: "✅", not_found: "❓" };
+      if (ltStatus.length === 0 && lrStatus.length === 0)
+        return "ℹ️ 当前没有已加载的 Loop 触发器。";
+      const icons: Record<string, string> = {
+        running: "⏳",
+        paused: "⏸️",
+        idle: "✅",
+        not_found: "❓",
+      };
       const lines = ["**Loop 触发器列表**\n"];
       for (const s of ltStatus) {
-        lines.push(`${icons[s.status] ?? "❓"} \`${s.id}\` — ${s.status}  (bindTo: \`${s.bindTo}\`)`);
+        lines.push(
+          `${icons[s.status] ?? "❓"} \`${s.id}\` — ${s.status}  (bindTo: \`${s.bindTo}\`)`
+        );
       }
       for (const s of lrStatus) {
         lines.push(`${icons[s.status] ?? "❓"} session \`${s.sessionId}\` — ${s.status}`);

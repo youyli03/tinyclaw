@@ -10,10 +10,10 @@
 import { readFileSync, existsSync } from "fs";
 
 const CA_CANDIDATES = [
-  "/etc/ssl/certs/ca-certificates.crt",  // Debian / Ubuntu
-  "/etc/pki/tls/certs/ca-bundle.crt",    // RHEL / CentOS
-  "/etc/ssl/ca-bundle.pem",              // openSUSE
-  "/etc/ssl/cert.pem",                   // Alpine / macOS
+  "/etc/ssl/certs/ca-certificates.crt", // Debian / Ubuntu
+  "/etc/pki/tls/certs/ca-bundle.crt", // RHEL / CentOS
+  "/etc/ssl/ca-bundle.pem", // openSUSE
+  "/etc/ssl/cert.pem", // Alpine / macOS
 ];
 
 let _systemCA: string | null | undefined; // undefined=未初始化, null=找不到

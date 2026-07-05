@@ -60,7 +60,11 @@ class SkillWatcher {
   /** 停止所有监听 */
   stop(): void {
     for (const w of this.watchers) {
-      try { w.close(); } catch { /* ignore */ }
+      try {
+        w.close();
+      } catch {
+        /* ignore */
+      }
     }
     for (const t of this.pollTimers) {
       clearInterval(t);
@@ -82,7 +86,9 @@ class SkillWatcher {
     // 监听 skills/ 目录 —— 使用轮询（Linux recursive fs.watch 不可靠）
     this._pollSkillsDir(skillsDir, agentId);
 
-    console.log(`[skills] watching agent="${agentId}" (SKILLS.md=fswatch, skills/=poll ${POLL_INTERVAL_MS}ms)`);
+    console.log(
+      `[skills] watching agent="${agentId}" (SKILLS.md=fswatch, skills/=poll ${POLL_INTERVAL_MS}ms)`
+    );
   }
 
   private _watchFile(filePath: string, agentId: string): void {
@@ -120,7 +126,8 @@ class SkillWatcher {
 
       let subdirs: string[];
       try {
-        subdirs = fs.readdirSync(skillsDir, { withFileTypes: true })
+        subdirs = fs
+          .readdirSync(skillsDir, { withFileTypes: true })
           .filter((d) => d.isDirectory() && !d.name.endsWith(".disabled"))
           .map((d) => d.name);
       } catch {
@@ -132,7 +139,9 @@ class SkillWatcher {
         // 记录子目录本身的 mtime（子目录新增/删除文件时 mtime 会变）
         try {
           cur.set(subDir, fs.statSync(subDir).mtimeMs);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         // 记录 SKILL.md / README.md 的 mtime
         for (const docName of ["SKILL.md", "README.md"]) {
           const docPath = path.join(subDir, docName);
@@ -140,7 +149,9 @@ class SkillWatcher {
             if (fs.existsSync(docPath)) {
               cur.set(docPath, fs.statSync(docPath).mtimeMs);
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
       return cur;
@@ -190,7 +201,11 @@ class SkillWatcher {
   private _doRefresh(agentId: string): void {
     skillRegistry.refresh(agentId);
     for (const fn of this.onChangeFns) {
-      try { fn(agentId); } catch { /* ignore */ }
+      try {
+        fn(agentId);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -207,7 +222,8 @@ class SkillWatcher {
 
       let subdirs: string[];
       try {
-        subdirs = fs.readdirSync(skillsDir, { withFileTypes: true })
+        subdirs = fs
+          .readdirSync(skillsDir, { withFileTypes: true })
           .filter((d) => d.isDirectory() && !d.name.endsWith(".disabled"))
           .map((d) => d.name);
       } catch {
@@ -216,12 +232,18 @@ class SkillWatcher {
 
       for (const sub of subdirs) {
         const subDir = path.join(skillsDir, sub);
-        try { cur.set(subDir, fs.statSync(subDir).mtimeMs); } catch { /* ignore */ }
+        try {
+          cur.set(subDir, fs.statSync(subDir).mtimeMs);
+        } catch {
+          /* ignore */
+        }
         for (const docName of ["SKILL.md", "README.md"]) {
           const docPath = path.join(subDir, docName);
           try {
             if (fs.existsSync(docPath)) cur.set(docPath, fs.statSync(docPath).mtimeMs);
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
       return cur;
@@ -235,11 +257,17 @@ class SkillWatcher {
       let changed = false;
 
       for (const [k, v] of cur) {
-        if (snapshot.get(k) !== v) { changed = true; break; }
+        if (snapshot.get(k) !== v) {
+          changed = true;
+          break;
+        }
       }
       if (!changed) {
         for (const k of snapshot.keys()) {
-          if (!cur.has(k)) { changed = true; break; }
+          if (!cur.has(k)) {
+            changed = true;
+            break;
+          }
         }
       }
 

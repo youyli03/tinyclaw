@@ -60,20 +60,20 @@ function normalizeContentType(contentType: string, ext: string): string {
   }
   // 按扩展名推断
   const byExt: Record<string, string> = {
-    ".amr":  "audio/amr",
+    ".amr": "audio/amr",
     ".silk": "audio/silk",
-    ".mp3":  "audio/mpeg",
-    ".wav":  "audio/wav",
-    ".ogg":  "audio/ogg",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
     ".flac": "audio/flac",
-    ".aac":  "audio/aac",
-    ".m4a":  "audio/mp4",
-    ".mp4":  "video/mp4",
+    ".aac": "audio/aac",
+    ".m4a": "audio/mp4",
+    ".mp4": "video/mp4",
     ".webm": "video/webm",
-    ".jpg":  "image/jpeg",
+    ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
-    ".png":  "image/png",
-    ".gif":  "image/gif",
+    ".png": "image/png",
+    ".gif": "image/gif",
     ".webp": "image/webp",
   };
   return byExt[ext.toLowerCase()] ?? contentType;
@@ -84,15 +84,14 @@ function normalizeContentType(contentType: string, ext: string): string {
  * - 用 AbortController + setTimeout 手动实现超时（替代 AbortSignal.timeout，避免 hang 连接）
  * - 失败后等待 1s 重试，最多重试 retries 次
  */
-async function fetchWithRetry(
-  url: string,
-  timeoutMs: number,
-  retries = 1
-): Promise<Response> {
+async function fetchWithRetry(url: string, timeoutMs: number, retries = 1): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(new DOMException("The operation timed out.", "TimeoutError")), timeoutMs);
+    const timer = setTimeout(
+      () => ac.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      timeoutMs
+    );
     try {
       const resp = await fetch(url, { signal: ac.signal });
       clearTimeout(timer);
@@ -101,7 +100,7 @@ async function fetchWithRetry(
       clearTimeout(timer);
       lastErr = err;
       if (attempt < retries) {
-        await new Promise(res => setTimeout(res, 1_000));
+        await new Promise((res) => setTimeout(res, 1_000));
       }
     }
   }
@@ -129,9 +128,7 @@ export async function downloadAttachments(
       }
       const buffer = Buffer.from(await resp.arrayBuffer());
       const rawContentType = att.voiceWavUrl ? "audio/wav" : att.contentType;
-      const ext = att.filename
-        ? path.extname(att.filename)
-        : guessExtension(rawContentType);
+      const ext = att.filename ? path.extname(att.filename) : guessExtension(rawContentType);
       const basename = att.filename ?? `${crypto.randomUUID()}${ext}`;
       // 用扩展名修正 QQ 有时返回的不精确 content-type（如 application/octet-stream）
       const effectiveContentType = normalizeContentType(rawContentType, ext);

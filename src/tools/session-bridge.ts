@@ -69,8 +69,7 @@ registerTool({
         properties: {
           target_session_id: {
             type: "string",
-            description:
-              "目标 session 的 ID（可通过 session_get 获取可用列表）",
+            description: "目标 session 的 ID（可通过 session_get 获取可用列表）",
           },
           message: {
             type: "string",

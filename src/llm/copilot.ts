@@ -36,7 +36,7 @@ async function getUndiciAgent(): Promise<import("undici").Agent> {
   const { Agent } = await import("undici");
   const ca = getSystemCA();
   _undiciAgent = new Agent({
-    allowH2: true,  // HTTP/2，匹配 Copilot CLI EnvHttpProxyAgent({allowH2: true})
+    allowH2: true, // HTTP/2，匹配 Copilot CLI EnvHttpProxyAgent({allowH2: true})
     ...(ca ? { connect: { ca } } : {}),
   });
   return _undiciAgent;
@@ -203,7 +203,13 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
 
   const ghToken = await resolveGitHubToken(githubTokenSource);
 
-  const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
+  const policy = (() => {
+    try {
+      return getRetryPolicy();
+    } catch {
+      return null;
+    }
+  })();
   const MAX_RETRIES = policy?.maxAttempts ?? 3;
   const BASE_DELAY = policy?.baseDelayMs ?? 500;
   const infinite = MAX_RETRIES === -1;
@@ -211,18 +217,23 @@ export async function getCopilotToken(githubTokenSource: string): Promise<string
   let resp: Response | undefined;
   for (let attempt = 1; infinite || attempt <= MAX_RETRIES + 1; attempt++) {
     try {
-      resp = await fetch(TOKEN_URL, withCA({
-        headers: {
-          Authorization: `token ${ghToken}`,
-          Accept: "application/json",
-          ...COPILOT_HEADERS,
-        },
-      }));
+      resp = await fetch(
+        TOKEN_URL,
+        withCA({
+          headers: {
+            Authorization: `token ${ghToken}`,
+            Accept: "application/json",
+            ...COPILOT_HEADERS,
+          },
+        })
+      );
       break; // 成功，退出重试循环
     } catch (err: unknown) {
       if (!infinite && attempt > MAX_RETRIES) throw err;
-      console.warn(`[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`);
-      await new Promise(r => setTimeout(r, BASE_DELAY));
+      console.warn(
+        `[tinyclaw] Copilot token 请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`
+      );
+      await new Promise((r) => setTimeout(r, BASE_DELAY));
     }
   }
 
@@ -253,7 +264,9 @@ function decodeCopilotJWT(token: string): Record<string, unknown> | null {
     const payloadB64 = parts[1]!;
     // base64url → base64
     const padded = payloadB64 + "=".repeat((4 - (payloadB64.length % 4)) % 4);
-    const decoded = Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
+    const decoded = Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString(
+      "utf-8"
+    );
     return JSON.parse(decoded) as Record<string, unknown>;
   } catch {
     return null;
@@ -322,23 +335,24 @@ const userQuotaCache = new Map<string, { data: CopilotUserQuota; ts: number }>()
  * 使用 GitHub OAuth token（非 Copilot API token），结果缓存 3 分钟。
  * 失败时静默返回空对象，不影响 /status 其他字段。
  */
-export async function getCopilotUserQuota(
-  githubTokenSource: string
-): Promise<CopilotUserQuota> {
+export async function getCopilotUserQuota(githubTokenSource: string): Promise<CopilotUserQuota> {
   const cached = userQuotaCache.get(githubTokenSource);
   if (cached && Date.now() - cached.ts < 3 * 60 * 1000) return cached.data;
 
   try {
     const ghToken = await resolveGitHubToken(githubTokenSource);
-    const resp = await globalThis.fetch(USER_URL, withCA({
-      headers: {
-        Authorization: `token ${ghToken}`,
-        Accept: "application/json",
-        "User-Agent": "tinyclaw/1.0",
-      },
-    }));
+    const resp = await globalThis.fetch(
+      USER_URL,
+      withCA({
+        headers: {
+          Authorization: `token ${ghToken}`,
+          Accept: "application/json",
+          "User-Agent": "tinyclaw/1.0",
+        },
+      })
+    );
     if (!resp.ok) return {};
-    const body = await resp.json() as Record<string, unknown>;
+    const body = (await resp.json()) as Record<string, unknown>;
     const snapshots = body["quota_snapshots"] as Record<string, unknown> | undefined;
     const result: CopilotUserQuota = {};
     if (typeof body["quota_reset_date"] === "string") {
@@ -397,30 +411,30 @@ export async function getCopilotUserQuota(
 // - 若模型名称不在表中，则 multiplier 为 undefined（显示为 "-"）
 
 const MODEL_MULTIPLIERS_PAID: Record<string, number> = {
-  "Claude Haiku 4.5":                          0.33,
-  "Claude Opus 4.5":                           3,
-  "Claude Opus 4.6":                           3,
-  "Claude Opus 4.6 (fast mode) (preview)":     30,
-  "Claude Sonnet 4":                           1,
-  "Claude Sonnet 4.5":                         1,
-  "Claude Sonnet 4.6":                         1,
-  "Gemini 2.5 Pro":                            1,
-  "Gemini 3 Flash":                            0.33,
-  "Gemini 3 Pro":                              1,
-  "Gemini 3.1 Pro":                            1,
-  "GPT-4.1":                                   0,
-  "GPT-4o":                                    0,
-  "GPT-5 mini":                                0,
-  "GPT-5.1":                                   1,
-  "GPT-5.1-Codex":                             1,
-  "GPT-5.1-Codex-Mini":                        0.33,
-  "GPT-5.1-Codex-Max":                         1,
-  "GPT-5.2":                                   1,
-  "GPT-5.2-Codex":                             1,
-  "GPT-5.3-Codex":                             1,
-  "GPT-5.4":                                   1,
-  "Grok Code Fast 1":                          0.25,
-  "Raptor mini":                               0,
+  "Claude Haiku 4.5": 0.33,
+  "Claude Opus 4.5": 3,
+  "Claude Opus 4.6": 3,
+  "Claude Opus 4.6 (fast mode) (preview)": 30,
+  "Claude Sonnet 4": 1,
+  "Claude Sonnet 4.5": 1,
+  "Claude Sonnet 4.6": 1,
+  "Gemini 2.5 Pro": 1,
+  "Gemini 3 Flash": 0.33,
+  "Gemini 3 Pro": 1,
+  "Gemini 3.1 Pro": 1,
+  "GPT-4.1": 0,
+  "GPT-4o": 0,
+  "GPT-5 mini": 0,
+  "GPT-5.1": 1,
+  "GPT-5.1-Codex": 1,
+  "GPT-5.1-Codex-Mini": 0.33,
+  "GPT-5.1-Codex-Max": 1,
+  "GPT-5.2": 1,
+  "GPT-5.2-Codex": 1,
+  "GPT-5.3-Codex": 1,
+  "GPT-5.4": 1,
+  "Grok Code Fast 1": 0.25,
+  "Raptor mini": 0,
 };
 
 /**
@@ -433,7 +447,11 @@ const MODEL_MULTIPLIERS_PAID: Record<string, number> = {
 export function lookupMultiplier(name: string): number | undefined {
   if (name in MODEL_MULTIPLIERS_PAID) return MODEL_MULTIPLIERS_PAID[name];
   const lower = name.toLowerCase();
-  const stripPreview = (s: string) => s.replace(/\s*\(preview\)/gi, "").trim().toLowerCase();
+  const stripPreview = (s: string) =>
+    s
+      .replace(/\s*\(preview\)/gi, "")
+      .trim()
+      .toLowerCase();
   const nameLower = stripPreview(name);
   for (const [k, v] of Object.entries(MODEL_MULTIPLIERS_PAID)) {
     if (k.toLowerCase() === lower) return v;
@@ -546,15 +564,19 @@ const MODELS_CACHE_TTL = 3600;
 /**
  * 获取该账号可用的所有 Copilot 模型（带缓存）。
  */
-export async function getCopilotModels(
-  githubTokenSource: string
-): Promise<CopilotModelInfo[]> {
+export async function getCopilotModels(githubTokenSource: string): Promise<CopilotModelInfo[]> {
   const cached = modelsCache.get(githubTokenSource);
   if (cached && nowSecs() - cached.ts < MODELS_CACHE_TTL) return cached.models;
 
   const token = await getCopilotToken(githubTokenSource);
 
-  const policy = (() => { try { return getRetryPolicy(); } catch { return null; } })();
+  const policy = (() => {
+    try {
+      return getRetryPolicy();
+    } catch {
+      return null;
+    }
+  })();
   const MAX_RETRIES = policy?.maxAttempts ?? 3;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
   const infinite = MAX_RETRIES === -1;
@@ -562,18 +584,23 @@ export async function getCopilotModels(
   let resp: Response | undefined;
   for (let attempt = 1; infinite || attempt <= MAX_RETRIES + 1; attempt++) {
     try {
-      resp = await fetch(`${COPILOT_API}/models`, withCA({
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-          ...COPILOT_HEADERS,
-        },
-      }));
+      resp = await fetch(
+        `${COPILOT_API}/models`,
+        withCA({
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            ...COPILOT_HEADERS,
+          },
+        })
+      );
       break;
     } catch (err: unknown) {
       if (!infinite && attempt > MAX_RETRIES) throw err;
-      console.warn(`[tinyclaw] Copilot 模型列表请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`);
-      await new Promise(r => setTimeout(r, BASE_DELAY));
+      console.warn(
+        `[tinyclaw] Copilot 模型列表请求失败（第 ${attempt} 次），${BASE_DELAY}ms 后重试…`
+      );
+      await new Promise((r) => setTimeout(r, BASE_DELAY));
     }
   }
 
@@ -596,9 +623,10 @@ export async function getCopilotModels(
       maxOutputTokens: m.capabilities.limits?.max_output_tokens ?? 4096,
       maxContextWindow: m.capabilities.limits?.max_context_window_tokens ?? 128_000,
       // max_prompt_tokens 是 API 真实接受的 prompt 上限，未提供时回退到 maxContextWindow
-      maxPromptTokens: m.capabilities.limits?.max_prompt_tokens
-        ?? m.capabilities.limits?.max_context_window_tokens
-        ?? 128_000,
+      maxPromptTokens:
+        m.capabilities.limits?.max_prompt_tokens ??
+        m.capabilities.limits?.max_context_window_tokens ??
+        128_000,
       supportsToolCalls: m.capabilities.supports.tool_calls ?? false,
       supportsParallelToolCalls: m.capabilities.supports.parallel_tool_calls ?? false,
       supportsVision: m.capabilities.supports.vision ?? false,
@@ -667,9 +695,7 @@ export async function buildCopilotClient(
     model = models.find((m) => m.id === config.model);
     if (!model) {
       const ids = models.map((m) => m.id).join(", ");
-      throw new Error(
-        `Copilot 模型 '${config.model}' 不存在，可用模型：${ids}`
-      );
+      throw new Error(`Copilot 模型 '${config.model}' 不存在，可用模型：${ids}`);
     }
   }
 
@@ -709,16 +735,22 @@ export async function buildCopilotClient(
     if (undiciFetch) {
       try {
         const agent = await getUndiciAgent();
-        response = await undiciFetch(input as string, {
-          ...init, headers,
-          dispatcher: agent,
-        } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+        response = (await undiciFetch(
+          input as string,
+          {
+            ...init,
+            headers,
+            dispatcher: agent,
+          } as unknown as Parameters<typeof undiciFetch>[1]
+        )) as unknown as Response;
       } catch (undiciErr) {
         const msg = undiciErr instanceof Error ? undiciErr.message : String(undiciErr);
         // 遍历 cause 链检测网络错误（模仿 Copilot CLI f_s()）
         // Node.js undici 的 "fetch failed" 是底层网络错误的包装，真实错误在 err.cause 中
         const isNetworkMsgErr = (m: string) =>
-          /socket|closed|connect|network|econnreset|abort|terminated|goaway|und_err_socket|fetch failed|etimedout|enotfound|econnrefused/i.test(m);
+          /socket|closed|connect|network|econnreset|abort|terminated|goaway|und_err_socket|fetch failed|etimedout|enotfound|econnrefused/i.test(
+            m
+          );
         let cause: unknown = undiciErr;
         let isNetworkErr = undiciErr instanceof Error && undiciErr.name === "AbortError";
         while (!isNetworkErr && cause instanceof Error) {
@@ -744,9 +776,13 @@ export async function buildCopilotClient(
 
     // 非 2xx 时 clone 并 log 原始 body，帮助诊断 API 拒绝的具体原因（如 400 text/plain）
     if (!response.ok) {
-      response.clone().text().then((body) => {
-        console.error(`[copilot] HTTP ${response.status} body: ${body.slice(0, 500)}`);
-      }).catch(() => {});
+      response
+        .clone()
+        .text()
+        .then((body) => {
+          console.error(`[copilot] HTTP ${response.status} body: ${body.slice(0, 500)}`);
+        })
+        .catch(() => {});
     }
 
     // 捕获 rate-limit 响应头，更新内存 + 持久化（仅补全接口有此头）
@@ -790,17 +826,19 @@ export async function buildCopilotClient(
       // (supported_endpoints includes "ws:/responses"). claude-sonnet-4.6 and similar
       // models use HTTP Chat Completions; oswe-vscode-prime and SWE-capable models
       // support Responses API. Falls back to HTTP Chat Completions if not supported.
-      ...(resolvedModel.supportsWsResponsesApi ? {
-        wsUrl: toResponsesWsUrl(COPILOT_API),
-        // Provide fresh Copilot token + standard headers for each WS handshake.
-        getWsHeaders: async () => {
-          const freshToken = await getCopilotToken(githubToken);
-          return {
-            Authorization: `Bearer ${freshToken}`,
-            ...COPILOT_HEADERS,
-          };
-        },
-      } : {}),
+      ...(resolvedModel.supportsWsResponsesApi
+        ? {
+            wsUrl: toResponsesWsUrl(COPILOT_API),
+            // Provide fresh Copilot token + standard headers for each WS handshake.
+            getWsHeaders: async () => {
+              const freshToken = await getCopilotToken(githubToken);
+              return {
+                Authorization: `Bearer ${freshToken}`,
+                ...COPILOT_HEADERS,
+              };
+            },
+          }
+        : {}),
     },
     copilotFetch,
     // 流中断时重置 undici 连接池，下次重试建立新连接
@@ -819,7 +857,10 @@ export async function buildCopilotClient(
   // 允许向下限制（修正上报过大的模型）或向上扩展（API 报值低于实际时），
   // 但始终不超过 maxPromptTokens，避免 override > 实际 prompt 上限时压缩不触发。
   if (config.maxContextWindowOverride != null && config.maxContextWindowOverride > 0) {
-    effectiveContextWindow = Math.min(config.maxContextWindowOverride, resolvedModel.maxPromptTokens);
+    effectiveContextWindow = Math.min(
+      config.maxContextWindowOverride,
+      resolvedModel.maxPromptTokens
+    );
   }
 
   return { client, contextWindow: effectiveContextWindow };

@@ -21,8 +21,8 @@ export const BUILTIN_ALIASES: Record<string, string> = {
   opus: "copilot/claude-opus-4.8",
   sonnet: "copilot/claude-sonnet-4.6",
   prime: "copilot/oswe-vscode-prime",
-  "gpt4o": "copilot/gpt-4o",
-  "auto": "copilot/auto",
+  gpt4o: "copilot/gpt-4o",
+  auto: "copilot/auto",
   // MiMo
   mimo: "mimo/mimo-v2.5",
   "mimo-pro": "mimo/mimo-v2.5-pro",

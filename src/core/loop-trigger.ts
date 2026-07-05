@@ -39,18 +39,24 @@ const TriggerConfigSchema = z.object({
   /** 每次 tick 间隔秒数（上次结束后等待） */
   tickSeconds: z.number().int().min(1).default(60),
   /** 时间段过滤:支持多段，任一命中即触发；兼容单对象写法。段外静默跳过。 */
-  timeRanges: z.union([
-    z.array(z.object({
-      start: z.string().regex(/^\d{2}:\d{2}$/),
-      end: z.string().regex(/^\d{2}:\d{2}$/),
-      weekdays: z.array(z.number().int().min(0).max(6)).optional(),
-    })),
-    z.object({
-      start: z.string().regex(/^\d{2}:\d{2}$/),
-      end: z.string().regex(/^\d{2}:\d{2}$/),
-      weekdays: z.array(z.number().int().min(0).max(6)).optional(),
-    }).transform((v) => [v]),
-  ]).optional(),
+  timeRanges: z
+    .union([
+      z.array(
+        z.object({
+          start: z.string().regex(/^\d{2}:\d{2}$/),
+          end: z.string().regex(/^\d{2}:\d{2}$/),
+          weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+        })
+      ),
+      z
+        .object({
+          start: z.string().regex(/^\d{2}:\d{2}$/),
+          end: z.string().regex(/^\d{2}:\d{2}$/),
+          weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+        })
+        .transform((v) => [v]),
+    ])
+    .optional(),
   /**
    * 是否允许 AI 通过调用 loop_exit 工具退出本轮任务（默认 false）。
    * true: AI 调用 loop_exit 后，本时间窗口内不再 tick，等下一个窗口重置后继续；
@@ -126,7 +132,10 @@ export class LoopTriggerManager {
 
   private getSession: ((sessionId: string) => Session) | null = null;
   private runAgent: typeof RunAgentFn | null = null;
-  private connectors: Map<string, { send(peerId: string, type: string, content: string): Promise<void> }> = new Map();
+  private connectors: Map<
+    string,
+    { send(peerId: string, type: string, content: string): Promise<void> }
+  > = new Map();
   private loopsDir: string = path.join(os.homedir(), ".tinyclaw", "loops");
 
   /** 启动所有启用的触发器 */
@@ -200,17 +209,21 @@ export class LoopTriggerManager {
     return false;
   }
 
-  listStatus(): Array<{ id: string; bindTo: string; status: "running" | "paused" | "idle" | "not_found" }> {
+  listStatus(): Array<{
+    id: string;
+    bindTo: string;
+    status: "running" | "paused" | "idle" | "not_found";
+  }> {
     return Array.from(this.configs.values()).map((cfg) => ({
       id: cfg.id,
       bindTo: cfg.bindTo,
       status: !this.scheduled.has(cfg.id)
         ? "not_found"
         : this.running.has(cfg.id)
-        ? "running"
-        : this.paused.has(cfg.id)
-        ? "paused"
-        : "idle",
+          ? "running"
+          : this.paused.has(cfg.id)
+            ? "paused"
+            : "idle",
     }));
   }
 
@@ -228,7 +241,9 @@ export class LoopTriggerManager {
     for (const e of entries) {
       if (!e.isFile() || !e.name.endsWith(".json")) continue;
       try {
-        const raw = JSON.parse(fs.readFileSync(path.join(this.loopsDir, e.name), "utf-8")) as unknown;
+        const raw = JSON.parse(
+          fs.readFileSync(path.join(this.loopsDir, e.name), "utf-8")
+        ) as unknown;
         const cfg = TriggerConfigSchema.parse(raw);
         result.push(cfg);
       } catch (err) {
@@ -239,7 +254,9 @@ export class LoopTriggerManager {
   }
 
   private scheduleOne(cfg: TriggerConfig): void {
-    console.log(`[loop-trigger] id=${cfg.id} bindTo=${cfg.bindTo} 已启动（每 ${cfg.tickSeconds}s tick）`);
+    console.log(
+      `[loop-trigger] id=${cfg.id} bindTo=${cfg.bindTo} 已启动（每 ${cfg.tickSeconds}s tick）`
+    );
     this.scheduled.add(cfg.id);
     void this.loop(cfg);
   }
@@ -290,7 +307,6 @@ export class LoopTriggerManager {
     this.scheduled.delete(cfg.id);
   }
 
-
   /** 返回 true 表示 AI 调用了 loop_exit（本窗口任务完成信号） */
   private async tick(cfg: TriggerConfig): Promise<boolean> {
     if (this.running.has(cfg.id)) {
@@ -310,7 +326,9 @@ export class LoopTriggerManager {
       const scriptPath = cfg.preCheckScript;
       const result = spawnSync(process.execPath, [scriptPath], { timeout: 10000 });
       if (result.status !== 0) {
-        console.log(`[loop-trigger] id=${cfg.id} preCheckScript 返回 ${result.status ?? "null"}，跳过本次 tick`);
+        console.log(
+          `[loop-trigger] id=${cfg.id} preCheckScript 返回 ${result.status ?? "null"}，跳过本次 tick`
+        );
         return false;
       }
       console.log(`[loop-trigger] id=${cfg.id} preCheckScript 通过`);
@@ -342,7 +360,11 @@ export class LoopTriggerManager {
 
       // allowExit=true 时：退出信号标志 + onLoopExit 回调
       let exitSignaled = false;
-      const onLoopExit = cfg.allowExit ? () => { exitSignaled = true; } : undefined;
+      const onLoopExit = cfg.allowExit
+        ? () => {
+            exitSignaled = true;
+          }
+        : undefined;
 
       // 执行 tool steps，收集输出拼成前缀
       let prefix = "";
@@ -352,10 +374,16 @@ export class LoopTriggerManager {
         for (const step of cfg.steps) {
           console.log(`[loop-trigger] id=${cfg.id} tool step: ${step.name}`);
           try {
-            const result = await executeTool(step.name, step.args as Record<string, unknown>, toolCtx);
+            const result = await executeTool(
+              step.name,
+              step.args as Record<string, unknown>,
+              toolCtx
+            );
             parts.push(`[${step.name}]\n${result}`);
           } catch (err) {
-            parts.push(`[${step.name}] 执行失败: ${err instanceof Error ? err.message : String(err)}`);
+            parts.push(
+              `[${step.name}] 执行失败: ${err instanceof Error ? err.message : String(err)}`
+            );
           }
         }
         if (parts.length > 0) {
@@ -432,17 +460,23 @@ export class LoopTriggerManager {
     }
   }
 
-  private buildNotifyFn(bindTo: string, botId?: string): ((msg: string) => Promise<void>) | undefined {
+  private buildNotifyFn(
+    bindTo: string,
+    botId?: string
+  ): ((msg: string) => Promise<void>) | undefined {
     if (this.connectors.size === 0) return undefined;
     // 解析 qqbot:c2c:<peerId> 或 qqbot:group:<peerId>
     const m = bindTo.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
     if (!m) return undefined;
     const [, type, peerId] = m;
     // 按 botId 路由；找不到则 fallback 第一个 connector
-    const connector = (botId ? this.connectors.get(botId) : undefined) ?? [...this.connectors.values()][0];
+    const connector =
+      (botId ? this.connectors.get(botId) : undefined) ?? [...this.connectors.values()][0];
     if (!connector) return undefined;
     return async (msg: string) => {
-      const prefixed = msg.startsWith("<img") ? msg : `🔔 [监控]
+      const prefixed = msg.startsWith("<img")
+        ? msg
+        : `🔔 [监控]
 ${msg}`;
       await connector.send(peerId!, type!, prefixed);
     };
@@ -452,7 +486,7 @@ ${msg}`;
     cfg: TriggerConfig,
     session: Session,
     notifyFn: ((msg: string) => Promise<void>) | undefined,
-    onLoopExit?: () => void,
+    onLoopExit?: () => void
   ): ToolContext {
     return {
       sessionId: cfg.bindTo,
@@ -465,7 +499,9 @@ ${msg}`;
           slaveDepth: 1,
           ...(notifyFn ? { onNotify: notifyFn } : {}),
         }),
-      onSlaveComplete: async () => { /* no-op */ },
+      onSlaveComplete: async () => {
+        /* no-op */
+      },
       ...(notifyFn ? { onNotify: notifyFn } : {}),
       ...(onLoopExit ? { onLoopExit } : {}),
     };

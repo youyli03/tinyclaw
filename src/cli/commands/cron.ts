@@ -53,17 +53,21 @@ function cmdList(): void {
         ? `${j.lastRunStatus === "error" ? red("✗") : green("✓")} ${new Date(j.lastRunAt).toLocaleString("zh-CN")}`
         : dim("未运行"),
       j.output.notify,
-    ]),
+    ])
   );
   console.log();
 }
 
 function scheduleDesc(j: CronJob): string {
   switch (j.type) {
-    case "once":   return j.runAt ? new Date(j.runAt).toLocaleString("zh-CN") : "-";
-    case "every":  return `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`;
-    case "daily":  return `每天 ${j.timeOfDay}`;
-    case "manual": return "手动触发";
+    case "once":
+      return j.runAt ? new Date(j.runAt).toLocaleString("zh-CN") : "-";
+    case "every":
+      return `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`;
+    case "daily":
+      return `每天 ${j.timeOfDay}`;
+    case "manual":
+      return "手动触发";
   }
 }
 
@@ -74,7 +78,10 @@ async function cmdAdd(): Promise<void> {
 
   // 1. 指令内容
   const message = await prompt("触发时发送的指令（prompt）：");
-  if (!message.trim()) { console.log(red("指令不能为空")); return; }
+  if (!message.trim()) {
+    console.log(red("指令不能为空"));
+    return;
+  }
 
   // 2. 调度类型
   const type = await select<"once" | "every" | "daily">("调度类型：", [
@@ -91,16 +98,25 @@ async function cmdAdd(): Promise<void> {
   if (type === "once") {
     const raw = await prompt("触发时间（ISO 或 YYYY-MM-DD HH:MM，本地时间）：");
     const d = new Date(raw.trim());
-    if (isNaN(d.getTime())) { console.log(red("时间格式无效")); return; }
+    if (isNaN(d.getTime())) {
+      console.log(red("时间格式无效"));
+      return;
+    }
     runAt = d.toISOString();
   } else if (type === "every") {
     const raw = await prompt("间隔秒数（如 3600 = 1 小时）：");
     const n = parseInt(raw.trim(), 10);
-    if (isNaN(n) || n <= 0) { console.log(red("请输入正整数")); return; }
+    if (isNaN(n) || n <= 0) {
+      console.log(red("请输入正整数"));
+      return;
+    }
     intervalSecs = n;
   } else {
     const raw = await prompt("每天触发时间（HH:MM，24h 制，本地时间）：");
-    if (!/^\d{2}:\d{2}$/.test(raw.trim())) { console.log(red("格式应为 HH:MM")); return; }
+    if (!/^\d{2}:\d{2}$/.test(raw.trim())) {
+      console.log(red("格式应为 HH:MM"));
+      return;
+    }
     timeOfDay = raw.trim();
   }
 
@@ -169,9 +185,15 @@ async function cmdAdd(): Promise<void> {
 
 async function cmdRemove(id: string): Promise<void> {
   const job = getJob(id);
-  if (!job) { console.log(red(`未找到 job "${id}"`)); return; }
+  if (!job) {
+    console.log(red(`未找到 job "${id}"`));
+    return;
+  }
   const ok = await confirm(`删除 job ${cyan(id)} "${dim(job.message.slice(0, 40))}"？`, false);
-  if (!ok) { console.log(dim("已取消")); return; }
+  if (!ok) {
+    console.log(dim("已取消"));
+    return;
+  }
   removeJob(id);
   cronScheduler.reschedule(id);
   console.log(green("✓ 已删除"));
@@ -180,13 +202,19 @@ async function cmdRemove(id: string): Promise<void> {
 // ── enable / disable ──────────────────────────────────────────────────────────
 
 function cmdEnable(id: string): void {
-  if (!updateJob(id, { enabled: true })) { console.log(red(`未找到 job "${id}"`)); return; }
+  if (!updateJob(id, { enabled: true })) {
+    console.log(red(`未找到 job "${id}"`));
+    return;
+  }
   cronScheduler.reschedule(id);
   console.log(green(`✓ job ${id} 已启用`));
 }
 
 function cmdDisable(id: string): void {
-  if (!updateJob(id, { enabled: false })) { console.log(red(`未找到 job "${id}"`)); return; }
+  if (!updateJob(id, { enabled: false })) {
+    console.log(red(`未找到 job "${id}"`));
+    return;
+  }
   cronScheduler.reschedule(id);
   console.log(yellow(`✓ job ${id} 已停用`));
 }
@@ -195,7 +223,10 @@ function cmdDisable(id: string): void {
 
 async function cmdRun(id: string): Promise<void> {
   const job = getJob(id);
-  if (!job) { console.log(red(`未找到 job "${id}"`)); return; }
+  if (!job) {
+    console.log(red(`未找到 job "${id}"`));
+    return;
+  }
 
   // 优先通过 IPC 委托守护进程执行（无需重新初始化 LLM）
   if (existsSync(IPC_SOCKET_PATH)) {
@@ -221,7 +252,9 @@ async function cmdRun(id: string): Promise<void> {
               console.log(red(`✗ ${(resp as { type: "error"; message: string }).message}`));
               delegated = true;
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           socket.destroy();
           resolve();
         }
@@ -253,9 +286,15 @@ async function cmdRun(id: string): Promise<void> {
 
 function cmdLogs(id: string, n: number): void {
   const job = getJob(id);
-  if (!job) { console.log(red(`未找到 job "${id}"`)); return; }
+  if (!job) {
+    console.log(red(`未找到 job "${id}"`));
+    return;
+  }
   const entries = readLogs(id, n);
-  if (entries.length === 0) { console.log(dim("暂无运行记录")); return; }
+  if (entries.length === 0) {
+    console.log(dim("暂无运行记录"));
+    return;
+  }
   section(`Cron 日志：${id}`);
   for (const e of entries) {
     const ts = new Date(e.ts).toLocaleString("zh-CN");
@@ -368,7 +407,16 @@ ${bold("参数：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
-export const subcommands = ["list", "add", "remove", "enable", "disable", "run", "logs", "help"] as const;
+export const subcommands = [
+  "list",
+  "add",
+  "remove",
+  "enable",
+  "disable",
+  "run",
+  "logs",
+  "help",
+] as const;
 export const description = "Cron 定时任务：创建、管理、查看定时执行记录";
 export const usage = "cron <list|add|remove|enable|disable|run|logs>";
 
@@ -378,31 +426,52 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "list":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("list");
+        break;
+      }
       cmdList();
       break;
     case "add":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("add"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("add");
+        break;
+      }
       await cmdAdd();
       break;
     case "remove":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("remove"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("remove");
+        break;
+      }
       await cmdRemove(args[1] ?? "");
       break;
     case "enable":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("enable"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("enable");
+        break;
+      }
       cmdEnable(args[1] ?? "");
       break;
     case "disable":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("disable"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("disable");
+        break;
+      }
       cmdDisable(args[1] ?? "");
       break;
     case "run":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("run"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("run");
+        break;
+      }
       await cmdRun(args[1] ?? "");
       break;
     case "logs": {
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("logs"); break; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("logs");
+        break;
+      }
       const nIdx = args.indexOf("-n");
       const n = nIdx >= 0 ? parseInt(args[nIdx + 1] ?? "20", 10) : 20;
       cmdLogs(args[1] ?? "", n);
@@ -410,7 +479,9 @@ export async function run(args: string[]): Promise<void> {
     }
     case "--help":
     case "-h":
-    case "help": printHelp(); break;
+    case "help":
+      printHelp();
+      break;
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();

@@ -17,7 +17,11 @@ function send(msg: CronWorkerResponse): void {
 }
 
 function classifyJob(job: CronJob): "tool-only" | "agent" {
-  if (Array.isArray(job.steps) && job.steps.length > 0 && job.steps.every((step) => step.type === "tool")) {
+  if (
+    Array.isArray(job.steps) &&
+    job.steps.length > 0 &&
+    job.steps.every((step) => step.type === "tool")
+  ) {
     return "tool-only";
   }
   return "agent";

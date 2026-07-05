@@ -36,12 +36,14 @@ const RULES: InjectionRule[] = [
   {
     id: "disregard_instructions",
     description: "无视系统指令",
-    regex: /disregard\s+(all|previous|above|prior|your|the)\s+(instructions?|directives?|rules?|prompt)/i,
+    regex:
+      /disregard\s+(all|previous|above|prior|your|the)\s+(instructions?|directives?|rules?|prompt)/i,
   },
   {
     id: "forget_instructions",
     description: "遗忘指令",
-    regex: /forget\s+(everything|all|your\s+(previous\s+)?instructions?|what\s+(i|you|we)\s+(told|said|wrote))/i,
+    regex:
+      /forget\s+(everything|all|your\s+(previous\s+)?instructions?|what\s+(i|you|we)\s+(told|said|wrote))/i,
   },
   // ── 身份覆盖 ────────────────────────────────────────────────────────
   {
@@ -131,14 +133,11 @@ function detectOne(text: string): DetectionResult | null {
 
     // 提取上下文片段（命中位置前后各 60 字符）
     const start = Math.max(0, match.index - 60);
-    const end   = Math.min(text.length, match.index + match[0].length + 60);
+    const end = Math.min(text.length, match.index + match[0].length + 60);
     const snippet = text.slice(start, end).replace(/\n/g, " ").slice(0, 120);
 
     // 替换：将命中的完整匹配替换为安全占位符
-    const sanitized = text.replace(
-      rule.regex,
-      `[⚠️BLOCKED:${rule.id}]`
-    );
+    const sanitized = text.replace(rule.regex, `[⚠️BLOCKED:${rule.id}]`);
 
     return { pattern: `${rule.id} — ${rule.description}`, snippet, sanitized };
   }

@@ -19,8 +19,8 @@ export const CARD_TYPES = [
 
 export const CARD_STATUSES = ["active", "obsolete", "resolved"] as const;
 
-export type MemoryCardType = typeof CARD_TYPES[number];
-export type MemoryCardStatus = typeof CARD_STATUSES[number];
+export type MemoryCardType = (typeof CARD_TYPES)[number];
+export type MemoryCardStatus = (typeof CARD_STATUSES)[number];
 
 export interface MemoryCard {
   id: string;
@@ -37,11 +37,13 @@ export interface MemoryCard {
 }
 
 function normalizeSlug(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "card";
+  return (
+    input
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "card"
+  );
 }
 
 function safeArray(value: unknown): string[] {
@@ -67,7 +69,10 @@ function normalizeCard(raw: unknown): MemoryCard | null {
   if (!title || !summary) return null;
 
   const tsRaw = String(obj.ts ?? "").trim();
-  const ts = tsRaw && !Number.isNaN(new Date(tsRaw).getTime()) ? new Date(tsRaw).toISOString() : new Date().toISOString();
+  const ts =
+    tsRaw && !Number.isNaN(new Date(tsRaw).getTime())
+      ? new Date(tsRaw).toISOString()
+      : new Date().toISOString();
 
   const importanceRaw = Number(obj.importance ?? 0.7);
   const importance = Math.min(1, Math.max(0, Number.isFinite(importanceRaw) ? importanceRaw : 0.7));
@@ -152,7 +157,11 @@ function parseFrontmatterValue(line: string): string {
 function parseFrontmatterArray(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [];
-  return trimmed.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+  return trimmed
+    .slice(1, -1)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export function readExistingCards(agentId: string): MemoryCard[] {
@@ -201,7 +210,10 @@ function isSimilarCard(a: MemoryCard, b: MemoryCard): boolean {
   return titleA === titleB || titleA.includes(titleB) || titleB.includes(titleA);
 }
 
-export function saveCards(cards: MemoryCard[], agentId: string): { saved: number; obsoleted: number } {
+export function saveCards(
+  cards: MemoryCard[],
+  agentId: string
+): { saved: number; obsoleted: number } {
   if (cards.length === 0) return { saved: 0, obsoleted: 0 };
 
   const existing = readExistingCards(agentId);

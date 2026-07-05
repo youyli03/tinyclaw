@@ -17,12 +17,17 @@
  *     access.toml   — 跨 session 通信权限配置（可选）
  */
 
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { projectsDir, memoryIndexPath, topicFilesList, aliasesPath, notesPath } from "./project-memory.js";
+import {
+  projectsDir,
+  memoryIndexPath,
+  topicFilesList,
+  aliasesPath,
+  notesPath,
+} from "./project-memory.js";
 
 /**
  * 跨 session 通信权限配置（存储在 agents/<agentId>/access.toml）。
@@ -110,7 +115,8 @@ export class AgentManager {
   /** 列出所有已创建的 agent id（agents/ 目录下的所有子目录名） */
   listAgentIds(): string[] {
     if (!fs.existsSync(AGENTS_ROOT)) return [];
-    return fs.readdirSync(AGENTS_ROOT, { withFileTypes: true })
+    return fs
+      .readdirSync(AGENTS_ROOT, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
   }
@@ -267,7 +273,9 @@ export class AgentManager {
     if (fs.existsSync(p)) {
       try {
         existing = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
-      } catch { /* ignore parse error, overwrite */ }
+      } catch {
+        /* ignore parse error, overwrite */
+      }
     }
 
     // 构建 [loop] 表内容
@@ -319,7 +327,9 @@ export class AgentManager {
     if (fs.existsSync(p)) {
       try {
         existing = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
-      } catch { /* overwrite */ }
+      } catch {
+        /* overwrite */
+      }
     }
     const key = mode === "code" ? "mcp_code" : "mcp_chat";
     existing[key] = { enabled: servers };
@@ -443,7 +453,9 @@ export class AgentManager {
       if (!entry.isDirectory()) continue;
       try {
         result.push(this.load(entry.name));
-      } catch { /* skip malformed */ }
+      } catch {
+        /* skip malformed */
+      }
     }
     return result;
   }
@@ -465,7 +477,8 @@ export class AgentManager {
     }
     return {
       id,
-      createdAt: typeof parsed["createdAt"] === "string" ? parsed["createdAt"] : new Date().toISOString(),
+      createdAt:
+        typeof parsed["createdAt"] === "string" ? parsed["createdAt"] : new Date().toISOString(),
       bindings,
     };
   }
@@ -515,7 +528,9 @@ export class AgentManager {
         for (const b of def.bindings) {
           if (b.source === source) return def.id;
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     return DEFAULT_AGENT_ID;
   }
@@ -530,7 +545,9 @@ export class AgentManager {
     if (fs.existsSync(AGENTS_ROOT)) {
       try {
         entries = fs.readdirSync(AGENTS_ROOT, { withFileTypes: true });
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name === agentId) continue;
@@ -541,7 +558,9 @@ export class AgentManager {
           def.bindings = filtered;
           this.save(def);
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     // 添加到目标 agent
     const target = this.load(agentId);
@@ -575,10 +594,7 @@ export class AgentManager {
 }
 
 function formatAgentToml(def: AgentDef): string {
-  const lines: string[] = [
-    `id = "${def.id}"`,
-    `createdAt = "${def.createdAt}"`,
-  ];
+  const lines: string[] = [`id = "${def.id}"`, `createdAt = "${def.createdAt}"`];
   for (const b of def.bindings) {
     lines.push(`\n[[bindings]]`);
     lines.push(`source = "${b.source}"`);

@@ -25,11 +25,7 @@ export function schemaKeys(schema: z.ZodTypeAny, prefix = ""): string[] {
   const typeName = schema._def?.typeName as string | undefined;
 
   // 透明包装层，直接 unwrap
-  if (
-    typeName === "ZodDefault" ||
-    typeName === "ZodOptional" ||
-    typeName === "ZodNullable"
-  ) {
+  if (typeName === "ZodDefault" || typeName === "ZodOptional" || typeName === "ZodNullable") {
     return schemaKeys(schema._def.innerType as z.ZodTypeAny, prefix);
   }
 
@@ -63,9 +59,7 @@ export const ALL_CONFIG_KEYS: string[] = schemaKeys(ConfigSchema);
  * 获取指定 dot-path 对应的 Zod schema（用于类型检查和枚举提示）。
  * 返回 null 表示路径不存在于 schema 中。
  */
-export function getSchemaAtPath(
-  dotPath: string
-): z.ZodTypeAny | null {
+export function getSchemaAtPath(dotPath: string): z.ZodTypeAny | null {
   const parts = dotPath.split(".");
   let cur: z.ZodTypeAny = ConfigSchema;
 
@@ -128,11 +122,15 @@ export function getFieldType(dotPath: string): FieldType {
     const itemSchema = schema._def.type as z.ZodTypeAny;
     const itemTn = itemSchema._def?.typeName as string | undefined;
     const itemKind =
-      itemTn === "ZodString" ? "string"
-      : itemTn === "ZodNumber" ? "number"
-      : itemTn === "ZodBoolean" ? "boolean"
-      : itemTn === "ZodObject" ? "object"
-      : "unknown";
+      itemTn === "ZodString"
+        ? "string"
+        : itemTn === "ZodNumber"
+          ? "number"
+          : itemTn === "ZodBoolean"
+            ? "boolean"
+            : itemTn === "ZodObject"
+              ? "object"
+              : "unknown";
     return { kind: "array", itemKind };
   }
   if (tn === "ZodObject") return { kind: "object" };

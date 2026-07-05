@@ -47,17 +47,18 @@ registerTool({
           },
           options: {
             type: "array",
-            description: "预设选项列表（可选，建议 2～5 项）。每项包含 label、可选的 description 和 recommended 标记。",
+            description:
+              "预设选项列表（可选，建议 2～5 项）。每项包含 label、可选的 description 和 recommended 标记。",
             items: {
               type: "object",
               properties: {
                 label: {
                   type: "string",
-                description: "选项标签，简短明确（例：直接修改现有文件）。",
+                  description: "选项标签，简短明确（例：直接修改现有文件）。",
                 },
                 description: {
                   type: "string",
-                description: "选项补充说明（可选，例：保留旧文件备份）。",
+                  description: "选项补充说明（可选，例：保留旧文件备份）。",
                 },
                 recommended: {
                   type: "boolean",

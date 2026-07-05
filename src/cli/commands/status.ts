@@ -58,7 +58,9 @@ export async function run(_args: string[]): Promise<void> {
 
   const parsed = ConfigSchema.safeParse(rawConfig);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
+    const issues = parsed.error.issues
+      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
     console.log(`配置验证：${red("失败")}\n${issues}`);
     return;
   }
@@ -82,7 +84,8 @@ export async function run(_args: string[]): Promise<void> {
         ? { provider: b.model, modelId: "" }
         : { provider: b.model.slice(0, slash), modelId: b.model.slice(slash + 1) };
     })();
-    const providerStr = provider === "copilot" ? cyan("copilot") : provider === "openai" ? "openai" : dim(provider);
+    const providerStr =
+      provider === "copilot" ? cyan("copilot") : provider === "openai" ? "openai" : dim(provider);
     const modelStr = modelId === "auto" || modelId === "" ? yellow(b.model) : cyan(b.model);
     return [bold(name), providerStr, modelStr];
   });
@@ -97,7 +100,9 @@ export async function run(_args: string[]): Promise<void> {
       const masked = saved.slice(0, 8) + "…" + saved.slice(-4);
       console.log(`\nGitHub Token：${green("已保存")}  ${dim(masked)}`);
     } else {
-      console.log(`\nGitHub Token：${yellow("未保存")}  ${dim("（将使用 gh CLI 或 Device Flow）")}`);
+      console.log(
+        `\nGitHub Token：${yellow("未保存")}  ${dim("（将使用 gh CLI 或 Device Flow）")}`
+      );
     }
   }
 

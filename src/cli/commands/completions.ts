@@ -110,9 +110,12 @@ function detectShell(): ShellType {
 function getRcFile(shell: ShellType): string {
   const home = os.homedir();
   switch (shell) {
-    case "zsh":  return path.join(home, ".zshrc");
-    case "fish": return path.join(home, ".config", "fish", "completions", "tinyclaw.fish");
-    default:     return path.join(home, ".bashrc");
+    case "zsh":
+      return path.join(home, ".zshrc");
+    case "fish":
+      return path.join(home, ".config", "fish", "completions", "tinyclaw.fish");
+    default:
+      return path.join(home, ".bashrc");
   }
 }
 
@@ -136,7 +139,10 @@ async function install(shellArg: string | undefined): Promise<void> {
     fs.mkdirSync(dir, { recursive: true });
     if (fs.existsSync(rcFile)) {
       const skip = !(await confirm(`${rcFile} 已存在，覆盖？`, false));
-      if (skip) { console.log(dim("已取消")); return; }
+      if (skip) {
+        console.log(dim("已取消"));
+        return;
+      }
     }
     fs.writeFileSync(rcFile, fishScript(), "utf-8");
     console.log(`${green("✓")} 已写入 ${rcFile}`);
@@ -250,7 +256,8 @@ export async function run(args: string[]): Promise<void> {
   const sub = args[0];
 
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
-    printHelp(); return;
+    printHelp();
+    return;
   }
 
   const rest = args.slice(1);
@@ -258,16 +265,31 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "bash":
-      if (wantsHelp) { printSubHelp("bash"); return; }
-      process.stdout.write(bashScript()); return;
+      if (wantsHelp) {
+        printSubHelp("bash");
+        return;
+      }
+      process.stdout.write(bashScript());
+      return;
     case "zsh":
-      if (wantsHelp) { printSubHelp("zsh"); return; }
-      process.stdout.write(zshScript()); return;
+      if (wantsHelp) {
+        printSubHelp("zsh");
+        return;
+      }
+      process.stdout.write(zshScript());
+      return;
     case "fish":
-      if (wantsHelp) { printSubHelp("fish"); return; }
-      process.stdout.write(fishScript()); return;
+      if (wantsHelp) {
+        printSubHelp("fish");
+        return;
+      }
+      process.stdout.write(fishScript());
+      return;
     case "install":
-      if (wantsHelp) { printSubHelp("install"); return; }
+      if (wantsHelp) {
+        printSubHelp("install");
+        return;
+      }
       return install(args[1]);
     default:
       console.error(red(`未知子命令 "${sub}"`));

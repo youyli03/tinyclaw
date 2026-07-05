@@ -158,8 +158,7 @@ registerTool({
         properties: {
           agent_id: {
             type: "string",
-            description:
-              "要在哪个 Agent 下创建 skill，默认为 \"default\"。",
+            description: '要在哪个 Agent 下创建 skill，默认为 "default"。',
           },
         },
         required: [],
@@ -167,9 +166,10 @@ registerTool({
     },
   },
   execute: async (args) => {
-    const agentId = typeof args["agent_id"] === "string" && args["agent_id"].trim()
-      ? args["agent_id"].trim()
-      : "default";
+    const agentId =
+      typeof args["agent_id"] === "string" && args["agent_id"].trim()
+        ? args["agent_id"].trim()
+        : "default";
     return buildGuide(agentId);
   },
 });

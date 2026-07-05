@@ -22,23 +22,35 @@ const NOTES_ROOT = nodePath.join(os.homedir(), ".tinyclaw", "notes");
 
 interface TreeNode {
   name: string;
-  path: string;     // 相对于 NOTES_ROOT 的路径
+  path: string; // 相对于 NOTES_ROOT 的路径
   type: "dir" | "file";
   ext?: string;
-  count?: number;   // 目录：含子目录的总文件数
+  count?: number; // 目录：含子目录的总文件数
   children?: TreeNode[];
 }
 
 function buildTree(absDir: string, relBase: string): TreeNode[] {
   let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(absDir, { withFileTypes: true }); }
-  catch { return []; }
+  try {
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   const result: TreeNode[] = [];
   for (const e of entries) {
     // 跳过隐藏目录/文件（如 .obsidian、.git）
     if (e.name.startsWith(".")) continue;
     const relPath = relBase ? `${relBase}/${e.name}` : e.name;
-    const resolvedIsDir = e.isDirectory() || (e.isSymbolicLink() && (() => { try { return fs.statSync(nodePath.join(absDir, e.name)).isDirectory(); } catch { return false; } })());
+    const resolvedIsDir =
+      e.isDirectory() ||
+      (e.isSymbolicLink() &&
+        (() => {
+          try {
+            return fs.statSync(nodePath.join(absDir, e.name)).isDirectory();
+          } catch {
+            return false;
+          }
+        })());
     if (resolvedIsDir) {
       const children = buildTree(nodePath.join(absDir, e.name), relPath);
       const count = countFiles(children);
@@ -56,7 +68,8 @@ function buildTree(absDir: string, relBase: string): TreeNode[] {
     if (a.type === "file") {
       // 文件名以 YYYY-MM-DD 开头时降序(最新在前),否则升序
       const dateRe = /^\d{4}-\d{2}-\d{2}/;
-      const aHasDate = dateRe.test(a.name), bHasDate = dateRe.test(b.name);
+      const aHasDate = dateRe.test(a.name),
+        bHasDate = dateRe.test(b.name);
       if (aHasDate && bHasDate) return b.name.localeCompare(a.name, "zh");
       return a.name.localeCompare(b.name, "zh");
     }
@@ -103,10 +116,7 @@ function err(res: ServerResponse, msg: string, status = 400): void {
   json(res, { error: msg }, status);
 }
 
-export async function handleApi(
-  req: IncomingMessage,
-  res: ServerResponse
-): Promise<boolean> {
+export async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const pathname = url.pathname;
 
@@ -117,10 +127,7 @@ export async function handleApi(
   try {
     // GET /api/stats
     if (pathname === "/api/stats") {
-      const [stats, jobs] = await Promise.all([
-        sampleStats(),
-        Promise.resolve(loadJobs()),
-      ]);
+      const [stats, jobs] = await Promise.all([sampleStats(), Promise.resolve(loadJobs())]);
       const activeJobs = jobs.filter((j) => j.enabled).length;
       json(res, {
         cpu_percent: stats.cpu_percent,
@@ -159,7 +166,13 @@ export async function handleApi(
       const sinceOpts = sinceParam ? { since: parseInt(sinceParam, 10) } : {};
       // today=1 时使用当日自然日(本地 0:00)而非"过去24小时",避免把昨天数据计入今日
       const todayOnly = url.searchParams.get("today") === "1";
-      const rows = queryMetrics({ category, key, days, ...sinceOpts, ...(todayOnly ? { todayOnly: true } : {}) });
+      const rows = queryMetrics({
+        category,
+        key,
+        days,
+        ...sinceOpts,
+        ...(todayOnly ? { todayOnly: true } : {}),
+      });
       json(res, { category, key, rows });
       return true;
     }
@@ -198,7 +211,6 @@ export async function handleApi(
       return true;
     }
 
-
     // ── GET /api/notes/tree ───────────────────────────────────────────────────
     if (pathname === "/api/notes/tree") {
       const tree = buildTree(NOTES_ROOT, "");
@@ -209,13 +221,20 @@ export async function handleApi(
     // ── GET /api/notes/file?path=xxx ─────────────────────────────────────────
     if (pathname === "/api/notes/file") {
       const relPath = url.searchParams.get("path") ?? "";
-      if (!relPath) { err(res, "缺少 path 参数"); return true; }
+      if (!relPath) {
+        err(res, "缺少 path 参数");
+        return true;
+      }
       // 防路径穿越
       const abs = nodePath.resolve(NOTES_ROOT, relPath);
       if (!abs.startsWith(NOTES_ROOT + nodePath.sep) && abs !== NOTES_ROOT) {
-        err(res, "非法路径", 403); return true;
+        err(res, "非法路径", 403);
+        return true;
       }
-      if (!fs.existsSync(abs)) { err(res, "文件不存在", 404); return true; }
+      if (!fs.existsSync(abs)) {
+        err(res, "文件不存在", 404);
+        return true;
+      }
       const ext = nodePath.extname(abs).toLowerCase();
       if (ext === ".pdf") {
         const stat = fs.statSync(abs);
@@ -224,8 +243,8 @@ export async function handleApi(
         const fname = encodeURIComponent(nodePath.basename(abs));
         if (rangeHeader) {
           const m = String(rangeHeader).match(/bytes=(\d*)-(\d*)/);
-          const start = (m && m[1]) ? parseInt(m[1], 10) : 0;
-          const end = (m && m[2]) ? parseInt(m[2], 10) : total - 1;
+          const start = m && m[1] ? parseInt(m[1], 10) : 0;
+          const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
           const chunkLen = end - start + 1;
           res.writeHead(206, {
             "Content-Type": "application/pdf",
@@ -258,8 +277,11 @@ export async function handleApi(
     // ── GET /api/notes/search?q=xxx ──────────────────────────────────────────
     if (pathname === "/api/notes/search") {
       const q = (url.searchParams.get("q") ?? "").trim();
-      if (!q) { json(res, { results: [] }); return true; }
-      const safeQ = q.replace(/"/g, '').replace(/'/g, '');
+      if (!q) {
+        json(res, { results: [] });
+        return true;
+      }
+      const safeQ = q.replace(/"/g, "").replace(/'/g, "");
       let results: Array<{ path: string; name: string; ext: string; type: string }> = [];
       try {
         // 搜文件夹名
@@ -270,7 +292,9 @@ export async function handleApi(
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
           dirPaths = dirOut ? dirOut.split("\n") : [];
-        } catch { /* 无匹配 */ }
+        } catch {
+          /* 无匹配 */
+        }
         // 搜文件名
         let nameOut = "";
         try {
@@ -278,7 +302,9 @@ export async function handleApi(
             `find "${NOTES_ROOT}" -not -name '.*' -type f \( -name "*.md" -o -name "*.pdf" \) | grep -i "${safeQ}" | head -30`,
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
-        } catch { /* 无匹配 */ }
+        } catch {
+          /* 无匹配 */
+        }
         const namePaths = nameOut ? nameOut.split("\n") : [];
         // grep 内容(仅 md)
         let contentPaths: string[] = [];
@@ -288,23 +314,29 @@ export async function handleApi(
             { encoding: "utf-8", timeout: 5000 }
           ).trim();
           contentPaths = grepOut ? grepOut.split("\n") : [];
-        } catch { /* 无匹配 */ }
+        } catch {
+          /* 无匹配 */
+        }
         // 文件夹结果
-        const dirResults = [...new Set(dirPaths)].filter(Boolean).map(a => ({
+        const dirResults = [...new Set(dirPaths)].filter(Boolean).map((a) => ({
           path: nodePath.relative(NOTES_ROOT, a),
           name: nodePath.basename(a),
-          ext: '',
-          type: 'dir' as const,
+          ext: "",
+          type: "dir" as const,
         }));
         // 文件结果
-        const fileResults = [...new Set([...namePaths, ...contentPaths])].filter(Boolean).map(a => ({
-          path: nodePath.relative(NOTES_ROOT, a),
-          name: nodePath.basename(a),
-          ext: nodePath.extname(a).toLowerCase(),
-          type: 'file' as const,
-        }));
+        const fileResults = [...new Set([...namePaths, ...contentPaths])]
+          .filter(Boolean)
+          .map((a) => ({
+            path: nodePath.relative(NOTES_ROOT, a),
+            name: nodePath.basename(a),
+            ext: nodePath.extname(a).toLowerCase(),
+            type: "file" as const,
+          }));
         results = [...dirResults, ...fileResults];
-      } catch { /* 失败 */ }
+      } catch {
+        /* 失败 */
+      }
       json(res, { results });
       return true;
     }
@@ -317,4 +349,3 @@ export async function handleApi(
     return true;
   }
 }
-

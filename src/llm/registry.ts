@@ -58,9 +58,7 @@ class LLMRegistry {
 
       const copilotCfg = config.providers.copilot;
       if (!copilotCfg) {
-        throw new Error(
-          `后端 '${name}' 使用 copilot 模型，但 [providers.copilot] 未配置`
-        );
+        throw new Error(`后端 '${name}' 使用 copilot 模型，但 [providers.copilot] 未配置`);
       }
 
       // code backend 默认超时 240s（探索大仓库时 LLM 单轮处理耗时更长）
@@ -70,8 +68,12 @@ class LLMRegistry {
         model: modelId,
         timeoutMs: role.timeoutMs ?? defaultTimeoutMs,
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
-        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
-        ...(role.maxContextWindow !== undefined ? { maxContextWindowOverride: role.maxContextWindow } : {}),
+        ...(role.supportsToolCalls !== undefined
+          ? { supportsToolCalls: role.supportsToolCalls }
+          : {}),
+        ...(role.maxContextWindow !== undefined
+          ? { maxContextWindowOverride: role.maxContextWindow }
+          : {}),
       });
       this.clients.set(name, client);
       this.contextWindows.set(name, contextWindow);
@@ -95,10 +97,13 @@ class LLMRegistry {
     const config = loadConfig();
     const backends = config.llm.backends;
     const role: BackendRole | undefined =
-      name === "daily" ? backends.daily
-      : name === "code" ? backends.code
-      : name === "vision" ? backends.vision
-      : backends.summarizer;
+      name === "daily"
+        ? backends.daily
+        : name === "code"
+          ? backends.code
+          : name === "vision"
+            ? backends.vision
+            : backends.summarizer;
 
     if (!role) {
       return this.get("daily");
@@ -109,17 +114,13 @@ class LLMRegistry {
     if (provider === "copilot") {
       const dailyClient = this.clients.get("daily");
       if (name !== "daily" && dailyClient) return dailyClient;
-      throw new Error(
-        `Copilot 后端 '${name}' 尚未初始化，请在启动时调用 await llmRegistry.init()`
-      );
+      throw new Error(`Copilot 后端 '${name}' 尚未初始化，请在启动时调用 await llmRegistry.init()`);
     }
 
     if (provider === "openai") {
       const openaiCfg = config.providers.openai;
       if (!openaiCfg) {
-        throw new Error(
-          `后端 '${name}' 使用 openai 模型，但 [providers.openai] 未配置`
-        );
+        throw new Error(`后端 '${name}' 使用 openai 模型，但 [providers.openai] 未配置`);
       }
       const client = new LLMClient({
         baseUrl: openaiCfg.baseUrl,
@@ -129,7 +130,9 @@ class LLMRegistry {
         // code backend 默认超时 240s
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : openaiCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
-        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
+        ...(role.supportsToolCalls !== undefined
+          ? { supportsToolCalls: role.supportsToolCalls }
+          : {}),
       });
       this.clients.set(name, client);
       return client;
@@ -138,17 +141,16 @@ class LLMRegistry {
     if (provider === "openrouter") {
       const orCfg = config.providers.openrouter;
       if (!orCfg) {
-        throw new Error(
-          `后端 '${name}' 使用 openrouter 模型，但 [providers.openrouter] 未配置`
-        );
+        throw new Error(`后端 '${name}' 使用 openrouter 模型，但 [providers.openrouter] 未配置`);
       }
-      const client = modelId === "auto-free"
-        ? new AutoFreeClient(orCfg)
-        : buildOpenRouterClient(orCfg, modelId, role.supportsToolCalls, role.supportsVision);
+      const client =
+        modelId === "auto-free"
+          ? new AutoFreeClient(orCfg)
+          : buildOpenRouterClient(orCfg, modelId, role.supportsToolCalls, role.supportsVision);
       this.clients.set(name, client);
       return client;
     }
-    
+
     if (provider === "deepseek") {
       const dsCfg = config.providers.deepseek;
       if (!dsCfg) {
@@ -161,7 +163,9 @@ class LLMRegistry {
         maxTokens: role.maxTokens ?? dsCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : dsCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
-        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
+        ...(role.supportsToolCalls !== undefined
+          ? { supportsToolCalls: role.supportsToolCalls }
+          : {}),
         ...(role.disableThinking ? { disableThinking: true } : {}),
       });
       this.clients.set(name, client);
@@ -184,7 +188,9 @@ class LLMRegistry {
         maxTokens: role.maxTokens ?? mimoCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? (name === "code" ? 240_000 : mimoCfg.timeoutMs),
         ...(role.supportsVision !== undefined ? { supportsVision: role.supportsVision } : {}),
-        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
+        ...(role.supportsToolCalls !== undefined
+          ? { supportsToolCalls: role.supportsToolCalls }
+          : {}),
       });
       this.clients.set(name, client);
       if (role.maxContextWindow && role.maxContextWindow > 0) {
@@ -204,8 +210,10 @@ class LLMRegistry {
         model: modelId,
         maxTokens: role.maxTokens ?? googleCfg.maxTokens,
         timeoutMs: role.timeoutMs ?? googleCfg.timeoutMs,
-        supportsVision: role.supportsVision ?? true,  // Gemini Flash 原生支持视觉
-        ...(role.supportsToolCalls !== undefined ? { supportsToolCalls: role.supportsToolCalls } : {}),
+        supportsVision: role.supportsVision ?? true, // Gemini Flash 原生支持视觉
+        ...(role.supportsToolCalls !== undefined
+          ? { supportsToolCalls: role.supportsToolCalls }
+          : {}),
       });
       this.clients.set(name, client);
       if (role.maxContextWindow && role.maxContextWindow > 0) {
@@ -230,9 +238,7 @@ class LLMRegistry {
     if (cached instanceof AutoFreeClient && cached.contextWindow > 0) {
       return cached.contextWindow;
     }
-    return (
-      this.contextWindows.get(name) ?? loadConfig().memory.contextWindow
-    );
+    return this.contextWindows.get(name) ?? loadConfig().memory.contextWindow;
   }
 
   /** 清除所有缓存的 client（用于配置热重载） */
@@ -252,7 +258,14 @@ class LLMRegistry {
     if (provider === "openai") {
       const c = config.providers.openai;
       if (!c) throw new Error("providers.openai 未配置");
-      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+      return new LLMClient({
+        baseUrl: c.baseUrl,
+        apiKey: c.apiKey,
+        model: modelId,
+        maxTokens: c.maxTokens,
+        timeoutMs: c.timeoutMs,
+        supportsVision: true,
+      });
     }
     if (provider === "openrouter") {
       const c = config.providers.openrouter;
@@ -262,17 +275,38 @@ class LLMRegistry {
     if (provider === "deepseek") {
       const c = config.providers.deepseek;
       if (!c) throw new Error("providers.deepseek 未配置");
-      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+      return new LLMClient({
+        baseUrl: c.baseUrl,
+        apiKey: c.apiKey,
+        model: modelId,
+        maxTokens: c.maxTokens,
+        timeoutMs: c.timeoutMs,
+        supportsVision: true,
+      });
     }
     if (provider === "mimo") {
       const c = config.providers.mimo;
       if (!c) throw new Error("providers.mimo 未配置");
-      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+      return new LLMClient({
+        baseUrl: c.baseUrl,
+        apiKey: c.apiKey,
+        model: modelId,
+        maxTokens: c.maxTokens,
+        timeoutMs: c.timeoutMs,
+        supportsVision: true,
+      });
     }
     if (provider === "google") {
       const c = config.providers.google;
       if (!c) throw new Error("providers.google 未配置");
-      return new LLMClient({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: modelId, maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, supportsVision: true });
+      return new LLMClient({
+        baseUrl: c.baseUrl,
+        apiKey: c.apiKey,
+        model: modelId,
+        maxTokens: c.maxTokens,
+        timeoutMs: c.timeoutMs,
+        supportsVision: true,
+      });
     }
     throw new Error(`未知 provider "${provider}"`);
   }
@@ -296,9 +330,17 @@ class LLMRegistry {
     const visionCfg = config.llm.backends.vision;
     if (!visionCfg) return [];
     const chain: AnyLLMClient[] = [];
-    try { chain.push(this.get("vision")); } catch { /* skip */ }
+    try {
+      chain.push(this.get("vision"));
+    } catch {
+      /* skip */
+    }
     for (const sym of visionCfg.fallbacks ?? []) {
-      try { chain.push(this.buildClientForSymbol(sym, true)); } catch { /* skip */ }
+      try {
+        chain.push(this.buildClientForSymbol(sym, true));
+      } catch {
+        /* skip */
+      }
     }
     return chain;
   }
@@ -365,4 +407,3 @@ export async function buildFallbackClient(): Promise<AnyLLMClient | undefined> {
   }
   return undefined;
 }
-

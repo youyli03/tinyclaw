@@ -40,17 +40,19 @@ export function sanitizeUnicode(text: string): string {
 
     // 3. 显式清除已知危险范围（兜底，覆盖不支持 \p{} 的运行时）
     current = current
-      .replace(/[\u200B-\u200F]/g, "")   // 零宽空格、LTR/RTL 标记
-      .replace(/[\u202A-\u202E]/g, "")   // 方向格式字符
-      .replace(/[\u2066-\u2069]/g, "")   // 方向隔离字符
-      .replace(/[\uFEFF]/g, "")          // BOM
-      .replace(/[\uE000-\uF8FF]/g, "");  // BMP 私有区（含 Unicode Tag 载体）
+      .replace(/[\u200B-\u200F]/g, "") // 零宽空格、LTR/RTL 标记
+      .replace(/[\u202A-\u202E]/g, "") // 方向格式字符
+      .replace(/[\u2066-\u2069]/g, "") // 方向隔离字符
+      .replace(/[\uFEFF]/g, "") // BOM
+      .replace(/[\uE000-\uF8FF]/g, ""); // BMP 私有区（含 Unicode Tag 载体）
     // Unicode Tag 字符 U+E0000-U+E007F（补充平面，代理对形式）用 split+codePointAt 过滤
     if (current.includes("\uDB40")) {
-      current = [...current].filter((ch) => {
-        const cp = ch.codePointAt(0) ?? 0;
-        return cp < 0xE0000 || cp > 0xE007F;
-      }).join("");
+      current = [...current]
+        .filter((ch) => {
+          const cp = ch.codePointAt(0) ?? 0;
+          return cp < 0xe0000 || cp > 0xe007f;
+        })
+        .join("");
     }
 
     iterations++;

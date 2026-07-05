@@ -146,7 +146,7 @@ class MemoryMaintenanceScheduler {
         cronScheduler.reschedule("mem-distill");
         console.log(
           "[memory-maintenance] 已自动禁用旧版 mem-distill cron job(由内置调度器接管)\n" +
-          "[memory-maintenance] 如需恢复旧 job,可手动修改 ~/.tinyclaw/cron/jobs/mem-distill.json"
+            "[memory-maintenance] 如需恢复旧 job,可手动修改 ~/.tinyclaw/cron/jobs/mem-distill.json"
         );
       }
     }
@@ -179,7 +179,7 @@ class MemoryMaintenanceScheduler {
     const nextRun = new Date(Date.now() + ms);
     console.log(
       `[memory-maintenance] Scheduler started, next run at ${nextRun.toLocaleString()} ` +
-      `(in ${Math.round(ms / 60000)} min)`
+        `(in ${Math.round(ms / 60000)} min)`
     );
     this.timer = setTimeout(() => {
       void this.fire(timeOfDay);
@@ -199,7 +199,9 @@ class MemoryMaintenanceScheduler {
 
   private async runAll(): Promise<void> {
     const agents = agentManager.loadAll();
-    console.log(`[memory-maintenance] Processing ${agents.length} agent(s): ${agents.map((a) => a.id).join(", ")}`);
+    console.log(
+      `[memory-maintenance] Processing ${agents.length} agent(s): ${agents.map((a) => a.id).join(", ")}`
+    );
     for (const agent of agents) {
       await this.runOne(agent.id);
     }
@@ -212,7 +214,9 @@ class MemoryMaintenanceScheduler {
       if (cfg.memory.enabled) {
         const result = await rebuildMemoryIndex(agentId);
         if (result) {
-          console.log(`[memory-maintenance] [${agentId}] Index rebuilt: files=${result.update.indexed} chunks=${result.embed.chunksEmbedded}`);
+          console.log(
+            `[memory-maintenance] [${agentId}] Index rebuilt: files=${result.update.indexed} chunks=${result.embed.chunksEmbedded}`
+          );
         }
       } else {
         console.log(`[memory-maintenance] [${agentId}] memory not enabled, skipping index rebuild`);
@@ -248,7 +252,9 @@ class MemoryMaintenanceScheduler {
     console.log(`[memory-maintenance] [${agentId}] Step 5: aging stale open_loop cards...`);
     try {
       const result = ageOpenLoopCards(agentId, 30);
-      console.log(`[memory-maintenance] [${agentId}] aged ${result.aged} open_loop cards → obsolete`);
+      console.log(
+        `[memory-maintenance] [${agentId}] aged ${result.aged} open_loop cards → obsolete`
+      );
     } catch (err) {
       console.error(`[memory-maintenance] [${agentId}] age open_loop error:`, err);
     }
@@ -291,9 +297,10 @@ class MemoryMaintenanceScheduler {
     for (const [sectionTitle, newLines] of dedupedPatches) {
       if (!(MEM_SECTION_KEYS as readonly string[]).includes(sectionTitle)) continue;
       // 🎯 当前任务 章节使用"完全替换"策略，避免无限追加历史任务
-      const nextMem = sectionTitle === "🎯 当前任务"
-        ? this.replaceSection(updatedMem, sectionTitle, newLines)
-        : this.upsertSection(updatedMem, sectionTitle, newLines);
+      const nextMem =
+        sectionTitle === "🎯 当前任务"
+          ? this.replaceSection(updatedMem, sectionTitle, newLines)
+          : this.upsertSection(updatedMem, sectionTitle, newLines);
       if (nextMem !== updatedMem) updatedCount++;
       updatedMem = nextMem;
     }
@@ -554,7 +561,9 @@ class MemoryMaintenanceScheduler {
 /** 计算两个向量的余弦相似度 */
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
-  let dot = 0, na = 0, nb = 0;
+  let dot = 0,
+    na = 0,
+    nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i]! * b[i]!;
     na += a[i]! * a[i]!;
@@ -580,7 +589,7 @@ async function batchEmbed(texts: string[]): Promise<number[][]> {
           signal: AbortSignal.timeout(10000),
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json() as { embedding?: number[] };
+        const data = (await resp.json()) as { embedding?: number[] };
         if (!data.embedding || !Array.isArray(data.embedding)) {
           throw new Error("Invalid embedding response");
         }
@@ -589,7 +598,10 @@ async function batchEmbed(texts: string[]): Promise<number[][]> {
       return embeddings;
     } catch (e) {
       if (attempt === maxRetries) {
-        console.warn(`[memory-maintenance] Embedding 服务不可用 (${maxRetries + 1} 次重试均失败),跳过去重:`, e);
+        console.warn(
+          `[memory-maintenance] Embedding 服务不可用 (${maxRetries + 1} 次重试均失败),跳过去重:`,
+          e
+        );
         return [];
       }
       await new Promise((r) => setTimeout(r, 2000));
@@ -605,7 +617,7 @@ async function batchEmbed(texts: string[]): Promise<number[][]> {
 async function embedDedupPatches(
   currentMem: string,
   sectionPatches: Map<string, string[]>,
-  agentId: string,
+  agentId: string
 ): Promise<Map<string, string[]>> {
   const deduped = new Map<string, string[]>();
 
@@ -652,7 +664,10 @@ async function embedDedupPatches(
   }
 
   // 按 section 分组已有和新候选的 embedding
-  const results = new Map<number, { existing: number[][]; candidates: { text: string; emb: number[] }[] }>();
+  const results = new Map<
+    number,
+    { existing: number[][]; candidates: { text: string; emb: number[] }[] }
+  >();
   for (let i = 0; i < textMeta.length; i++) {
     const meta = textMeta[i]!;
     const emb = embs[i]!;
@@ -691,7 +706,9 @@ async function embedDedupPatches(
 
     if (filtered.length < section.newLines.length) {
       const skipped = section.newLines.length - filtered.length;
-      console.log(`[memory-maintenance] [${agentId}] Embedding 去重: ${section.title} 跳过 ${skipped} 条重复`);
+      console.log(
+        `[memory-maintenance] [${agentId}] Embedding 去重: ${section.title} 跳过 ${skipped} 条重复`
+      );
     }
     deduped.set(section.title, filtered);
   }
@@ -725,7 +742,7 @@ function extractSectionItems(memContent: string): Map<string, string[]> {
 async function maybeConsolidatePreferences(
   agentId: string,
   updatedMem: string,
-  memPath: string,
+  memPath: string
 ): Promise<void> {
   try {
     const sectionItems = extractSectionItems(updatedMem);
@@ -737,19 +754,22 @@ async function maybeConsolidatePreferences(
     const client = llmRegistry.get("summarizer");
     const prefText = prefs.map((p, i) => `${i + 1}. ${p}`).join("\n");
 
-    const result = await client.chat([
-      {
-        role: "system",
-        content: `[⚠️BLOCKED:zh_you_are]。
+    const result = await client.chat(
+      [
+        {
+          role: "system",
+          content: `[⚠️BLOCKED:zh_you_are]。
 你的任务是将"用户偏好"列表中语义完全相同的条目合并,保留表述最清晰的一条。
 重要:不要删除任何独立的约束/偏好,只合并语义完全相同的条目。
 输出格式:用 Markdown 列表(- 开头),每行一条合并后的偏好。`,
-      },
-      {
-        role: "user",
-        content: `以下是当前"用户偏好"列表(${prefs.length} 条),请合并语义完全相同的条目:\n\n${prefText}`,
-      },
-    ], { isUserInitiated: false });
+        },
+        {
+          role: "user",
+          content: `以下是当前"用户偏好"列表(${prefs.length} 条),请合并语义完全相同的条目:\n\n${prefText}`,
+        },
+      ],
+      { isUserInitiated: false }
+    );
 
     const consolidated = result.content.trim();
     if (!consolidated) return;
@@ -766,7 +786,9 @@ async function maybeConsolidatePreferences(
     // 用 replaceSection 替换整个章节
     const merged = replaceSectionStatic(updatedMem, "👤 用户偏好", newLines);
     fs.writeFileSync(memPath, merged, "utf-8");
-    console.log(`[memory-maintenance] [${agentId}] 👤 用户偏好合并完成: ${prefs.length} → ${newLines.length} 条`);
+    console.log(
+      `[memory-maintenance] [${agentId}] 👤 用户偏好合并完成: ${prefs.length} → ${newLines.length} 条`
+    );
   } catch (e) {
     console.warn(`[memory-maintenance] [${agentId}] 偏好合并失败:`, e);
   }

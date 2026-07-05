@@ -47,7 +47,9 @@ async function cmdShow(): Promise<void> {
 
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  ${red("✗")} ${i.path.join(".")}: ${i.message}`).join("\n");
+    const issues = parsed.error.issues
+      .map((i) => `  ${red("✗")} ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
     console.log(`\n${yellow("⚠ 配置验证失败")}(以下字段有问题):\n${issues}`);
     console.log(dim("\n显示默认值填充后的配置:"));
   }
@@ -79,9 +81,10 @@ async function cmdShow(): Promise<void> {
         const rows = servers.map(([name, srv]) => {
           const tag = srv.enabled !== false ? green("enabled") : dim("disabled");
           const transport = srv.transport;
-          const endpoint = srv.transport === "stdio"
-            ? dim(`${srv.command} ${srv.args?.join(" ") ?? ""}`.trim().slice(0, 60))
-            : dim(srv.url ?? "");
+          const endpoint =
+            srv.transport === "stdio"
+              ? dim(`${srv.command} ${srv.args?.join(" ") ?? ""}`.trim().slice(0, 60))
+              : dim(srv.url ?? "");
           return [cyan(name), `[${tag}]`, transport, endpoint];
         });
         printTable(["Name", "Status", "Transport", "Command / URL"], rows);
@@ -225,8 +228,13 @@ async function cmdGet(args: string[]): Promise<void> {
 async function cmdSet(args: string[]): Promise<void> {
   // 解析 --append / --remove 标志
   let mode: "set" | "append" | "remove" = "set";
-  if (args[0] === "--append") { mode = "append"; args = args.slice(1); }
-  else if (args[0] === "--remove") { mode = "remove"; args = args.slice(1); }
+  if (args[0] === "--append") {
+    mode = "append";
+    args = args.slice(1);
+  } else if (args[0] === "--remove") {
+    mode = "remove";
+    args = args.slice(1);
+  }
 
   if (args.length < 2) {
     console.log(red("用法:config set [--append|--remove] <dotted.key> <value>"));
@@ -254,7 +262,11 @@ async function cmdSet(args: string[]): Promise<void> {
   // ── 数组追加 / 删除模式 ──────────────────────────────────────────────────
   if (mode === "append" || mode === "remove") {
     if (fieldType.kind !== "array") {
-      console.error(red(`字段 "${dotPath}" 不是数组类型（实际类型：${fieldType.kind}），无法使用 --append/--remove`));
+      console.error(
+        red(
+          `字段 "${dotPath}" 不是数组类型（实际类型：${fieldType.kind}），无法使用 --append/--remove`
+        )
+      );
       return;
     }
 
@@ -264,7 +276,10 @@ async function cmdSet(args: string[]): Promise<void> {
       const raw = parse(readRawConfig()) as Record<string, unknown>;
       let cur: unknown = raw;
       for (const p of dotPath.split(".")) {
-        if (cur === null || typeof cur !== "object") { cur = undefined; break; }
+        if (cur === null || typeof cur !== "object") {
+          cur = undefined;
+          break;
+        }
         cur = (cur as Record<string, unknown>)[p];
       }
       if (Array.isArray(cur)) currentArr = cur;
@@ -429,23 +444,40 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "show":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("show");
+        return;
+      }
       return cmdShow();
     case "get":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("get"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("get");
+        return;
+      }
       return cmdGet(rest);
     case "edit":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("edit"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("edit");
+        return;
+      }
       return cmdEdit();
     case "path":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("path"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("path");
+        return;
+      }
       return cmdPath();
     case "set":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("set"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("set");
+        return;
+      }
       return cmdSet(rest);
     case "--help":
     case "-h":
-    case "help":  printHelp(); return;
+    case "help":
+      printHelp();
+      return;
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();

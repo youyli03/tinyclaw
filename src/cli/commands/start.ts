@@ -12,7 +12,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { bold, green, red, yellow, dim } from "../ui.js";
 
-const TINYCLAW_DIR    = path.join(os.homedir(), ".tinyclaw");
+const TINYCLAW_DIR = path.join(os.homedir(), ".tinyclaw");
 const SERVICE_PID_FILE = path.join(TINYCLAW_DIR, ".service_pid");
 export const SERVICE_LOG_FILE = path.join(TINYCLAW_DIR, "service.log");
 
@@ -35,7 +35,11 @@ export async function run(_args: string[]): Promise<void> {
         return;
       } catch {
         // 进程不存在，清理残留 PID 文件
-        try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(SERVICE_PID_FILE);
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -66,17 +70,20 @@ export async function run(_args: string[]): Promise<void> {
   let ready = false;
   for (let i = 0; i < 15; i++) {
     await new Promise<void>((r) => setTimeout(r, 200));
-    if (fs.existsSync(SERVICE_PID_FILE)) { ready = true; break; }
+    if (fs.existsSync(SERVICE_PID_FILE)) {
+      ready = true;
+      break;
+    }
   }
 
-  const pid = ready
-    ? fs.readFileSync(SERVICE_PID_FILE, "utf-8").trim()
-    : String(child.pid);
+  const pid = ready ? fs.readFileSync(SERVICE_PID_FILE, "utf-8").trim() : String(child.pid);
 
   if (ready) {
     console.log(`${green("✓")} tinyclaw 已在后台启动（PID ${bold(pid)}）`);
   } else {
-    console.log(`${yellow("⚠")} 进程已启动（PID ${bold(pid)}），但 PID 文件尚未写入，服务可能仍在初始化`);
+    console.log(
+      `${yellow("⚠")} 进程已启动（PID ${bold(pid)}），但 PID 文件尚未写入，服务可能仍在初始化`
+    );
   }
   console.log(dim(`日志：tinyclaw logs  或  tail -f ${SERVICE_LOG_FILE}`));
 }

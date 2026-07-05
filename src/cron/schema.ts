@@ -75,7 +75,10 @@ export const CronJobSchema = z.object({
   intervalSecs: z.number().int().positive().optional(),
   /** "daily": "HH:MM" 本地时间，每天触发一次 */
   /** "daily": "HH:MM" 本地时间,每天触发一次(单时段;多时段请用 timesOfDay) */
-  timeOfDay: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  timeOfDay: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
   /** "daily": 多个触发时间点,格式 ["HH:MM", ...](优先于 timeOfDay) */
   timesOfDay: z.array(z.string().regex(/^\d{2}:\d{2}$/)).optional(),
   /**
@@ -83,11 +86,13 @@ export const CronJobSchema = z.object({
    * - start/end: "HH:MM" 本地时间
    * - weekdays: 允许触发的星期数组（0=周日, 1=周一 … 6=周六），不填=每天
    */
-  timeRange: z.object({
-    start: z.string().regex(/^\d{2}:\d{2}$/),
-    end: z.string().regex(/^\d{2}:\d{2}$/),
-    weekdays: z.array(z.number().int().min(0).max(6)).optional(),
-  }).optional(),
+  timeRange: z
+    .object({
+      start: z.string().regex(/^\d{2}:\d{2}$/),
+      end: z.string().regex(/^\d{2}:\d{2}$/),
+      weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+    })
+    .optional(),
 
   // ── 输出配置 ──────────────────────────────────────────────────────────────
   output: CronOutputSchema,

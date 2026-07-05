@@ -45,7 +45,8 @@ registerTool({
         properties: {
           skill_name: {
             type: "string",
-            description: "要执行的 skill 名称（与 SKILLS.md 中的 name 一致，如 stock-daily-report）",
+            description:
+              "要执行的 skill 名称（与 SKILLS.md 中的 name 一致，如 stock-daily-report）",
           },
           args: {
             type: "string",
@@ -74,9 +75,7 @@ registerTool({
 
     // 1. 解析 SKILLS.md，找到对应条目
     const index = parseSkillsIndex(agentId);
-    const entry = index.find(
-      (e) => e.name === skillName || e.name === skillName.toLowerCase()
-    );
+    const entry = index.find((e) => e.name === skillName || e.name === skillName.toLowerCase());
     if (!entry) {
       const available = index.map((e) => e.name).join(", ") || "（暂无）";
       return `错误：找不到 skill "${skillName}"。可用技能：${available}`;
@@ -120,7 +119,7 @@ registerTool({
         undefined,
         undefined,
         "inject",
-        { systemPromptSuffix },
+        { systemPromptSuffix }
       );
       return `⏳ skill \`${skillName}\` 已在后台启动（slave: ${slaveId}），完成后自动通知。`;
     }
@@ -132,10 +131,18 @@ registerTool({
         ctx.slaveRunFn(slaveSession, task, {
           systemPromptSuffix,
           onToolCall: (name: string, args: Record<string, unknown>) => {
-            broadcastActivity(slaveSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+            broadcastActivity(slaveSession.sessionId, {
+              kind: "tool_call",
+              name,
+              argsSummary: JSON.stringify(args).slice(0, 200),
+            });
           },
           onToolResult: (name: string, res: string) => {
-            broadcastActivity(slaveSession.sessionId, { kind: "tool_result", name, resultSummary: res.slice(0, 300) });
+            broadcastActivity(slaveSession.sessionId, {
+              kind: "tool_result",
+              name,
+              resultSummary: res.slice(0, 300),
+            });
           },
         }),
         new Promise<never>((_, reject) =>
@@ -147,7 +154,6 @@ registerTool({
       const msg = err instanceof Error ? err.message : String(err);
       return `❌ skill "${skillName}" 执行失败:${msg}`;
     }
-
 
     // 清理 skill 临时 session JSONL,并裁剪同前缀旧文件
     slaveSession.deleteJsonl();

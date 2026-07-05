@@ -55,11 +55,7 @@ export function checkSecureFilePerm(filePath: string): FilePermCheckResult {
  * @param label    日志中显示的文件别名(如 "secrets.toml")
  * @param autoFix  过宽时是否自动 chmod 0600(默认 false,仅告警)
  */
-export function ensureSecureFilePerm(
-  filePath: string,
-  label: string,
-  autoFix = false,
-): void {
+export function ensureSecureFilePerm(filePath: string, label: string, autoFix = false): void {
   const result = checkSecureFilePerm(filePath);
   if (result.ok) return;
 
@@ -67,13 +63,13 @@ export function ensureSecureFilePerm(
     try {
       fs.chmodSync(filePath, 0o600);
       console.warn(
-        `[tinyclaw] ⚠️  ${label} 权限过宽(${result.mode.toString(8).padStart(3, "0")}),已自动修正为 600`,
+        `[tinyclaw] ⚠️  ${label} 权限过宽(${result.mode.toString(8).padStart(3, "0")}),已自动修正为 600`
       );
       return;
     } catch (err) {
       console.warn(
         `[tinyclaw] ⚠️  ${label} 权限过宽,自动修正失败:${err}\n` +
-          `   请手动执行:chmod 600 ${filePath}`,
+          `   请手动执行:chmod 600 ${filePath}`
       );
       return;
     }
@@ -82,6 +78,6 @@ export function ensureSecureFilePerm(
   console.warn(
     `[tinyclaw] ⚠️  安全警告:${label} ${result.msg}\n` +
       `   建议执行:chmod 600 ${filePath}\n` +
-      `   (可在 config.toml 设置 [auth.secret_guard] autoChmod = true 让 tinyclaw 自动修正)`,
+      `   (可在 config.toml 设置 [auth.secret_guard] autoChmod = true 让 tinyclaw 自动修正)`
   );
 }

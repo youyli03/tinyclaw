@@ -14,14 +14,14 @@
   const _err = console.error.bind(console);
   const _warn = console.warn.bind(console);
   const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
-  console.log   = (...a) => _log(`[${ts()}]`, ...a);
+  console.log = (...a) => _log(`[${ts()}]`, ...a);
   console.error = (...a) => {
     _err(`[${ts()}]`, ...a);
-    if (a.some(x => String(x).includes("longer than the context"))) {
+    if (a.some((x) => String(x).includes("longer than the context"))) {
       _err("[ERR STACK]", new Error().stack?.split("\n").slice(2, 6).join(" | "));
     }
   };
-  console.warn  = (...a) => _warn(`[${ts()}]`, ...a);
+  console.warn = (...a) => _warn(`[${ts()}]`, ...a);
 }
 
 import * as fs from "node:fs";
@@ -120,7 +120,9 @@ function stripVenvFromEnv(): void {
   delete process.env.VIRTUAL_ENV;
   delete process.env.VIRTUAL_ENV_PROMPT;
   if (process.env.PATH) {
-    const cleaned = process.env.PATH.split(":").filter((p) => !p.includes("venv/bin")).join(":");
+    const cleaned = process.env.PATH.split(":")
+      .filter((p) => !p.includes("venv/bin"))
+      .join(":");
     if (cleaned !== process.env.PATH) {
       process.env.PATH = cleaned;
       console.log("[tinyclaw] Stripped venv/bin from PATH");
@@ -141,7 +143,10 @@ function loadDotEnv(): void {
       const eq = line.indexOf("=");
       if (eq <= 0) continue;
       const key = line.slice(0, eq).trim();
-      const val = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      const val = line
+        .slice(eq + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
       if (key && !(key in process.env)) {
         process.env[key] = val;
         count++;
@@ -204,143 +209,179 @@ async function main(): Promise<void> {
   // ── QQBot 消息处理 ──────────────────────────────────────────────────────
 
   // 为每个 bot 构建独立的消息处理闭包
-  function makeHandleMessage(activeConnector: QQBotConnector): (msg: InboundMessage) => Promise<string> {
+  function makeHandleMessage(
+    activeConnector: QQBotConnector
+  ): (msg: InboundMessage) => Promise<string> {
     return async function handleMessage(msg: InboundMessage): Promise<string> {
-    // eslint-disable-next-line @typescript-eslint/no-shadow
-    const connector = activeConnector;
-    const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
-    const session = getSession(sessionId);
-    // 记录该 session 归属的 connector，供 session_send 路由使用
-    sessionConnectorMap.set(sessionId, activeConnector);
+       
+      const connector = activeConnector;
+      const sessionId = `qqbot:${msg.type}:${msg.peerId}`;
+      const session = getSession(sessionId);
+      // 记录该 session 归属的 connector，供 session_send 路由使用
+      sessionConnectorMap.set(sessionId, activeConnector);
 
-    // ── 附件预处理（语音转文字）——必须在所有早期 return 分支之前执行 ──────
-    // plan 审批、ask_user、MFA 等分支均需能接收语音消息作为输入。
-    let resolvedContent = msg.content;
-    let earlyDownloaded: import("./connectors/qqbot/attachments.js").DownloadedAttachment[] = [];
-    if (msg.attachments && msg.attachments.length > 0) {
-      try {
-        earlyDownloaded = await downloadAttachments(
-          msg.attachments,
-          agentManager.downloadsDir(session.agentId)
-        );
-        const voiceCfg = loadConfig().voice;
-        for (const d of earlyDownloaded) {
-          if (!d.contentType.startsWith("audio/")) continue;
-          console.log(`[whisper] 开始转录: ${d.filename} (model=${voiceCfg.model})`);
-          try {
-            const transcript = await transcribeAudio(d.localPath, voiceCfg.model, voiceCfg.language);
-            if (transcript) {
-              d.transcript = transcript;
-              console.log(`[whisper] 转录完成: "${transcript}"`);
-              resolvedContent = transcript; // 用转录文本替代原始消息内容
-              void connector.send(msg.peerId, msg.type, `🎤 语音识别：${transcript}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
-            } else {
-              console.log(`[whisper] 转录结果为空: ${d.filename}`);
+      // ── 附件预处理（语音转文字）——必须在所有早期 return 分支之前执行 ──────
+      // plan 审批、ask_user、MFA 等分支均需能接收语音消息作为输入。
+      let resolvedContent = msg.content;
+      let earlyDownloaded: import("./connectors/qqbot/attachments.js").DownloadedAttachment[] = [];
+      if (msg.attachments && msg.attachments.length > 0) {
+        try {
+          earlyDownloaded = await downloadAttachments(
+            msg.attachments,
+            agentManager.downloadsDir(session.agentId)
+          );
+          const voiceCfg = loadConfig().voice;
+          for (const d of earlyDownloaded) {
+            if (!d.contentType.startsWith("audio/")) continue;
+            console.log(`[whisper] 开始转录: ${d.filename} (model=${voiceCfg.model})`);
+            try {
+              const transcript = await transcribeAudio(
+                d.localPath,
+                voiceCfg.model,
+                voiceCfg.language
+              );
+              if (transcript) {
+                d.transcript = transcript;
+                console.log(`[whisper] 转录完成: "${transcript}"`);
+                resolvedContent = transcript; // 用转录文本替代原始消息内容
+                void connector
+                  .send(msg.peerId, msg.type, `🎤 语音识别：${transcript}`)
+                  .catch((e: unknown) => console.error("[qqbot] send error:", e));
+              } else {
+                console.log(`[whisper] 转录结果为空: ${d.filename}`);
+              }
+            } catch (err) {
+              console.warn(`[whisper] 语音转文字失败 (${d.filename}):`, err);
             }
-          } catch (err) {
-            console.warn(`[whisper] 语音转文字失败 (${d.filename}):`, err);
           }
+        } catch (err) {
+          console.warn("[qqbot] 附件下载失败:", err);
         }
-      } catch (err) {
-        console.warn("[qqbot] 附件下载失败:", err);
       }
-    }
 
-    // ── Plan 审批：检测 plan 子模式下等待用户选择操作的消息 ─────────────
-    // 收集图片附件路径（供 InboundMessageBus 使用）
-    const imagePaths = earlyDownloaded
-      .filter((d) => d.contentType.startsWith("image/") && d.localPath)
-      .map((d) => d.localPath);
-    // 拼入附件标签:供 inboundBus 等待者(ask_user/plan approval/MFA 等)直接获取完整内容
-    const enrichedForBus = buildEnrichedContent(resolvedContent, earlyDownloaded);
-    const inboundExtras: import("./core/inbound-bus.js").InboundExtras = {
-      rawContent: resolvedContent,
-      imagePaths,
-      enrichedContent: enrichedForBus,
-    };
+      // ── Plan 审批：检测 plan 子模式下等待用户选择操作的消息 ─────────────
+      // 收集图片附件路径（供 InboundMessageBus 使用）
+      const imagePaths = earlyDownloaded
+        .filter((d) => d.contentType.startsWith("image/") && d.localPath)
+        .map((d) => d.localPath);
+      // 拼入附件标签:供 inboundBus 等待者(ask_user/plan approval/MFA 等)直接获取完整内容
+      const enrichedForBus = buildEnrichedContent(resolvedContent, earlyDownloaded);
+      const inboundExtras: import("./core/inbound-bus.js").InboundExtras = {
+        rawContent: resolvedContent,
+        imagePaths,
+        enrichedContent: enrichedForBus,
+      };
 
-    // ── 斜杠命令拦截:以 "/" 开头的消息优先执行,不走 inboundBus ────────
-    // /status 等查询命令在 plan/ask_user 等待期间也应直接响应
-    const parsedCmd = parseCommand(msg.content);
-    if (parsedCmd) {
-      const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
-      if (result) {
-        await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+      // ── 斜杠命令拦截:以 "/" 开头的消息优先执行,不走 inboundBus ────────
+      // /status 等查询命令在 plan/ask_user 等待期间也应直接响应
+      const parsedCmd = parseCommand(msg.content);
+      if (parsedCmd) {
+        const result = await executeCommand(parsedCmd.name, parsedCmd.args, { session });
+        if (result) {
+          await connector.send(msg.peerId, msg.type, result, msg.messageId).catch(() => {});
+        }
+        // /retry 命令设置了 pendingRetry:fall-through,继续构建 opts 并重新调用 runAgent
+        if (!session.pendingRetry) {
+          return "";
+        }
       }
-      // /retry 命令设置了 pendingRetry:fall-through,继续构建 opts 并重新调用 runAgent
-      if (!session.pendingRetry) {
+
+      // ── InboundMessageBus 分发:将消息路由给注册的等待者 ──────────────────
+      // 覆盖:MFA pendingApproval、plan approval、ask_master、ask_user(含 async slave)
+      // 严格 FIFO:按注册时间顺序,找到第一个 match() 的 Waiter 并调用其 handle()
+      if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
         return "";
       }
-    }
 
-    // ── InboundMessageBus 分发:将消息路由给注册的等待者 ──────────────────
-    // 覆盖:MFA pendingApproval、plan approval、ask_master、ask_user(含 async slave)
-    // 严格 FIFO:按注册时间顺序,找到第一个 match() 的 Waiter 并调用其 handle()
-    if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
-      return "";
-    }
-    
-    // ── Debounce:非命令/非 inboundBus 消息缓冲 5s 后合并送入 runAgent ────
-    {
-      const item: MergedPendingItem = { msg, resolvedContent, earlyDownloaded };
-      const existing = pendingBuffers.get(sessionId);
+      // ── Debounce:非命令/非 inboundBus 消息缓冲 5s 后合并送入 runAgent ────
+      {
+        const item: MergedPendingItem = { msg, resolvedContent, earlyDownloaded };
+        const existing = pendingBuffers.get(sessionId);
 
-      if (existing) {
-        // 追加消息，重置 timer
-        // 如果 runAgent 已注册了 inboundBus 等待者（askUser/exitPlan），优先 dispatch
-        if (!session.inboundBus.hasNoBounceWaiter() && session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
+        if (existing) {
+          // 追加消息，重置 timer
+          // 如果 runAgent 已注册了 inboundBus 等待者（askUser/exitPlan），优先 dispatch
+          if (
+            !session.inboundBus.hasNoBounceWaiter() &&
+            session.inboundBus.dispatch(enrichedForBus, inboundExtras)
+          ) {
+            clearTimeout(existing.timer);
+            pendingBuffers.delete(sessionId);
+            // 合并先前缓冲的消息再送入 runAgent
+            if (existing.items.length > 0) {
+              const bText = existing.items.map((i) => i.resolvedContent).join("\n");
+              const bDl = existing.items.flatMap((i) => i.earlyDownloaded);
+              const bLast = existing.items[existing.items.length - 1]!;
+              void handleMessageCore(
+                connector,
+                session,
+                { ...bLast.msg, content: bText },
+                bText,
+                bDl
+              );
+            }
+            return "";
+          }
           clearTimeout(existing.timer);
-          pendingBuffers.delete(sessionId);
-          // 合并先前缓冲的消息再送入 runAgent
-          if (existing.items.length > 0) {
-            const bText = existing.items.map((i) => i.resolvedContent).join('\n');
-            const bDl = existing.items.flatMap((i) => i.earlyDownloaded);
-            const bLast = existing.items[existing.items.length - 1]!;
-            void handleMessageCore(connector, session, { ...bLast.msg, content: bText }, bText, bDl);
-          }
-          return '';
+          existing.items.push(item);
+          existing.timer = setTimeout(() => void existing.flush(), MESSAGE_DEBOUNCE_MS);
+          console.log(`[debounce] 追加第 ${existing.items.length} 条 → sessionId=${sessionId}`);
+          return "";
+        } else {
+          return await new Promise<string>((resolve) => {
+            const newBuf: MergedPendingBuffer = {
+              items: [item],
+              timer: null as unknown as ReturnType<typeof setTimeout>,
+              flush: async () => {
+                pendingBuffers.delete(sessionId);
+                const mergedText = newBuf.items.map((i) => i.resolvedContent).join("\n");
+                const mergedDownloaded = newBuf.items.flatMap((i) => i.earlyDownloaded);
+                const lastItem = newBuf.items[newBuf.items.length - 1];
+                const lastMsg = lastItem!.msg;
+                if (newBuf.items.length > 1) {
+                  console.log(
+                    `[debounce] flush 合并 ${newBuf.items.length} 条 → sessionId=${sessionId}`
+                  );
+                }
+                // flush 时再次尝试 dispatch，拦截 askUser/exitPlan
+                // flush 时用 mergedText 做 rawContent,enrichedContent 由各 item 的 earlyDownloaded 拼入
+                const mergedDownloadedForBus = newBuf.items.flatMap((i) => i.earlyDownloaded);
+                const mergedEnrichedForBus = buildEnrichedContent(
+                  mergedText,
+                  mergedDownloadedForBus
+                );
+                const mergedImagePaths = mergedDownloadedForBus
+                  .filter((d) => d.contentType.startsWith("image/"))
+                  .map((d) => d.localPath);
+                if (
+                  !session.inboundBus.hasNoBounceWaiter() &&
+                  session.inboundBus.dispatch(mergedEnrichedForBus, {
+                    rawContent: mergedText,
+                    imagePaths: mergedImagePaths,
+                    enrichedContent: mergedEnrichedForBus,
+                  })
+                ) {
+                  resolve("");
+                  return;
+                }
+                resolve(
+                  await handleMessageCore(
+                    connector,
+                    session,
+                    { ...lastMsg, content: mergedText },
+                    mergedText,
+                    mergedDownloaded
+                  )
+                );
+              },
+            };
+            newBuf.timer = setTimeout(() => void newBuf.flush(), MESSAGE_DEBOUNCE_MS);
+            pendingBuffers.set(sessionId, newBuf);
+          });
         }
-        clearTimeout(existing.timer);
-        existing.items.push(item);
-        existing.timer = setTimeout(() => void existing.flush(), MESSAGE_DEBOUNCE_MS);
-        console.log(`[debounce] 追加第 ${existing.items.length} 条 → sessionId=${sessionId}`);
-        return "";
-      } else {
-        return await new Promise<string>((resolve) => {
-          const newBuf: MergedPendingBuffer = {
-            items: [item],
-            timer: null as unknown as ReturnType<typeof setTimeout>,
-            flush: async () => {
-              pendingBuffers.delete(sessionId);
-              const mergedText = newBuf.items.map((i) => i.resolvedContent).join("\n");
-              const mergedDownloaded = newBuf.items.flatMap((i) => i.earlyDownloaded);
-              const lastItem = newBuf.items[newBuf.items.length - 1];
-              const lastMsg = lastItem!.msg;
-              if (newBuf.items.length > 1) {
-                console.log(`[debounce] flush 合并 ${newBuf.items.length} 条 → sessionId=${sessionId}`);
-              }
-              // flush 时再次尝试 dispatch，拦截 askUser/exitPlan
-              // flush 时用 mergedText 做 rawContent,enrichedContent 由各 item 的 earlyDownloaded 拼入
-              const mergedDownloadedForBus = newBuf.items.flatMap((i) => i.earlyDownloaded);
-              const mergedEnrichedForBus = buildEnrichedContent(mergedText, mergedDownloadedForBus);
-              const mergedImagePaths = mergedDownloadedForBus.filter(d => d.contentType.startsWith("image/")).map(d => d.localPath);
-              if (!session.inboundBus.hasNoBounceWaiter() && session.inboundBus.dispatch(mergedEnrichedForBus, { rawContent: mergedText, imagePaths: mergedImagePaths, enrichedContent: mergedEnrichedForBus })) {
-                resolve('');
-                return;
-              }
-              resolve(await handleMessageCore(
-                connector, session, { ...lastMsg, content: mergedText }, mergedText, mergedDownloaded
-              ));
-            },
-          };
-          newBuf.timer = setTimeout(() => void newBuf.flush(), MESSAGE_DEBOUNCE_MS);
-          pendingBuffers.set(sessionId, newBuf);
-        });
       }
-    }
     };
   }
-
 
   async function handleMessageCore(
     connector: QQBotConnector,
@@ -400,20 +441,28 @@ async function main(): Promise<void> {
       const slaveOpts: AgentRunOptions = {
         onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
           return connector.buildMFARequest(
-            msg.peerId, msg.type, warningMsg,
+            msg.peerId,
+            msg.type,
+            warningMsg,
             mfaTimeoutSecs * 1000,
             verifyCode
           );
         },
         onMFAPrompt: (statusMsg: string) => {
-          void connector.send(msg.peerId, msg.type, statusMsg).catch((e: unknown) => console.error("[qqbot] send error:", e));
+          void connector
+            .send(msg.peerId, msg.type, statusMsg)
+            .catch((e: unknown) => console.error("[qqbot] send error:", e));
         },
         // 后台注入不需要心跳：用户没有主动发起请求，不应收到「仍在处理中」消息
         onCompress: (phase, summary) => {
           if (phase === "start") {
-            void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...").catch((e: unknown) => console.error("[qqbot] send error:", e));
+            void connector
+              .send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...")
+              .catch((e: unknown) => console.error("[qqbot] send error:", e));
           } else if (phase === "done" && summary) {
-            void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
+            void connector
+              .send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`)
+              .catch((e: unknown) => console.error("[qqbot] send error:", e));
           }
         },
         // 不传 onSlaveComplete，避免 Slave 触发递归 fork
@@ -442,9 +491,7 @@ async function main(): Promise<void> {
      * Slave 定期进度推送回调：直接通过 connector 推送进度快照，不触发 runAgent。
      */
     const onProgressNotify = async (slaveId: string, state: SlaveState): Promise<void> => {
-      const elapsed = Math.round(
-        (Date.now() - new Date(state.startedAt).getTime()) / 1000
-      );
+      const elapsed = Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000);
       const toolsSummary =
         state.progress.toolsUsed.length > 0
           ? `\n已用工具：${state.progress.toolsUsed.join(", ")}`
@@ -478,7 +525,7 @@ async function main(): Promise<void> {
         summary: string,
         actions?: string[],
         recommendedAction?: string,
-        planPath?: string,
+        planPath?: string
       ): Promise<PlanApprovalResult> => {
         // 达到最大交互次数：自动拒绝并通知 AI 总结
         interactiveCallCount++;
@@ -489,7 +536,7 @@ async function main(): Promise<void> {
           };
         }
 
-                const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
+        const resolvedActions = actions ?? ["autopilot", "interactive", "exit_only"];
         const resolvedRecommended = recommendedAction ?? "autopilot";
 
         // 构建操作菜单（Markdown 格式，用于渲染为图片）
@@ -514,7 +561,13 @@ async function main(): Promise<void> {
         let sent = false;
         try {
           const outDir = path.join(
-            os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+            os.homedir(),
+            ".tinyclaw",
+            "agents",
+            session.agentId,
+            "workspace",
+            "output",
+            "md-renders"
           );
           fs.mkdirSync(outDir, { recursive: true });
           const imgPath = await mdToImage(menuMsg, outDir);
@@ -527,11 +580,17 @@ async function main(): Promise<void> {
           // fallback：发送纯文本版本（去掉 Markdown 特殊符号）
           const plainMsg =
             `📋 计划已就绪\n\n${summary}${planPath ? `\n📄 详细计划：${planPath}` : ""}\n\n` +
-            `─────────────────\n请选择操作：\n${resolvedActions.map((action, i) => {
-              const icons: Record<string, string> = { autopilot: "🚀", interactive: "💬", exit_only: "❌" };
-              const isRecommended = action === resolvedRecommended;
-              return `  ${i + 1}. ${icons[action] ?? "▶️"} ${action}${isRecommended ? " —— 推荐" : ""}`;
-            }).join("\n")}\n\n` +
+            `─────────────────\n请选择操作：\n${resolvedActions
+              .map((action, i) => {
+                const icons: Record<string, string> = {
+                  autopilot: "🚀",
+                  interactive: "💬",
+                  exit_only: "❌",
+                };
+                const isRecommended = action === resolvedRecommended;
+                return `  ${i + 1}. ${icons[action] ?? "▶️"} ${action}${isRecommended ? " —— 推荐" : ""}`;
+              })
+              .join("\n")}\n\n` +
             `或直接输入反馈意见，AI 将修改计划后重新提交。`;
           await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
         }
@@ -549,7 +608,7 @@ async function main(): Promise<void> {
     const onAskUser = async (
       question: string,
       options?: Array<{ label: string; description?: string; recommended?: boolean }>,
-      allowFreeform = true,
+      allowFreeform = true
     ): Promise<{ answer: string; isFreeform: boolean }> => {
       // 达到最大交互次数:通知 AI 总结（code 模式限制，chat 模式不限）
       interactiveCallCount++;
@@ -580,18 +639,27 @@ async function main(): Promise<void> {
         for (let mi = allMsgs.length - 1; mi >= 0; mi--) {
           const mm = allMsgs[mi]!;
           if (mm.role === "assistant") {
-            const tcs = (mm as { role: "assistant"; tool_calls?: Array<{ function: { name: string }; id: string }> }).tool_calls;
+            const tcs = (
+              mm as {
+                role: "assistant";
+                tool_calls?: Array<{ function: { name: string }; id: string }>;
+              }
+            ).tool_calls;
             if (!tcs) break; // 最近一批 assistant 消息无 tool_calls，停止扫描
             for (const tc of tcs) {
               if (tc.function.name === "render_diagram") {
                 const tmsg = allMsgs.find(
-                  (x) => x.role === "tool" && (x as { role: "tool"; tool_call_id: string }).tool_call_id === tc.id
+                  (x) =>
+                    x.role === "tool" &&
+                    (x as { role: "tool"; tool_call_id: string }).tool_call_id === tc.id
                 ) as { role: "tool"; content: string } | undefined;
                 if (tmsg) {
                   const imgM = tmsg.content.match(/<img\s+src="([^"]+)"/);
                   if (imgM?.[1] && fs.existsSync(imgM[1])) {
                     console.log(`[main] ask_user 前预发 render_diagram 图片: ${imgM[1]}`);
-                    await connector.send(msg.peerId, msg.type, `<img src="${imgM[1]}"/>`).catch(() => {});
+                    await connector
+                      .send(msg.peerId, msg.type, `<img src="${imgM[1]}"/>`)
+                      .catch(() => {});
                   }
                 }
               }
@@ -607,7 +675,13 @@ async function main(): Promise<void> {
       let sent = false;
       try {
         const outDir = path.join(
-          os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+          os.homedir(),
+          ".tinyclaw",
+          "agents",
+          session.agentId,
+          "workspace",
+          "output",
+          "md-renders"
         );
         fs.mkdirSync(outDir, { recursive: true });
         const imgPath = await mdToImage(menuMsg, outDir);
@@ -631,7 +705,7 @@ async function main(): Promise<void> {
       }
 
       // 等待用户回复，INVALID_CHOICE 时重新提示并循环
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         try {
           return await session.waitForAskUser(optionLabels, allowFreeform);
@@ -651,7 +725,9 @@ async function main(): Promise<void> {
       onSlaveComplete,
       onProgressNotify,
       onNotify: async (message: string) => {
-        const prefixed = message.startsWith("<img") ? message : `⏳ [进度]
+        const prefixed = message.startsWith("<img")
+          ? message
+          : `⏳ [进度]
 ${message}`;
         await connector.send(msg.peerId, msg.type, prefixed).catch((err) => {
           console.error("[notify_user] send error:", err);
@@ -661,31 +737,49 @@ ${message}`;
       onAskUser,
       onMFARequest: async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
         return connector.buildMFARequest(
-          msg.peerId, msg.type, warningMsg,
+          msg.peerId,
+          msg.type,
+          warningMsg,
           mfaTimeoutSecs * 1000,
           verifyCode
         );
       },
       onMFAPrompt: (statusMsg: string) => {
-        void connector.send(msg.peerId, msg.type, statusMsg).catch((e: unknown) => console.error("[qqbot] send error:", e));
+        void connector
+          .send(msg.peerId, msg.type, statusMsg)
+          .catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
       onHeartbeat: (msg2: string) => {
-        void connector.send(msg.peerId, msg.type, msg2).catch((e: unknown) => console.error("[qqbot] send error:", e));
+        void connector
+          .send(msg.peerId, msg.type, msg2)
+          .catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
       onCompress: (phase, summary) => {
         if (phase === "start") {
-          void connector.send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...").catch((e: unknown) => console.error("[qqbot] send error:", e));
+          void connector
+            .send(msg.peerId, msg.type, "🧠 对话较长，正在整理记忆...")
+            .catch((e: unknown) => console.error("[qqbot] send error:", e));
         } else if (phase === "done" && summary) {
-          void connector.send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`).catch((e: unknown) => console.error("[qqbot] send error:", e));
+          void connector
+            .send(msg.peerId, msg.type, `✅ 记忆整理完成\n\n${summary}`)
+            .catch((e: unknown) => console.error("[qqbot] send error:", e));
         }
       },
       ...(_sessionSendFn ? { sessionSendFn: _sessionSendFn } : {}),
       ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
       onToolCall: (name: string, args: Record<string, unknown>) => {
-        broadcastActivity(session.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+        broadcastActivity(session.sessionId, {
+          kind: "tool_call",
+          name,
+          argsSummary: JSON.stringify(args).slice(0, 200),
+        });
       },
       onToolResult: (name: string, result: string) => {
-        broadcastActivity(session.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+        broadcastActivity(session.sessionId, {
+          kind: "tool_result",
+          name,
+          resultSummary: result.slice(0, 300),
+        });
       },
       onChunk: (delta: string) => {
         broadcastActivity(session.sessionId, { kind: "chunk", delta });
@@ -724,26 +818,26 @@ ${message}`;
 
     const runPromise = runAgent(session, messageContent, finalOpts);
     // 广播用户输入（包含语音转录后的 resolvedContent）
-    broadcastActivity(session.sessionId, { kind: "user_input", message: resolvedContent.slice(0, 500) });
+    broadcastActivity(session.sessionId, {
+      kind: "user_input",
+      message: resolvedContent.slice(0, 500),
+    });
     session.currentRunPromise = runPromise;
 
     void runPromise
       .then(async (result) => {
         // 工具执行完但 LLM 最终返回空 content 时（非中断），发送兜底消息
-        let toSend = result.content ||
+        let toSend =
+          result.content ||
           (result.toolsUsed.length > 0 && !session.abortRequested ? "✅ 已完成" : "");
         if (!toSend) return;
 
         // 发给用户前预检本地媒体文件，失败则回传给 agent 重跑，用户不感知
         const mediaErrors = validateMediaContent(toSend);
         if (mediaErrors.length > 0) {
-          const feedback = mediaErrors.map(e => `${e.src}: ${e.error}`).join("\n");
+          const feedback = mediaErrors.map((e) => `${e.src}: ${e.error}`).join("\n");
           console.log(`[main] 媒体预检失败，重跑 agent:\n${feedback}`);
-          const retryResult = await runAgent(
-            session,
-            `[系统] ${feedback}`,
-            opts
-          );
+          const retryResult = await runAgent(session, `[系统] ${feedback}`, opts);
           if (retryResult.content) {
             toSend = retryResult.content;
           } else {
@@ -762,16 +856,26 @@ ${message}`;
           for (let i = msgs.length - 1; i >= 0; i--) {
             const m = msgs[i]!;
             if (m.role === "assistant") {
-              const tc = (m as { role: "assistant"; tool_calls?: Array<{ function: { name: string }; id: string }> }).tool_calls;
+              const tc = (
+                m as {
+                  role: "assistant";
+                  tool_calls?: Array<{ function: { name: string }; id: string }>;
+                }
+              ).tool_calls;
               if (!tc) continue;
               for (const call of tc) {
                 if (call.function.name === "render_diagram") {
                   const toolMsg = msgs.find(
-                    (x) => x.role === "tool" && (x as { role: "tool"; tool_call_id: string }).tool_call_id === call.id
+                    (x) =>
+                      x.role === "tool" &&
+                      (x as { role: "tool"; tool_call_id: string }).tool_call_id === call.id
                   ) as { role: "tool"; content: string } | undefined;
                   if (toolMsg) {
                     const imgMatch = toolMsg.content.match(/<img\s+src="([^"]+)"/);
-                    if (imgMatch?.[1]) { foundImgPath = imgMatch[1]; break; }
+                    if (imgMatch?.[1]) {
+                      foundImgPath = imgMatch[1];
+                      break;
+                    }
                   }
                 }
               }
@@ -788,7 +892,13 @@ ${message}`;
         if (session.mode === "code" && looksLikeMarkdown(toSend)) {
           try {
             const outDir = path.join(
-              os.homedir(), ".tinyclaw", "agents", session.agentId, "workspace", "output", "md-renders"
+              os.homedir(),
+              ".tinyclaw",
+              "agents",
+              session.agentId,
+              "workspace",
+              "output",
+              "md-renders"
             );
             fs.mkdirSync(outDir, { recursive: true });
             const imgPath = await mdToImage(toSend, outDir);
@@ -811,9 +921,10 @@ ${message}`;
       .catch(async (err: unknown) => {
         broadcastActivity(session.sessionId, { kind: "error", message: String(err) });
         console.error("[qqbot] runAgent error:", err);
-        const userMsg = err instanceof Error && err.name === "LLMConnectionError"
-          ? err.message
-          : "抱歉，处理消息时出现错误";
+        const userMsg =
+          err instanceof Error && err.name === "LLMConnectionError"
+            ? err.message
+            : "抱歉，处理消息时出现错误";
         try {
           await connector.send(msg.peerId, msg.type, userMsg, msg.messageId);
         } catch {
@@ -831,7 +942,6 @@ ${message}`;
     // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
     return "";
   }
-
 
   // ── 注册处理器并启动 ───────────────────────────────────────────────────
 
@@ -855,7 +965,7 @@ ${message}`;
   const sessionSendFn = async (
     targetSessionId: string,
     message: string,
-    fromAgentId: string,
+    fromAgentId: string
   ): Promise<string> => {
     // 获取目标 session（不存在时 lazy 创建）
     const targetSession = getSession(targetSessionId);
@@ -863,7 +973,10 @@ ${message}`;
 
     // 双向权限检查
     const senderAccess = agentManager.readAccessConfig(fromAgentId);
-    if (!senderAccess.can_access.includes("*") && !senderAccess.can_access.includes(targetAgentId)) {
+    if (
+      !senderAccess.can_access.includes("*") &&
+      !senderAccess.can_access.includes(targetAgentId)
+    ) {
       return `权限拒绝：agent "${fromAgentId}" 未配置对 agent "${targetAgentId}" 的访问权限（在 ${agentManager.accessConfigPath(fromAgentId)} 中添加 can_access = ["${targetAgentId}"] 或 can_access = ["*"]）`;
     }
     const receiverAccess = agentManager.readAccessConfig(targetAgentId);
@@ -887,16 +1000,26 @@ ${message}`;
       const targetConnector = sessionConnectorMap.get(targetSessionId) ?? connectors[0] ?? null;
       if (targetConnector) {
         targetOnNotify = async (notifMsg: string) => {
-          await targetConnector.send(targetPeerId!, targetType! as import("./connectors/base.js").InboundMessage["type"], notifMsg).catch(() => {});
+          await targetConnector
+            .send(
+              targetPeerId!,
+              targetType! as import("./connectors/base.js").InboundMessage["type"],
+              notifMsg
+            )
+            .catch(() => {});
         };
       }
     }
 
-    const { content: finalContent } = await runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
-      sessionSendFn,
-      sessionGetFn,
-      ...(targetOnNotify ? { onNotify: targetOnNotify } : {}),
-    });
+    const { content: finalContent } = await runAgent(
+      targetSession,
+      `[来自 ${fromAgentId} @ ${nowStr}] ${message}`,
+      {
+        sessionSendFn,
+        sessionGetFn,
+        ...(targetOnNotify ? { onNotify: targetOnNotify } : {}),
+      }
+    );
 
     // 将 AI 最终回复推给目标用户
     if (targetOnNotify && finalContent?.trim()) {
@@ -907,13 +1030,17 @@ ${message}`;
   };
 
   const sessionGetFn = async (
-    fromAgentId: string,
+    fromAgentId: string
   ): Promise<import("./tools/registry.js").SessionInfo[]> => {
     const senderAccess = agentManager.readAccessConfig(fromAgentId);
     const result: import("./tools/registry.js").SessionInfo[] = [];
     for (const [sid, session] of sessions) {
       const targetAgentId = session.agentId;
-      if (!senderAccess.can_access.includes("*") && !senderAccess.can_access.includes(targetAgentId)) continue;
+      if (
+        !senderAccess.can_access.includes("*") &&
+        !senderAccess.can_access.includes(targetAgentId)
+      )
+        continue;
       const receiverAccess = agentManager.readAccessConfig(targetAgentId);
       if (!receiverAccess.allow_from.includes(fromAgentId)) continue;
       result.push({
@@ -931,7 +1058,11 @@ ${message}`;
   _sessionSendFn = sessionSendFn;
   _sessionGetFn = sessionGetFn;
 
-  const loopTick = async (sessionId: string, content: string, taskFilePath: string): Promise<void> => {
+  const loopTick = async (
+    sessionId: string,
+    content: string,
+    taskFilePath: string
+  ): Promise<void> => {
     const session = getSession(sessionId);
     // stateful=false：每轮开始前清空历史，避免 context 无限积累
     const loopCfg = agentManager.readSessionLoop(sessionId);
@@ -973,7 +1104,12 @@ ${message}`;
   }
 
   // 7. 定期清理已完成的 Slave（每小时一次，防止 Map 无限增长）
-  const gcInterval = setInterval(() => { slaveManager.gc(); }, 60 * 60 * 1000);
+  const gcInterval = setInterval(
+    () => {
+      slaveManager.gc();
+    },
+    60 * 60 * 1000
+  );
 
   // 8. 优雅退出
   const handleExit = async (signal: string) => {
@@ -1005,12 +1141,18 @@ ${message}`;
     if (fs.existsSync(ROLLBACK_NOTIFY_FILE)) {
       try {
         const rn = JSON.parse(fs.readFileSync(ROLLBACK_NOTIFY_FILE, "utf-8")) as {
-          originalHead: string; prevHead: string; rollbackAt: string;
+          originalHead: string;
+          prevHead: string;
+          rollbackAt: string;
         };
         fs.unlinkSync(ROLLBACK_NOTIFY_FILE);
         didRollback = true;
-        console.log(`[tinyclaw] ⚠️ git 自动回退: ${rn.originalHead} → ${rn.prevHead} at ${rn.rollbackAt}`);
-      } catch { /* ignore */ }
+        console.log(
+          `[tinyclaw] ⚠️ git 自动回退: ${rn.originalHead} → ${rn.prevHead} at ${rn.rollbackAt}`
+        );
+      } catch {
+        /* ignore */
+      }
     }
 
     // 检查重启通知 marker（由 /restart 命令或 restart_tool 写入，用于重启后发送通知）
@@ -1040,9 +1182,7 @@ ${message}`;
           //    code 模式重启(含 codeSessionId)由 resume runAgent 的 result.content 返回结果，
           //    不额外推送 "✅ 重启完成" 避免重复打扰。
           if (!marker.codeSessionId) {
-            const okMsg = marker.note
-              ? `✅ ${marker.note},服务已恢复`
-              : "✅ 重启完成,服务已恢复";
+            const okMsg = marker.note ? `✅ ${marker.note},服务已恢复` : "✅ 重启完成,服务已恢复";
             void connector!.send(marker.peerId, marker.msgType, okMsg).catch(() => {});
           }
 
@@ -1058,13 +1198,21 @@ ${message}`;
                     : "✅ 重启完成，继续执行之前的任务。";
                   codeSession.updateToolResult(marker.restartCallId, restartMsg);
                 }
-                void connector!.send(marker.peerId, marker.msgType,
-                  didRollback
-                    ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash，可用 git stash pop 恢复）"
-                    : "✅ 重启完成，继续执行之前的任务。",
-                ).catch(() => {});
+                void connector!
+                  .send(
+                    marker.peerId,
+                    marker.msgType,
+                    didRollback
+                      ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash，可用 git stash pop 恢复）"
+                      : "✅ 重启完成，继续执行之前的任务。"
+                  )
+                  .catch(() => {});
                 if (didRollback) {
-                  try { fs.unlinkSync(ROLLBACK_STATE_FILE); } catch { /* ignore */ }
+                  try {
+                    fs.unlinkSync(ROLLBACK_STATE_FILE);
+                  } catch {
+                    /* ignore */
+                  }
                 }
                 codeSession.running = true;
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接，不注入多余的用户消息
@@ -1074,8 +1222,12 @@ ${message}`;
                 const MAX_INTERACTIVE_CALLS_RESTART = 45;
                 const resumeOnAskUser = async (
                   resumeQuestion: string,
-                  resumeOptions?: Array<{ label: string; description?: string; recommended?: boolean }>,
-                  resumeAllowFreeform = true,
+                  resumeOptions?: Array<{
+                    label: string;
+                    description?: string;
+                    recommended?: boolean;
+                  }>,
+                  resumeAllowFreeform = true
                 ): Promise<{ answer: string; isFreeform: boolean }> => {
                   restartInteractiveCallCount++;
                   if (restartInteractiveCallCount > MAX_INTERACTIVE_CALLS_RESTART) {
@@ -1091,13 +1243,17 @@ ${message}`;
                   });
                   const plainMsg =
                     `🤔 有一个问题\n\n${resumeQuestion}` +
-                    (optionLines.length > 0 ? `\n\n─────────────────\n${optionLines.join("\n")}` : "") +
+                    (optionLines.length > 0
+                      ? `\n\n─────────────────\n${optionLines.join("\n")}`
+                      : "") +
                     (resumeAllowFreeform ? "\n\n或直接输入你的想法..." : "");
                   await connector!.send(marker.peerId, marker.msgType, plainMsg).catch(() => {});
                   return codeSession.waitForAskUser(optionLabels, resumeAllowFreeform);
                 };
                 const resumeOnNotify = async (notifyMessage: string) => {
-                  await connector!.send(marker.peerId, marker.msgType, notifyMessage).catch(() => {});
+                  await connector!
+                    .send(marker.peerId, marker.msgType, notifyMessage)
+                    .catch(() => {});
                 };
 
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接,不注入多余的用户消息
@@ -1111,10 +1267,18 @@ ${message}`;
                     broadcastActivity(codeSession.sessionId, { kind: "chunk", delta });
                   },
                   onToolCall: (name: string, args: Record<string, unknown>) => {
-                    broadcastActivity(codeSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) });
+                    broadcastActivity(codeSession.sessionId, {
+                      kind: "tool_call",
+                      name,
+                      argsSummary: JSON.stringify(args).slice(0, 200),
+                    });
                   },
                   onToolResult: (name: string, result: string) => {
-                    broadcastActivity(codeSession.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) });
+                    broadcastActivity(codeSession.sessionId, {
+                      kind: "tool_result",
+                      name,
+                      resultSummary: result.slice(0, 300),
+                    });
                   },
                 });
                 codeSession.currentRunPromise = resumePromise;
@@ -1122,11 +1286,16 @@ ${message}`;
                   .then((result) => {
                     broadcastActivity(codeSession.sessionId, { kind: "done" });
                     if (result.content) {
-                      void connector!.send(marker.peerId, marker.msgType, result.content).catch(() => {});
+                      void connector!
+                        .send(marker.peerId, marker.msgType, result.content)
+                        .catch(() => {});
                     }
                   })
                   .catch((err: unknown) => {
-                    broadcastActivity(codeSession.sessionId, { kind: "error", message: String(err) });
+                    broadcastActivity(codeSession.sessionId, {
+                      kind: "error",
+                      message: String(err),
+                    });
                     console.error("[restart_tool] resume runAgent error:", err);
                   })
                   .finally(() => {
@@ -1134,7 +1303,9 @@ ${message}`;
                     codeSession.currentRunPromise = null;
                   });
               } else {
-                console.log(`[restart_tool] codeSession "${marker.codeSessionId}" not found after restart, skip resume`);
+                console.log(
+                  `[restart_tool] codeSession "${marker.codeSessionId}" not found after restart, skip resume`
+                );
               }
 
               // ── 续接排队中的其他 session ──────────────────────────────────
@@ -1146,30 +1317,69 @@ ${message}`;
                   extraSession.updateToolResult(extra.callId, "✅ 重启完成,继续执行之前的任务。");
                 }
                 if (extra.peerId) {
-                  void connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], "✅ 重启完成,继续执行之前的任务。").catch(() => {});
+                  void connector!
+                    .send(
+                      extra.peerId,
+                      extra.msgType as import("./connectors/base.js").InboundMessage["type"],
+                      "✅ 重启完成,继续执行之前的任务。"
+                    )
+                    .catch(() => {});
                 }
                 extraSession.running = true;
                 const extraPromise = runAgent(extraSession, "", {
                   skipAddUserMessage: true,
                   continueAsAgentRound: true,
-                  ...(extra.peerId ? { onNotify: async (msg: string) => {
-                    await connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], msg).catch(() => {});
-                  }} : {}),
+                  ...(extra.peerId
+                    ? {
+                        onNotify: async (msg: string) => {
+                          await connector!
+                            .send(
+                              extra.peerId,
+                              extra.msgType as import("./connectors/base.js").InboundMessage["type"],
+                              msg
+                            )
+                            .catch(() => {});
+                        },
+                      }
+                    : {}),
                   ...(extra.taskId ? { agentTaskIdOverride: extra.taskId } : {}),
-                  onChunk: (delta: string) => { broadcastActivity(extraSession.sessionId, { kind: "chunk", delta }); },
-                  onToolCall: (name: string, args: Record<string, unknown>) => { broadcastActivity(extraSession.sessionId, { kind: "tool_call", name, argsSummary: JSON.stringify(args).slice(0, 200) }); },
-                  onToolResult: (name: string, result: string) => { broadcastActivity(extraSession.sessionId, { kind: "tool_result", name, resultSummary: result.slice(0, 300) }); },
+                  onChunk: (delta: string) => {
+                    broadcastActivity(extraSession.sessionId, { kind: "chunk", delta });
+                  },
+                  onToolCall: (name: string, args: Record<string, unknown>) => {
+                    broadcastActivity(extraSession.sessionId, {
+                      kind: "tool_call",
+                      name,
+                      argsSummary: JSON.stringify(args).slice(0, 200),
+                    });
+                  },
+                  onToolResult: (name: string, result: string) => {
+                    broadcastActivity(extraSession.sessionId, {
+                      kind: "tool_result",
+                      name,
+                      resultSummary: result.slice(0, 300),
+                    });
+                  },
                 });
                 extraSession.currentRunPromise = extraPromise;
                 extraPromise
                   .then((result) => {
                     broadcastActivity(extraSession.sessionId, { kind: "done" });
                     if (result.content && extra.peerId) {
-                      void connector!.send(extra.peerId, extra.msgType as import("./connectors/base.js").InboundMessage["type"], result.content).catch(() => {});
+                      void connector!
+                        .send(
+                          extra.peerId,
+                          extra.msgType as import("./connectors/base.js").InboundMessage["type"],
+                          result.content
+                        )
+                        .catch(() => {});
                     }
                   })
                   .catch((err: unknown) => {
-                    broadcastActivity(extraSession.sessionId, { kind: "error", message: String(err) });
+                    broadcastActivity(extraSession.sessionId, {
+                      kind: "error",
+                      message: String(err),
+                    });
                     console.error("[restart_tool] extra session resume error:", err);
                   })
                   .finally(() => {
@@ -1181,7 +1391,11 @@ ${message}`;
           }
         };
       } catch {
-        try { fs.unlinkSync(RESTART_NOTIFY_FILE); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(RESTART_NOTIFY_FILE);
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -1194,7 +1408,9 @@ ${message}`;
   } else {
     // IPC-only 模式：无限等待信号
     console.log("[tinyclaw] Running in IPC-only mode (no QQBot). Send SIGTERM to stop.");
-    await new Promise<void>(() => { /* 永不 resolve，依靠 SIGTERM/SIGINT 退出 */ });
+    await new Promise<void>(() => {
+      /* 永不 resolve，依靠 SIGTERM/SIGINT 退出 */
+    });
   }
 }
 

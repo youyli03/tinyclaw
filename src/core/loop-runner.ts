@@ -14,7 +14,11 @@ import { agentManager } from "./agent-manager.js";
 import type { LoopSessionConfig } from "./agent-manager.js";
 
 /** main.ts 提供的 tick 回调：将 taskContent 作为用户消息注入指定 session，taskFilePath 用于 loop task 折叠 */
-export type LoopTickFn = (sessionId: string, content: string, taskFilePath: string) => Promise<void>;
+export type LoopTickFn = (
+  sessionId: string,
+  content: string,
+  taskFilePath: string
+) => Promise<void>;
 
 // ── LoopRunner ────────────────────────────────────────────────────────────────
 
@@ -107,8 +111,8 @@ class LoopRunner {
       status: this.running.has(sessionId)
         ? "running"
         : this.paused.has(sessionId)
-        ? "paused"
-        : "idle",
+          ? "paused"
+          : "idle",
     }));
   }
 

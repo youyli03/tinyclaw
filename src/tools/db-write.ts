@@ -65,7 +65,14 @@ registerTool({
     if (isNaN(value)) return "错误：value 必须是数字";
 
     try {
-      insertMetric({ category, key, value, ...(note !== undefined && { note }), ...(ts !== undefined && { ts }) });      const tsStr = ts
+      insertMetric({
+        category,
+        key,
+        value,
+        ...(note !== undefined && { note }),
+        ...(ts !== undefined && { ts }),
+      });
+      const tsStr = ts
         ? new Date(ts * 1000).toLocaleString("zh-CN")
         : new Date().toLocaleString("zh-CN");
       return `已写入: ${category}/${key} = ${value}${note ? `（${note}）` : ""}  [${tsStr}]`;

@@ -13,7 +13,7 @@ import { tmpdir, homedir } from "node:os";
 
 // ── 主题配置（改这里换主题）──────────────────────────────────────────────────
 export const MERMAID_THEME_LIGHT = "solarized-light";
-export const MERMAID_THEME_DARK  = "tokyo-night";
+export const MERMAID_THEME_DARK = "tokyo-night";
 
 // ── 输出目录 ──────────────────────────────────────────────────────────────────
 
@@ -120,8 +120,8 @@ export async function tryBeautifulMermaid(
   }
 
   // 从主题对象读取背景色，fallback 到各自默认值
-  const bgColor = (themeOpts as Record<string, string>).bg
-    ?? (theme === "dark" ? "#1a1b26" : "#fdf6e3");
+  const bgColor =
+    (themeOpts as Record<string, string>).bg ?? (theme === "dark" ? "#1a1b26" : "#fdf6e3");
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>*{margin:0;padding:0;}body{background:${bgColor};display:inline-block;padding:24px;}</style>
@@ -158,12 +158,11 @@ export async function tryBeautifulMermaid(
 /** 尝试运行本地 mmdc，返回 null（未安装）、""（成功）、或错误信息字符串 */
 export function tryMmdc(mmdFile: string, outFile: string): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn("mmdc", [
-      "-i", mmdFile,
-      "-o", outFile,
-      "--theme", "neutral",
-      "--backgroundColor", "white",
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(
+      "mmdc",
+      ["-i", mmdFile, "-o", outFile, "--theme", "neutral", "--backgroundColor", "white"],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
 
     const errChunks: Buffer[] = [];
     const outChunks: Buffer[] = [];
@@ -284,8 +283,7 @@ export async function tryMermaidInk(code: string, outFile: string): Promise<void
   const resp = await fetch(url);
   if (!resp.ok) {
     throw new Error(
-      `mermaid.ink 返回 ${resp.status}（${resp.statusText}）。\n` +
-      `请检查 mermaid 语法是否正确。`
+      `mermaid.ink 返回 ${resp.status}（${resp.statusText}）。\n` + `请检查 mermaid 语法是否正确。`
     );
   }
   const buf = Buffer.from(await resp.arrayBuffer());
@@ -350,17 +348,21 @@ export async function renderPythonToFile(code: string, outPath: string): Promise
       if (code === 0 && existsSync(outPath)) {
         resolve();
       } else if (code === 0) {
-        reject(new Error(
-          `Python 代码执行成功但未生成图片文件。\n` +
-          `请确认代码会产生图形（如 plt.plot(...)），或手动调用 plt.savefig(os.environ["DIAGRAM_OUTPUT_FILE"])。\n` +
-          (stdout ? `stdout:\n${stdout}` : "")
-        ));
+        reject(
+          new Error(
+            `Python 代码执行成功但未生成图片文件。\n` +
+              `请确认代码会产生图形（如 plt.plot(...)），或手动调用 plt.savefig(os.environ["DIAGRAM_OUTPUT_FILE"])。\n` +
+              (stdout ? `stdout:\n${stdout}` : "")
+          )
+        );
       } else {
-        reject(new Error(
-          `Python 退出码 ${code}\n` +
-          (stderr ? `stderr:\n${stderr}\n` : "") +
-          (stdout ? `stdout:\n${stdout}` : "")
-        ));
+        reject(
+          new Error(
+            `Python 退出码 ${code}\n` +
+              (stderr ? `stderr:\n${stderr}\n` : "") +
+              (stdout ? `stdout:\n${stdout}` : "")
+          )
+        );
       }
     });
 

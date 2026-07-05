@@ -21,8 +21,11 @@ import { handleApi } from "./api.js";
 
 // 可压缩的文本类 MIME(前缀匹配)
 const COMPRESSIBLE = [
-  "text/", "application/javascript", "application/json",
-  "image/svg+xml", "application/manifest+json",
+  "text/",
+  "application/javascript",
+  "application/json",
+  "image/svg+xml",
+  "application/manifest+json",
 ];
 function isCompressible(contentType: string): boolean {
   return COMPRESSIBLE.some((p) => contentType.startsWith(p));
@@ -44,14 +47,14 @@ const BUILD_TS = Date.now();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
-  ".css":  "text/css; charset=utf-8",
-  ".js":   "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
   ".json": "application/json",
-  ".png":  "image/png",
-  ".ico":  "image/x-icon",
-  ".svg":  "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".svg": "image/svg+xml",
   ".webp": "image/webp",
-  ".mjs":  "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
 };
 
 // ── cookie 解析 ───────────────────────────────────────────────────────────────
@@ -106,7 +109,7 @@ function checkAuth(
     const cleanUrl = parsedUrl.pathname + (parsedUrl.search || "");
     res.writeHead(302, {
       "Set-Cookie": `${COOKIE_NAME}=${encodeURIComponent(configToken)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax`,
-      "Location": cleanUrl,
+      Location: cleanUrl,
     });
     res.end();
     return true;
@@ -224,8 +227,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   const hasVersion = parsedUrl.searchParams.has("v");
   const isVersioned = hasVersion || fileName.includes(".min.") || fileName.includes("vue.global");
   const cacheControl = isVersioned
-    ? "public, max-age=31536000, immutable"  // 1 年，不变
-    : "public, max-age=3600";               // 其他资源 1 小时
+    ? "public, max-age=31536000, immutable" // 1 年，不变
+    : "public, max-age=3600"; // 其他资源 1 小时
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     "Cache-Control": cacheControl,
@@ -276,7 +279,9 @@ export function startDashboard(port = 4096, token?: string): void {
   });
 
   server.listen(port, "0.0.0.0", () => {
-    console.log(`[dashboard] HTTP server started on http://0.0.0.0:${port}${token ? " (auth enabled)" : ""}`);
+    console.log(
+      `[dashboard] HTTP server started on http://0.0.0.0:${port}${token ? " (auth enabled)" : ""}`
+    );
   });
 
   server.on("error", (err) => {

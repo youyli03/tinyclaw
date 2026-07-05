@@ -62,8 +62,8 @@ function openDB(): Database {
 
   // 写入内置指标白名单（幂等）
   const builtins: Array<[string, string, string]> = [
-    ["electric", "balance",   "电费余额(元)"],
-    ["copilot",  "remaining", "高级请求剩余次数"],
+    ["electric", "balance", "电费余额(元)"],
+    ["copilot", "remaining", "高级请求剩余次数"],
   ];
   const upsert = db.prepare(
     "INSERT OR IGNORE INTO metric_keys (category, key, description) VALUES (?, ?, ?)"
@@ -71,12 +71,17 @@ function openDB(): Database {
   for (const [cat, k, desc] of builtins) upsert.run(cat, k, desc);
 
   // 清理已废弃的 rate_limit_remaining（历史遗留，前端不展示）
-  db.prepare("DELETE FROM metric_keys WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
-  db.prepare("DELETE FROM metrics WHERE category = 'copilot' AND key = 'rate_limit_remaining'").run();
+  db.prepare(
+    "DELETE FROM metric_keys WHERE category = 'copilot' AND key = 'rate_limit_remaining'"
+  ).run();
+  db.prepare(
+    "DELETE FROM metrics WHERE category = 'copilot' AND key = 'rate_limit_remaining'"
+  ).run();
 
   // Migration: 为已有 metric_keys 表补充 chart_type 列
-  const cols = (db.prepare("PRAGMA table_info(metric_keys)").all() as Array<{ name: string }>)
-    .map(c => c.name);
+  const cols = (db.prepare("PRAGMA table_info(metric_keys)").all() as Array<{ name: string }>).map(
+    (c) => c.name
+  );
   if (!cols.includes("chart_type")) {
     db.exec("ALTER TABLE metric_keys ADD COLUMN chart_type TEXT NOT NULL DEFAULT 'line'");
   }
@@ -125,29 +130,36 @@ export function isMetricKeyAllowed(category: string, key: string): boolean {
 }
 
 /** 注册一个新指标（/metric add 命令调用） */
-export function addMetricKey(category: string, key: string, description?: string, chartType?: string): void {
+export function addMetricKey(
+  category: string,
+  key: string,
+  description?: string,
+  chartType?: string
+): void {
   const db = openDB();
   db.prepare(
     "INSERT OR REPLACE INTO metric_keys (category, key, description, chart_type) VALUES (?, ?, ?, ?)"
-  ).run(category, key, description ?? null, chartType ?? 'line');
+  ).run(category, key, description ?? null, chartType ?? "line");
 }
 
 /** 删除一个指标注册（同时删除历史数据） */
 export function removeMetricKey(category: string, key: string): { deleted: number } {
   const db = openDB();
   db.prepare("DELETE FROM metric_keys WHERE category = ? AND key = ?").run(category, key);
-  const deleted = (db.prepare(
-    "DELETE FROM metrics WHERE category = ? AND key = ?"
-  ).run(category, key) as { changes: number }).changes;
+  const deleted = (
+    db.prepare("DELETE FROM metrics WHERE category = ? AND key = ?").run(category, key) as {
+      changes: number;
+    }
+  ).changes;
   return { deleted };
 }
 
 /** 修改一个指标的图表类型 */
 export function setMetricChartType(category: string, key: string, chartType: string): boolean {
   const db = openDB();
-  const result = db.prepare(
-    "UPDATE metric_keys SET chart_type = ? WHERE category = ? AND key = ?"
-  ).run(chartType, category, key) as { changes: number };
+  const result = db
+    .prepare("UPDATE metric_keys SET chart_type = ? WHERE category = ? AND key = ?")
+    .run(chartType, category, key) as { changes: number };
   return result.changes > 0;
 }
 
@@ -155,7 +167,9 @@ export function setMetricChartType(category: string, key: string, chartType: str
 export function listRegisteredKeys(): MetricKeyRow[] {
   const db = openDB();
   return db
-    .prepare("SELECT category, key, description, chart_type, created_at FROM metric_keys ORDER BY category, key")
+    .prepare(
+      "SELECT category, key, description, chart_type, created_at FROM metric_keys ORDER BY category, key"
+    )
     .all() as MetricKeyRow[];
 }
 
@@ -179,9 +193,7 @@ export function insertMetric(opts: {
     );
   }
   // 非负校验：某些指标（如 copilot/remaining）不允许负值
-  const NON_NEGATIVE_METRICS: Array<[string, string]> = [
-    ["copilot", "remaining"],
-  ];
+  const NON_NEGATIVE_METRICS: Array<[string, string]> = [["copilot", "remaining"]];
   if (
     NON_NEGATIVE_METRICS.some(([c, k]) => c === opts.category && k === opts.key) &&
     opts.value < 0
@@ -191,9 +203,13 @@ export function insertMetric(opts: {
     );
   }
   const ts = opts.ts ?? Math.floor(Date.now() / 1000);
-  db.prepare(
-    "INSERT INTO metrics (ts, category, key, value, note) VALUES (?, ?, ?, ?, ?)"
-  ).run(ts, opts.category, opts.key, opts.value, opts.note ?? null);
+  db.prepare("INSERT INTO metrics (ts, category, key, value, note) VALUES (?, ?, ?, ?, ?)").run(
+    ts,
+    opts.category,
+    opts.key,
+    opts.value,
+    opts.note ?? null
+  );
 }
 
 /** 查询某 category/key 的历史时序数据 */
@@ -228,7 +244,11 @@ export function queryMetrics(opts: {
 
 /** 查询所有已注册的 category/key（从白名单读，不从 metrics 读） */
 export function listMetricKeys(): Array<{ category: string; key: string; chart_type: string }> {
-  return listRegisteredKeys().map(r => ({ category: r.category, key: r.key, chart_type: r.chart_type }));
+  return listRegisteredKeys().map((r) => ({
+    category: r.category,
+    key: r.key,
+    chart_type: r.chart_type,
+  }));
 }
 
 // ── system_snapshots ──────────────────────────────────────────────────────────
@@ -237,11 +257,20 @@ export function listMetricKeys(): Array<{ category: string; key: string; chart_t
 export function insertSnapshot(row: Omit<SystemSnapshotRow, "ts"> & { ts?: number }): void {
   const db = openDB();
   const ts = row.ts ?? Math.floor(Date.now() / 1000);
-  db.prepare(`
+  db.prepare(
+    `
     INSERT OR REPLACE INTO system_snapshots
       (ts, cpu_percent, mem_used_mb, mem_total_mb, disk_used_gb, disk_total_gb)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(ts, row.cpu_percent, row.mem_used_mb, row.mem_total_mb, row.disk_used_gb, row.disk_total_gb);
+  `
+  ).run(
+    ts,
+    row.cpu_percent,
+    row.mem_used_mb,
+    row.mem_total_mb,
+    row.disk_used_gb,
+    row.disk_total_gb
+  );
 }
 
 /** 查询最近 N 小时的系统快照 */

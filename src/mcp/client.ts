@@ -72,7 +72,9 @@ class MCPClientManager {
       console.log(`[mcp] loaded config: ${entries.length} server(s) (lazy mode, none connected)`);
     }
     // 向 registry 注册过滤回调，供 getAllToolSpecs(agentId) 调用
-    setMcpAgentFilter((toolName: string, agentId: string) => this.isToolAllowedForAgent(toolName, agentId));
+    setMcpAgentFilter((toolName: string, agentId: string) =>
+      this.isToolAllowedForAgent(toolName, agentId)
+    );
   }
 
   /**
@@ -86,7 +88,7 @@ class MCPClientManager {
   isAllowedForAgent(serverName: string, agentId?: string): boolean {
     if (!agentId) return true;
     const allowed = agentManager.readMcpServers(agentId);
-    if (allowed === null) return true;          // 文件不存在 → 全量访问
+    if (allowed === null) return true; // 文件不存在 → 全量访问
     return allowed.includes(serverName);
   }
 
@@ -143,7 +145,12 @@ class MCPClientManager {
    * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_enable_server meta-tool 使用。
    */
-  async enableServer(name: string, agentId?: string, sessionId?: string, mode?: "chat" | "code"): Promise<string> {
+  async enableServer(
+    name: string,
+    agentId?: string,
+    sessionId?: string,
+    mode?: "chat" | "code"
+  ): Promise<string> {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"，请先用 mcp_list_servers 查看可用列表。`;
@@ -184,7 +191,12 @@ class MCPClientManager {
    * 若传入 agentId 且该 agent 不在白名单中，返回权限错误。
    * 供 mcp_disable_server meta-tool 使用。
    */
-  disableServer(name: string, agentId?: string, sessionId?: string, mode?: "chat" | "code"): string {
+  disableServer(
+    name: string,
+    agentId?: string,
+    sessionId?: string,
+    mode?: "chat" | "code"
+  ): string {
     const cfg = this.loadedConfig.servers[name];
     if (!cfg) {
       return `错误：未找到 MCP server "${name}"。`;
@@ -204,7 +216,11 @@ class MCPClientManager {
     // 从持久化列表移除
     if (sessionId && mode) {
       const cur = agentManager.readSessionMcp(sessionId, mode);
-      agentManager.writeSessionMcp(sessionId, mode, cur.filter(s => s !== name));
+      agentManager.writeSessionMcp(
+        sessionId,
+        mode,
+        cur.filter((s) => s !== name)
+      );
     }
 
     return `已禁用 server "${name}" 的 ${rt.toolNames.length} 个工具（连接保持，再次 enable 无需重连）。`;
@@ -223,7 +239,10 @@ class MCPClientManager {
       try {
         await this.enableServer(name, agentId, sessionId, mode);
       } catch (err) {
-        console.warn(`[mcp] restoreSession: failed to enable '${name}':`, err instanceof Error ? err.message : err);
+        console.warn(
+          `[mcp] restoreSession: failed to enable '${name}':`,
+          err instanceof Error ? err.message : err
+        );
       }
     }
   }
@@ -235,7 +254,10 @@ class MCPClientManager {
         try {
           await rt.client.close();
         } catch (err) {
-          console.warn(`[mcp] error closing server '${name}':`, err instanceof Error ? err.message : err);
+          console.warn(
+            `[mcp] error closing server '${name}':`,
+            err instanceof Error ? err.message : err
+          );
         }
       }
     }
@@ -256,7 +278,9 @@ class MCPClientManager {
       transport = new StdioClientTransport({
         command: cfg.command,
         args: cfg.args,
-        ...(cfg.env !== undefined ? { env: { ...(process.env as Record<string, string>), ...cfg.env } } : {}),
+        ...(cfg.env !== undefined
+          ? { env: { ...(process.env as Record<string, string>), ...cfg.env } }
+          : {}),
       });
     } else {
       // sse
@@ -286,9 +310,10 @@ class MCPClientManager {
       const registeredName = mcpToolName(name, tool.name);
       const requiresMFA = mfaTools.has(registeredName);
 
-      const parameters = (tool.inputSchema && typeof tool.inputSchema === "object")
-        ? tool.inputSchema
-        : { type: "object", properties: {}, required: [] };
+      const parameters =
+        tool.inputSchema && typeof tool.inputSchema === "object"
+          ? tool.inputSchema
+          : { type: "object", properties: {}, required: [] };
 
       registerTool({
         spec: {
@@ -345,7 +370,9 @@ class MCPClientManager {
       rt.toolNames.push(registeredName);
     }
 
-    console.log(`[mcp] server '${name}' connected (lazy), ${rt.toolNames.length} tool(s) registered (hidden)`);
+    console.log(
+      `[mcp] server '${name}' connected (lazy), ${rt.toolNames.length} tool(s) registered (hidden)`
+    );
   }
 
   /**

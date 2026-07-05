@@ -62,8 +62,8 @@ export async function run(args: string[]): Promise<void> {
     }
     console.log(`\n${bold("活跃 session 列表：")}\n`);
     for (const s of sessions) {
-      const suffix  = brightCyan(s.sessionId.slice(-8));
-      const tag     = s.running ? yellow("● 运行中") : dim("○ 空闲");
+      const suffix = brightCyan(s.sessionId.slice(-8));
+      const tag = s.running ? yellow("● 运行中") : dim("○ 空闲");
       const lastMsg = s.lastUserMessage
         ? dim(`  "${s.lastUserMessage.slice(0, 60).replace(/\n/g, "↵")}"`)
         : "";
@@ -76,9 +76,12 @@ export async function run(args: string[]): Promise<void> {
 
   // 解析 flags
   const noChunk = args.includes("--no-chunk");
-  const idOrSuffix = args.find(a => !a.startsWith("--"))!;
+  const idOrSuffix = args.find((a) => !a.startsWith("--"))!;
 
-  if (!idOrSuffix) { printHelp(); return; }
+  if (!idOrSuffix) {
+    printHelp();
+    return;
+  }
 
   if (!existsSync(IPC_SOCKET_PATH)) {
     console.error(red("tinyclaw 服务未运行，请先执行 tinyclaw start"));
@@ -113,12 +116,18 @@ export async function run(args: string[]): Promise<void> {
         for (const line of lines) {
           if (!line.trim()) continue;
           let resp: IpcResponse;
-          try { resp = JSON.parse(line) as IpcResponse; } catch { continue; }
+          try {
+            resp = JSON.parse(line) as IpcResponse;
+          } catch {
+            continue;
+          }
 
           if (resp.type === "subscribed") {
             subscribed = true;
             console.log(dim(`✅ 已订阅 session: ${resp.sessionId}`));
-            console.log(dim(`按 Ctrl-C 退出${noChunk ? "  (--no-chunk 模式: 不显示 chunk)" : ""}\n`));
+            console.log(
+              dim(`按 Ctrl-C 退出${noChunk ? "  (--no-chunk 模式: 不显示 chunk)" : ""}\n`)
+            );
           } else if (resp.type === "error") {
             if (!subscribed) {
               socket.destroy();
@@ -129,7 +138,12 @@ export async function run(args: string[]): Promise<void> {
               resolve("exit");
             }
           } else if (resp.type === "activity") {
-            printEvent(resp.event, noChunk, { inChunk: () => inChunk, setInChunk: (v) => { inChunk = v; } });
+            printEvent(resp.event, noChunk, {
+              inChunk: () => inChunk,
+              setInChunk: (v) => {
+                inChunk = v;
+              },
+            });
           }
         }
       });
@@ -140,7 +154,10 @@ export async function run(args: string[]): Promise<void> {
 
       socket.on("close", () => {
         if (subscribed) {
-          if (inChunk) { process.stdout.write("\n"); inChunk = false; }
+          if (inChunk) {
+            process.stdout.write("\n");
+            inChunk = false;
+          }
         }
         resolve("reconnect");
       });
@@ -168,7 +185,7 @@ export async function run(args: string[]): Promise<void> {
       }
     }
     // 等待 session 恢复（服务刚重启时 session 还未加载）
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, 900));
     console.log(dim("[重连中...]"));
   }
 }
@@ -177,14 +194,19 @@ export async function run(args: string[]): Promise<void> {
  * 等待条件满足，期间每秒打印 "label N 秒..." 倒计时。
  * @returns 是否在超时前满足条件
  */
-async function waitWithCountdown(label: string, maxSecs: number, pollMs: number, cond: () => boolean): Promise<boolean> {
+async function waitWithCountdown(
+  label: string,
+  maxSecs: number,
+  pollMs: number,
+  cond: () => boolean
+): Promise<boolean> {
   let elapsed = 0;
   const max = maxSecs * 1000;
   while (elapsed < max) {
     if (cond()) return true;
     const remaining = Math.ceil((max - elapsed) / 1000);
     process.stdout.write(`\r${dim(`${label}... ${remaining}s`)}`);
-    await new Promise(r => setTimeout(r, pollMs));
+    await new Promise((r) => setTimeout(r, pollMs));
     elapsed += pollMs;
   }
   process.stdout.write("\n");
@@ -200,8 +222,12 @@ function printEvent(
 
   switch (event.kind) {
     case "user_input": {
-      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
-      const preview = event.message.length > 120 ? event.message.slice(0, 120) + "…" : event.message;
+      if (chunkState.inChunk()) {
+        process.stdout.write("\n");
+        chunkState.setInChunk(false);
+      }
+      const preview =
+        event.message.length > 120 ? event.message.slice(0, 120) + "…" : event.message;
       console.log(`${ts} ${brightMagenta("❯")} ${bold(brightMagenta("user"))}  ${preview}`);
       break;
     }
@@ -214,7 +240,10 @@ function printEvent(
 
     case "tool_call": {
       const argsLines = formatArgs(event.argsSummary, 200);
-      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
+      if (chunkState.inChunk()) {
+        process.stdout.write("\n");
+        chunkState.setInChunk(false);
+      }
       console.log(`${ts} ${brightYellow("▶")} ${bold(brightYellow(event.name))}`);
       for (const line of argsLines) {
         console.log(`   ${dim("·")} ${line}`);
@@ -223,9 +252,10 @@ function printEvent(
     }
 
     case "tool_result": {
-      const resultDisplay = event.resultSummary.length > 400
-        ? event.resultSummary.slice(0, 400) + "…"
-        : event.resultSummary;
+      const resultDisplay =
+        event.resultSummary.length > 400
+          ? event.resultSummary.slice(0, 400) + "…"
+          : event.resultSummary;
       console.log(`${ts} ${brightGreen("◀")} ${bold(brightGreen(event.name))}`);
       const lines = resultDisplay.split("\n").slice(0, 8);
       for (const l of lines) {
@@ -235,12 +265,18 @@ function printEvent(
     }
 
     case "done":
-      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
+      if (chunkState.inChunk()) {
+        process.stdout.write("\n");
+        chunkState.setInChunk(false);
+      }
       console.log(`${ts} ${bold(brightCyan("◼ done"))}\n`);
       break;
 
     case "error":
-      if (chunkState.inChunk()) { process.stdout.write("\n"); chunkState.setInChunk(false); }
+      if (chunkState.inChunk()) {
+        process.stdout.write("\n");
+        chunkState.setInChunk(false);
+      }
       console.log(`${ts} ${bold(brightRed("✗ error"))} ${event.message}`);
       break;
   }
@@ -248,12 +284,12 @@ function printEvent(
 
 // 亮色系列（适合深色背景终端）
 const brightYellow = (s: string) => `\x1b[93m${s}\x1b[0m`;
-const brightGreen  = (s: string) => `\x1b[92m${s}\x1b[0m`;
-const brightCyan   = (s: string) => `\x1b[96m${s}\x1b[0m`;
-const brightRed     = (s: string) => `\x1b[91m${s}\x1b[0m`;
+const brightGreen = (s: string) => `\x1b[92m${s}\x1b[0m`;
+const brightCyan = (s: string) => `\x1b[96m${s}\x1b[0m`;
+const brightRed = (s: string) => `\x1b[91m${s}\x1b[0m`;
 const brightMagenta = (s: string) => `\x1b[95m${s}\x1b[0m`;
-const brightBlue    = (s: string) => `\x1b[94m${s}\x1b[0m`;
-const brightWhite   = (s: string) => `\x1b[97m${s}\x1b[0m`;
+const brightBlue = (s: string) => `\x1b[94m${s}\x1b[0m`;
+const brightWhite = (s: string) => `\x1b[97m${s}\x1b[0m`;
 
 /**
  * 将 JSON 参数字符串转为可读多行摘要。
@@ -263,7 +299,9 @@ const brightWhite   = (s: string) => `\x1b[97m${s}\x1b[0m`;
  */
 function formatArgs(raw: string, _maxLen: number): string[] {
   let parsed: Record<string, unknown>;
-  try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch {
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
     return [raw.length > 200 ? raw.slice(0, 200) + "…" : raw];
   }
 
@@ -309,7 +347,8 @@ function tryHighlight(code: string, lang: string): string {
 /** 根据内容首行猜测语言 */
 function detectLang(content: string): string {
   const first = content.trimStart().slice(0, 100);
-  if (/^(import |const |let |var |function |class |export |interface |type )/.test(first)) return "typescript";
+  if (/^(import |const |let |var |function |class |export |interface |type )/.test(first))
+    return "typescript";
   if (/^(def |import |class |async def |from )/.test(first)) return "python";
   if (/^(package |func |import )/.test(first)) return "go";
   if (/^#!|^\$/.test(first)) return "bash";

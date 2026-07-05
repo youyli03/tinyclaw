@@ -15,8 +15,8 @@ import * as os from "node:os";
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
 export interface SessionLock {
-  holder: string;       // sessionId
-  acquiredAt: string;   // ISO 8601
+  holder: string; // sessionId
+  acquiredAt: string; // ISO 8601
 }
 
 // ── 路径方法 ────────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ export function sessionLockPath(agentId: string, slug: string): string {
     "code",
     "projects",
     slug,
-    "session.lock",
+    "session.lock"
   );
 }
 
@@ -60,7 +60,7 @@ export function projectSessionPath(agentId: string, slug: string): string {
     "code",
     "projects",
     slug,
-    "session.jsonl",
+    "session.jsonl"
   );
 }
 
@@ -150,7 +150,7 @@ export function releaseLock(agentId: string, slug: string, sessionId: string): b
 
     if (lock.holder !== sessionId) {
       console.warn(
-        `[project-router] releaseLock: holder mismatch (expected ${sessionId}, got ${lock.holder})`,
+        `[project-router] releaseLock: holder mismatch (expected ${sessionId}, got ${lock.holder})`
       );
       return false;
     }
@@ -236,7 +236,7 @@ export function isValidProject(agentId: string, slug: string): boolean {
     "code",
     "projects",
     slug,
-    "metadata.json",
+    "metadata.json"
   );
   return fs.existsSync(metaPath);
 }
@@ -245,16 +245,10 @@ export function isValidProject(agentId: string, slug: string): boolean {
  * 列出所有已注册的项目 slug（扫描目录）。
  */
 export function listAllProjects(agentId: string): string[] {
-  const projectsDir = path.join(
-    os.homedir(),
-    ".tinyclaw",
-    "agents",
-    agentId,
-    "code",
-    "projects",
-  );
+  const projectsDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "code", "projects");
   if (!fs.existsSync(projectsDir)) return [];
-  return fs.readdirSync(projectsDir, { withFileTypes: true })
+  return fs
+    .readdirSync(projectsDir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
 }

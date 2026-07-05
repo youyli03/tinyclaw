@@ -17,14 +17,36 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { bold, dim, green, red, cyan, yellow, printTable, singleSelect, multiSelect } from "../ui.js";
+import {
+  bold,
+  dim,
+  green,
+  red,
+  cyan,
+  yellow,
+  printTable,
+  singleSelect,
+  multiSelect,
+} from "../ui.js";
 import { AgentManager } from "../../core/agent-manager.js";
 import type { LoopSessionConfig as _LoopSessionConfig } from "../../core/agent-manager.js";
 import { stringify } from "smol-toml";
 
-export const subcommands = ["list", "new", "show", "edit", "delete", "repair", "perm", "access", "memoryonly", "help"] as const;
+export const subcommands = [
+  "list",
+  "new",
+  "show",
+  "edit",
+  "delete",
+  "repair",
+  "perm",
+  "access",
+  "memoryonly",
+  "help",
+] as const;
 export const description = "管理 Agent 工作区（独立人格与记忆命名空间）";
-export const usage = "agent <list|new|show|edit|delete|repair|mcp|tools|perm|access|loop> [id|--all]";
+export const usage =
+  "agent <list|new|show|edit|delete|repair|mcp|tools|perm|access|loop> [id|--all]";
 
 // ── 所有内置工具名（静态枚举，与 src/tools/ 下注册的工具同步） ──────────────
 
@@ -307,37 +329,70 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "list":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("list"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("list");
+        return;
+      }
       return runList(mgr);
     case "new":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("new"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("new");
+        return;
+      }
       return runNew(mgr, rest);
     case "show":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("show"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("show");
+        return;
+      }
       return runShow(mgr, args[1]);
     case "edit":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("edit"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("edit");
+        return;
+      }
       return runEdit(mgr, args[1]);
     case "delete":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("delete"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("delete");
+        return;
+      }
       return runDelete(mgr, args[1]);
     case "repair":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("repair"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("repair");
+        return;
+      }
       return runRepair(mgr, args[1]);
     case "mcp":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("mcp"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("mcp");
+        return;
+      }
       return runMcp(mgr, rest);
     case "tools":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("tools"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("tools");
+        return;
+      }
       return runTools(mgr, rest);
     case "perm":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("perm"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("perm");
+        return;
+      }
       return runPerm(mgr, args[1]);
     case "access":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("access"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("access");
+        return;
+      }
       return runAccess(mgr, rest);
     case "loop":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("loop"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("loop");
+        return;
+      }
       return runLoopCmd(mgr, rest);
     default:
       console.error(red(`未知子命令 "${sub}"`));
@@ -356,23 +411,23 @@ function runList(mgr: AgentManager): void {
   }
   const rows = agents.map((a) => {
     const hasPrompt = existsSync(mgr.systemPromptPath(a.id));
-    const bindings = a.bindings.length > 0
-      ? a.bindings.map((b) => b.source).join(", ")
-      : dim("—");
+    const bindings = a.bindings.length > 0 ? a.bindings.map((b) => b.source).join(", ") : dim("—");
 
     const mcpCfg = mgr.readMcpServers(a.id);
-    const mcpStr = mcpCfg === null
-      ? dim("不限制")
-      : mcpCfg.length === 0
-        ? red("全禁用")
-        : cyan(mcpCfg.join(", "));
+    const mcpStr =
+      mcpCfg === null
+        ? dim("不限制")
+        : mcpCfg.length === 0
+          ? red("全禁用")
+          : cyan(mcpCfg.join(", "));
 
     const toolsCfg = mgr.readToolsConfig(a.id);
-    const toolsStr = toolsCfg === null
-      ? dim("不限制")
-      : toolsCfg.mode === "allowlist"
-        ? green(`白名单(${toolsCfg.tools.length})`)
-        : yellow(`黑名单(${toolsCfg.tools.length})`);
+    const toolsStr =
+      toolsCfg === null
+        ? dim("不限制")
+        : toolsCfg.mode === "allowlist"
+          ? green(`白名单(${toolsCfg.tools.length})`)
+          : yellow(`黑名单(${toolsCfg.tools.length})`);
 
     return [
       a.id === "default" ? cyan(a.id) + dim(" (default)") : cyan(a.id),
@@ -431,7 +486,9 @@ function runNew(mgr: AgentManager, args: string[]): void {
     mgr.load(id);
     console.error(red(`错误：Agent "${id}" 已存在`));
     process.exit(1);
-  } catch { /* expected */ }
+  } catch {
+    /* expected */
+  }
 
   mgr.save({ id, createdAt: new Date().toISOString(), bindings: [] });
   console.log(green(`✓ Agent "${id}" 已创建`));
@@ -464,10 +521,16 @@ function runNew(mgr: AgentManager, args: string[]): void {
 // ── show ─────────────────────────────────────────────────────────────────────
 
 function runShow(mgr: AgentManager, id: string | undefined): void {
-  if (!id) { console.error(red("错误：请指定 Agent ID")); process.exit(1); }
+  if (!id) {
+    console.error(red("错误：请指定 Agent ID"));
+    process.exit(1);
+  }
   let def;
-  try { def = mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  try {
+    def = mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
   console.log(`\n${bold("Agent: " + id)}`);
   console.log(dim("─".repeat(44)));
@@ -538,7 +601,8 @@ function runShow(mgr: AgentManager, id: string | undefined): void {
       console.log(`  ${cyan("can_access")}  （可向谁的 session 发消息）：`);
       if (accessCfg.can_access.includes("*")) {
         console.log(`    ${cyan("•")} ${bold("*")}  ${dim("（通配符：可向所有 agent 发消息）")}`);
-        for (const a of accessCfg.can_access.filter(a => a !== "*")) console.log(`    ${cyan("•")} ${a}`);
+        for (const a of accessCfg.can_access.filter((a) => a !== "*"))
+          console.log(`    ${cyan("•")} ${a}`);
       } else {
         for (const a of accessCfg.can_access) console.log(`    ${cyan("•")} ${a}`);
       }
@@ -558,13 +622,23 @@ function runShow(mgr: AgentManager, id: string | undefined): void {
 // ── edit ─────────────────────────────────────────────────────────────────────
 
 function runEdit(mgr: AgentManager, id: string | undefined): void {
-  if (!id) { console.error(red("错误：请指定 Agent ID")); process.exit(1); }
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  if (!id) {
+    console.error(red("错误：请指定 Agent ID"));
+    process.exit(1);
+  }
+  try {
+    mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
   const systemPath = mgr.systemPromptPath(id);
   if (!existsSync(systemPath)) {
-    writeFileSync(systemPath, `# ${id} 系统提示\n\n在此描述该 Agent 的角色、风格和专业方向。\n`, "utf-8");
+    writeFileSync(
+      systemPath,
+      `# ${id} 系统提示\n\n在此描述该 Agent 的角色、风格和专业方向。\n`,
+      "utf-8"
+    );
   }
   const editor = process.env["EDITOR"] ?? process.env["VISUAL"] ?? "nano";
   const result = spawnSync(editor, [systemPath], { stdio: "inherit" });
@@ -579,7 +653,10 @@ function runEdit(mgr: AgentManager, id: string | undefined): void {
 // ── delete ───────────────────────────────────────────────────────────────────
 
 function runDelete(mgr: AgentManager, id: string | undefined): void {
-  if (!id) { console.error(red("错误：请指定 Agent ID")); process.exit(1); }
+  if (!id) {
+    console.error(red("错误：请指定 Agent ID"));
+    process.exit(1);
+  }
   try {
     mgr.delete(id);
     console.log(green(`✓ Agent "${id}" 已删除`));
@@ -601,7 +678,10 @@ function repairOne(mgr: AgentManager, id: string): void {
   ];
   let createdDirs = 0;
   for (const d of dirs) {
-    if (!existsSync(d)) { mkdirSync(d, { recursive: true }); createdDirs++; }
+    if (!existsSync(d)) {
+      mkdirSync(d, { recursive: true });
+      createdDirs++;
+    }
   }
   let createdFiles = 0;
   const templates: Array<[string, string]> = [
@@ -610,7 +690,10 @@ function repairOne(mgr: AgentManager, id: string): void {
     [mgr.skillsPath(id), SAMPLE_SKILLS],
   ];
   for (const [p, content] of templates) {
-    if (!existsSync(p)) { writeFileSync(p, content, "utf-8"); createdFiles++; }
+    if (!existsSync(p)) {
+      writeFileSync(p, content, "utf-8");
+      createdFiles++;
+    }
   }
   const summary: string[] = [];
   if (createdDirs > 0) summary.push(`${createdDirs} 个目录`);
@@ -625,11 +708,17 @@ function repairOne(mgr: AgentManager, id: string): void {
 function runRepair(mgr: AgentManager, target: string | undefined): void {
   if (!target || target === "--all") {
     const agents = mgr.loadAll();
-    if (agents.length === 0) { console.log(dim("暂无 Agent")); return; }
+    if (agents.length === 0) {
+      console.log(dim("暂无 Agent"));
+      return;
+    }
     for (const a of agents) repairOne(mgr, a.id);
   } else {
-    try { mgr.load(target); } catch {
-      console.error(red(`错误：Agent "${target}" 不存在`)); process.exit(1);
+    try {
+      mgr.load(target);
+    } catch {
+      console.error(red(`错误：Agent "${target}" 不存在`));
+      process.exit(1);
     }
     repairOne(mgr, target);
   }
@@ -644,8 +733,11 @@ function runMcp(mgr: AgentManager, args: string[]): void {
     console.error(dim("用法：agent mcp <id> [set <server...> | clear]"));
     process.exit(1);
   }
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  try {
+    mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
 
   const sub = args[1];
@@ -682,11 +774,13 @@ function runMcp(mgr: AgentManager, args: string[]): void {
     writeFileSync(
       mgr.agentMcpPath(id),
       `# MCP server 白名单 — Agent: ${id}\n# 只有列出的 server 才对此 agent 可见；删除此文件则不限制。\n\n${content}`,
-      "utf-8",
+      "utf-8"
     );
-    console.log(servers.length === 0
-      ? green(`✓ Agent "${id}" MCP 白名单已设为空（禁用所有 server）`)
-      : green(`✓ Agent "${id}" MCP 白名单：[${servers.join(", ")}]`));
+    console.log(
+      servers.length === 0
+        ? green(`✓ Agent "${id}" MCP 白名单已设为空（禁用所有 server）`)
+        : green(`✓ Agent "${id}" MCP 白名单：[${servers.join(", ")}]`)
+    );
     return;
   }
 
@@ -703,8 +797,11 @@ function runTools(mgr: AgentManager, args: string[]): void {
     console.error(dim("用法：agent tools <id> [set-allow|set-deny <tools...> | clear]"));
     process.exit(1);
   }
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  try {
+    mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
 
   const sub = args[1];
@@ -741,7 +838,11 @@ function runTools(mgr: AgentManager, args: string[]): void {
     const mode = sub === "set-allow" ? "allowlist" : "denylist";
     const tools = args.slice(2).filter(Boolean);
     writeToolsToml(mgr, id, mode, tools);
-    console.log(green(`✓ Agent "${id}" 工具${mode === "allowlist" ? "白" : "黑"}名单已更新：[${tools.join(", ")}]`));
+    console.log(
+      green(
+        `✓ Agent "${id}" 工具${mode === "allowlist" ? "白" : "黑"}名单已更新：[${tools.join(", ")}]`
+      )
+    );
     return;
   }
 
@@ -750,12 +851,17 @@ function runTools(mgr: AgentManager, args: string[]): void {
 }
 
 /** 写入 tools.toml */
-function writeToolsToml(mgr: AgentManager, id: string, mode: "allowlist" | "denylist", tools: string[]): void {
+function writeToolsToml(
+  mgr: AgentManager,
+  id: string,
+  mode: "allowlist" | "denylist",
+  tools: string[]
+): void {
   const content = stringify({ mode, tools } as Record<string, unknown>);
   writeFileSync(
     mgr.agentToolsPath(id),
     `# 内置工具${mode === "allowlist" ? "白" : "黑"}名单 — Agent: ${id}\n# mode = "allowlist"（只允许）或 "denylist"（禁止）\n# MCP 工具(mcp_*)不受此影响，由 mcp.toml 控制。\n\n${content}`,
-    "utf-8",
+    "utf-8"
   );
 }
 
@@ -765,20 +871,24 @@ function writeMcpToml(mgr: AgentManager, id: string, servers: string[]): void {
   writeFileSync(
     mgr.agentMcpPath(id),
     `# MCP server 白名单 — Agent: ${id}\n# 只有列出的 server 才对此 agent 可见；删除此文件则不限制。\n\n${content}`,
-    "utf-8",
+    "utf-8"
   );
 }
 
 /** 写入 access.toml */
-function writeAccessToml(mgr: AgentManager, id: string, cfg: import("../../core/agent-manager.js").AccessConfig): void {
+function writeAccessToml(
+  mgr: AgentManager,
+  id: string,
+  cfg: import("../../core/agent-manager.js").AccessConfig
+): void {
   const lines = [
     `# 跨 Session 通信权限 — Agent: ${id}`,
     `# can_access: 本 agent 可以向哪些 agentId 的 session 发消息`,
     `# allow_from: 允许哪些 agentId 的 agent 向本 session 发消息`,
     `# 双向均满足才允许通信；文件不存在 = 默认拒绝所有跨 session 通信`,
     ``,
-    `can_access = [${cfg.can_access.map(a => `"${a}"`).join(", ")}]`,
-    `allow_from = [${cfg.allow_from.map(a => `"${a}"`).join(", ")}]`,
+    `can_access = [${cfg.can_access.map((a) => `"${a}"`).join(", ")}]`,
+    `allow_from = [${cfg.allow_from.map((a) => `"${a}"`).join(", ")}]`,
   ];
   writeFileSync(mgr.accessConfigPath(id), lines.join("\n") + "\n", "utf-8");
 }
@@ -792,8 +902,11 @@ function runAccess(mgr: AgentManager, args: string[]): void {
     console.error(dim("用法：agent access <id> [show|set-can-access|set-allow-from|...]"));
     process.exit(1);
   }
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  try {
+    mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
 
   const sub = args[1];
@@ -807,8 +920,10 @@ function runAccess(mgr: AgentManager, args: string[]): void {
       console.log(`  ${dim("can_access  = []  (不可主动向其他 agent 的 session 发消息)")}`);
     } else if (cfg.can_access.includes("*")) {
       console.log(`  ${cyan("can_access")}（可向以下 agent 的 session 发消息）：`);
-      console.log(`    ${cyan("•")} ${bold("*")}  ${dim("（通配符：可向所有 agent 的 session 发消息）")}`);
-      for (const a of cfg.can_access.filter(a => a !== "*")) console.log(`    ${cyan("•")} ${a}`);
+      console.log(
+        `    ${cyan("•")} ${bold("*")}  ${dim("（通配符：可向所有 agent 的 session 发消息）")}`
+      );
+      for (const a of cfg.can_access.filter((a) => a !== "*")) console.log(`    ${cyan("•")} ${a}`);
     } else {
       console.log(`  ${cyan("can_access")}（可向以下 agent 的 session 发消息）：`);
       for (const a of cfg.can_access) console.log(`    ${cyan("•")} ${a}`);
@@ -887,7 +1002,11 @@ function runAccess(mgr: AgentManager, args: string[]): void {
     return;
   }
 
-  console.error(red(`未知子命令 "${sub}"，可用：show / set-can-access / set-allow-from / add-can-access / add-allow-from / clear-can-access / clear-allow-from / clear`));
+  console.error(
+    red(
+      `未知子命令 "${sub}"，可用：show / set-can-access / set-allow-from / add-can-access / add-allow-from / clear-can-access / clear-allow-from / clear`
+    )
+  );
   process.exit(1);
 }
 
@@ -899,8 +1018,11 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
     console.error(dim("用法：agent perm <id>"));
     process.exit(1);
   }
-  try { mgr.load(id); } catch {
-    console.error(red(`错误：Agent "${id}" 不存在`)); process.exit(1);
+  try {
+    mgr.load(id);
+  } catch {
+    console.error(red(`错误：Agent "${id}" 不存在`));
+    process.exit(1);
   }
 
   console.log(`\n${bold(`Agent "${id}" 权限配置向导`)}`);
@@ -908,11 +1030,12 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
 
   // ── Step 1：内置工具模式 ────────────────────────────────────────────
   const currentTools = mgr.readToolsConfig(id);
-  const currentToolsDesc = currentTools === null
-    ? dim("当前：不限制")
-    : currentTools.mode === "allowlist"
-      ? green(`当前：白名单 [${currentTools.tools.join(", ")}]`)
-      : yellow(`当前：黑名单 [${currentTools.tools.join(", ")}]`);
+  const currentToolsDesc =
+    currentTools === null
+      ? dim("当前：不限制")
+      : currentTools.mode === "allowlist"
+        ? green(`当前：白名单 [${currentTools.tools.join(", ")}]`)
+        : yellow(`当前：黑名单 [${currentTools.tools.join(", ")}]`);
 
   console.log(`\n${bold("── 内置工具限制 ──────────────────────────────────")}`);
   console.log(`  ${currentToolsDesc}`);
@@ -929,17 +1052,19 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
   if (toolMode === "allowlist" || toolMode === "denylist") {
     const initial = currentTools?.tools ?? [];
     const toolItems = BUILTIN_TOOLS.map((t) => ({ value: t }));
-    const modeLabel = toolMode === "allowlist" ? "白名单（勾选允许的工具）" : "黑名单（勾选禁止的工具）";
+    const modeLabel =
+      toolMode === "allowlist" ? "白名单（勾选允许的工具）" : "黑名单（勾选禁止的工具）";
     finalTools = await multiSelect(modeLabel, toolItems, initial);
   }
 
   // ── Step 2：MCP servers ─────────────────────────────────────────────
   const currentMcp = mgr.readMcpServers(id);
-  const currentMcpDesc = currentMcp === null
-    ? dim("当前：不限制")
-    : currentMcp.length === 0
-      ? red("当前：全禁用")
-      : cyan(`当前：白名单 [${currentMcp.join(", ")}]`);
+  const currentMcpDesc =
+    currentMcp === null
+      ? dim("当前：不限制")
+      : currentMcp.length === 0
+        ? red("当前：全禁用")
+        : cyan(`当前：白名单 [${currentMcp.join(", ")}]`);
 
   console.log(`\n${bold("── MCP Server 权限 ────────────────────────────────")}`);
   console.log(`  ${currentMcpDesc}`);
@@ -950,7 +1075,9 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
     const { loadMcpConfig } = await import("../../config/loader.js");
     const mcpCfg = loadMcpConfig();
     knownServers = Object.keys(mcpCfg.servers);
-  } catch { /* 无 MCP 配置时忽略 */ }
+  } catch {
+    /* 无 MCP 配置时忽略 */
+  }
 
   type McpMode = "none" | "allowlist" | "keep";
   const mcpMode = await singleSelect<McpMode>("选择 MCP 访问模式", [
@@ -977,16 +1104,20 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
 
   // ── Step 3：跨 session 通信权限 ────────────────────────────────────
   const currentAccess = mgr.readAccessConfig(id);
-  const currentAccessDesc = (currentAccess.can_access.length === 0 && currentAccess.allow_from.length === 0)
-    ? dim("当前：未配置（默认拒绝所有跨 session 通信）")
-    : `${cyan("can_access")}=[${currentAccess.can_access.join(",")}]  ${green("allow_from")}=[${currentAccess.allow_from.join(",")}]`;
+  const currentAccessDesc =
+    currentAccess.can_access.length === 0 && currentAccess.allow_from.length === 0
+      ? dim("当前：未配置（默认拒绝所有跨 session 通信）")
+      : `${cyan("can_access")}=[${currentAccess.can_access.join(",")}]  ${green("allow_from")}=[${currentAccess.allow_from.join(",")}]`;
 
   console.log(`\n${bold("── 跨 Session 通信权限 ────────────────────────────")}`);
   console.log(`  ${currentAccessDesc}`);
   console.log(dim("  双向 allow-list：发送方 can_access + 接收方 allow_from 均满足才允许通信"));
 
   // 枚举所有其他 agent
-  const allOtherAgents = mgr.loadAll().map(a => a.id).filter(a => a !== id);
+  const allOtherAgents = mgr
+    .loadAll()
+    .map((a) => a.id)
+    .filter((a) => a !== id);
 
   type AccessMode = "none" | "both" | "can_access" | "allow_from" | "keep" | "skip";
   let accessMode: AccessMode = "keep";
@@ -1010,23 +1141,23 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
       if (accessMode === "both" || accessMode === "can_access") {
         const canAccessItems = [
           { value: "*", label: "* （通配符：可向所有 agent 的 session 发消息）" },
-          ...allOtherAgents.map(a => ({ value: a })),
+          ...allOtherAgents.map((a) => ({ value: a })),
         ];
         const canAccessSelected = await multiSelect(
           "can_access — 勾选可向哪些 agent 的 session 发消息",
           canAccessItems,
-          currentAccess.can_access,
+          currentAccess.can_access
         );
         finalAccess = { ...(finalAccess ?? currentAccess), can_access: canAccessSelected };
       }
 
       // allow_from multiSelect（无通配符）
       if (accessMode === "both" || accessMode === "allow_from") {
-        const allowFromItems = allOtherAgents.map(a => ({ value: a }));
+        const allowFromItems = allOtherAgents.map((a) => ({ value: a }));
         const allowFromSelected = await multiSelect(
           "allow_from — 勾选允许哪些 agent 向本 session 发消息",
           allowFromItems,
-          currentAccess.allow_from,
+          currentAccess.allow_from
         );
         finalAccess = { ...(finalAccess ?? currentAccess), allow_from: allowFromSelected };
       }
@@ -1038,8 +1169,10 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
 
   if (toolMode === "none") {
     const p = mgr.agentToolsPath(id);
-    if (existsSync(p)) { unlinkSync(p); console.log(green("  ✓ tools.toml 已删除（不限制）")); }
-    else console.log(dim("  ─ tools.toml 本就不存在，无需操作"));
+    if (existsSync(p)) {
+      unlinkSync(p);
+      console.log(green("  ✓ tools.toml 已删除（不限制）"));
+    } else console.log(dim("  ─ tools.toml 本就不存在，无需操作"));
   } else if (toolMode === "allowlist" || toolMode === "denylist") {
     writeToolsToml(mgr, id, toolMode, finalTools!);
     console.log(green(`  ✓ tools.toml 已写入：${toolMode} [${finalTools!.join(", ")}]`));
@@ -1049,8 +1182,10 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
 
   if (mcpMode === "none") {
     const p = mgr.agentMcpPath(id);
-    if (existsSync(p)) { unlinkSync(p); console.log(green("  ✓ mcp.toml 已删除（不限制）")); }
-    else console.log(dim("  ─ mcp.toml 本就不存在，无需操作"));
+    if (existsSync(p)) {
+      unlinkSync(p);
+      console.log(green("  ✓ mcp.toml 已删除（不限制）"));
+    } else console.log(dim("  ─ mcp.toml 本就不存在，无需操作"));
   } else if (mcpMode === "allowlist") {
     writeMcpToml(mgr, id, finalServers!);
     console.log(green(`  ✓ mcp.toml 已写入：allowlist [${finalServers!.join(", ")}]`));
@@ -1060,11 +1195,17 @@ async function runPerm(mgr: AgentManager, id: string | undefined): Promise<void>
 
   if (accessMode === "none") {
     const p = mgr.accessConfigPath(id);
-    if (existsSync(p)) { unlinkSync(p); console.log(green("  ✓ access.toml 已删除（默认 deny）")); }
-    else console.log(dim("  ─ access.toml 本就不存在，无需操作"));
+    if (existsSync(p)) {
+      unlinkSync(p);
+      console.log(green("  ✓ access.toml 已删除（默认 deny）"));
+    } else console.log(dim("  ─ access.toml 本就不存在，无需操作"));
   } else if (finalAccess !== null) {
     writeAccessToml(mgr, id, finalAccess);
-    console.log(green(`  ✓ access.toml 已写入：can_access=[${finalAccess.can_access.join(", ")}], allow_from=[${finalAccess.allow_from.join(", ")}]`));
+    console.log(
+      green(
+        `  ✓ access.toml 已写入：can_access=[${finalAccess.can_access.join(", ")}], allow_from=[${finalAccess.allow_from.join(", ")}]`
+      )
+    );
   } else {
     console.log(dim("  ─ access 配置：保持不变"));
   }

@@ -24,14 +24,21 @@ async function flushPending(agentId: string): Promise<void> {
   let names: string[] = [];
   try {
     const content = fs.readFileSync(PENDING_MARKER, "utf-8").trim();
-    names = content.split(",").map((s) => s.trim()).filter(Boolean);
-  } catch { /* ignore */ }
+    names = content
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    /* ignore */
+  }
 
   if (names.length === 0) names = ["news"];
 
   try {
     fs.unlinkSync(PENDING_MARKER);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   const { updateStore } = await import("./qmd.js");
   for (const name of names) {
@@ -53,12 +60,12 @@ export function startNewsWatcher(agentId = "default"): void {
   // 确保 news 目录存在
   try {
     fs.mkdirSync(NEWS_DIR, { recursive: true });
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // 启动时处理残留标记（上次未处理的）
-  flushPending(agentId).catch((e) =>
-    console.warn("[news-watcher] 启动时 flush 失败:", e)
-  );
+  flushPending(agentId).catch((e) => console.warn("[news-watcher] 启动时 flush 失败:", e));
 
   if (watcher) return; // 已启动
 
@@ -66,9 +73,7 @@ export function startNewsWatcher(agentId = "default"): void {
     if (filename === ".update-pending" && eventType === "rename") {
       // rename 事件包括文件创建和删除，只在文件存在时处理
       if (fs.existsSync(PENDING_MARKER)) {
-        flushPending(agentId).catch((e) =>
-          console.warn("[news-watcher] flush 失败:", e)
-        );
+        flushPending(agentId).catch((e) => console.warn("[news-watcher] flush 失败:", e));
       }
     }
   });

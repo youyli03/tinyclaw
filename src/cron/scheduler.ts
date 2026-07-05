@@ -47,8 +47,8 @@ function isInTimeRange(job: CronJob): boolean {
   const now = new Date();
   const weekday = now.getDay(); // 0=周日 ... 6=周六
   if (job.timeRange.weekdays && !job.timeRange.weekdays.includes(weekday)) return false;
-  const [sh, sm] = job.timeRange.start.split(':').map(Number);
-  const [eh, em] = job.timeRange.end.split(':').map(Number);
+  const [sh, sm] = job.timeRange.start.split(":").map(Number);
+  const [eh, em] = job.timeRange.end.split(":").map(Number);
   const nowMins = now.getHours() * 60 + now.getMinutes();
   const startMins = sh! * 60 + sm!;
   const endMins = eh! * 60 + em!;
@@ -60,7 +60,10 @@ function isInTimeRange(job: CronJob): boolean {
 class CronScheduler {
   private connector: Connector | null = null;
   /** jobId → timer handle */
-  private timers = new Map<string, ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>>();
+  private timers = new Map<
+    string,
+    ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>
+  >();
   /** 正在执行的 jobId 集合（并发保护：同一 job 不允许多个实例同时运行） */
   private running = new Set<string>();
   /** 长驻 cron runtime 子进程 */
@@ -136,10 +139,14 @@ class CronScheduler {
 
   private scheduleJob(job: CronJob): void {
     switch (job.type) {
-      case "once":  return this.scheduleOnce(job);
-      case "every": return this.scheduleEvery(job);
-      case "daily": return this.scheduleDaily(job);
-      case "manual": return; // 无自动调度，等待 cron_run 手动触发
+      case "once":
+        return this.scheduleOnce(job);
+      case "every":
+        return this.scheduleEvery(job);
+      case "daily":
+        return this.scheduleDaily(job);
+      case "manual":
+        return; // 无自动调度，等待 cron_run 手动触发
     }
   }
 
@@ -171,7 +178,7 @@ class CronScheduler {
 
     const handle = setInterval(() => {
       if (!isInTimeRange(job)) {
-        const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         // out of timeRange 静默跳过，不打印日志
         return;
       }
@@ -215,7 +222,9 @@ class CronScheduler {
       return;
     }
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-    console.log(`[${ts}] [cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`);
+    console.log(
+      `[${ts}] [cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`
+    );
     this.running.add(job.id);
     try {
       await this.runInWorker(job.id);
@@ -315,7 +324,11 @@ class CronScheduler {
         this.workerReady = null;
         failPending(`cron runtime exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
         if (!ready) {
-          reject(new Error(`cron runtime exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+          reject(
+            new Error(
+              `cron runtime exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`
+            )
+          );
         }
       });
     });

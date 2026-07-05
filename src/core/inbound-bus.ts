@@ -86,6 +86,9 @@ export class InboundMessageBus {
 
   /** 获取当前队列快照（用于调试） */
   snapshot(): Array<{ id: string; label?: string }> {
-    return this.waiters.map((w) => ({ id: w.id, ...(w.label !== undefined ? { label: w.label } : {}) }));
+    return this.waiters.map((w) => ({
+      id: w.id,
+      ...(w.label !== undefined ? { label: w.label } : {}),
+    }));
   }
 }

@@ -20,16 +20,16 @@ import * as path from "node:path";
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
 export interface TopicInfo {
-  name: string;      // 文件名(不含 .md),如 "constraints"
-  path: string;      // 绝对路径
-  mtime: Date;       // 最后修改时间
-  daysAgo: number;   // 距今天数
+  name: string; // 文件名(不含 .md),如 "constraints"
+  path: string; // 绝对路径
+  mtime: Date; // 最后修改时间
+  daysAgo: number; // 距今天数
   lineCount: number; // 行数
 }
 
 export interface IndexMeta {
   path: string;
-  mtime: string;     // ISO 8601
+  mtime: string; // ISO 8601
   lineCount: number;
   maxLines: number;
   sections: string[];
@@ -41,8 +41,8 @@ export interface ProjectMeta {
     slug: string;
     workdir?: string;
     type: "local" | "ssh";
-    createdAt: string;   // ISO 8601
-    lastActive: string;  // ISO 8601
+    createdAt: string; // ISO 8601
+    lastActive: string; // ISO 8601
   };
   index: IndexMeta;
   topics: Record<string, TopicInfo & { createdAt: string }>;
@@ -50,11 +50,7 @@ export interface ProjectMeta {
 
 // ── 常量 ────────────────────────────────────────────────────────────────────
 
-const AGENTS_ROOT = path.join(
-  process.env.HOME ?? "/home/lyy",
-  ".tinyclaw",
-  "agents",
-);
+const AGENTS_ROOT = path.join(process.env.HOME ?? "/home/lyy", ".tinyclaw", "agents");
 
 const MEMORY_INDEX_SKELETON = `# Project Memory Index
 
@@ -128,7 +124,8 @@ export function topicFilesList(agentId: string, project: string): string[] {
 export function listProjects(agentId: string): string[] {
   const dir = projectsDir(agentId);
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, "MEMORY.md")))
     .map((d) => d.name);
 }
@@ -150,7 +147,10 @@ function writeMetadata(agentId: string, project: string, meta: ProjectMeta): voi
   fs.writeFileSync(metadataPath(agentId, project), JSON.stringify(meta, null, 2), "utf-8");
 }
 
-function scanTopicStats(agentId: string, project: string): Record<string, TopicInfo & { createdAt: string }> {
+function scanTopicStats(
+  agentId: string,
+  project: string
+): Record<string, TopicInfo & { createdAt: string }> {
   const files = topicFilesList(agentId, project);
   const result: Record<string, TopicInfo & { createdAt: string }> = {};
   const now = Date.now();
@@ -176,7 +176,10 @@ function scanTopicStats(agentId: string, project: string): Record<string, TopicI
   return result;
 }
 
-function scanIndexStats(agentId: string, project: string): Omit<IndexMeta, "maxLines" | "sections"> | null {
+function scanIndexStats(
+  agentId: string,
+  project: string
+): Omit<IndexMeta, "maxLines" | "sections"> | null {
   const p = memoryIndexPath(agentId, project);
   if (!fs.existsSync(p)) return null;
   try {
@@ -289,7 +292,7 @@ export interface InitProjectMemoryOptions {
 export function ensureProjectMemory(
   agentId: string,
   project: string,
-  opts: InitProjectMemoryOptions = {},
+  opts: InitProjectMemoryOptions = {}
 ): void {
   const dir = projectDir(agentId, project);
   fs.mkdirSync(dir, { recursive: true });

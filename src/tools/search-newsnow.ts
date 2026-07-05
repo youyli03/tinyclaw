@@ -66,9 +66,12 @@ registerTool({
 
     const spawnArgs = [
       SEARCH_SCRIPT,
-      "--query", query,
-      "--days", String(days),
-      "--limit", String(limit),
+      "--query",
+      query,
+      "--days",
+      String(days),
+      "--limit",
+      String(limit),
     ];
     if (fresh) spawnArgs.push("--fresh");
 

@@ -41,8 +41,21 @@ export type IpcRequest =
   | { type: "list" }
   | { type: "new"; agentId?: string }
   | { type: "cron_trigger"; jobId: string }
-  | { type: "qqbot_send"; peerId: string; msgType: "c2c" | "group" | "guild" | "dm"; text: string; replyToId?: string; botId?: string }
-  | { type: "qqbot_prompt"; peerId: string; msgType: "c2c" | "group" | "guild" | "dm"; prompt: string; timeoutMs: number }
+  | {
+      type: "qqbot_send";
+      peerId: string;
+      msgType: "c2c" | "group" | "guild" | "dm";
+      text: string;
+      replyToId?: string;
+      botId?: string;
+    }
+  | {
+      type: "qqbot_prompt";
+      peerId: string;
+      msgType: "c2c" | "group" | "guild" | "dm";
+      prompt: string;
+      timeoutMs: number;
+    }
   | { type: "memorize"; sessionId: string }
   /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
   | { type: "loop_trigger"; sessionId: string }
@@ -96,9 +109,21 @@ export type IpcResponse =
   /** loop_resume 请求的响应 */
   | { type: "loop_resumed"; sessionId: string; found: boolean }
   /** loop_status 请求的响应 */
-  | { type: "loop_status_result"; sessionId: string; status: "running" | "paused" | "idle" | "not_found" }
+  | {
+      type: "loop_status_result";
+      sessionId: string;
+      status: "running" | "paused" | "idle" | "not_found";
+    }
   /** loop_list_status 请求的响应 */
-  | { type: "loop_list_status_result"; items: Array<{ sessionId: string; status: "running" | "paused" | "idle" | "not_found"; agentId: string; tickSeconds: number }> }
+  | {
+      type: "loop_list_status_result";
+      items: Array<{
+        sessionId: string;
+        status: "running" | "paused" | "idle" | "not_found";
+        agentId: string;
+        tickSeconds: number;
+      }>;
+    }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
   /** abort_session 请求的响应 */
@@ -131,4 +156,3 @@ export type ActivityEvent =
   | { kind: "tool_result"; name: string; resultSummary: string }
   | { kind: "done" }
   | { kind: "error"; message: string };
-

@@ -58,10 +58,7 @@ export function containsForceFlag(value: string): boolean {
  * 递归扫描工具参数中所有 string 类型的值，检测是否含有 --force 或独立 -f。
  * 扫描深度最多 2 层（避免过深递归）。
  */
-export function argsContainForceFlag(
-  args: Record<string, unknown>,
-  depth = 0
-): boolean {
+export function argsContainForceFlag(args: Record<string, unknown>, depth = 0): boolean {
   if (depth > 2) return false;
   for (const value of Object.values(args)) {
     if (typeof value === "string") {

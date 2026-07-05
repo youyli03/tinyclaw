@@ -52,7 +52,7 @@ async function cmdStatus(): Promise<void> {
     }
   } else {
     console.log(yellow("未找到已保存的 GitHub Token"));
-    console.log(dim("  · 如已配置 `githubToken = \"gh_cli\"`，请确认 `gh auth login` 已完成"));
+    console.log(dim('  · 如已配置 `githubToken = "gh_cli"`，请确认 `gh auth login` 已完成'));
     console.log(dim("  · 或运行 `auth github` 通过 Device Flow 授权"));
   }
 
@@ -62,7 +62,7 @@ async function cmdStatus(): Promise<void> {
   const mfaCfg = loadConfig().auth?.mfa;
   if (!mfaCfg) {
     console.log(dim("未配置 [auth.mfa]，MFA 关闭"));
-    console.log(dim("  · 在 config.toml 中添加 [auth.mfa] 并设置 interface = \"totp\" 可启用"));
+    console.log(dim('  · 在 config.toml 中添加 [auth.mfa] 并设置 interface = "totp" 可启用'));
   } else {
     const iface = mfaCfg.interface ?? "simple";
     console.log(`  interface    = ${cyan(iface)}`);
@@ -79,14 +79,22 @@ async function cmdStatus(): Promise<void> {
       const { join } = await import("node:path");
       const secretPath = mfaCfg.totpSecretPath ?? join(getDataPath("auth"), "totp.key");
       const bound = existsSync(secretPath);
-      console.log(`  TOTP secret  = ${bound
-        ? green("✓ 已绑定 (" + secretPath + ")")
-        : red("✗ 未绑定 — 请运行 `tinyclaw auth mfa-setup`")}`);
+      console.log(
+        `  TOTP secret  = ${
+          bound
+            ? green("✓ 已绑定 (" + secretPath + ")")
+            : red("✗ 未绑定 — 请运行 `tinyclaw auth mfa-setup`")
+        }`
+      );
     } else if (iface === "msal") {
       const hasTenant = !!mfaCfg.tenantId && !mfaCfg.tenantId.includes("xxxx");
       const hasClient = !!mfaCfg.clientId && !mfaCfg.clientId.includes("xxxx");
-      console.log(`  tenantId     = ${hasTenant ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`);
-      console.log(`  clientId     = ${hasClient ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`);
+      console.log(
+        `  tenantId     = ${hasTenant ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`
+      );
+      console.log(
+        `  clientId     = ${hasClient ? green("✓ 已设置") : red("✗ 未设置（含占位符）")}`
+      );
     }
   }
   console.log();
@@ -99,7 +107,7 @@ async function cmdMFASetup(): Promise<void> {
     const secretPath = loadConfig().auth?.mfa?.totpSecretPath;
     setupTOTP(secretPath);
     console.log(green("✓ TOTP 绑定完成"));
-    console.log(dim("  如需启用，在 config.toml [auth.mfa] 中设置 interface = \"totp\""));
+    console.log(dim('  如需启用，在 config.toml [auth.mfa] 中设置 interface = "totp"'));
   } catch (e) {
     console.error(red(`绑定失败：${e}`));
   }
@@ -171,17 +179,28 @@ export async function run(args: string[]): Promise<void> {
 
   switch (sub) {
     case "github":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("github"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("github");
+        return;
+      }
       return cmdGithub();
     case "status":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("status"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("status");
+        return;
+      }
       return cmdStatus();
     case "mfa-setup":
-      if (rest.includes("-h") || rest.includes("--help")) { printSubHelp("mfa-setup"); return; }
+      if (rest.includes("-h") || rest.includes("--help")) {
+        printSubHelp("mfa-setup");
+        return;
+      }
       return cmdMFASetup();
     case "--help":
     case "-h":
-    case "help":    printHelp(); return;
+    case "help":
+      printHelp();
+      return;
     default:
       console.error(red(`未知子命令 "${sub}"`));
       printHelp();

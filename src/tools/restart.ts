@@ -102,10 +102,7 @@ export function runTypecheck(): Promise<{ ok: boolean; output: string }> {
 
 // ── 工具实现 ──────────────────────────────────────────────────────────────────
 
-async function restartToolImpl(
-  _args: Record<string, unknown>,
-  ctx?: ToolContext,
-): Promise<string> {
+async function restartToolImpl(_args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   // ── 1. 类型检查 ──────────────────────────────────────────────────────────
   const { ok, output } = await runTypecheck();
 
@@ -145,7 +142,9 @@ async function restartToolImpl(
     if (ctx?.masterSession && ctx.currentCallId) {
       try {
         ctx.masterSession.addToolResultMessage(ctx.currentCallId, pendingMsg);
-      } catch { /* 写 JSONL 失败不影响 */ }
+      } catch {
+        /* 写 JSONL 失败不影响 */
+      }
     }
 
     // 通知用户
@@ -180,7 +179,7 @@ async function restartToolImpl(
           restartTaskId: queueItem.taskId,
           additionalSessions: additionalSessions.length > 0 ? additionalSessions : undefined,
         }),
-        "utf-8",
+        "utf-8"
       );
     } catch {
       /* 写失败不影响重启 */

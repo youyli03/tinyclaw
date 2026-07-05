@@ -48,7 +48,7 @@ registerTool({
     }
     lines.push(
       "> 使用 `mcp_enable_server` 启用某个 server 以获取其工具文档并注册工具。\n" +
-      "> 使用 `mcp_disable_server` 禁用已启用的 server（释放 token 空间，连接保持）。"
+        "> 使用 `mcp_disable_server` 禁用已启用的 server（释放 token 空间，连接保持）。"
     );
     return lines.join("\n");
   },
@@ -78,7 +78,12 @@ registerTool({
   execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.enableServer(name, ctx?.agentId, ctx?.sessionId, ctx?.mode as "chat" | "code" | undefined);
+    return mcpManager.enableServer(
+      name,
+      ctx?.agentId,
+      ctx?.sessionId,
+      ctx?.mode as "chat" | "code" | undefined
+    );
   },
 });
 
@@ -106,6 +111,11 @@ registerTool({
   execute: async (args, ctx) => {
     const name = String(args["name"] ?? "");
     if (!name) return "错误：缺少 name 参数。";
-    return mcpManager.disableServer(name, ctx?.agentId, ctx?.sessionId, ctx?.mode as "chat" | "code" | undefined);
+    return mcpManager.disableServer(
+      name,
+      ctx?.agentId,
+      ctx?.sessionId,
+      ctx?.mode as "chat" | "code" | undefined
+    );
   },
 });

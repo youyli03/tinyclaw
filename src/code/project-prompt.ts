@@ -60,7 +60,9 @@ export function loadProjectContext(agentId: string, slug: string): ProjectContex
     if (existsSync(mp)) {
       memoryContent = readFileSync(mp, "utf-8");
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // 读 topic 列表
   const rawTopics = getProjectTopics(agentId, slug);
@@ -164,7 +166,7 @@ export interface BuildProjectPromptOptions {
 export function buildProjectSystemPrompt(
   agentId: string,
   ctx: ProjectContext,
-  options: BuildProjectPromptOptions = {},
+  options: BuildProjectPromptOptions = {}
 ): string {
   const sessionId = options.sessionId ?? "";
   const agentDir = agentManager.agentDir(agentId);
@@ -186,7 +188,9 @@ export function buildProjectSystemPrompt(
       const ec = readFileSync(envPath, "utf-8").trim();
       if (ec.length > 0) envContent = ec;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // vision
   const visionSection = options.supportsVision
@@ -230,7 +234,9 @@ export function buildProjectSystemPrompt(
 
   // 11. feedback
   if (feedbackContent) {
-    parts.push(`\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`);
+    parts.push(
+      `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`
+    );
   }
 
   // 12. code hook
@@ -259,7 +265,7 @@ function renderProjectWorkspace(
   agentDir: string,
   workspaceDir: string,
   planPath: string,
-  _agentDir: string, // same as agentDir, kept for symmetry
+  _agentDir: string // same as agentDir, kept for symmetry
 ): string {
   return `## 工作区
 

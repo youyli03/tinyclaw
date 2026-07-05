@@ -16,8 +16,7 @@ function ok(imgPath: string): string {
 
 function fail(type: string, detail: string): string {
   return (
-    `❌ 渲染失败（${type}），请修正代码后重新调用 render_diagram。\n` +
-    `错误信息：\n${detail}`
+    `❌ 渲染失败（${type}），请修正代码后重新调用 render_diagram。\n` + `错误信息：\n${detail}`
   );
 }
 
@@ -33,7 +32,7 @@ registerTool({
         "将图表代码渲染为图片，通过 QQ 发送。支持两种类型：" +
         "（1）mermaid：流程图/时序图/类图/状态机/ER图/甘特图/饼图等，传入 mermaid 语法代码；" +
         "（2）python：任意 Python 绘图代码（matplotlib/graphviz 等），代码直接生成图形即可，" +
-        "无需手动 savefig（工具会自动保存），或手动调用 plt.savefig(os.environ[\"DIAGRAM_OUTPUT_FILE\"]) 指定路径。" +
+        '无需手动 savefig（工具会自动保存），或手动调用 plt.savefig(os.environ["DIAGRAM_OUTPUT_FILE"]) 指定路径。' +
         "渲染失败时工具会返回详细错误，请根据错误修正代码后重试。",
       parameters: {
         type: "object",
@@ -56,7 +55,8 @@ registerTool({
           theme: {
             type: "string",
             enum: ["light", "dark"],
-            description: "mermaid 图表配色主题：light（亮色，默认）或 dark（暗色/技术风格）。python 类型忽略此参数。",
+            description:
+              "mermaid 图表配色主题：light（亮色，默认）或 dark（暗色/技术风格）。python 类型忽略此参数。",
           },
         },
         required: ["type", "code"],

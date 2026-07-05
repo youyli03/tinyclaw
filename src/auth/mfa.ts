@@ -28,9 +28,7 @@ function getPCA(): PublicClientApplication {
     );
   }
   if (!cfg.tenantId || !cfg.clientId) {
-    throw new Error(
-      "MFA Interface B 需要配置 auth.mfa.tenantId 和 auth.mfa.clientId"
-    );
+    throw new Error("MFA Interface B 需要配置 auth.mfa.tenantId 和 auth.mfa.clientId");
   }
   const cachePath = getMSALCachePath();
 
@@ -80,7 +78,7 @@ function getPCA(): PublicClientApplication {
 export async function requireMFA(
   displayFn: (message: string) => void = console.log
 ): Promise<AuthenticationResult> {
-  const cfg = loadConfig().auth.mfa!;  // getPCA() 已确保 mfa 已配置
+  const cfg = loadConfig().auth.mfa!; // getPCA() 已确保 mfa 已配置
   const app = getPCA();
 
   // 尝试静默获取（缓存中有有效 token 时直接返回）
@@ -101,11 +99,12 @@ export async function requireMFA(
   // Device Code Flow（触发 number-matching 推送）
   return new Promise((resolve, reject) => {
     // cfg.timeoutSecs === 0 表示不超时，永久等待用户确认
-    const timeoutHandle = cfg.timeoutSecs > 0
-      ? setTimeout(() => {
-          reject(new MFAError("MFA 确认超时，操作已取消"));
-        }, cfg.timeoutSecs * 1000)
-      : null;
+    const timeoutHandle =
+      cfg.timeoutSecs > 0
+        ? setTimeout(() => {
+            reject(new MFAError("MFA 确认超时，操作已取消"));
+          }, cfg.timeoutSecs * 1000)
+        : null;
 
     const request: DeviceCodeRequest = {
       scopes: MFA_SCOPES,

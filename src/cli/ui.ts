@@ -13,25 +13,25 @@ import { stdin, stdout } from "node:process";
 const ESC = "\x1b[";
 
 export const ansi = {
-  reset:   "\x1b[0m",
-  bold:    "\x1b[1m",
-  dim:     "\x1b[2m",
-  green:   "\x1b[32m",
-  red:     "\x1b[31m",
-  yellow:  "\x1b[33m",
-  cyan:    "\x1b[36m",
-  blue:    "\x1b[34m",
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  cyan: "\x1b[36m",
+  blue: "\x1b[34m",
   magenta: "\x1b[35m",
-  white:   "\x1b[37m",
+  white: "\x1b[37m",
 };
 
-export const bold    = (s: string) => `${ansi.bold}${s}${ansi.reset}`;
-export const dim     = (s: string) => `${ansi.dim}${s}${ansi.reset}`;
-export const green   = (s: string) => `${ansi.green}${s}${ansi.reset}`;
-export const red     = (s: string) => `${ansi.red}${s}${ansi.reset}`;
-export const yellow  = (s: string) => `${ansi.yellow}${s}${ansi.reset}`;
-export const cyan    = (s: string) => `${ansi.cyan}${s}${ansi.reset}`;
-export const blue    = (s: string) => `${ansi.blue}${s}${ansi.reset}`;
+export const bold = (s: string) => `${ansi.bold}${s}${ansi.reset}`;
+export const dim = (s: string) => `${ansi.dim}${s}${ansi.reset}`;
+export const green = (s: string) => `${ansi.green}${s}${ansi.reset}`;
+export const red = (s: string) => `${ansi.red}${s}${ansi.reset}`;
+export const yellow = (s: string) => `${ansi.yellow}${s}${ansi.reset}`;
+export const cyan = (s: string) => `${ansi.cyan}${s}${ansi.reset}`;
+export const blue = (s: string) => `${ansi.blue}${s}${ansi.reset}`;
 export const magenta = (s: string) => `${ansi.magenta}${s}${ansi.reset}`;
 
 // ── 表格打印 ──────────────────────────────────────────────────────────────────
@@ -44,9 +44,7 @@ export function printTable(headers: string[], rows: (string | undefined)[][]): v
   const visLen = (s: string) => stripAnsi(s).length;
 
   const allRows = [headers, ...rows];
-  const widths = headers.map((_, col) =>
-    Math.max(...allRows.map((r) => visLen(r[col] ?? "")))
-  );
+  const widths = headers.map((_, col) => Math.max(...allRows.map((r) => visLen(r[col] ?? ""))));
 
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - visLen(s)));
   const sep = "  ";
@@ -138,11 +136,26 @@ function readKey(): Promise<string> {
       process.stdin.removeListener("data", onData);
       const s = buf.toString();
       // 方向键转义序列
-      if (s === "\x1b[A") { resolve("up");    return; }
-      if (s === "\x1b[B") { resolve("down");  return; }
-      if (s === "\r" || s === "\n") { resolve("enter"); return; }
-      if (s === " ")                { resolve("space"); return; }
-      if (s === "\x1b" || s === "q" || s === "\x03") { resolve("quit"); return; }
+      if (s === "\x1b[A") {
+        resolve("up");
+        return;
+      }
+      if (s === "\x1b[B") {
+        resolve("down");
+        return;
+      }
+      if (s === "\r" || s === "\n") {
+        resolve("enter");
+        return;
+      }
+      if (s === " ") {
+        resolve("space");
+        return;
+      }
+      if (s === "\x1b" || s === "q" || s === "\x03") {
+        resolve("quit");
+        return;
+      }
       resolve(s);
     };
     process.stdin.once("data", onData);
@@ -167,7 +180,7 @@ function saveCursor(): void {
  */
 export async function singleSelect<T>(
   title: string,
-  items: { label: string; value: T; note?: string }[],
+  items: { label: string; value: T; note?: string }[]
 ): Promise<T> {
   if (!hasTTY()) {
     return select(title, items);
@@ -218,10 +231,18 @@ export async function singleSelect<T>(
   try {
     while (true) {
       const key = await readKey();
-      if (key === "up")         { cursor = (cursor - 1 + items.length) % items.length; redraw(); }
-      else if (key === "down")  { cursor = (cursor + 1) % items.length; redraw(); }
-      else if (key === "enter") { process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J"); break; }
-      else if (key === "quit")  { process.exit(0); }
+      if (key === "up") {
+        cursor = (cursor - 1 + items.length) % items.length;
+        redraw();
+      } else if (key === "down") {
+        cursor = (cursor + 1) % items.length;
+        redraw();
+      } else if (key === "enter") {
+        process.stdout.write("\x1b[" + String(lastN) + "A\x1b[J");
+        break;
+      } else if (key === "quit") {
+        process.exit(0);
+      }
     }
   } finally {
     process.stdin.setRawMode(false);
@@ -240,7 +261,7 @@ export async function singleSelect<T>(
 export async function multiSelect(
   title: string,
   items: { value: string; label?: string }[],
-  initialSelected: string[] = [],
+  initialSelected: string[] = []
 ): Promise<string[]> {
   if (!hasTTY()) {
     // fallback：显示列表，让用户输入空格分隔的 value
@@ -282,15 +303,23 @@ export async function multiSelect(
   try {
     while (true) {
       const key = await readKey();
-      if (key === "up")    { cursor = (cursor - 1 + items.length) % items.length; render(false); }
-      else if (key === "down")  { cursor = (cursor + 1) % items.length; render(false); }
-      else if (key === "space") {
-        const v = items[cursor]!.value;
-        if (selected.has(v)) selected.delete(v); else selected.add(v);
+      if (key === "up") {
+        cursor = (cursor - 1 + items.length) % items.length;
         render(false);
+      } else if (key === "down") {
+        cursor = (cursor + 1) % items.length;
+        render(false);
+      } else if (key === "space") {
+        const v = items[cursor]!.value;
+        if (selected.has(v)) selected.delete(v);
+        else selected.add(v);
+        render(false);
+      } else if (key === "enter") {
+        clearLines(items.length + 2);
+        break;
+      } else if (key === "quit") {
+        process.exit(0);
       }
-      else if (key === "enter") { clearLines(items.length + 2); break; }
-      else if (key === "quit")  { process.exit(0); }
     }
   } finally {
     process.stdin.setRawMode(false);
@@ -314,14 +343,17 @@ export async function multiSelect(
  */
 export async function searchableSelect<T>(
   title: string,
-  allItems: { label: string; value: T; note?: string }[],
+  allItems: { label: string; value: T; note?: string }[]
 ): Promise<T> {
   if (!hasTTY()) {
-    const kw = await prompt("\u641c\u7d22\u5173\u952e\u8bcd (\u76f4\u63a5\u56de\u8f66\u8df3\u8fc7): ");
+    const kw = await prompt(
+      "\u641c\u7d22\u5173\u952e\u8bcd (\u76f4\u63a5\u56de\u8f66\u8df3\u8fc7): "
+    );
     const filtered = kw.trim()
-      ? allItems.filter((i) =>
-          i.label.toLowerCase().includes(kw.toLowerCase()) ||
-          String(i.value).toLowerCase().includes(kw.toLowerCase())
+      ? allItems.filter(
+          (i) =>
+            i.label.toLowerCase().includes(kw.toLowerCase()) ||
+            String(i.value).toLowerCase().includes(kw.toLowerCase())
         )
       : allItems;
     return select(title, filtered.length > 0 ? filtered : allItems);
@@ -366,9 +398,11 @@ export async function searchableSelect<T>(
       ? "  \u641c\u7d22: " + cyan(query) + "\u2588"
       : "  \u641c\u7d22: " + dim("(Tab \u6fc0\u6d3b)");
     out.push(searchLine);
-    out.push(searchMode
-      ? dim("Enter \u786e\u8ba4  Esc \u6e05\u7a7a  \u2191\u2193 \u79fb\u52a8")
-      : dim("\u2191\u2193 \u79fb\u52a8  Enter \u786e\u8ba4  Tab \u641c\u7d22"));
+    out.push(
+      searchMode
+        ? dim("Enter \u786e\u8ba4  Esc \u6e05\u7a7a  \u2191\u2193 \u79fb\u52a8")
+        : dim("\u2191\u2193 \u79fb\u52a8  Enter \u786e\u8ba4  Tab \u641c\u7d22")
+    );
     return out;
   };
 
@@ -394,10 +428,18 @@ export async function searchableSelect<T>(
       const key = await readKey();
       if (key === "quit") process.exit(0);
 
-      if (key === "\t") { searchMode = !searchMode; redraw(); continue; }
+      if (key === "\t") {
+        searchMode = !searchMode;
+        redraw();
+        continue;
+      }
 
       if (key === "\x1b") {
-        if (query) { query = ""; cursor = 0; scrollTop = 0; }
+        if (query) {
+          query = "";
+          cursor = 0;
+          scrollTop = 0;
+        }
         searchMode = false;
         redraw();
         continue;

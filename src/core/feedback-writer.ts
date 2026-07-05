@@ -16,11 +16,7 @@ import { agentManager } from "./agent-manager.js";
  * 向对应模式的 feedback.md 追加一条反馈记录。
  * 自动创建父目录，幂等安全（appendFileSync）。
  */
-export function appendFeedback(
-  agentId: string,
-  mode: "chat" | "code",
-  content: string,
-): void {
+export function appendFeedback(agentId: string, mode: "chat" | "code", content: string): void {
   const feedbackPath = agentManager.feedbackPath(agentId, mode);
   fs.mkdirSync(path.dirname(feedbackPath), { recursive: true });
 
@@ -34,10 +30,7 @@ export function appendFeedback(
  * 读取指定模式的 feedback.md 内容。
  * 文件不存在时返回 null。
  */
-export function readFeedback(
-  agentId: string,
-  mode: "chat" | "code",
-): string | null {
+export function readFeedback(agentId: string, mode: "chat" | "code"): string | null {
   const feedbackPath = agentManager.feedbackPath(agentId, mode);
   if (!fs.existsSync(feedbackPath)) return null;
   const content = fs.readFileSync(feedbackPath, "utf-8").trim();

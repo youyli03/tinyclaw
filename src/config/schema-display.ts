@@ -24,40 +24,40 @@ export interface FieldMeta {
 
 export const DISPLAY_META: Record<string, FieldMeta> = {
   // ── 顶级 section 标题 ──────────────────────────────────────────────────────
-  providers:                              { sectionTitle: "Providers（凭证）" },
-  llm:                                    { sectionTitle: "LLM 配置" },
-  auth:                                   { sectionTitle: "Auth / MFA" },
-  channels:                               { sectionTitle: "Channels" },
-  memory:                                 { sectionTitle: "Memory" },
-  submitter:                              { sectionTitle: "Submitter（自动提交）" },
-  tools:                                  { sectionTitle: "Tools" },
-  agent:                                  { sectionTitle: "Agent 行为" },
-  concurrency:                            { sectionTitle: "Concurrency（并发控制）" },
-  voice:                                  { sectionTitle: "Voice（语音识别）" },
-  retry:                                  { sectionTitle: "Retry（重试策略）" },
-  web:                                    { sectionTitle: "Web Dashboard" },
+  providers: { sectionTitle: "Providers（凭证）" },
+  llm: { sectionTitle: "LLM 配置" },
+  auth: { sectionTitle: "Auth / MFA" },
+  channels: { sectionTitle: "Channels" },
+  memory: { sectionTitle: "Memory" },
+  submitter: { sectionTitle: "Submitter（自动提交）" },
+  tools: { sectionTitle: "Tools" },
+  agent: { sectionTitle: "Agent 行为" },
+  concurrency: { sectionTitle: "Concurrency（并发控制）" },
+  voice: { sectionTitle: "Voice（语音识别）" },
+  retry: { sectionTitle: "Retry（重试策略）" },
+  web: { sectionTitle: "Web Dashboard" },
 
   // ── 敏感字段 ────────────────────────────────────────────────────────────────
-  "providers.copilot.githubToken":        { sensitive: true },
-  "providers.openai.apiKey":              { sensitive: true },
-  "channels.qqbot.appId":                { sensitive: true },
-  "channels.qqbot.clientSecret":          { sensitive: true },
-  "auth.mfa.tenantId":                    { sensitive: true },
-  "auth.mfa.clientId":                    { sensitive: true },
-  "web.token":                            { sensitive: true },
+  "providers.copilot.githubToken": { sensitive: true },
+  "providers.openai.apiKey": { sensitive: true },
+  "channels.qqbot.appId": { sensitive: true },
+  "channels.qqbot.clientSecret": { sensitive: true },
+  "auth.mfa.tenantId": { sensitive: true },
+  "auth.mfa.clientId": { sensitive: true },
+  "web.token": { sensitive: true },
 
   // ── 数值补充说明 ────────────────────────────────────────────────────────────
-  "retry.maxAttempts":                    { hint: "(-1 = 无限)" },
-  "retry.max5xxAttempts":                 { hint: "(-1 = 无限)" },
-  "retry.maxTransportAttempts":           { hint: "(-1 = 无限)" },
-  "retry.maxRetryDurationMs":             { hint: "(0 = 不限制)" },
-  "retry.streamIdleTimeoutMs":            { hint: "(0 = 禁用)" },
+  "retry.maxAttempts": { hint: "(-1 = 无限)" },
+  "retry.max5xxAttempts": { hint: "(-1 = 无限)" },
+  "retry.maxTransportAttempts": { hint: "(-1 = 无限)" },
+  "retry.maxRetryDurationMs": { hint: "(0 = 不限制)" },
+  "retry.streamIdleTimeoutMs": { hint: "(0 = 禁用)" },
   "concurrency.maxConcurrentLLMRequests": { hint: "(0 = 不限制)" },
-  "agent.heartbeatIntervalSecs":          { hint: "(0 = 关闭心跳)" },
-  "tools.maxCodeToolRounds":              { hint: "(0 = 不限制)" },
-  "tools.maxChatToolRounds":              { hint: "(0 = 不限制)" },
-  "memory.tokenThreshold":               { hint: "(0.1-0.99)" },
-  "submitter.intervalSecs":              { hint: "(秒；默认 14400 = 4h)" },
+  "agent.heartbeatIntervalSecs": { hint: "(0 = 关闭心跳)" },
+  "tools.maxCodeToolRounds": { hint: "(0 = 不限制)" },
+  "tools.maxChatToolRounds": { hint: "(0 = 不限制)" },
+  "memory.tokenThreshold": { hint: "(0.1-0.99)" },
+  "submitter.intervalSecs": { hint: "(秒；默认 14400 = 4h)" },
 };
 
 // ── 脱敏辅助 ─────────────────────────────────────────────────────────────────
@@ -69,11 +69,7 @@ function mask(s: string): string {
 
 // ── 通用值渲染 ────────────────────────────────────────────────────────────────
 
-function renderValue(
-  value: unknown,
-  dotPath: string,
-  indent: string
-): string {
+function renderValue(value: unknown, dotPath: string, indent: string): string {
   const meta = DISPLAY_META[dotPath];
 
   // null/undefined 最先处理（包括敏感字段也可能是未设置）
@@ -83,7 +79,7 @@ function renderValue(
 
   // 脱敏字段
   if (meta?.sensitive) {
-    const str = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+    const str = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
     const hint = meta.hint ? `  ${dim(meta.hint)}` : "";
     return `${dim(mask(str))}${hint}`;
   }
@@ -143,12 +139,7 @@ function renderValue(
  * @param dotPath   当前对象的 dot-path 前缀
  * @param indent    缩进字符串
  */
-function renderObject(
-  schema: z.ZodTypeAny,
-  value: unknown,
-  dotPath: string,
-  indent: string
-): void {
+function renderObject(schema: z.ZodTypeAny, value: unknown, dotPath: string, indent: string): void {
   // unwrap 包装层
   while (true) {
     const tn = schema._def?.typeName as string | undefined;

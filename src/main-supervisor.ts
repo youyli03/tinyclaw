@@ -16,9 +16,9 @@
   const _err = console.error.bind(console);
   const _warn = console.warn.bind(console);
   const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
-  console.log   = (...a) => _log(`[${ts()}]`, ...a);
+  console.log = (...a) => _log(`[${ts()}]`, ...a);
   console.error = (...a) => _err(`[${ts()}]`, ...a);
-  console.warn  = (...a) => _warn(`[${ts()}]`, ...a);
+  console.warn = (...a) => _warn(`[${ts()}]`, ...a);
 }
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -42,10 +42,14 @@ let restartCount = 0;
 let hasRolledBack = (() => {
   try {
     if (fs.existsSync(ROLLBACK_STATE_FILE)) {
-      const s = JSON.parse(fs.readFileSync(ROLLBACK_STATE_FILE, "utf-8")) as { rolledBack?: boolean };
+      const s = JSON.parse(fs.readFileSync(ROLLBACK_STATE_FILE, "utf-8")) as {
+        rolledBack?: boolean;
+      };
       return s.rolledBack === true;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false;
 })();
 let child: ChildProcess | null = null;
@@ -57,22 +61,40 @@ async function killStaleInstance(): Promise<void> {
   let stalePid: number;
   try {
     stalePid = parseInt(fs.readFileSync(SERVICE_PID_FILE, "utf-8").trim(), 10);
-  } catch { return; }
+  } catch {
+    return;
+  }
   if (!stalePid || isNaN(stalePid) || stalePid === process.pid) return;
-  try { process.kill(stalePid, 0); } catch { return; } // 进程不存在，无需清理
+  try {
+    process.kill(stalePid, 0);
+  } catch {
+    return;
+  } // 进程不存在，无需清理
 
   console.log(`[supervisor] 发现残留实例（PID ${stalePid}），正在终止…`);
-  try { process.kill(stalePid, "SIGTERM"); } catch { return; }
+  try {
+    process.kill(stalePid, "SIGTERM");
+  } catch {
+    return;
+  }
 
   // 等待最多 5s 让旧进程优雅退出
   for (let i = 0; i < 25; i++) {
     await new Promise<void>((r) => setTimeout(r, 200));
-    try { process.kill(stalePid, 0); } catch { return; } // 已退出
+    try {
+      process.kill(stalePid, 0);
+    } catch {
+      return;
+    } // 已退出
   }
 
   // 超时：强制终止
   console.warn(`[supervisor] 旧实例未在 5s 内退出，强制终止（SIGKILL）`);
-  try { process.kill(stalePid, "SIGKILL"); } catch { /* already gone */ }
+  try {
+    process.kill(stalePid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
   await new Promise<void>((r) => setTimeout(r, 300));
 }
 
@@ -82,7 +104,9 @@ await killStaleInstance();
 try {
   fs.mkdirSync(path.dirname(SERVICE_PID_FILE), { recursive: true });
   fs.writeFileSync(SERVICE_PID_FILE, String(process.pid), "utf-8");
-} catch { /* ignore */ }
+} catch {
+  /* ignore */
+}
 
 /** 执行 git 回退：git stash + git checkout HEAD~1，返回是否成功 */
 async function tryGitRollback(): Promise<{ ok: boolean; prevHead: string; currentHead: string }> {
@@ -170,21 +194,33 @@ function startChild(): void {
         if (ok) {
           // 写状态文件（下次进程启动时读取，防止二次回退）
           try {
-            fs.writeFileSync(ROLLBACK_STATE_FILE, JSON.stringify({
-              rolledBack: true,
-              originalHead: currentHead,
-              prevHead,
-              rollbackAt: new Date().toISOString(),
-            }), "utf-8");
-          } catch { /* ignore */ }
+            fs.writeFileSync(
+              ROLLBACK_STATE_FILE,
+              JSON.stringify({
+                rolledBack: true,
+                originalHead: currentHead,
+                prevHead,
+                rollbackAt: new Date().toISOString(),
+              }),
+              "utf-8"
+            );
+          } catch {
+            /* ignore */
+          }
           // 写通知文件（main.ts 启动后发 QQ 消息）
           try {
-            fs.writeFileSync(ROLLBACK_NOTIFY_FILE, JSON.stringify({
-              originalHead: currentHead,
-              prevHead,
-              rollbackAt: new Date().toISOString(),
-            }), "utf-8");
-          } catch { /* ignore */ }
+            fs.writeFileSync(
+              ROLLBACK_NOTIFY_FILE,
+              JSON.stringify({
+                originalHead: currentHead,
+                prevHead,
+                rollbackAt: new Date().toISOString(),
+              }),
+              "utf-8"
+            );
+          } catch {
+            /* ignore */
+          }
           // 重置崩溃计数，立即重启
           restartCount = 0;
           console.log("[supervisor] 回退完成，立即重启...");
@@ -206,15 +242,17 @@ function startChild(): void {
       RESTART_DELAYS_MS[Math.min(restartCount, RESTART_DELAYS_MS.length - 1)] ??
       RESTART_DELAYS_MS[RESTART_DELAYS_MS.length - 1]!;
     restartCount++;
-    console.log(
-      `[supervisor] ${delay / 1000}s 后重启（第 ${restartCount} 次）…`
-    );
+    console.log(`[supervisor] ${delay / 1000}s 后重启（第 ${restartCount} 次）…`);
     setTimeout(startChild, delay);
   });
 }
 
 function cleanup(): void {
-  try { fs.unlinkSync(SERVICE_PID_FILE); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(SERVICE_PID_FILE);
+  } catch {
+    /* ignore */
+  }
 }
 
 function handleSignal(signal: "SIGTERM" | "SIGINT"): void {
@@ -237,6 +275,6 @@ function handleSignal(signal: "SIGTERM" | "SIGINT"): void {
 }
 
 process.on("SIGTERM", () => handleSignal("SIGTERM"));
-process.on("SIGINT",  () => handleSignal("SIGINT"));
+process.on("SIGINT", () => handleSignal("SIGINT"));
 
 startChild();

@@ -42,7 +42,8 @@ registerTool({
         properties: {
           markdown: {
             type: "string",
-            description: "Markdown 格式的快报正文（type=markdown 时必填，其余类型可选用于描述文字）",
+            description:
+              "Markdown 格式的快报正文（type=markdown 时必填，其余类型可选用于描述文字）",
           },
           type: {
             type: "string",
@@ -92,10 +93,12 @@ registerTool({
     );
     mkdirSync(outDir, { recursive: true });
 
-    const notify = ctx?.onNotify ?? ((msg: string) => {
-      console.log(`[send_report]${title ? ` [${title}]` : ""} ${msg}`);
-      return Promise.resolve();
-    });
+    const notify =
+      ctx?.onNotify ??
+      ((msg: string) => {
+        console.log(`[send_report]${title ? ` [${title}]` : ""} ${msg}`);
+        return Promise.resolve();
+      });
 
     // 尝试渲染为图片
     let imgPath: string | null = null;

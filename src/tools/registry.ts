@@ -42,7 +42,10 @@ export interface ToolContext {
    * Slave 定期进度推送回调（由 main.ts 注入）。
    * 每隔 reportIntervalSecs 秒向用户推送 Slave 当前进度快照，不触发 runAgent。
    */
-  onProgressNotify?: (slaveId: string, state: import("../core/slave-manager.js").SlaveState) => Promise<void>;
+  onProgressNotify?: (
+    slaveId: string,
+    state: import("../core/slave-manager.js").SlaveState
+  ) => Promise<void>;
   /**
    * 主动向用户推送消息（由 main.ts 注入）。
    * 供 notify_user 工具调用，不等 runAgent 结束即发送，不触发新一轮 LLM 推理。
@@ -59,13 +62,16 @@ export interface ToolContext {
     summary: string,
     actions?: string[],
     recommendedAction?: string,
-    planPath?: string,
+    planPath?: string
   ) => Promise<import("../core/session.js").PlanApprovalResult>;
   /**
    * MFA 确认回调（由 main.ts → runAgent opts 透传）。
    * 供 code_assist 在启动子 Agent 前做一次性预授权确认。
    */
-  onMFARequest?: (warningMessage: string, verifyCode?: (code: string) => boolean) => Promise<boolean>;
+  onMFARequest?: (
+    warningMessage: string,
+    verifyCode?: (code: string) => boolean
+  ) => Promise<boolean>;
   /**
    * ask_user 回调（由 main.ts 注入）。
    * AI 调用 ask_user 工具时触发，向用户展示问题和选项菜单，等待用户回复。
@@ -82,7 +88,7 @@ export interface ToolContext {
   onAskUser?: (
     question: string,
     options?: Array<{ label: string; description?: string; recommended?: boolean }>,
-    allowFreeform?: boolean,
+    allowFreeform?: boolean
   ) => Promise<{ answer: string; isFreeform: boolean; imagePaths?: string[] }>;
   /**
    * ask_master 回调(由 code_assist 注入给 daily subagent)。
@@ -99,7 +105,7 @@ export interface ToolContext {
   sessionSendFn?: (
     targetSessionId: string,
     message: string,
-    fromAgentId: string,
+    fromAgentId: string
   ) => Promise<string>;
   /**
    * 跨 session 通信：获取当前 Agent 可见的 session 列表（由 main.ts 注入）。

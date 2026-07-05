@@ -48,18 +48,18 @@ registerTool({
     },
   },
   execute: async (args: Record<string, unknown>) => {
-    const type    = String(args["type"] ?? "");
+    const type = String(args["type"] ?? "");
     const content = String(args["content"] ?? "");
-    const title   = args["title"] ? String(args["title"]) : undefined;
-    const date    = args["date"]  ? String(args["date"])  : undefined;
+    const title = args["title"] ? String(args["title"]) : undefined;
+    const date = args["date"] ? String(args["date"]) : undefined;
 
-    if (!type)    return JSON.stringify({ error: "type 不能为空" });
+    if (!type) return JSON.stringify({ error: "type 不能为空" });
     if (!content) return JSON.stringify({ error: "content 不能为空" });
 
     try {
       const opts: Parameters<typeof writeReport>[0] = { type, content };
       if (title) opts.title = title;
-      if (date)  opts.date  = date;
+      if (date) opts.date = date;
       const file = writeReport(opts);
       return JSON.stringify({ success: true, file });
     } catch (e) {

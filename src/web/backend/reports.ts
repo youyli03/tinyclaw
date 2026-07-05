@@ -20,8 +20,8 @@ export function listReportTypes(): string[] {
   ensureDir(REPORTS_DIR);
   return fs
     .readdirSync(REPORTS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name)
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
     .sort();
 }
 
@@ -31,8 +31,8 @@ export function listReportDates(type: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-    .map(f => f.replace(/\.md$/, ""))
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+    .map((f) => f.replace(/\.md$/, ""))
     .sort()
     .reverse();
 }
@@ -47,9 +47,9 @@ export function readReport(type: string, date: string): string | null {
 /** 写入一篇日报（覆盖已有同日期同类型） */
 export function writeReport(opts: {
   type: string;
-  date?: string;   // 默认今天 YYYY-MM-DD
+  date?: string; // 默认今天 YYYY-MM-DD
   content: string;
-  title?: string;  // 可选，会作为 H1 前置到内容里（若内容本身已有 # 则跳过）
+  title?: string; // 可选，会作为 H1 前置到内容里（若内容本身已有 # 则跳过）
 }): string {
   const { type, content, title } = opts;
   const date = opts.date ?? todayStr();

@@ -12,7 +12,7 @@ import { CronJobSchema, CronJobsFileSchema, type CronJob } from "./schema.js";
 // ── 路径工具 ──────────────────────────────────────────────────────────────────
 
 const CRON_DIR = path.join(os.homedir(), ".tinyclaw", "cron");
-const JOBS_DIR = path.join(CRON_DIR, "jobs");              // 每个 job 独立文件
+const JOBS_DIR = path.join(CRON_DIR, "jobs"); // 每个 job 独立文件
 const JOBS_FILE_LEGACY = path.join(CRON_DIR, "jobs.json"); // 旧格式，仅用于迁移
 const LOGS_DIR = path.join(CRON_DIR, "logs");
 
@@ -84,7 +84,12 @@ export function removeJob(id: string): boolean {
   migrateIfNeeded();
   const fp = jobFilePath(id);
   if (!fs.existsSync(fp)) return false;
-  try { fs.unlinkSync(fp); return true; } catch { return false; }
+  try {
+    fs.unlinkSync(fp);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 更新 job 的部分字段 */
@@ -99,7 +104,9 @@ export function updateJob(id: string, patch: Partial<CronJob>): boolean {
     const updated = CronJobSchema.parse({ ...existing.data, ...patch });
     fs.writeFileSync(fp, JSON.stringify(updated, null, 2), "utf-8");
     return true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 /** 获取单个 job（直接读取对应文件，无需加载全部） */
@@ -111,7 +118,9 @@ export function getJob(id: string): CronJob | undefined {
     const raw = JSON.parse(fs.readFileSync(fp, "utf-8")) as unknown;
     const parsed = CronJobSchema.safeParse(raw);
     return parsed.success ? parsed.data : undefined;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 // ── 日志 CRUD ─────────────────────────────────────────────────────────────────
@@ -138,7 +147,11 @@ export function readLogs(jobId: string, n = 20): CronLogEntry[] {
     const lines = fs.readFileSync(file, "utf-8").split("\n").filter(Boolean);
     const entries = lines
       .map((l) => {
-        try { return JSON.parse(l) as CronLogEntry; } catch { return null; }
+        try {
+          return JSON.parse(l) as CronLogEntry;
+        } catch {
+          return null;
+        }
       })
       .filter((e): e is CronLogEntry => e !== null);
     return entries.slice(-n);

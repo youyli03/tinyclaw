@@ -60,9 +60,7 @@ export function listCommands(mode?: "chat" | "code"): CommandDef[] {
  * 解析以 "/" 开头的输入字符串。
  * 如果不是命令格式，返回 null。
  */
-export function parseCommand(
-  input: string
-): { name: string; args: string[] } | null {
+export function parseCommand(input: string): { name: string; args: string[] } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith("/")) return null;
   const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
@@ -82,12 +80,11 @@ export async function executeCommand(
   const cmd = commands.get(name.toLowerCase());
   if (!cmd) {
     console.log(`[cmd] unknown /${name} (session: ${ctx.session?.sessionId ?? "?"})`);
-    return (
-      `❌ 未知命令 \`/${name}\`\n` +
-      `发送 \`/help\` 查看所有可用命令。`
-    );
+    return `❌ 未知命令 \`/${name}\`\n` + `发送 \`/help\` 查看所有可用命令。`;
   }
-  console.log(`[cmd] /${name}${args.length ? " " + args.join(" ") : ""} (session: ${ctx.session?.sessionId ?? "?"})`);
+  console.log(
+    `[cmd] /${name}${args.length ? " " + args.join(" ") : ""} (session: ${ctx.session?.sessionId ?? "?"})`
+  );
   // 模式隔离检查：命令标记了 modes 且当前模式不在列表中时拦截
   if (cmd.modes && ctx.session && !cmd.modes.includes(ctx.session.mode)) {
     const allowed = cmd.modes.map((m) => (m === "chat" ? "Chat 模式" : "Code 模式")).join("/");

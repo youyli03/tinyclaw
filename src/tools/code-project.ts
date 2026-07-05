@@ -40,7 +40,8 @@ registerTool({
           },
           task: {
             type: "string",
-            description: "切换后要执行的任务描述(必填)。例如:'看看最近 commit'、'修复 auth.ts 的类型错误'",
+            description:
+              "切换后要执行的任务描述(必填)。例如:'看看最近 commit'、'修复 auth.ts 的类型错误'",
           },
         },
         required: ["project", "task"],

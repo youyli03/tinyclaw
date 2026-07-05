@@ -48,8 +48,7 @@ export const DANGEROUS_SYSTEM_PATHS: string[] = [
 ];
 
 export type ExecCheckResult =
-  | { blocked: false }
-  | { blocked: true; mode: "overwrite" | "append"; path: string };
+  { blocked: false } | { blocked: true; mode: "overwrite" | "append"; path: string };
 
 /**
  * 检测 exec_shell 命令是否对危险系统路径进行写入/覆盖。
@@ -88,13 +87,15 @@ export function checkExecCommand(cmd: string): ExecCheckResult {
   }
 
   // 6. sed -i ... <path>
-  for (const m of cmd.matchAll(/\bsed\s+(?:[^|&;]*\s)?-i\S*\s+(?:'[^']*'\s+|"[^"]*"\s+|\S+\s+)?([^\s|&;><"']+)/g)) {
+  for (const m of cmd.matchAll(
+    /\bsed\s+(?:[^|&;]*\s)?-i\S*\s+(?:'[^']*'\s+|"[^"]*"\s+|\S+\s+)?([^\s|&;><"']+)/g
+  )) {
     if (m[1]) candidates.push({ filePath: m[1], isAppend: false });
   }
 
   for (const { filePath, isAppend } of candidates) {
     const isDangerous = DANGEROUS_SYSTEM_PATHS.some(
-      (p) => filePath === p || filePath.startsWith(p + "/"),
+      (p) => filePath === p || filePath.startsWith(p + "/")
     );
     if (isDangerous) {
       return { blocked: true, mode: isAppend ? "append" : "overwrite", path: filePath };
@@ -116,7 +117,7 @@ export function checkExecCommand(cmd: string): ExecCheckResult {
  */
 export function checkWritePath(
   resolvedPath: string,
-  ctx?: ToolContext,
+  ctx?: ToolContext
 ): { allow: true } | { allow: false; isDangerous: boolean; reason: string } {
   const sep = path.sep;
 
@@ -164,10 +165,10 @@ export function checkWritePath(
   // ── 第1层：白名单检查 ─────────────────────────────────────────────────────
   const agentId = ctx?.agentId ?? "default";
   const bases: string[] = [
-    agentManager.workspaceDir(agentId),   // ~/.tinyclaw/agents/<id>/workspace
-    agentManager.agentDir(agentId),       // ~/.tinyclaw/agents/<id>
-    path.join(os.tmpdir()),               // /tmp 或系统临时目录
-    "/tmp",                               // 明确包含 /tmp（tmpdir() 可能返回 /var/folders/... on macOS）
+    agentManager.workspaceDir(agentId), // ~/.tinyclaw/agents/<id>/workspace
+    agentManager.agentDir(agentId), // ~/.tinyclaw/agents/<id>
+    path.join(os.tmpdir()), // /tmp 或系统临时目录
+    "/tmp", // 明确包含 /tmp（tmpdir() 可能返回 /var/folders/... on macOS）
   ];
 
   // code 模式下 ctx.cwd = codeWorkdir，若不在现有 bases 内则额外加入
@@ -178,9 +179,7 @@ export function checkWritePath(
     }
   }
 
-  const inWhitelist = bases.some(
-    (b) => resolvedPath === b || resolvedPath.startsWith(b + sep),
-  );
+  const inWhitelist = bases.some((b) => resolvedPath === b || resolvedPath.startsWith(b + sep));
 
   if (inWhitelist) {
     return { allow: true };

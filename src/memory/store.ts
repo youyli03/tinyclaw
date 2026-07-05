@@ -25,10 +25,13 @@ async function safetyCheckContent(text: string): Promise<{ safe: boolean; reason
   try {
     const { llmRegistry } = await import("../llm/registry.js");
     const client = llmRegistry.get("summarizer");
-    const result = await client.chat([
-      { role: "system", content: SAFETY_CHECK_SYSTEM },
-      { role: "user", content: text.slice(0, 4000) }, // 截断避免过长
-    ], { isUserInitiated: false });
+    const result = await client.chat(
+      [
+        { role: "system", content: SAFETY_CHECK_SYSTEM },
+        { role: "user", content: text.slice(0, 4000) }, // 截断避免过长
+      ],
+      { isUserInitiated: false }
+    );
     const raw = result.content.trim();
     // 提取 JSON（可能被 markdown 包裹）
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -43,7 +46,10 @@ async function safetyCheckContent(text: string): Promise<{ safe: boolean; reason
       : { safe: parsed.safe !== false };
   } catch (err) {
     // 审查调用失败时保守视为安全（不阻断写入），但记录警告
-    console.warn("[memory/store] 安全检查调用失败，保守视为安全:", err instanceof Error ? err.message : err);
+    console.warn(
+      "[memory/store] 安全检查调用失败，保守视为安全:",
+      err instanceof Error ? err.message : err
+    );
     return { safe: true };
   }
 }
@@ -65,7 +71,7 @@ export async function persistSummary(summaryText: string, agentId = "default"): 
     if (!check.safe) {
       console.warn(
         `[memory/store] ⚠️ 安全审查拦截记忆写入（agentId=${agentId}）：${check.reason ?? "未知原因"}\n` +
-        `[memory/store] 摘要前200字：${summaryText.slice(0, 200)}`
+          `[memory/store] 摘要前200字：${summaryText.slice(0, 200)}`
       );
       // 不写入文件，直接返回
       return;
@@ -74,8 +80,8 @@ export async function persistSummary(summaryText: string, agentId = "default"): 
 
   // ── 写入文件 ──────────────────────────────────────────────────────────────
   const now = new Date();
-  const month = now.toISOString().slice(0, 7);  // YYYY-MM
-  const date  = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const month = now.toISOString().slice(0, 7); // YYYY-MM
+  const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
   const monthDir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory", month);
   fs.mkdirSync(monthDir, { recursive: true });
 

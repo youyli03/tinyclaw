@@ -1,9 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ChatMessage, ContentPart, LLMChatMessage, ToolCallResult, OpenAIToolCall } from "../llm/client.js";
+import type {
+  ChatMessage,
+  ContentPart,
+  LLMChatMessage,
+  ToolCallResult,
+  OpenAIToolCall,
+} from "../llm/client.js";
 import { llmRegistry } from "../llm/registry.js";
-import { shouldSummarize, summarizeAndCompress, shouldSummarizeCode, summarizeAndCompressCode, microCompactMessages } from "../memory/summarizer.js";
+import {
+  shouldSummarize,
+  summarizeAndCompress,
+  shouldSummarizeCode,
+  summarizeAndCompressCode,
+  microCompactMessages,
+} from "../memory/summarizer.js";
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 import { InboundMessageBus } from "./inbound-bus.js";
@@ -132,7 +144,7 @@ export class Session {
   codeSubMode: "auto" | "plan" = "auto";
 
   /** Code 后端（当前仅 copilot，预留扩展） */
-  codeBackend: "copilot" = "copilot";
+  codeBackend: string = "copilot";
 
   /** Code 模式用户指定的工作目录（null = 使用默认 workspace） */
   codeWorkdir: string | null = null;
@@ -221,8 +233,14 @@ export class Session {
       if (this.projectSlug) {
         // 从 project session 恢复
         const projFile = path.join(
-          os.homedir(), ".tinyclaw", "agents", this.agentId,
-          "code", "projects", this.projectSlug, "session.jsonl",
+          os.homedir(),
+          ".tinyclaw",
+          "agents",
+          this.agentId,
+          "code",
+          "projects",
+          this.projectSlug,
+          "session.jsonl"
         );
         restored = Session.loadFromFile(projFile);
       }
@@ -239,14 +257,22 @@ export class Session {
         if (this.projectSlug) {
           try {
             const metaPath = path.join(
-              os.homedir(), ".tinyclaw", "agents", this.agentId,
-              "code", "projects", this.projectSlug, "metadata.json",
+              os.homedir(),
+              ".tinyclaw",
+              "agents",
+              this.agentId,
+              "code",
+              "projects",
+              this.projectSlug,
+              "metadata.json"
             );
             const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
             if (meta?.project?.workdir) {
               this.codeWorkdir = meta.project.workdir;
             }
-          } catch { /* metadata.json 不存在或格式错误, 保持 .code.dir 的值 */ }
+          } catch {
+            /* metadata.json 不存在或格式错误, 保持 .code.dir 的值 */
+          }
         }
         this._persistReady = true;
         return;
@@ -279,7 +305,10 @@ export class Session {
     // 找到最后一条带 _loopTaskRef 的 user 消息的索引
     let lastLoopIdx = -1;
     for (let i = this.messages.length - 1; i >= 0; i--) {
-      if (this.messages[i]!._loopTaskRef) { lastLoopIdx = i; break; }
+      if (this.messages[i]!._loopTaskRef) {
+        lastLoopIdx = i;
+        break;
+      }
     }
     for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i]!;
@@ -296,8 +325,10 @@ export class Session {
           // content 置为 null（不含 content 字段）而非 ""，
           // 避免 Copilot 的 Claude 路由在转换为 Anthropic 格式时因 content="" 丢失 tool_use block，
           // 从而导致 "unexpected tool_use_id in tool_result" 400 错误。
-          const { content: _c, ...withoutContent } =
-            plain as Extract<LLMChatMessage, { role: "assistant" }>;
+          const { content: _c, ...withoutContent } = plain as Extract<
+            LLMChatMessage,
+            { role: "assistant" }
+          >;
           result.push(withoutContent);
         } else {
           result.push(plain as LLMChatMessage);
@@ -306,7 +337,7 @@ export class Session {
         // 最后一条 loop task 消息：展开文件内容
         let expanded: string;
         try {
-          expanded = require("node:fs").readFileSync(m._loopTaskRef, "utf-8") as string;
+          expanded = fs.readFileSync(m._loopTaskRef, "utf-8");
         } catch {
           expanded = typeof m.content === "string" ? m.content : "[loop task file not found]";
         }
@@ -325,7 +356,11 @@ export class Session {
    * content 为 task 文件内容；_loopTaskRef 保存文件路径供 getMessagesForLLM 使用。
    */
   addLoopTaskMessage(taskFilePath: string, content: string): void {
-    const msg: ChatMessage & { _loopTaskRef?: string } = { role: "user", content, _loopTaskRef: taskFilePath };
+    const msg: ChatMessage & { _loopTaskRef?: string } = {
+      role: "user",
+      content,
+      _loopTaskRef: taskFilePath,
+    };
     this.messages.push(msg);
     this._appendMsgToJsonl(msg);
   }
@@ -347,9 +382,7 @@ export class Session {
     if (lastAssistantIdx < 0) return;
     const msg = this.messages[lastAssistantIdx]!;
     if (typeof msg.content !== "string") return;
-    const stripped = msg.content
-      .replace(/\[NOTIFY\]([\s\S]*?)\[\/NOTIFY\]/g, "$1")
-      .trim();
+    const stripped = msg.content.replace(/\[NOTIFY\]([\s\S]*?)\[\/NOTIFY\]/g, "$1").trim();
     if (stripped === msg.content.trim()) return; // 无变化
     // 更新内存
     (msg as { role: string; content: string }).content = stripped;
@@ -368,7 +401,11 @@ export class Session {
         if (!line) continue;
         try {
           const obj = JSON.parse(line) as Record<string, unknown>;
-          if (obj["role"] === "assistant" && typeof obj["content"] === "string" && (obj["content"] as string).includes("[NOTIFY]")) {
+          if (
+            obj["role"] === "assistant" &&
+            typeof obj["content"] === "string" &&
+            (obj["content"] as string).includes("[NOTIFY]")
+          ) {
             obj["content"] = stripped;
             lines[i] = JSON.stringify(obj);
             fs.writeFileSync(filePath, lines.join("\n"), "utf-8");
@@ -400,7 +437,11 @@ export class Session {
    */
   addAssistantWithToolCalls(content: string, calls: ToolCallResult[]): void {
     const maxArgChars = (() => {
-      try { return loadConfig().tools.maxToolCallArgChars; } catch { return 4_000; }
+      try {
+        return loadConfig().tools.maxToolCallArgChars;
+      } catch {
+        return 4_000;
+      }
     })();
     const tool_calls: OpenAIToolCall[] = calls.map((c) => {
       // 截断每个字符串字段值（而非截断整个 JSON 字符串），保证序列化结果始终是合法 JSON。
@@ -413,7 +454,7 @@ export class Session {
               return [k, v.slice(0, maxArgChars) + `...[截断，原 ${v.length} 字符]`];
             }
             return [k, v];
-          }),
+          })
         );
         return JSON.stringify(truncated);
       })();
@@ -439,7 +480,8 @@ export class Session {
    */
   updateToolResult(callId: string, content: string): void {
     const msg = this.messages.find(
-      (m) => m.role === "tool" && (m as { role: "tool"; tool_call_id: string }).tool_call_id === callId
+      (m) =>
+        m.role === "tool" && (m as { role: "tool"; tool_call_id: string }).tool_call_id === callId
     ) as { role: "tool"; tool_call_id: string; content: string } | undefined;
     if (!msg) return;
     msg.content = content;
@@ -488,7 +530,10 @@ export class Session {
     const marker = firstLine ? `<!-- memory:${firstLine} -->` : "<!-- memory:context -->";
     const marked = marker + "\n" + content;
     const idx = this.messages.findIndex(
-      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith(marker)
+      (m) =>
+        m.role === "system" &&
+        typeof m.content === "string" &&
+        (m.content as string).startsWith(marker)
     );
     if (idx !== -1) {
       this.messages[idx] = { role: "system", content: marked };
@@ -500,14 +545,20 @@ export class Session {
   /** 当前 messages 中是否已存在记忆注入（memory: marker）。用于 searchMemory 节流判断。 */
   hasMemoryContext(): boolean {
     return this.messages.some(
-      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith("<!-- memory:"),
+      (m) =>
+        m.role === "system" &&
+        typeof m.content === "string" &&
+        (m.content as string).startsWith("<!-- memory:")
     );
   }
 
   replaceOrAddSkillReminder(content: string): void {
     const MARKER = "<!-- skill-reminder -->";
     const idx = this.messages.findIndex(
-      (m) => m.role === "system" && typeof m.content === "string" && (m.content as string).startsWith(MARKER)
+      (m) =>
+        m.role === "system" &&
+        typeof m.content === "string" &&
+        (m.content as string).startsWith(MARKER)
     );
     const marked = MARKER + "\n" + content;
     if (idx !== -1) {
@@ -572,9 +623,10 @@ export class Session {
       let i = 0;
       while (i < sanitized.length) {
         const m = sanitized[i]!;
-        const calls = m.role === "assistant"
-          ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
-          : undefined;
+        const calls =
+          m.role === "assistant"
+            ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
+            : undefined;
         if (calls && calls.length > 0) {
           const expectedIds = new Set(calls.map((c) => c.id));
           let j = i + 1;
@@ -613,7 +665,9 @@ export class Session {
         } else {
           this.rewriteJsonl();
         }
-      } catch { /* 回写失败不阻塞主流程 */ }
+      } catch {
+        /* 回写失败不阻塞主流程 */
+      }
     }
   }
 
@@ -652,9 +706,10 @@ export class Session {
     this.rewriteJsonl();
     // 摘要内容在最后一条 assistant 消息中
     const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
-    const summary = (typeof summaryMsg?.content === "string"
-      ? summaryMsg.content.replace(/^\[对话历史摘要\]\n/, "")
-      : "") ?? "";
+    const summary =
+      (typeof summaryMsg?.content === "string"
+        ? summaryMsg.content.replace(/^\[对话历史摘要\]\n/, "")
+        : "") ?? "";
     this.lastSummary = summary;
     return summary;
   }
@@ -681,18 +736,32 @@ export class Session {
    * 返回 true 表示压缩已执行。
    */
   async compressForCode(): Promise<boolean> {
-    const compressed = await summarizeAndCompressCode(this.messages, this.agentId, this.projectSlug);
+    const compressed = await summarizeAndCompressCode(
+      this.messages,
+      this.agentId,
+      this.projectSlug
+    );
     // 如果返回原始消息（无足够旧内容可压缩），跳过更新
     const estimateChars = (msgs: typeof this.messages): number =>
       msgs.reduce((sum, m) => {
         const c = m.content;
         if (typeof c === "string") return sum + c.length;
-        if (Array.isArray(c)) return sum + (c as { text?: string }[]).reduce((cs: number, p) => cs + (typeof p.text === "string" ? p.text.length : 200), 0);
+        if (Array.isArray(c))
+          return (
+            sum +
+            (c as { text?: string }[]).reduce(
+              (cs: number, p) => cs + (typeof p.text === "string" ? p.text.length : 200),
+              0
+            )
+          );
         return sum;
       }, 0);
     const originalChars = estimateChars(this.messages);
     const compressedChars = estimateChars(compressed);
-    if (compressed === this.messages || (compressed.length >= this.messages.length && compressedChars >= originalChars * 0.95)) {
+    if (
+      compressed === this.messages ||
+      (compressed.length >= this.messages.length && compressedChars >= originalChars * 0.95)
+    ) {
       return false;
     }
     this.messages = compressed;
@@ -752,7 +821,7 @@ export class Session {
     });
   }
 
-    abortPendingApproval(): void {
+  abortPendingApproval(): void {
     if (this.pendingApproval) {
       this.pendingApproval.reject(new Error("会话被中断，MFA 操作已取消"));
       this.pendingApproval = null;
@@ -781,7 +850,10 @@ export class Session {
         match: () => true,
         handle: (content) => {
           unregister();
-          console.log("[plan] waitForPlanApproval handle triggered, content:", content.slice(0, 120));
+          console.log(
+            "[plan] waitForPlanApproval handle triggered, content:",
+            content.slice(0, 120)
+          );
           const trimmed = content.trim();
           const n = parseInt(trimmed, 10);
           this.pendingPlanApproval = null;
@@ -810,7 +882,7 @@ export class Session {
     });
   }
 
-    abortPendingPlanApproval(): void {
+  abortPendingPlanApproval(): void {
     if (this.pendingPlanApproval) {
       this.pendingPlanApproval.reject(new PlanAbortError());
       this.pendingPlanApproval = null;
@@ -825,10 +897,7 @@ export class Session {
    * - resolve({ answer, isFreeform: true })  = 用户自由输入
    * - reject = 超时或会话被中断
    */
-  waitForAskUser(
-    optionLabels: string[],
-    allowFreeform: boolean,
-  ): Promise<AskUserResult> {
+  waitForAskUser(optionLabels: string[], allowFreeform: boolean): Promise<AskUserResult> {
     if (this.pendingAskUser) {
       this.pendingAskUser.reject(new Error("新的 ask_user 请求覆盖了未完成的请求"));
       this.pendingAskUser = null;
@@ -854,7 +923,11 @@ export class Session {
           if (!isNaN(n) && n >= 1 && n <= optionLabels.length) {
             const chosenLabel = optionLabels[n - 1]!;
             const combined = extraText ? `${chosenLabel}\n${extraText}` : chosenLabel;
-            resolve({ answer: combined, isFreeform: extraText.length > 0, ...(imagePaths?.length ? { imagePaths } : {}) });
+            resolve({
+              answer: combined,
+              isFreeform: extraText.length > 0,
+              ...(imagePaths?.length ? { imagePaths } : {}),
+            });
           } else if (allowFreeform) {
             resolve({ answer, isFreeform: true, ...(imagePaths?.length ? { imagePaths } : {}) });
           } else {
@@ -883,7 +956,7 @@ export class Session {
     });
   }
 
-    abortPendingAskUser(): void {
+  abortPendingAskUser(): void {
     if (this.pendingAskUser) {
       this.pendingAskUser.reject(new Error("会话被中断，提问已取消"));
       this.pendingAskUser = null;
@@ -923,7 +996,11 @@ export class Session {
       return JSON.stringify(base);
     }
     if (m.role === "tool") {
-      const base: Record<string, unknown> = { role: m.role, tool_call_id: m.tool_call_id, content: m.content };
+      const base: Record<string, unknown> = {
+        role: m.role,
+        tool_call_id: m.tool_call_id,
+        content: m.content,
+      };
       if (ts) base["ts"] = ts;
       return JSON.stringify(base);
     }
@@ -946,7 +1023,11 @@ export class Session {
     try {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.appendFileSync(filePath, Session.serializeMsgFull(msg, new Date().toISOString()) + "\n", "utf-8");
+      fs.appendFileSync(
+        filePath,
+        Session.serializeMsgFull(msg, new Date().toISOString()) + "\n",
+        "utf-8"
+      );
     } catch (err) {
       console.error("[session] JSONL incremental append failed:", err);
     }
@@ -980,7 +1061,11 @@ export class Session {
 
     const ts = new Date().toISOString();
     // 序列化从 user 消息开始到末尾的完整工具调用链
-    const lines = msgs.slice(userIdx).map((m) => Session.serializeMsgFull(m, ts)).join("\n") + "\n";
+    const lines =
+      msgs
+        .slice(userIdx)
+        .map((m) => Session.serializeMsgFull(m, ts))
+        .join("\n") + "\n";
 
     try {
       const filePath = this._getJsonlPath();
@@ -1001,14 +1086,16 @@ export class Session {
     try {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const lines =
-        this.messages
-          .map((m) => Session.serializeMsgFull(m))
-          .join("\n") + "\n";
+      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
       // 重写后追加 _meta:promptTokens，确保压缩后 lastPromptTokens 不丢失
-      const metaLine = this.lastPromptTokens > 0
-        ? JSON.stringify({ _meta: "promptTokens", value: this.lastPromptTokens, ts: new Date().toISOString() }) + "\n"
-        : "";
+      const metaLine =
+        this.lastPromptTokens > 0
+          ? JSON.stringify({
+              _meta: "promptTokens",
+              value: this.lastPromptTokens,
+              ts: new Date().toISOString(),
+            }) + "\n"
+          : "";
       fs.writeFileSync(filePath, lines + metaLine, "utf-8");
     } catch (err) {
       console.error("[session] JSONL rewrite failed:", err);
@@ -1025,10 +1112,7 @@ export class Session {
     try {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const lines =
-        this.messages
-          .map((m) => Session.serializeMsgFull(m))
-          .join("\n") + "\n";
+      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
     } catch (err) {
       console.error("[session] code JSONL rewrite failed:", err);
@@ -1055,7 +1139,9 @@ export class Session {
    * 解析 JSONL 行数组为 messages + lastPromptTokens。
    * 由 loadFromFile / loadFromJsonl 共用。
    */
-  private static _parseJsonlLines(lines: string[]): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  private static _parseJsonlLines(
+    lines: string[]
+  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
     const messages: ChatMessage[] = [];
     let lastPromptTokens = 0;
     for (const line of lines) {
@@ -1076,10 +1162,16 @@ export class Session {
           if (typeof toolCallId === "string" && typeof content === "string") {
             messages.push({ role: "tool", tool_call_id: toolCallId, content });
           }
-        } else if (role === "assistant" && (typeof content === "string" || Array.isArray(content))) {
+        } else if (
+          role === "assistant" &&
+          (typeof content === "string" || Array.isArray(content))
+        ) {
           // assistant 消息:可选恢复 tool_calls 字段
           const rawToolCalls = entry["tool_calls"];
-          const msg: ChatMessage = { role: "assistant", content: content as string | ContentPart[] };
+          const msg: ChatMessage = {
+            role: "assistant",
+            content: content as string | ContentPart[],
+          };
           if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
             const validCalls = (rawToolCalls as unknown[]).filter((tc): tc is OpenAIToolCall => {
               if (typeof tc !== "object" || tc === null) return false;
@@ -1093,7 +1185,13 @@ export class Session {
               );
             });
             if (validCalls.length > 0) {
-              (msg as { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }).tool_calls = validCalls;
+              (
+                msg as {
+                  role: "assistant";
+                  content: string | ContentPart[];
+                  tool_calls?: OpenAIToolCall[];
+                }
+              ).tool_calls = validCalls;
             }
           }
           messages.push(msg);
@@ -1101,7 +1199,10 @@ export class Session {
           (role === "system" || role === "user") &&
           (typeof content === "string" || Array.isArray(content))
         ) {
-          const msgEntry: ChatMessage & { _loopTaskRef?: string } = { role, content: content as string | ContentPart[] };
+          const msgEntry: ChatMessage & { _loopTaskRef?: string } = {
+            role,
+            content: content as string | ContentPart[],
+          };
           const loopTaskRef = entry["loop_task_ref"];
           if (role === "user" && typeof loopTaskRef === "string") {
             msgEntry._loopTaskRef = loopTaskRef;
@@ -1136,9 +1237,10 @@ export class Session {
       let i = 0;
       while (i < sanitized.length) {
         const m = sanitized[i]!;
-        const calls = m.role === "assistant"
-          ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
-          : undefined;
+        const calls =
+          m.role === "assistant"
+            ? (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls
+            : undefined;
         if (calls && calls.length > 0) {
           const expectedIds = new Set(calls.map((c) => c.id));
           let j = i + 1;
@@ -1172,7 +1274,9 @@ export class Session {
   /**
    * 从任意路径读取 JSONL 文件（供 project session 恢复使用）。
    */
-  private static loadFromFile(filePath: string): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  private static loadFromFile(
+    filePath: string
+  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
     if (!fs.existsSync(filePath)) return null;
     try {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
@@ -1183,7 +1287,10 @@ export class Session {
     }
   }
 
-  private static loadFromJsonl(sessionId: string, mode: "chat" | "code" = "chat"): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  private static loadFromJsonl(
+    sessionId: string,
+    mode: "chat" | "code" = "chat"
+  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
     const filePath = Session.getJsonlPath(sessionId, mode);
     if (!fs.existsSync(filePath)) return null;
     try {
@@ -1195,7 +1302,6 @@ export class Session {
     }
   }
 
-
   /**
    * 将本轮实际 promptTokens 持久化到 JSONL 末尾（_meta 行）。
    * loadFromJsonl 读取时识别并恢复到 session.lastPromptTokens，供 shouldSummarize 使用。
@@ -1205,7 +1311,9 @@ export class Session {
     try {
       const filePath = Session.getJsonlPath(sessionId, mode);
       if (!fs.existsSync(filePath)) return;
-      const line = JSON.stringify({ _meta: "promptTokens", value: tokens, ts: new Date().toISOString() }) + "\n";
+      const line =
+        JSON.stringify({ _meta: "promptTokens", value: tokens, ts: new Date().toISOString() }) +
+        "\n";
       fs.appendFileSync(filePath, line, "utf-8");
     } catch (err) {
       console.error("[session] persistPromptTokens failed:", err);
@@ -1226,7 +1334,7 @@ export class Session {
         "code",
         "projects",
         this.projectSlug,
-        "session.jsonl",
+        "session.jsonl"
       );
     }
     return Session.getJsonlPath(this.sessionId, m);
@@ -1265,14 +1373,21 @@ export class Session {
     try {
       const dir = path.join(os.homedir(), ".tinyclaw", "sessions");
       if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir)
+      const files = fs
+        .readdirSync(dir)
         .filter((f) => f.startsWith(sanitizedPrefix) && f.endsWith(".jsonl"))
         .sort() // 字典序即时间序（时间戳为 13 位数字，等长可字典排序）
         .reverse(); // 最新的排前面
       for (let i = keep; i < files.length; i++) {
-        try { fs.unlinkSync(path.join(dir, files[i]!)); } catch { /* 忽略 */ }
+        try {
+          fs.unlinkSync(path.join(dir, files[i]!));
+        } catch {
+          /* 忽略 */
+        }
       }
-    } catch { /* 忽略 */ }
+    } catch {
+      /* 忽略 */
+    }
   }
 
   /** `.code.active` 标记文件路径（存在表示当前 session 正处于 code 模式，用于区分 crash 和主动切换） */
@@ -1352,7 +1467,9 @@ export class Session {
       if (!fs.existsSync(codeDirFile)) return null;
       const dir = fs.readFileSync(codeDirFile, "utf-8").trim();
       if (dir && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) return dir;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return null;
   }
 
@@ -1365,7 +1482,9 @@ export class Session {
       if (!fs.existsSync(subModeFile)) return "plan"; // 默认 plan
       const val = fs.readFileSync(subModeFile, "utf-8").trim();
       if (val === "plan" || val === "auto") return val;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return "plan"; // 默认 plan
   }
 
@@ -1427,7 +1546,9 @@ export class Session {
       // Count tool_call argument characters (critical: tool_calls typically account for
       // 50-70% of total payload but were omitted from the original estimate, causing the
       // threshold check to massively undercount tokens and skip compression when needed).
-      const toolCalls = (m as { role: string; tool_calls?: Array<{ function?: { arguments?: string } }> }).tool_calls;
+      const toolCalls = (
+        m as { role: string; tool_calls?: Array<{ function?: { arguments?: string } }> }
+      ).tool_calls;
       if (m.role === "assistant" && toolCalls) {
         for (const tc of toolCalls) {
           chars += tc.function?.arguments?.length ?? 0;

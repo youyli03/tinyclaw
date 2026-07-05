@@ -115,7 +115,8 @@ registerCommand({
 
 registerCommand({
   name: "plan",
-  description: "切换到 Plan 子模式：AI 先分析任务、输出计划，等用户确认后再执行（需在 Code 模式下）",
+  description:
+    "切换到 Plan 子模式：AI 先分析任务、输出计划，等用户确认后再执行（需在 Code 模式下）",
   usage: "/plan",
   modes: ["code"],
   execute({ session }) {

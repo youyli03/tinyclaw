@@ -34,7 +34,8 @@ registerTool({
         properties: {
           summary: {
             type: "string",
-            description: "计划摘要，清晰列出要修改/创建的文件、每处修改内容和预期效果。展示给用户。",
+            description:
+              "计划摘要，清晰列出要修改/创建的文件、每处修改内容和预期效果。展示给用户。",
           },
           planPath: {
             type: "string",

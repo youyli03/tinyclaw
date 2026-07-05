@@ -1,4 +1,9 @@
-import OpenAI, { APIConnectionError, APIConnectionTimeoutError, RateLimitError, APIError } from "openai";
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  RateLimitError,
+  APIError,
+} from "openai";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname } from "node:path";
@@ -63,21 +68,35 @@ function isRetryableError(err: unknown, policy: RetryConfig): boolean {
     // Matches the same error patterns as @github/copilot CLI's f_s() function (cause-chain traversal).
     // "fetch failed" is Node.js undici's wrapper for any underlying network error; the real error is in
     // err.cause (e.g. TypeError: terminated, ECONNREFUSED, etc.). Always retryable.
-    if (msg.includes("econnreset") || msg.includes("connection error") || msg.includes("socket") ||
-        msg.includes("goaway") || msg.includes("und_err_socket") || msg.includes("fetch failed") ||
-        (err instanceof TypeError && msg.includes("terminated"))) {
+    if (
+      msg.includes("econnreset") ||
+      msg.includes("connection error") ||
+      msg.includes("socket") ||
+      msg.includes("goaway") ||
+      msg.includes("und_err_socket") ||
+      msg.includes("fetch failed") ||
+      (err instanceof TypeError && msg.includes("terminated"))
+    ) {
       return policy.retryTransport;
     }
-    if (msg.includes("idle timeout") || msg.includes("connection timeout")) return policy.retryTransport;
+    if (msg.includes("idle timeout") || msg.includes("connection timeout"))
+      return policy.retryTransport;
     // undici AbortError（连接超时 abort）也当作可重试的传输错误
-    if (err.name === "AbortError" || msg.includes("operation was aborted")) return policy.retryTransport;
+    if (err.name === "AbortError" || msg.includes("operation was aborted"))
+      return policy.retryTransport;
     // 遍历 cause 链（模仿 Copilot CLI f_s()），捕获 "fetch failed" 包装的底层网络错误
     if (err.cause instanceof Error) {
       const causeMsg = err.cause.message.toLowerCase();
-      if (causeMsg.includes("terminated") || causeMsg.includes("econnreset") ||
-          causeMsg.includes("socket") || causeMsg.includes("goaway") ||
-          causeMsg.includes("und_err_socket") || causeMsg.includes("econnrefused") ||
-          causeMsg.includes("etimedout") || causeMsg.includes("enotfound")) {
+      if (
+        causeMsg.includes("terminated") ||
+        causeMsg.includes("econnreset") ||
+        causeMsg.includes("socket") ||
+        causeMsg.includes("goaway") ||
+        causeMsg.includes("und_err_socket") ||
+        causeMsg.includes("econnrefused") ||
+        causeMsg.includes("etimedout") ||
+        causeMsg.includes("enotfound")
+      ) {
         return policy.retryTransport;
       }
     }
@@ -91,12 +110,16 @@ export class LLMConnectionError extends Error {
   readonly requestId?: string;
   constructor(cause: unknown, message?: string, requestId?: string) {
     const attempts = (() => {
-      try { return getRetryPolicy().maxAttempts; } catch { return 3; }
+      try {
+        return getRetryPolicy().maxAttempts;
+      } catch {
+        return 3;
+      }
     })();
     const attemptsDesc = attempts === -1 ? "已多次" : `已重试 ${attempts} 次`;
     super(
       message ??
-      `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`,
+        `⚠️ 与 AI 服务的连接失败（${attemptsDesc}）：${cause instanceof Error ? cause.message : String(cause)}`,
       cause instanceof Error ? { cause } : undefined
     );
     this.name = "LLMConnectionError";
@@ -117,9 +140,18 @@ export interface RetryHooks {
 }
 
 /** 按 RetryConfig 策略重试，固定间隔，abort 后不再重试。maxAttempts=-1 为无限重试 */
-async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: RetryHooks, maxTransportRetryOverride?: number): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+  hooks?: RetryHooks,
+  maxTransportRetryOverride?: number
+): Promise<T> {
   const policy = (() => {
-    try { return getRetryPolicy(); } catch { return undefined; }
+    try {
+      return getRetryPolicy();
+    } catch {
+      return undefined;
+    }
   })();
   const MAX_RETRIES = policy?.maxAttempts ?? 0;
   const BASE_DELAY = policy?.baseDelayMs ?? 1000;
@@ -127,7 +159,10 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   const MAX_5XX = policy?.max5xxAttempts ?? 15;
   const MAX_5XX_DELAY = policy?.max5xxDelayMs ?? 30_000;
   // 若调用方传入 override（如 code 模式传 1），优先使用；否则读全局配置
-  const MAX_TRANSPORT = maxTransportRetryOverride !== undefined ? maxTransportRetryOverride : (policy?.maxTransportAttempts ?? 3);
+  const MAX_TRANSPORT =
+    maxTransportRetryOverride !== undefined
+      ? maxTransportRetryOverride
+      : (policy?.maxTransportAttempts ?? 3);
   const infinite = MAX_RETRIES === -1;
   const infinite5xx = MAX_5XX === -1;
   const infiniteTransport = MAX_TRANSPORT === -1;
@@ -141,7 +176,7 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
     } catch (err) {
       lastErr = err;
       // 超时且不重试：立即包装为 LLMConnectionError
-      if (err instanceof APIConnectionTimeoutError && !(policy?.retryTimeout)) {
+      if (err instanceof APIConnectionTimeoutError && !policy?.retryTimeout) {
         throw new LLMConnectionError(err, `⚠️ AI 服务请求超时，请稍后重试`);
       }
       if (!policy || !isRetryableError(err, policy) || signal?.aborted) throw err;
@@ -150,32 +185,41 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
       if (MAX_DURATION > 0 && Date.now() - startedAt >= MAX_DURATION) {
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
         console.warn(`[llm] 已达最大重试时长 ${MAX_DURATION}ms，停止重试：${formatErrChain(err)}`);
-        throw new LLMConnectionError(err,
+        throw new LLMConnectionError(
+          err,
           `⚠️ 连接持续中断（已重试约 ${elapsed}s）：${formatErrChain(err)}\n` +
-          `发送 /retry 可重试（不额外消耗高级请求）；若多次重试仍失败，发送 /new 清空上下文后重试`
+            `发送 /retry 可重试（不额外消耗高级请求）；若多次重试仍失败，发送 /new 清空上下文后重试`
         );
       }
       // 5xx 单独计数：连续 5xx 超限时抛出专用错误（避免请求内容有问题时无限循环）
-      const is5xx = err instanceof APIError && err.status != null && (err.status >= 500 || err.status === 499 || err.status === 408);
-      const isTransport = !is5xx && isRetryableError(err, { ...policy, retry5xx: false, retry429: false } as RetryConfig);
+      const is5xx =
+        err instanceof APIError &&
+        err.status != null &&
+        (err.status >= 500 || err.status === 499 || err.status === 408);
+      const isTransport =
+        !is5xx &&
+        isRetryableError(err, { ...policy, retry5xx: false, retry429: false } as RetryConfig);
       if (is5xx) {
         consecutive5xx++;
         consecutiveTransport = 0;
         if (!infinite5xx && consecutive5xx > MAX_5XX) {
           const statusCode = (err as APIError).status;
-          const statusHint = statusCode === 408
-            ? `请求体过大导致服务端读取超时（408），建议发送 /compact 压缩上下文后重试，或 /new 清空后重试`
-            : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），服务端持续不可用，请稍后发送 /retry 重试`;
+          const statusHint =
+            statusCode === 408
+              ? `请求体过大导致服务端读取超时（408），建议发送 /compact 压缩上下文后重试，或 /new 清空后重试`
+              : `AI 服务持续返回 ${statusCode} 错误（已重试 ${consecutive5xx - 1} 次），服务端持续不可用，请稍后发送 /retry 重试`;
           throw new LLMConnectionError(err, `⚠️ ${statusHint}`);
         }
       } else if (isTransport) {
         consecutiveTransport++;
         consecutive5xx = 0;
         if (!infiniteTransport && consecutiveTransport > MAX_TRANSPORT) {
-          const retryHint = MAX_TRANSPORT === 0
-            ? `发送 /retry 可重试（不消耗额外高级请求）`
-            : `建议发送 /retry 重试或 /new 清空上下文后重试`;
-          throw new LLMConnectionError(err,
+          const retryHint =
+            MAX_TRANSPORT === 0
+              ? `发送 /retry 可重试（不消耗额外高级请求）`
+              : `建议发送 /retry 重试或 /new 清空上下文后重试`;
+          throw new LLMConnectionError(
+            err,
             `⚠️ 连接中断（已重试 ${consecutiveTransport - 1} 次）：${formatErrChain(err)}\n${retryHint}`
           );
         }
@@ -184,17 +228,27 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
         consecutiveTransport = 0;
       }
       // 429：优先使用 Retry-After，否则固定 baseDelayMs；5xx 加 cap 防止指数增长过长；其他用指数退避
-      const rawDelay = err instanceof RateLimitError
-        ? (parseRetryAfterMs(err) ?? BASE_DELAY)
-        : backoff(BASE_DELAY, attempt);
+      const rawDelay =
+        err instanceof RateLimitError
+          ? (parseRetryAfterMs(err) ?? BASE_DELAY)
+          : backoff(BASE_DELAY, attempt);
       const delay = is5xx ? Math.min(rawDelay, MAX_5XX_DELAY) : rawDelay;
       const attemptLabel = infinite ? `${attempt + 1}/∞` : `${attempt + 1}/${MAX_RETRIES}`;
-      console.warn(`[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${formatErrChain(err)}`);
+      console.warn(
+        `[llm] retryable error (attempt ${attemptLabel}), retrying in ${delay}ms: ${formatErrChain(err)}`
+      );
       // 进入等待前通知外部（release slot），等待期间让其他请求使用 slot
       hooks?.onRetryWait?.();
       await new Promise<void>((res, rej) => {
         const t = setTimeout(res, delay);
-        signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("abort")); }, { once: true });
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(t);
+            rej(new Error("abort"));
+          },
+          { once: true }
+        );
       }).catch((e: unknown) => {
         if (signal?.aborted) throw e;
       });
@@ -208,7 +262,10 @@ async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal, hooks?: 
   throw new LLMConnectionError(lastErr);
 }
 
-function buildMaxTokenParam(model: string, maxTokens: number): { max_completion_tokens: number } | { max_tokens: number } {
+function buildMaxTokenParam(
+  model: string,
+  maxTokens: number
+): { max_completion_tokens: number } | { max_tokens: number } {
   const normalized = model.toLowerCase();
   if (normalized.startsWith("gpt-5")) {
     return { max_completion_tokens: maxTokens };
@@ -374,7 +431,13 @@ export interface ChatResult {
   /** 模型请求执行的工具调用列表（function calling 格式） */
   toolCalls?: ToolCallResult[];
   /** 本次请求消耗的 token 数 */
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number };
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+  };
 }
 
 /**
@@ -409,11 +472,9 @@ const compressedDataUrlCache = new Map<string, string | null>();
  */
 function tryCompressImage(imgPath: string): Buffer | null {
   try {
-    const result = spawnSync(
-      "convert",
-      [imgPath, "-quality", "85", "-strip", "jpeg:-"],
-      { maxBuffer: IMAGE_COMPRESSED_MAX_BYTES + 1024 * 1024 },
-    );
+    const result = spawnSync("convert", [imgPath, "-quality", "85", "-strip", "jpeg:-"], {
+      maxBuffer: IMAGE_COMPRESSED_MAX_BYTES + 1024 * 1024,
+    });
     if (result.status === 0 && result.stdout && result.stdout.length > 0) {
       return result.stdout as Buffer;
     }
@@ -427,7 +488,10 @@ function tryCompressImage(imgPath: string): Buffer | null {
 
 function pathToDataUrl(imgPath: string): string | null {
   if (dataUrlCache.has(imgPath)) return dataUrlCache.get(imgPath)!;
-  if (!existsSync(imgPath)) { dataUrlCache.set(imgPath, null); return null; }
+  if (!existsSync(imgPath)) {
+    dataUrlCache.set(imgPath, null);
+    return null;
+  }
   try {
     const size = statSync(imgPath).size;
     let result: string | null;
@@ -436,20 +500,29 @@ function pathToDataUrl(imgPath: string): string | null {
       const buf = readFileSync(imgPath);
       const ext = extname(imgPath).toLowerCase().slice(1);
       const mime =
-        ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
-        ext === "png" ? "image/png" :
-        ext === "gif" ? "image/gif" :
-        ext === "webp" ? "image/webp" :
-        "image/png";
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "png"
+            ? "image/png"
+            : ext === "gif"
+              ? "image/gif"
+              : ext === "webp"
+                ? "image/webp"
+                : "image/png";
       result = `data:${mime};base64,${buf.toString("base64")}`;
     } else {
       // 超阈值：压缩为 JPEG 再编码
       const compressed = tryCompressImage(imgPath);
       if (!compressed || compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
-        if (compressed) console.warn(`[llm] 图片压缩后仍过大（${(compressed.length / 1024 / 1024).toFixed(1)} MB），跳过`);
+        if (compressed)
+          console.warn(
+            `[llm] 图片压缩后仍过大（${(compressed.length / 1024 / 1024).toFixed(1)} MB），跳过`
+          );
         result = null;
       } else {
-        console.log(`[llm] 图片压缩: ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`);
+        console.log(
+          `[llm] 图片压缩: ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`
+        );
         result = `data:image/jpeg;base64,${compressed.toString("base64")}`;
       }
     }
@@ -464,7 +537,10 @@ function pathToDataUrl(imgPath: string): string | null {
 /** budget 模式：强制压缩（用于总大小超限时），结果独立缓存 */
 export function pathToDataUrlCompressed(imgPath: string): string | null {
   if (compressedDataUrlCache.has(imgPath)) return compressedDataUrlCache.get(imgPath)!;
-  if (!existsSync(imgPath)) { compressedDataUrlCache.set(imgPath, null); return null; }
+  if (!existsSync(imgPath)) {
+    compressedDataUrlCache.set(imgPath, null);
+    return null;
+  }
   try {
     const size = statSync(imgPath).size;
     let result: string | null;
@@ -476,7 +552,9 @@ export function pathToDataUrlCompressed(imgPath: string): string | null {
       if (!compressed || compressed.length > IMAGE_COMPRESSED_MAX_BYTES) {
         result = null;
       } else {
-        console.log(`[llm] 图片压缩(budget): ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`);
+        console.log(
+          `[llm] 图片压缩(budget): ${(size / 1024).toFixed(0)} KB → ${(compressed.length / 1024).toFixed(0)} KB`
+        );
         result = `data:image/jpeg;base64,${compressed.toString("base64")}`;
       }
     }
@@ -490,7 +568,11 @@ export function pathToDataUrlCompressed(imgPath: string): string | null {
 
 /** 在发送给 API 前，将 messages 中的 image_path 条目转换为 image_url（base64 data URL）。
  *  若所有图片 base64 合计超过 IMAGE_TOTAL_BASE64_BUDGET，自动切换为压缩模式。 */
-function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true, maxHistoryImages = 3): LLMChatMessage[] {
+function resolveMessagesForApi(
+  messages: LLMChatMessage[],
+  supportsVision = true,
+  maxHistoryImages = 3
+): LLMChatMessage[] {
   // 收集最近 maxHistoryImages 条含 image_path 的消息索引
   const allowedImageMsgIdxSet = new Set<number>();
   for (let i = messages.length - 1; i >= 0 && allowedImageMsgIdxSet.size < maxHistoryImages; i--) {
@@ -521,7 +603,9 @@ function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true
   }
   const useBudget = totalBase64 > IMAGE_TOTAL_BASE64_BUDGET;
   if (useBudget) {
-    console.log(`[llm] 图片总 base64 ${(totalBase64 / 1024).toFixed(0)} KB > budget ${(IMAGE_TOTAL_BASE64_BUDGET / 1024).toFixed(0)} KB，启用压缩模式`);
+    console.log(
+      `[llm] 图片总 base64 ${(totalBase64 / 1024).toFixed(0)} KB > budget ${(IMAGE_TOTAL_BASE64_BUDGET / 1024).toFixed(0)} KB，启用压缩模式`
+    );
   }
 
   const getUrl = useBudget
@@ -541,7 +625,10 @@ function resolveMessagesForApi(messages: LLMChatMessage[], supportsVision = true
         }
         // 历史图片(不在允许列表中)直接丢弃,替换为文本提示
         if (!allowedImageMsgIdxSet.has(idx)) {
-          return { type: "text" as const, text: `[历史图片: ${p.path}（如需查看请用 read_image tool）]` };
+          return {
+            type: "text" as const,
+            text: `[历史图片: ${p.path}（如需查看请用 read_image tool）]`,
+          };
         }
         const url = getUrl(p.path);
         if (url) return { type: "image_url" as const, image_url: { url, detail: "auto" as const } };
@@ -589,8 +676,24 @@ async function* withStreamIdleTimeout<T>(
           reject(new Error(`stream idle timeout: no chunk received in ${ms}ms`));
         }, ms);
         const cleanup = () => clearTimeout(timer);
-        signal?.addEventListener("abort", () => { cleanup(); reject(new Error("abort")); }, { once: true });
-        it.next().then((r) => { cleanup(); resolve(r); }, (e) => { cleanup(); reject(e as unknown); });
+        signal?.addEventListener(
+          "abort",
+          () => {
+            cleanup();
+            reject(new Error("abort"));
+          },
+          { once: true }
+        );
+        it.next().then(
+          (r) => {
+            cleanup();
+            resolve(r);
+          },
+          (e) => {
+            cleanup();
+            reject(e as unknown);
+          }
+        );
       });
     }
     if (result.done) return;
@@ -624,7 +727,11 @@ export class LLMClient {
 
   /** Close and discard the current WebSocket connection (triggers reconnect on next use). */
   private closeWsConn(): void {
-    try { this.wsConn?.close(); } catch { /* ignore */ }
+    try {
+      this.wsConn?.close();
+    } catch {
+      /* ignore */
+    }
     this.wsConn = null;
   }
 
@@ -693,7 +800,9 @@ export class LLMClient {
 
     // If the server closed the connection since last use, reconnect
     if (!conn.isOpen()) {
-      console.debug(`[ws] reconnecting: server closed connection (request-id: ${conn.requestId ?? "unknown"})`);
+      console.debug(
+        `[ws] reconnecting: server closed connection (request-id: ${conn.requestId ?? "unknown"})`
+      );
       this.closeWsConn();
       const fresh = await this.ensureWsConn();
       fresh.send(request);
@@ -720,7 +829,6 @@ export class LLMClient {
     return this.backend.model;
   }
 
-
   /** 是否为 GitHub Copilot provider（按次计费，不计 token 用量） */
   get isCopilot(): boolean {
     return this.backend.isCopilotProvider === true;
@@ -746,8 +854,7 @@ export class LLMClient {
   }
 
   async chat(messages: LLMChatMessage[], opts: ChatOptions = {}): Promise<ChatResult> {
-    const canUseTools =
-      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+    const canUseTools = this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
     // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
     // to deduplicate retried requests and avoid double-billing premium requests.
@@ -755,42 +862,50 @@ export class LLMClient {
     const turnRequestId = this.backend.isCopilotProvider
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
-    const xTurnHeaders = this.backend.isCopilotProvider ? {
-      // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
-      // "agent" for tool-continuation rounds (free, not billed again).
-      // This matches VS Code Copilot chat behavior: 1 premium per user message.
-      "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
-      // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
-      "X-Interaction-Type": "conversation-agent",
-      // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
-      // can group them as a single task. Falls back to per-call UUID if not provided.
-      "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
-      ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
-    } : undefined;
+    const xTurnHeaders = this.backend.isCopilotProvider
+      ? {
+          // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
+          // "agent" for tool-continuation rounds (free, not billed again).
+          // This matches VS Code Copilot chat behavior: 1 premium per user message.
+          "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
+          // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
+          "X-Interaction-Type": "conversation-agent",
+          // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
+          // can group them as a single task. Falls back to per-call UUID if not provided.
+          "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
+          ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
+        }
+      : undefined;
 
     const resolved = resolveMessagesForApi(messages, this.supportsVision, this.maxHistoryImages);
-    const resolvedCall = withRetry(() => this.client.chat.completions.create(
-      {
-        model: this.backend.model,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        messages: resolved as any,
-        ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-        ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
-        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-        ...(canUseTools
-          ? {
-              tools: opts.tools!,
-              tool_choice: opts.tool_choice ?? "auto",
-              ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
-            }
-          : {}),
-      },
-      {
-        maxRetries: 5,  // mirrors Copilot CLI makeRequest({maxRetries: X=5})
-        ...(opts.signal ? { signal: opts.signal } : {}),
-        ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
-      }
-    ), opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
+    const resolvedCall = withRetry(
+      () =>
+        this.client.chat.completions.create(
+          {
+            model: this.backend.model,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            messages: resolved as any,
+            ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
+            ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
+            ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+            ...(canUseTools
+              ? {
+                  tools: opts.tools!,
+                  tool_choice: opts.tool_choice ?? "auto",
+                  ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
+                }
+              : {}),
+          },
+          {
+            maxRetries: 5, // mirrors Copilot CLI makeRequest({maxRetries: X=5})
+            ...(opts.signal ? { signal: opts.signal } : {}),
+            ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
+          }
+        ),
+      opts.signal,
+      opts._retryHooks,
+      opts.maxTransportRetryOverride
+    );
 
     let response: Awaited<typeof resolvedCall>;
     try {
@@ -847,7 +962,11 @@ export class LLMClient {
     opts: ChatOptions = {}
   ): Promise<ChatResult> {
     const idleTimeoutMs = (() => {
-      try { return getRetryPolicy().streamIdleTimeoutMs; } catch { return 60_000; }
+      try {
+        return getRetryPolicy().streamIdleTimeoutMs;
+      } catch {
+        return 60_000;
+      }
     })();
     // code 模式：收到第一个 chunk 后禁用空闲超时。
     // 原因：code 模式长代码生成 token 间隔可超过 60s，禁用超时避免误中断。
@@ -855,9 +974,12 @@ export class LLMClient {
     const idleMsAfterFirstChunk = opts.disableIdleAfterFirstChunk ? 0 : undefined;
 
     // 在 withRetry 外部解析（含图片压缩），避免每次重试都重新压缩
-    const resolvedForStream = resolveMessagesForApi(messages, this.supportsVision, this.maxHistoryImages);
-    const canUseTools =
-      this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
+    const resolvedForStream = resolveMessagesForApi(
+      messages,
+      this.supportsVision,
+      this.maxHistoryImages
+    );
+    const canUseTools = this.supportsToolCalls && !!opts.tools && opts.tools.length > 0;
 
     // X-Request-Id: fixed per turn, reused on retries. Copilot server uses this
     // to deduplicate retried requests and avoid double-billing premium requests.
@@ -865,181 +987,199 @@ export class LLMClient {
     const turnRequestId = this.backend.isCopilotProvider
       ? (opts.turnRequestIdOverride ?? crypto.randomUUID())
       : undefined;
-    const xTurnHeaders = this.backend.isCopilotProvider ? {
-      // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
-      // "agent" for tool-continuation rounds (free, not billed again).
-      // This matches VS Code Copilot chat behavior: 1 premium per user message.
-      "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
-      // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
-      "X-Interaction-Type": "conversation-agent",
-      // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
-      // can group them as a single task. Falls back to per-call UUID if not provided.
-      "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
-      ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
-    } : undefined;
+    const xTurnHeaders = this.backend.isCopilotProvider
+      ? {
+          // X-Initiator: "user" for round 0 (user-initiated, counts as premium request).
+          // "agent" for tool-continuation rounds (free, not billed again).
+          // This matches VS Code Copilot chat behavior: 1 premium per user message.
+          "X-Initiator": opts.isUserInitiated !== false ? "user" : "agent",
+          // X-Interaction-Type: "conversation-agent" routes to the agentic backend tier.
+          "X-Interaction-Type": "conversation-agent",
+          // X-Agent-Task-Id: shared across all rounds of one user interaction so the server
+          // can group them as a single task. Falls back to per-call UUID if not provided.
+          "X-Agent-Task-Id": opts.taskId ?? crypto.randomUUID(),
+          ...(turnRequestId ? { "X-Request-Id": turnRequestId } : {}),
+        }
+      : undefined;
 
     try {
-    // ── WebSocket path (Copilot provider only) ───────────────────────────────
-    // Try the Responses API WebSocket for stable, keepalive-based streaming.
-    // Falls back silently to HTTP Chat Completions if:
-    //   - WebSocket connection fails before any chunks arrive
-    //   - The model/endpoint doesn't support the Responses API
-    if (this.backend.wsUrl) {
-      let wsChunksReceived = 0;
-      try {
-        const { result, chunksReceived } = await this.streamChatViaWebSocket(
-          messages, onChunk, opts, turnRequestId
-        );
-        wsChunksReceived = chunksReceived;
-        return result;
-      } catch (err) {
-        if (!this.shouldFallbackToHttp(err, wsChunksReceived)) throw err;
-        console.warn(`[ws] WebSocket streaming failed before first chunk, falling back to HTTP: ${err instanceof Error ? err.message : String(err)}`);
-        this.closeWsConn();
-        // fall through to HTTP path below
-      }
-    }
-
-    // ── HTTP path ────────────────────────────────────────────────────────────
-    // chunksReceived tracks if any streaming data was received per attempt.
-    // Used to decide whether to fall back to non-streaming on idle timeout.
-    let chunksReceived = 0;
-    return await withRetry(async () => {
-      chunksReceived = 0; // reset on each retry attempt
-      const stream = await this.client.chat.completions.create(
-        {
-          model: this.backend.model,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          messages: resolvedForStream as any,
-          ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-        ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
-          ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-          ...(canUseTools
-            ? {
-                tools: opts.tools!,
-                tool_choice: opts.tool_choice ?? "auto",
-                ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
-              }
-            : {}),
-          stream: true,
-          stream_options: { include_usage: true },
-        },
-        {
-          // NOTE: SDK timeout (backend.timeoutMs) applies only to the connection phase
-          // (time until HTTP 200 headers arrive). The timer is cleared once create()
-          // resolves. After that, withStreamIdleTimeout below handles per-chunk idle
-          // detection, so long streaming responses are never cut short.
-          maxRetries: 5,  // mirrors Copilot CLI makeRequestStreaming({maxRetries: X=5})
-          ...(opts.signal ? { signal: opts.signal } : {}),
-          ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
+      // ── WebSocket path (Copilot provider only) ───────────────────────────────
+      // Try the Responses API WebSocket for stable, keepalive-based streaming.
+      // Falls back silently to HTTP Chat Completions if:
+      //   - WebSocket connection fails before any chunks arrive
+      //   - The model/endpoint doesn't support the Responses API
+      if (this.backend.wsUrl) {
+        let wsChunksReceived = 0;
+        try {
+          const { result, chunksReceived } = await this.streamChatViaWebSocket(
+            messages,
+            onChunk,
+            opts,
+            turnRequestId
+          );
+          wsChunksReceived = chunksReceived;
+          return result;
+        } catch (err) {
+          if (!this.shouldFallbackToHttp(err, wsChunksReceived)) throw err;
+          console.warn(
+            `[ws] WebSocket streaming failed before first chunk, falling back to HTTP: ${err instanceof Error ? err.message : String(err)}`
+          );
+          this.closeWsConn();
+          // fall through to HTTP path below
         }
-      );
-
-      let fullContent = "";
-      let streamedContent = "";
-      let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      // 聚合流式 tool_calls delta（各 index 独立累积）
-      const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
-
-      try {
-        for await (const chunk of withStreamIdleTimeout(stream, idleTimeoutMs, opts.signal, idleMsAfterFirstChunk)) {
-        if (opts.signal?.aborted) break;
-        const delta = chunk.choices[0]?.delta;
-
-        // 文本 delta(兼容 reasoning_content: mimo-v2-omni 等思考模型把内容放在 reasoning_content 里)
-        const contentDelta = delta?.content ?? "";
-        const reasoningDelta = (delta as any)?.reasoning_content ?? "";
-        const textDelta = contentDelta || reasoningDelta;
-        if (textDelta) {
-          fullContent += textDelta;
-          // content 始终推给 onChunk；reasoning_content 仅在显式 opt-in 时推
-          if (contentDelta) {
-            onChunk(contentDelta);
-            streamedContent += contentDelta;
-          } else if (reasoningDelta && opts.includeReasoningInStream) {
-            onChunk(reasoningDelta);
-            streamedContent += reasoningDelta;
-          }
-          chunksReceived++;
-        }
-
-        // 工具调用 delta（按 index 聚合）
-        for (const tcDelta of delta?.tool_calls ?? []) {
-          chunksReceived++;
-          const idx = tcDelta.index;
-          if (!toolCallAcc[idx]) {
-            toolCallAcc[idx] = {
-              id: tcDelta.id ?? "",
-              name: tcDelta.function?.name ?? "",
-              arguments: "",
-            };
-          } else {
-            if (tcDelta.id) toolCallAcc[idx]!.id = tcDelta.id;
-            if (tcDelta.function?.name) toolCallAcc[idx]!.name = tcDelta.function.name;
-          }
-          toolCallAcc[idx]!.arguments += tcDelta.function?.arguments ?? "";
-        }
-
-        if (chunk.usage) {
-          usage = {
-            promptTokens: chunk.usage.prompt_tokens,
-            completionTokens: chunk.usage.completion_tokens,
-            totalTokens: chunk.usage.total_tokens,
-            cacheReadTokens: (chunk.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
-            cacheCreationTokens: (chunk.usage as any)?.cache_creation_input_tokens ?? 0,
-          };
-        }
-        }
-      } catch (streamErr) {
-        // Socket closure during streaming: reset the undici connection pool so the next
-        // retry builds a fresh connection pool instead of reusing the broken one.
-        // Matches the error patterns in @github/copilot CLI's streaming error handling:
-        // UND_ERR_SOCKET, TypeError "terminated" (no longer expected with HTTP/1.1), ECONNRESET, etc.
-        const msg = streamErr instanceof Error ? streamErr.message.toLowerCase() : "";
-        const isSocketError = /socket|closed|econnreset|abort|goaway|und_err_socket/.test(msg) ||
-          (streamErr instanceof TypeError && msg.includes("terminated"));
-        if (isSocketError) {
-          this.onStreamSocketError?.();
-        }
-
-        // Non-streaming fallback: if idle timeout fires with 0 chunks, the streaming
-        // path is unlikely to succeed on retry. Switch to non-streaming (single HTTP
-        // request waiting for full response) which has a much longer timeout and no
-        // chunk-interval constraints. Reuse turnRequestId to avoid double-billing.
-        if (msg.includes("idle timeout") && chunksReceived === 0) {
-          console.warn("[llm] 流式空闲超时（0 chunks），切换为非流式请求...");
-          const fallbackResult = await this.chat(messages, {
-            ...opts,
-            ...(turnRequestId ? { turnRequestIdOverride: turnRequestId } : {}),
-          });
-          if (fallbackResult.content) onChunk(fallbackResult.content);
-          return fallbackResult;
-        }
-
-        throw streamErr;
       }
 
-      const toolCalls: ToolCallResult[] | undefined =
-        toolCallAcc.length > 0
-          ? toolCallAcc
-              // tcDelta.index 可能不连续（如 0, 2），导致 toolCallAcc 为稀疏数组
-              // 过滤掉洞（hole）和 undefined，避免后续 for...of 产生 undefined call
-              .filter((tc): tc is { id: string; name: string; arguments: string } => tc != null)
-              .map((tc) => ({
-                name: tc.name,
-                callId: tc.id,
-                args: (() => {
-                  try {
-                    return JSON.parse(tc.arguments) as Record<string, unknown>;
-                  } catch {
-                    return {} as Record<string, unknown>;
+      // ── HTTP path ────────────────────────────────────────────────────────────
+      // chunksReceived tracks if any streaming data was received per attempt.
+      // Used to decide whether to fall back to non-streaming on idle timeout.
+      let chunksReceived = 0;
+      return await withRetry(
+        async () => {
+          chunksReceived = 0; // reset on each retry attempt
+          const stream = await this.client.chat.completions.create(
+            {
+              model: this.backend.model,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              messages: resolvedForStream as any,
+              ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
+              ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
+              ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+              ...(canUseTools
+                ? {
+                    tools: opts.tools!,
+                    tool_choice: opts.tool_choice ?? "auto",
+                    ...(this.supportsParallelToolCalls ? { parallel_tool_calls: true } : {}),
                   }
-                })(),
-              }))
-          : undefined;
+                : {}),
+              stream: true,
+              stream_options: { include_usage: true },
+            },
+            {
+              // NOTE: SDK timeout (backend.timeoutMs) applies only to the connection phase
+              // (time until HTTP 200 headers arrive). The timer is cleared once create()
+              // resolves. After that, withStreamIdleTimeout below handles per-chunk idle
+              // detection, so long streaming responses are never cut short.
+              maxRetries: 5, // mirrors Copilot CLI makeRequestStreaming({maxRetries: X=5})
+              ...(opts.signal ? { signal: opts.signal } : {}),
+              ...(xTurnHeaders ? { headers: xTurnHeaders } : {}),
+            }
+          );
 
-      return { content: streamedContent, ...(toolCalls ? { toolCalls } : {}), usage };
-    }, opts.signal, opts._retryHooks, opts.maxTransportRetryOverride);
+          let fullContent = "";
+          let streamedContent = "";
+          let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          // 聚合流式 tool_calls delta（各 index 独立累积）
+          const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
+
+          try {
+            for await (const chunk of withStreamIdleTimeout(
+              stream,
+              idleTimeoutMs,
+              opts.signal,
+              idleMsAfterFirstChunk
+            )) {
+              if (opts.signal?.aborted) break;
+              const delta = chunk.choices[0]?.delta;
+
+              // 文本 delta(兼容 reasoning_content: mimo-v2-omni 等思考模型把内容放在 reasoning_content 里)
+              const contentDelta = delta?.content ?? "";
+              const reasoningDelta = (delta as any)?.reasoning_content ?? "";
+              const textDelta = contentDelta || reasoningDelta;
+              if (textDelta) {
+                fullContent += textDelta;
+                // content 始终推给 onChunk；reasoning_content 仅在显式 opt-in 时推
+                if (contentDelta) {
+                  onChunk(contentDelta);
+                  streamedContent += contentDelta;
+                } else if (reasoningDelta && opts.includeReasoningInStream) {
+                  onChunk(reasoningDelta);
+                  streamedContent += reasoningDelta;
+                }
+                chunksReceived++;
+              }
+
+              // 工具调用 delta（按 index 聚合）
+              for (const tcDelta of delta?.tool_calls ?? []) {
+                chunksReceived++;
+                const idx = tcDelta.index;
+                if (!toolCallAcc[idx]) {
+                  toolCallAcc[idx] = {
+                    id: tcDelta.id ?? "",
+                    name: tcDelta.function?.name ?? "",
+                    arguments: "",
+                  };
+                } else {
+                  if (tcDelta.id) toolCallAcc[idx]!.id = tcDelta.id;
+                  if (tcDelta.function?.name) toolCallAcc[idx]!.name = tcDelta.function.name;
+                }
+                toolCallAcc[idx]!.arguments += tcDelta.function?.arguments ?? "";
+              }
+
+              if (chunk.usage) {
+                usage = {
+                  promptTokens: chunk.usage.prompt_tokens,
+                  completionTokens: chunk.usage.completion_tokens,
+                  totalTokens: chunk.usage.total_tokens,
+                  cacheReadTokens: (chunk.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+                  cacheCreationTokens: (chunk.usage as any)?.cache_creation_input_tokens ?? 0,
+                };
+              }
+            }
+          } catch (streamErr) {
+            // Socket closure during streaming: reset the undici connection pool so the next
+            // retry builds a fresh connection pool instead of reusing the broken one.
+            // Matches the error patterns in @github/copilot CLI's streaming error handling:
+            // UND_ERR_SOCKET, TypeError "terminated" (no longer expected with HTTP/1.1), ECONNRESET, etc.
+            const msg = streamErr instanceof Error ? streamErr.message.toLowerCase() : "";
+            const isSocketError =
+              /socket|closed|econnreset|abort|goaway|und_err_socket/.test(msg) ||
+              (streamErr instanceof TypeError && msg.includes("terminated"));
+            if (isSocketError) {
+              this.onStreamSocketError?.();
+            }
+
+            // Non-streaming fallback: if idle timeout fires with 0 chunks, the streaming
+            // path is unlikely to succeed on retry. Switch to non-streaming (single HTTP
+            // request waiting for full response) which has a much longer timeout and no
+            // chunk-interval constraints. Reuse turnRequestId to avoid double-billing.
+            if (msg.includes("idle timeout") && chunksReceived === 0) {
+              console.warn("[llm] 流式空闲超时（0 chunks），切换为非流式请求...");
+              const fallbackResult = await this.chat(messages, {
+                ...opts,
+                ...(turnRequestId ? { turnRequestIdOverride: turnRequestId } : {}),
+              });
+              if (fallbackResult.content) onChunk(fallbackResult.content);
+              return fallbackResult;
+            }
+
+            throw streamErr;
+          }
+
+          const toolCalls: ToolCallResult[] | undefined =
+            toolCallAcc.length > 0
+              ? toolCallAcc
+                  // tcDelta.index 可能不连续（如 0, 2），导致 toolCallAcc 为稀疏数组
+                  // 过滤掉洞（hole）和 undefined，避免后续 for...of 产生 undefined call
+                  .filter((tc): tc is { id: string; name: string; arguments: string } => tc != null)
+                  .map((tc) => ({
+                    name: tc.name,
+                    callId: tc.id,
+                    args: (() => {
+                      try {
+                        return JSON.parse(tc.arguments) as Record<string, unknown>;
+                      } catch {
+                        return {} as Record<string, unknown>;
+                      }
+                    })(),
+                  }))
+              : undefined;
+
+          return { content: streamedContent, ...(toolCalls ? { toolCalls } : {}), usage };
+        },
+        opts.signal,
+        opts._retryHooks,
+        opts.maxTransportRetryOverride
+      );
     } catch (err) {
       // Propagate the turn's X-Request-Id so callers (e.g. /retry command) can reuse
       // the same ID for deduplication when retrying manually.

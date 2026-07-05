@@ -24,7 +24,7 @@ registerTool({
         "管理 Loop 触发器的运行状态。" +
         "当用户说「停止监控」「暂停」「不用盯了」「退出 loop」等，调用此工具。" +
         "action=pause 暂停 tick；action=resume 恢复；action=exit 退出当前时间窗口（下个窗口自动重置）。" +
-        "id 不填时默认操作名为 \"monitor\" 的 loop。",
+        'id 不填时默认操作名为 "monitor" 的 loop。',
       parameters: {
         type: "object",
         properties: {
@@ -35,7 +35,7 @@ registerTool({
           },
           id: {
             type: "string",
-            description: "Loop ID（对应 ~/.tinyclaw/loops/<id>.json 中的 id 字段），默认 \"monitor\"",
+            description: 'Loop ID（对应 ~/.tinyclaw/loops/<id>.json 中的 id 字段），默认 "monitor"',
           },
           reason: {
             type: "string",

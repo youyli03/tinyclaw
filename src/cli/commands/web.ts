@@ -46,7 +46,7 @@ function readWebCfg(): WebCfg {
     const w = (raw["web"] ?? {}) as Record<string, unknown>;
     return {
       enabled: Boolean(w["enabled"] ?? false),
-      port:    typeof w["port"] === "number" ? (w["port"] as number) : 4096,
+      port: typeof w["port"] === "number" ? (w["port"] as number) : 4096,
       ...(typeof w["token"] === "string" ? { token: w["token"] as string } : {}),
     };
   } catch {
@@ -74,7 +74,13 @@ function getLocalIPs(): IfaceInfo[] {
       // 根据网卡名猜测类型
       const n = name.toLowerCase();
       let label = "局域网";
-      if (n.includes("wlan") || n.includes("wifi") || n.includes("wlp") || n.includes("wl0") || n.includes("en0")) {
+      if (
+        n.includes("wlan") ||
+        n.includes("wifi") ||
+        n.includes("wlp") ||
+        n.includes("wl0") ||
+        n.includes("en0")
+      ) {
         label = "Wi-Fi";
       } else if (n.includes("eth") || n.includes("enp") || n.includes("eno") || n.includes("em")) {
         label = "有线";
@@ -105,7 +111,9 @@ function cmdInfo(): void {
   section("Dashboard Web 访问信息");
 
   if (!cfg.enabled) {
-    console.log(yellow("  ⚠ Dashboard 未启用") + dim("  (在 config.toml 设置 [web] enabled = true)"));
+    console.log(
+      yellow("  ⚠ Dashboard 未启用") + dim("  (在 config.toml 设置 [web] enabled = true)")
+    );
     console.log();
   }
 
