@@ -612,7 +612,13 @@ registerTool({
             description:
               "分点/章节标题(不含 ## 前缀)。" + "传此参数时 upsert 该章节内容,而非操作整个文件。",
           },
-          content: { type: "string", description: "要写入的内容（Markdown 格式）" },
+          content: {
+            type: "string",
+            description:
+              "要写入的内容(Markdown 格式)。" +
+              "写入 MEMORY.md 时,摘要行格式: - [YYYY-MM-DD] [s:5] 摘要 → topic.md。" +
+              "[s:N] 为稳定性(1-10),默认新建条目用 s:5。s 越高该记忆在 prompt 中存活越久。",
+          },
           mode: {
             type: "string",
             enum: ["append", "overwrite"],

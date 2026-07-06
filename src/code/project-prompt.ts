@@ -27,6 +27,7 @@ import {
 import { agentManager } from "../core/agent-manager.js";
 import { readFeedback } from "../core/feedback-writer.js";
 import { loadConfig } from "../config/loader.js";
+import { injectScoredEntries } from "../memory/entry-scorer.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,9 +86,12 @@ export function renderProjectContext(ctx: ProjectContext): string {
   out += `工作目录: \`${ctx.workdir}\`\n`;
   out += `类型: ${ctx.type === "ssh" ? "远程(SSH)" : "本地"}\n`;
 
-  // MEMORY.md 全文
+  // MEMORY.md 评分截断后注入
   if (ctx.memoryContent) {
-    out += `\n### 项目记忆 (MEMORY.md)\n\n${ctx.memoryContent}\n`;
+    const cfg = loadConfig();
+    const maxEntries = cfg.memory.codeInjectionMaxEntries ?? 30;
+    const scored = injectScoredEntries(ctx.memoryContent, maxEntries);
+    out += `\n### 项目记忆 (MEMORY.md)\n\n${scored}\n`;
   }
 
   // Topic 表

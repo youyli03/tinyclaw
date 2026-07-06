@@ -248,6 +248,54 @@ export function cardsRootPath(agentId: string): string {
   return path.join(os.homedir(), ".tinyclaw", "agents", agentId, "cards");
 }
 
+// ── 卡片时间衰减评分 ──────────────────────────────────────────────────────
+
+/** 卡片类型对应的半衰期(天) — 类型越稳定半衰期越长 */
+const CARD_TYPE_HALF_LIFE: Record<string, number> = {
+  preference:   180,  // 用户偏好,高度稳定
+  constraint:   180,  // 行为约束,几乎永不过期
+  decision:      60,  // 设计决策,中等周期
+  project_fact:  60,  // 项目事实,随项目演进
+  relationship:  90,  // 人际关系,较稳定
+  routine:       45,  // 例行习惯,可能变化
+  life_event:   365,  // 人生事件,长期记忆
+  open_loop:     14,  // 待办/进行中,短期活跃
+  task_state:    14,  // 任务状态,短期
+};
+
+/**
+ * 计算卡片在当前时间的衰减分数。
+ * score = importance × 2^(-daysSinceCreation / halfLife)
+ * - 刚创建: 衰减因子 ≈ 1, score ≈ importance
+ * - 经过 halfLife 天: 衰减因子 = 0.5, score = 0.5 × importance
+ * - 长期: 趋近于 0 但始终 > 0
+ */
+export function scoreCard(card: MemoryCard, now: Date = new Date()): number {
+  const ts = new Date(card.ts);
+  if (isNaN(ts.getTime())) return card.importance;
+  const daysSince = Math.max(0, (now.getTime() - ts.getTime()) / (1000 * 60 * 60 * 24));
+  const halfLife = CARD_TYPE_HALF_LIFE[card.type] ?? 45;
+  const decay = Math.pow(2, -daysSince / halfLife);
+  return card.importance * decay;
+}
+
+/**
+ * 按衰减分数排序卡片,返回 Top-N。
+ * score < minScore 的卡片会被过滤(默认 0.15)。
+ */
+export function sortCardsByScore(
+  cards: MemoryCard[],
+  maxCount: number,
+  minScore = 0.15,
+  now?: Date
+): MemoryCard[] {
+  const scored = cards
+    .map((c) => ({ card: c, score: scoreCard(c, now) }))
+    .filter((s) => s.score >= minScore);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, maxCount).map((s) => s.card);
+}
+
 /**
  * 将超过 maxAgeDays 天未更新的 open_loop 卡片标记为 obsolete。
  * 不删除文件，保留历史可查。

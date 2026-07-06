@@ -6,7 +6,8 @@ import type { AnyLLMClient } from "../llm/registry.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
 import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
-import { readExistingCards, parseCardJson, saveCards } from "./cards.js";
+import { readExistingCards, parseCardJson, saveCards, sortCardsByScore } from "./cards.js";
+import type { MemoryCard } from "./cards.js";
 import {
   mkdirSync,
   appendFileSync,
@@ -1130,6 +1131,15 @@ ${historyText.slice(0, 12000)}
 - MEMORY.md 保持轻量(每行摘要 ≤ 150 字),详情放 topic 文件
 - 延续现有的日期分区格式,不要做激进的重构
 - 对已有的正确信息不要删除或重写,只做增量更新
+- **MEMORY.md 条目格式**: \`- [YYYY-MM-DD] [s:N] 摘要 → topic.md\`
+  - s 为稳定性(stability, 1-10),影响该条记忆在 prompt 中的存活时间
+  - s:9-10 = 永久约束/硬规则("永远不能自行 kill 进程")
+  - s:7-8 = 长期有效的架构理解/核心事实
+  - s:5-6 = 当前事项/中等稳定
+  - s:3-4 = 临时信息/快速变化的进度
+  - s:1-2 = 短期活跃/即将过时
+  - 同一事实多次出现时,提高 s 值(强化机制)
+  - 已有条目若仍需保持高稳定性,保留其较高的 s 值
 
 必须输出合法 JSON,格式:
 {
@@ -1607,11 +1617,18 @@ Cards 输出格式(MemoryCard JSON):
 - type: preference/constraint/decision/routine/open_loop/life_event/project_fact/relationship/task_state
 - scope: 范围(general/project:stock/project:tinyclaw 等)
 - facet: 分类维度(同类 cards 合并到同一 facet)
-- importance: 0-1 重要性
+- importance: 0-1 重要性(同时影响记忆存活时间,见下方指引)
 - title: 简短标题(≤30字)
 - summary: 完整说明(1-3 句)
 - supersedes: 要替换的旧 card id 数组(可选)
 - 不填 id/ts/status(由系统自动生成)
+
+importance 取值指引(影响该记忆能被记住多久):
+- 0.8-1.0: 核心偏好/硬约束(如"永远不要 sudo rm"),半衰期 180 天,几乎永不过期
+- 0.5-0.7: 重要习惯/决策/事实,半衰期 60-90 天,数月后自然淡出
+- 0.3-0.4: 一般事项/临时记忆,半衰期 14-45 天,几周后淡出
+- 0.1-0.2: 短期活跃信息,快速过期
+⚠️ 同一事实多次出现(如用户多次强调某个偏好),应逐步提高 importance(强化机制)
 
 MEM.md 更新格式(按章节):
 {
@@ -1710,9 +1727,15 @@ function regenerateCardIndex(agentId: string): void {
     const active = cards.filter((c) => c.status === "active");
     if (active.length === 0) return;
 
-    // 按 type 分组
-    const byType = new Map<string, typeof active>();
-    for (const c of active) {
+    // 按时间衰减分数排序,取 Top-N(默认 50,可通过 config 调整)
+    const cfg = loadConfig();
+    const maxCards = cfg.memory.cardInjectionMax ?? 50;
+    const now = new Date();
+    const topCards = sortCardsByScore(active, maxCards, 0.15, now);
+
+    // 按 type 分组(topCards 已按 score 排序)
+    const byType = new Map<string, typeof topCards>();
+    for (const c of topCards) {
       const list = byType.get(c.type) || [];
       list.push(c);
       byType.set(c.type, list);
@@ -1721,10 +1744,9 @@ function regenerateCardIndex(agentId: string): void {
     // 生成索引条目
     const indexLines: string[] = [];
 
-    // preference: 全收,合并同类 facet
-    const prefs = (byType.get("preference") || []).sort((a, b) => b.importance - a.importance);
+    // preference: 合并同类 facet
+    const prefs = byType.get("preference") || [];
     if (prefs.length > 0) {
-      // 按 facet 合并
       const byFacet = new Map<string, typeof prefs>();
       for (const p of prefs) {
         const list = byFacet.get(p.facet) || [];
@@ -1739,29 +1761,21 @@ function regenerateCardIndex(agentId: string): void {
       }
     }
 
-    // constraint: 全收
-    const constraints = (byType.get("constraint") || []).sort(
-      (a, b) => b.importance - a.importance
-    );
+    // constraint: 单独列出
+    const constraints = byType.get("constraint") || [];
     for (const c of constraints) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
 
-    // decision: 最近 5 条
-    const decisions = (byType.get("decision") || [])
-      .sort((a, b) => b.ts.localeCompare(a.ts))
-      .slice(0, 5);
-    for (const c of decisions) {
+    // decision
+    for (const c of byType.get("decision") || []) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
 
-    // open_loop: 最近 5 条
-    const openLoops = (byType.get("open_loop") || [])
-      .sort((a, b) => b.ts.localeCompare(a.ts))
-      .slice(0, 5);
-    for (const c of openLoops) {
+    // open_loop
+    for (const c of byType.get("open_loop") || []) {
       const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
       indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
@@ -1773,26 +1787,20 @@ function regenerateCardIndex(agentId: string): void {
       indexLines.push(`- 例行: ${titles}`);
     }
 
-    // 其他类型:合并为摘要,提示用 memory_search 检索
-    const otherTypes = [
-      "relationship",
-      "life_event",
-      "project_fact",
-      "task_state",
-      "pattern",
-      "profile",
-    ];
-    let hasOther = false;
+    // 其他类型
+    const otherTypes = ["relationship", "life_event", "project_fact", "task_state"];
+    const otherCards: MemoryCard[] = [];
     for (const t of otherTypes) {
       const items = byType.get(t);
-      if (items && items.length > 0) {
-        hasOther = true;
-        break;
-      }
+      if (items) otherCards.push(...items);
     }
-    if (hasOther) {
-      indexLines.push("- 其他记忆(账户/事件/事实/关系) → 使用 memory_search 按需检索");
+    for (const c of otherCards) {
+      const path = `${c.ts.slice(0, 7)}/${c.id}.md`;
+      indexLines.push(`- **${c.title.slice(0, 50)}** → cards/${path}`);
     }
+
+    // 被截断的卡片数
+    const truncated = active.length - topCards.length;
 
     const indexContent = indexLines.join("\n");
     upsertMemSection(
@@ -1803,7 +1811,8 @@ function regenerateCardIndex(agentId: string): void {
       agentId
     );
     console.log(
-      `[distillChat] 卡片索引已刷新: ${active.length} active → ${indexLines.length} 条目`
+      `[distillChat] 卡片索引已刷新: ${active.length} active → ${indexLines.length} 条目` +
+        (truncated > 0 ? ` (${truncated} 条低分卡片未注入,可通过 memory_search 检索)` : "")
     );
   } catch (e) {
     console.warn("[distillChat] 卡片索引生成失败:", e);

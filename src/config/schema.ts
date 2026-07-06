@@ -415,6 +415,20 @@ const MemorySchema = z.object({
    */
   evergreenPatterns: z.array(z.string()).default(["MEM.md", "MEMORY.md", "patterns.md"]),
 
+  // ── 卡片注入截断 ─────────────────────────────────────────────────────────
+  /**
+   * Chat 卡片索引 (MEM.md "🗂️ 记忆卡片索引") 的最大注入卡片数，默认 50。
+   * 卡片按 score = importance × 2^(-days/halfLife) 排序后取 Top-N。
+   * 被截断的卡片保留在 QMD 搜索索引中，AI 可通过 memory_search 按需检索。
+   */
+  cardInjectionMax: z.number().int().min(5).default(50),
+  /**
+   * Code/Project MEMORY.md 注入的最大条目数，默认 30。
+   * 条目按 score = stability/10 × 2^(-days/halfLife) 排序后取 Top-N。
+   * 被截断的条目保留在 MEMORY.md 文件中，AI 可通过 code_note_read 按需检索。
+   */
+  codeInjectionMaxEntries: z.number().int().min(5).default(30),
+
   // ── MMR 多样性重排（去除冗余结果） ───────────────────────────────────────
   /**
    * 是否启用 MMR（Maximal Marginal Relevance）多样性重排（默认 true）。
