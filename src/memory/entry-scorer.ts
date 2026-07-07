@@ -4,8 +4,14 @@
  * 从 Project 记忆(MEMORY.md)中解析条目,按衰减公式计算分数,返回 Top-N。
  * 公式: score = stability / 10 × 2^(-daysSinceCreation / halfLife)
  *
- * 条目格式: - [YYYY-MM-DD] [s:N] 摘要 → topic.md
- *   - [s:N] 为可选的稳定性标注,缺失时按 topic 默认值
+ * MEMORY.md 实际格式(2026-07 架构迁移后):
+ *   ### 2026-07-06
+ *   - [决策] [s:9] 摘要
+ *     → decisions.md
+ *   - [进度] [s:5] 摘要
+ *     → progress.md
+ *
+ * 日期在 ##/### 标题中,类型在 [类型] 括号中,topic 在缩进续行中。
  */
 
 // ── 按 topic 差异化的半衰期(天) ────────────────────────────────────────────
@@ -33,10 +39,26 @@ const TOPIC_DEFAULT_STABILITY: Record<string, number> = {
 
 const DEFAULT_STABILITY = 5;
 
+// ── 类型标记 → topic 映射 ──────────────────────────────────────────────────
+
+/** [类型] 方括号中的中文标签到标准 topic 名的映射 */
+const TYPE_TO_TOPIC: Record<string, string> = {
+  "决策": "decisions",
+  "进度": "progress",
+  "问题": "bugs",
+  "探讨": "decisions",
+  "约束": "constraints",
+  "架构": "architecture",
+  "decision": "decisions",
+  "progress": "progress",
+  "bug": "bugs",
+  "constraint": "constraints",
+};
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ScoredEntry {
-  /** 原始行 */
+  /** 原始行(条目首行) */
   line: string;
   /** 稳定性(1-10) */
   stability: number;
@@ -46,28 +68,48 @@ export interface ScoredEntry {
   score: number;
 }
 
+/** 解析过程中的原始条目(未评分) */
+interface RawEntry {
+  dateStr: string;
+  typeTag: string;
+  stabilityStr?: string | undefined;
+  summary: string;
+  topicFile?: string | undefined;
+  firstLine: string;
+}
+
 // ── Regex ────────────────────────────────────────────────────────────────────
 
-/**
- * 匹配 MEMORY.md 条目:
- * - [YYYY-MM-DD] [s:N] 摘要 → topic.md
- * - [YYYY-MM-DD] 摘要 → topic.md  (无 stability 标注)
- * - [YYYY-MM-DD] [s:N] 摘要       (无 topic 指向)
- */
-const ENTRY_RE =
-  /^- \[(\d{4}-\d{2}-\d{2})\]\s*(?:\[s:(\d+)\]\s*)?(.+?)(?:\s*→\s*(\S+\.md))?$/gm;
+/** 匹配日期分区标题: "### 2026-07-06" 或 "### 2026-07" */
+const DATE_HEADING_RE = /^#{2,3}\s+(\d{4}-\d{2}(?:-\d{2})?)\s*$/;
+
+/** 匹配条目首行: "- [类型] [s:N] 摘要" */
+const ENTRY_LINE_RE = /^- \[(\S+?)\]\s*(?:\[s:(\d+)\]\s*)?(.+)$/;
+
+/** 匹配续行: "  → topic.md" 或 "  → topic.md (注释)" */
+const CONTINUATION_RE = /^\s+→\s+(\S+\.md)/;
 
 // ── Topic 推断 ──────────────────────────────────────────────────────────────
 
-/** 从条目摘要或 topic 文件名推断 topic 类型 */
-function inferTopic(line: string, topicFile?: string): string {
+/**
+ * 从类型标签、摘要文本、topic 文件名推断标准 topic 名。
+ * 优先级: topicFile basename > typeTag 映射 > 摘要关键词
+ */
+function inferTopic(typeTag: string, summary: string, topicFile?: string): string {
+  // 1. topic 文件名直接映射
   if (topicFile) {
     const base = topicFile.replace(/\.md$/, "").toLowerCase();
     if (TOPIC_HALF_LIFE[base] !== undefined) return base;
   }
 
-  // 从分区标题/关键词推断
-  const lower = line.toLowerCase();
+  // 2. 类型标签直接映射
+  if (typeTag) {
+    const mapped = TYPE_TO_TOPIC[typeTag];
+    if (mapped && TOPIC_HALF_LIFE[mapped] !== undefined) return mapped;
+  }
+
+  // 3. 摘要关键词 fallback
+  const lower = summary.toLowerCase();
   if (lower.includes("约束") || lower.includes("constraint")) return "constraints";
   if (lower.includes("架构") || lower.includes("architect")) return "architecture";
   if (lower.includes("决策") || lower.includes("decision")) return "decisions";
@@ -77,58 +119,115 @@ function inferTopic(line: string, topicFile?: string): string {
   return "*";
 }
 
+// ── 逐行解析 ────────────────────────────────────────────────────────────────
+
+/**
+ * 从 MEMORY.md 文本逐行解析出原始条目列表(不评分)。
+ * 日期从 `### YYYY-MM-DD` 标题读取,条目首行 `- [类型] [s:N] 摘要`,
+ * 续行 `  → topic.md`。
+ */
+function parseRawEntries(memoryContent: string): RawEntry[] {
+  const lines = memoryContent.split("\n");
+  const entries: RawEntry[] = [];
+  let currentDate = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+
+    // 日期标题
+    const dateMatch = trimmed.match(DATE_HEADING_RE);
+    if (dateMatch) {
+      currentDate = dateMatch[1]!;
+      // 若只有 YYYY-MM,补齐为当月 1 号
+      if (currentDate.length === 7) {
+        currentDate += "-01";
+      }
+      continue;
+    }
+
+    // 跳过空日期区段(文件开头的分区占位符 `## ⛔ 约束` 不包含日期)
+    if (!currentDate) continue;
+
+    // 条目首行: "- [类型] [s:N] 摘要"
+    const entryMatch = trimmed.match(ENTRY_LINE_RE);
+    if (entryMatch) {
+      const typeTag = entryMatch[1]!;
+      const stabilityStr = entryMatch[2];
+      const summary = entryMatch[3]!.trim();
+
+      // 检查下一行是否为续行
+      let topicFile: string | undefined;
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1]!;
+        const contMatch = nextLine.match(CONTINUATION_RE);
+        if (contMatch) {
+          topicFile = contMatch[1];
+        }
+      }
+
+      entries.push({
+        dateStr: currentDate,
+        typeTag,
+        stabilityStr,
+        summary,
+        topicFile,
+        firstLine: trimmed,
+      });
+    }
+  }
+
+  return entries;
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * 解析 MEMORY.md 全文,为每个条目计算衰减分数。
  */
 export function scoreEntries(memoryContent: string, now: Date = new Date()): ScoredEntry[] {
-  const entries: ScoredEntry[] = [];
-  const regex = new RegExp(ENTRY_RE.source, "gm");
+  const rawEntries = parseRawEntries(memoryContent);
+  const scored: ScoredEntry[] = [];
 
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(memoryContent)) !== null) {
-    const dateStr = match[1]!;
-    const stabilityStr = match[2];
-    const summary = match[3]!;
-    const topicFile = match[4];
-
+  for (const raw of rawEntries) {
     // 解析日期
-    const ts = new Date(dateStr);
+    const ts = new Date(raw.dateStr);
     if (isNaN(ts.getTime())) continue;
     const daysSince = Math.max(0, (now.getTime() - ts.getTime()) / (1000 * 60 * 60 * 24));
 
+    // 推断 topic
+    const topic = inferTopic(raw.typeTag, raw.summary, raw.topicFile);
+
     // 解析 stability
     let stability: number;
-    if (stabilityStr) {
-      stability = Math.min(10, Math.max(1, parseInt(stabilityStr, 10) || DEFAULT_STABILITY));
+    if (raw.stabilityStr) {
+      stability = Math.min(10, Math.max(1, parseInt(raw.stabilityStr, 10) || DEFAULT_STABILITY));
     } else {
-      const topic = inferTopic(summary, topicFile);
       stability = TOPIC_DEFAULT_STABILITY[topic] ?? DEFAULT_STABILITY;
     }
 
     // 查半衰期
-    const topic = inferTopic(summary, topicFile);
     const halfLife = TOPIC_HALF_LIFE[topic] ?? DEFAULT_HALF_LIFE;
 
     // 计算分数
     const decay = Math.pow(2, -daysSince / halfLife);
     const score = (stability / 10) * decay;
 
-    entries.push({
-      line: match[0].trim(),
+    scored.push({
+      line: raw.firstLine,
       stability,
       daysSince,
       score,
     });
   }
 
-  return entries;
+  return scored;
 }
 
 /**
  * 对 MEMORY.md 内容做评分+截断,返回 Top-N 的条目文本。
- * 保持原分区结构:先按分区拆分,每个分区内条目独立评分排序,最后拼接。
+ * 保持原分区结构:日期标题 + 分区标题保留,低分条目行被移除。
+ * 被保留条目的续行(→ topic.md)一并保留,被移除条目的续行一并移除。
  */
 export function injectScoredEntries(
   memoryContent: string,
@@ -141,36 +240,63 @@ export function injectScoredEntries(
     return memoryContent; // 无需截断
   }
 
-  // 按 score 排序,取 Top-N
+  // 按 score 降序,取 Top-N
   entries.sort((a, b) => b.score - a.score);
   const topLines = new Set(entries.slice(0, maxEntries).map((e) => e.line));
 
-  // 保持原结构和分区标题
+  // 重建输出,保持原结构
   const lines = memoryContent.split("\n");
   const result: string[] = [];
-  let kept = 0;
   let truncated = 0;
+  let inKeptEntry = false; // 当前是否在保留条目的续行区域
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
     const trimmed = line.trim();
-    // 分区标题(## xxx) 或空行保留
-    if (trimmed.startsWith("## ") || trimmed === "") {
+
+    // ── 日期标题(### YYYY-MM-DD) —— 必须优先于泛用 ## 检查 ──
+    if (DATE_HEADING_RE.test(trimmed)) {
       result.push(line);
+      inKeptEntry = false;
       continue;
     }
-    // 条目行:检查是否在 Top-N
-    if (trimmed.startsWith("- [20")) {
+
+    // ── 分区标题 / 注释 / 空行 / 引用 —— 无条件保留 ──
+    if (
+      trimmed.startsWith("##") ||
+      trimmed.startsWith("<!--") ||
+      trimmed === "" ||
+      trimmed.startsWith("> ")
+    ) {
+      result.push(line);
+      inKeptEntry = false;
+      continue;
+    }
+
+    // ── 条目首行: "- [类型] [s:N] 摘要" ──
+    const entryMatch = trimmed.match(ENTRY_LINE_RE);
+    if (entryMatch) {
       if (topLines.has(trimmed)) {
         result.push(line);
-        kept++;
+        inKeptEntry = true;
       } else {
         truncated++;
-        continue;
+        inKeptEntry = false;
       }
-    } else {
-      // 非条目行(如注释、说明)保留
-      result.push(line);
+      continue;
     }
+
+    // ── 续行: "  → topic.md" (用原始行检查,trimmed 会去掉前导空格) ──
+    if (CONTINUATION_RE.test(line)) {
+      if (inKeptEntry) {
+        result.push(line);
+      }
+      // 被截断条目的续行静默跳过
+      continue;
+    }
+
+    // ── 其他行(文件头注释等)保留 ──
+    result.push(line);
   }
 
   if (truncated > 0) {
