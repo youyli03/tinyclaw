@@ -115,7 +115,7 @@ export function topicFilesList(agentId: string, project: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => /\.md$/.test(f) && f !== "MEMORY.md")
+    .filter((f) => /\.md$/.test(f) && f !== "MEMORY.md" && !/^20\d\d-\d\d\.md$/.test(f))
     .sort()
     .map((f) => path.join(dir, f));
 }

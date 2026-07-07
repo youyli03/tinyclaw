@@ -414,7 +414,7 @@ export class AgentManager {
     return path.join(this.codeSessionsDir(agentId), month, `${day}.md`);
   }
 
-  /** 指定项目的笔记文件路径(蒸馏等非结构化内容)（格式：<project>/<YYYY-MM>.md） */
+  /** 指定项目的笔记文件路径(蒸馏等非结构化内容)（格式：<project>/NOTES.md） */
   codeProjectNotesPath(agentId: string, project: string, _date?: Date): string {
     return notesPath(agentId, project);
   }

@@ -1300,7 +1300,7 @@ export async function distillCodeTurnToNotes(
     const header = `### ${dateStr} ${timeStr}  [workdir: ${codeWorkdir}]`;
     const entry = `\n${header}\n\n${notes}\n`;
 
-    // 1. 写到 projects/slug/YYYY-MM.md（按项目归档）
+    // 1. 写到 projects/slug/NOTES.md（按项目归档）
     const slug = pathToProjectSlug(codeWorkdir);
     const notesPath = agentManager.codeProjectNotesPath(agentId, slug);
     mkdirSync(dirname(notesPath), { recursive: true });
