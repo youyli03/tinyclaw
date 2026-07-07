@@ -654,6 +654,8 @@ export interface AgentRunOptions {
    * 供 restart 后续接已有 tool_result 时使用，避免额外消耗 premium request。
    */
   continueAsAgentRound?: boolean;
+  /** 当前 connector 的 botId(从 main.ts 透传,供工具自动推断输出通道) */
+  botId?: string;
 }
 
 export interface AgentRunResult {
@@ -1444,6 +1446,7 @@ export async function runAgent(
           sessionId: session.sessionId,
           mode: isCodeMode ? "code" : "chat",
           agentId: session.agentId,
+          ...(opts.botId !== undefined ? { botId: opts.botId } : {}),
           masterSession: session,
           ...(session.currentAgentTaskId ? { agentTaskId: session.currentAgentTaskId } : {}),
           ...(!textMode && call.callId ? { currentCallId: call.callId } : {}), // function calling 模式下注入 callId，供 restart_tool 等在 process.exit 前写 tool result

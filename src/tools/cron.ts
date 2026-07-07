@@ -102,6 +102,11 @@ registerTool({
             enum: ["c2c", "group", "guild", "dm"],
             description: "消息类型（默认 c2c）",
           },
+          botId: {
+            type: "string",
+            description:
+              "(可选)指定使用哪个 QQBot connector。对应 config.toml [channels.qqbots] 中的 key(如 \"main\"/\"chat\")。多 QQBot 部署时用于指定由哪个 Bot 推送定时结果。不填则自动从当前调用 session 推断。",
+          },
           model: {
             type: "string",
             description:
@@ -167,6 +172,7 @@ registerTool({
         sessionId,
         peerId,
         msgType,
+        botId: args["botId"] ? String(args["botId"]) : ctx?.botId,
         notify:
           (args["notify"] as "always" | "on_change" | "on_error" | "never" | "llm") ?? "always",
       },

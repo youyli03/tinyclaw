@@ -48,7 +48,7 @@ interface PendingInput {
 export class QQBotConnector implements Connector {
   private handler: ((msg: InboundMessage) => Promise<string>) | null = null;
   private abortController: AbortController | null = null;
-  private readonly botId: string;
+  readonly botId: string;
   private readonly botCfg: QQBotConfig;
   private readonly pendingMFAMap = new Map<string, PendingMFA>();
   private readonly pendingInputMap = new Map<string, PendingInput>();

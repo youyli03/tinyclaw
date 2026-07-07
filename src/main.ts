@@ -722,6 +722,7 @@ async function main(): Promise<void> {
     };
 
     const opts: AgentRunOptions = {
+      botId: connector.botId,
       onSlaveComplete,
       onProgressNotify,
       onNotify: async (message: string) => {

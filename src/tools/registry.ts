@@ -26,6 +26,8 @@ export interface ToolContext {
   mode?: string;
   /** 当前 Agent 的 ID */
   agentId?: string;
+  /** 当前 connector 的 botId(供 cron_add 等工具自动推断输出通道) */
+  botId?: string;
   /** 当前 Master Session（供 agent_fork 读取上下文快照） */
   masterSession?: Session;
   /**
