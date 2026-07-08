@@ -614,19 +614,22 @@ async function handleRequest(
     }
   }
 
-  // ── 路由到 QQBot（如果 sessionId 编码了 QQ 频道信息）────────────────────────
-  if (connector && sessionId.startsWith("qqbot:")) {
-    // 格式：qqbot:<type>:<peerId>
+  // ── 路由到 QQBot(如果 sessionId 编码了 QQ 频道信息)────────────────────────
+  if (sessionId.startsWith("qqbot:")) {
+    // 格式:qqbot:<type>:<peerId>
     // type 可为 c2c | group | guild | dm
-    const withoutPrefix = sessionId.slice("qqbot:".length);
-    const colonIdx = withoutPrefix.indexOf(":");
-    if (colonIdx !== -1) {
-      const msgType = withoutPrefix.slice(0, colonIdx) as InboundMessage["type"];
-      const peerId = withoutPrefix.slice(colonIdx + 1);
-      try {
-        await connector.send(peerId, msgType, fullContent);
-      } catch (e) {
-        console.error("[ipc] QQBot route failed:", e);
+    const targetConnector = resolveConnector();
+    if (targetConnector) {
+      const withoutPrefix = sessionId.slice("qqbot:".length);
+      const colonIdx = withoutPrefix.indexOf(":");
+      if (colonIdx !== -1) {
+        const msgType = withoutPrefix.slice(0, colonIdx) as InboundMessage["type"];
+        const peerId = withoutPrefix.slice(colonIdx + 1);
+        try {
+          await targetConnector.send(peerId, msgType, fullContent);
+        } catch (e) {
+          console.error("[ipc] QQBot route failed:", e);
+        }
       }
     }
   }

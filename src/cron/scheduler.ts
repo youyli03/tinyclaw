@@ -58,7 +58,6 @@ function isInTimeRange(job: CronJob): boolean {
 // ── 调度器 ────────────────────────────────────────────────────────────────────
 
 class CronScheduler {
-  private connector: Connector | null = null;
   /** jobId → timer handle */
   private timers = new Map<
     string,
@@ -74,7 +73,7 @@ class CronScheduler {
   private pendingRuns = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
 
   async start(connector: Connector | null): Promise<void> {
-    this.connector = connector;
+    void connector; // 保留参数以兼容调用方,connector 实际通过 runtime-bridge 注入
     await this.ensureWorker();
     const jobs = loadJobs();
     for (const job of jobs) {

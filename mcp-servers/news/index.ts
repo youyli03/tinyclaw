@@ -272,12 +272,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词（如 NVDA、美光、芯片）",
+            description: "搜索关键词(如 NVDA、美光、芯片)",
           },
+          days: {
+            type: "number",
+            description: "搜索最近 N 天数据,默认 7",
+          },
+          limit: {
+            type: "number",
+            description: "最多返回结果数,默认 30",
+          },
+          platforms: {
+            type: "string",
+            description: "平台过滤,逗号分隔(如 '华尔街见闻,财联社热门'),不填则搜索所有平台",
+          },
+        },
+        required: ["query"],
+      },
+    },
     {
       name: "fetch_newsnow",
       description:
-        "从 NewsNow 公共 API 抓取中文财经热榜（华尔街见闻/财联社/知乎/微博等），\n" +
+        "从 NewsNow 公共 API 抓取中文财经热榜(华尔街见闻/财联社/知乎/微博等),\n" +
         "存入 ~/.tinyclaw/newsnow/YYYY-MM-DD.db。\n" +
         "抓取后即可用 search_trendradar 检索。每次约需 10-30 秒。",
       inputSchema: {
@@ -285,30 +301,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           platforms: {
             type: "string",
-            description: "平台 ID 逗号分隔（如 wallstreetcn-hot,cls-hot），不填则抓取全部 11 个平台",
+            description: "平台 ID 逗号分隔(如 wallstreetcn-hot,cls-hot),不填则抓取全部 11 个平台",
           },
           date: {
             type: "string",
-            description: "写入日期 YYYY-MM-DD（默认今天）",
+            description: "写入日期 YYYY-MM-DD(默认今天)",
           },
         },
         required: [],
-      },
-    },
-          days: {
-            type: "number",
-            description: "搜索最近 N 天数据，默认 7",
-          },
-          limit: {
-            type: "number",
-            description: "最多返回结果数，默认 30",
-          },
-          platforms: {
-            type: "string",
-            description: "平台过滤，逗号分隔（如 '华尔街见闻,财联社热门'），不填则搜索所有平台",
-          },
-        },
-        required: ["query"],
       },
     },
   ],
@@ -492,6 +492,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           return err(`search_trendradar 脚本错误:${result.stderr}`);
         }
 
+        let parsed: { results: unknown[]; count: number; error?: string };
+        try {
+          parsed = JSON.parse(result.stdout ?? "{}");
+        } catch {
+          return err(`JSON 解析失败: ${result.stdout?.slice(0, 200)}`);
+        }
+
+        if (parsed.error) return err(parsed.error);
+        return ok(parsed);
+      }
+
       // ── fetch_newsnow ─────────────────────────────────────────────────
       case "fetch_newsnow": {
         const fetchPlatforms = String(args["platforms"] ?? "").trim();
@@ -520,19 +531,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         return ok({
           ...fetchParsed,
-          message: `已抓取 ${fetchParsed.platforms} 个平台，插入 ${fetchParsed.inserted} 条热榜数据`,
+          message: `已抓取 ${fetchParsed.platforms} 个平台,插入 ${fetchParsed.inserted} 条热榜数据`,
         });
-      }
-
-        let parsed: { results: unknown[]; count: number; error?: string };
-        try {
-          parsed = JSON.parse(result.stdout ?? "{}");
-        } catch {
-          return err(`JSON 解析失败: ${result.stdout?.slice(0, 200)}`);
-        }
-
-        if (parsed.error) return err(parsed.error);
-        return ok(parsed);
       }
 
       default:
