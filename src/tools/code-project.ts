@@ -18,6 +18,7 @@ import {
   isValidProject,
   listAllProjects,
 } from "../core/project-router.js";
+import { ensureProjectMemory } from "../core/project-memory.js";
 
 // ── project_switch ───────────────────────────────────────────────────────────
 
@@ -63,18 +64,15 @@ registerTool({
       slug = project;
     }
 
-    // 2. 校验项目是否有效
+    // 2. 校验项目是否有效；不存在则尝试自动初始化
     if (!isValidProject(agentId, slug)) {
-      // 尝试反解为路径后再试
       const wd = slugToWorkdir(slug);
-      if (!wd) {
-        return `错误:项目 "${slug}" 不存在(metadata.json 未找到)。可用 project_list 查看所有项目。`;
+      if (wd) {
+        // 目录存在 → 自动初始化项目数据结构
+        ensureProjectMemory(agentId, slug, { workdir: wd });
+      } else {
+        return `错误:项目 "${slug}" 不存在(目录未找到)。可用 project_list 查看所有项目。`;
       }
-      const altSlug = workdirToSlug(wd);
-      if (!isValidProject(agentId, altSlug)) {
-        return `错误:项目 "${slug}" 不存在。可用 project_list 查看所有项目。`;
-      }
-      slug = altSlug;
     }
 
     // 3. 读取当前绑定
