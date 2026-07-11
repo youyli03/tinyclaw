@@ -177,7 +177,6 @@ class CronScheduler {
 
     const handle = setInterval(() => {
       if (!isInTimeRange(job)) {
-        const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         // out of timeRange 静默跳过，不打印日志
         return;
       }
@@ -216,13 +215,11 @@ class CronScheduler {
 
   private async fire(job: CronJob): Promise<void> {
     if (this.running.has(job.id)) {
-      const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-      console.warn(`[${ts}] [cron] Job ${job.id} skipped: previous run still in progress`);
+      console.warn(`[cron] Job ${job.id} skipped: previous run still in progress`);
       return;
     }
-    const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     console.log(
-      `[${ts}] [cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`
+      `[cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`
     );
     this.running.add(job.id);
     try {

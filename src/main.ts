@@ -8,12 +8,12 @@
  * 4. 监听信号，优雅退出
  */
 
-// ── 全局日志时间戳注入（daemon 进程，在所有 import 之前执行）────────────────
-{
-  // 若被 supervisor spawn(设置了 TINYCLAW_IS_CHILD),则跳过日志初始化(避免双时间戳)
-  if (!process.env.TINYCLAW_IS_CHILD) {
-    import("./utils/logger.js").then(({ initGlobalLogger }) => initGlobalLogger());
-  }
+// ── 全局日志初始化(同步)────────────────
+import { initGlobalLogger } from "./utils/logger.js";
+
+// 若被 supervisor spawn(设置了 TINYCLAW_IS_CHILD),则跳过日志初始化(避免双时间戳)
+if (!process.env.TINYCLAW_IS_CHILD) {
+  initGlobalLogger();
 }
 
 import * as fs from "node:fs";

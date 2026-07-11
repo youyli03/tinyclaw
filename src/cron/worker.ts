@@ -1,3 +1,6 @@
+import { initGlobalLogger } from "../utils/logger.js";
+initGlobalLogger();
+
 import { loadConfig } from "../config/loader.js";
 import { llmRegistry } from "../llm/registry.js";
 import { initLLMConcurrency } from "../llm/concurrency.js";
