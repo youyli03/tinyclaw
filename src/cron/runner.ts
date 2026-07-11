@@ -24,6 +24,9 @@ import type { AnyLLMClient } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { executeTool } from "../tools/registry.js";
 import type { ToolContext } from "../tools/registry.js";
+import { createLogger, setLogLevel, getLogLevel, type LogLevel } from "../utils/logger.js";
+
+const log = createLogger("cron");
 
 // ── Cron 专用 system prompt（约束 agent 不递归创建任务） ──────────────────────
 
@@ -265,6 +268,30 @@ async function runPipelineJob(
 
 export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Promise<void> {
   const now = new Date().toISOString();
+
+  // ── 按 job.logLevel 控制日志输出量 ────────────────────────────────────
+  const prevLevel = getLogLevel();
+  const jobLevel = job.logLevel ?? "normal";
+  if (jobLevel === "silent") {
+    setLogLevel("error"); // 仅 error 可见
+  } else if (jobLevel === "quiet") {
+    setLogLevel("warn"); // 仅 warn + error 可见
+  }
+  // normal: 保持当前 level 不变
+
+  try {
+    await _runJob(job, bridge, now);
+  } finally {
+    // 恢复日志级别(即使 job 抛异常也要恢复)
+    setLogLevel(prevLevel);
+  }
+}
+
+async function _runJob(
+  job: CronJob,
+  bridge: CronRuntimeBridge | null,
+  now: string
+): Promise<void> {
 
   // Pipeline 模式强制使用 stateful session（步骤间需共享上下文）
   const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;

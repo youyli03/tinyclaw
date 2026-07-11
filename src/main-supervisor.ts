@@ -10,15 +10,23 @@
  * PID 文件写入此 supervisor 自身的 PID，使 `tinyclaw restart` 能正确终止整个进程树。
  */
 
-// ── 全局日志时间戳注入 ────────────────────────────────────────────────────────
+import { createLogger } from "./utils/logger.js";
+
+const log = createLogger("supervisor");
+
+// ── 全局 console → Logger 桥接(仅在 supervisor 进程内生效)─────────────────
 {
   const _log = console.log.bind(console);
   const _err = console.error.bind(console);
   const _warn = console.warn.bind(console);
-  const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
-  console.log = (...a) => _log(`[${ts()}]`, ...a);
-  console.error = (...a) => _err(`[${ts()}]`, ...a);
-  console.warn = (...a) => _warn(`[${ts()}]`, ...a);
+  const _info = console.info.bind(console);
+  const _debug = console.debug.bind(console);
+  (console as unknown as Record<string, unknown>)["_orig"] = { log: _log, error: _err, warn: _warn, info: _info, debug: _debug };
+  console.log = (...a: unknown[]) => log.info(a.map(String).join(" "));
+  console.error = (...a: unknown[]) => log.error(a.map(String).join(" "));
+  console.warn = (...a: unknown[]) => log.warn(a.map(String).join(" "));
+  console.info = (...a: unknown[]) => log.info(a.map(String).join(" "));
+  console.debug = (...a: unknown[]) => log.debug(a.map(String).join(" "));
 }
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -156,7 +164,7 @@ function startChild(): void {
 
   child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, TINYCLAW_IS_CHILD: "1" },
     cwd: path.dirname(path.dirname(MAIN_SCRIPT)), // src/ → project root
   });
 

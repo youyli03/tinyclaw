@@ -130,6 +130,14 @@ export const CronJobSchema = z.object({
   steps: z.array(PipelineStepSchema).optional(),
 
   /**
+   * 此 cron job 的日志级别:
+   * - "normal" (默认):记录每次运行的完整日志(启动/步骤/结果/推送)
+   * - "quiet":仅记录错误和最终结果(中间步骤日志静默)
+   * - "silent":完全不输出日志(但 notify=on_error 的推送不受此限制)
+   */
+  logLevel: z.enum(["normal", "quiet", "silent"]).default("normal").optional(),
+
+  /**
    * Pipeline 模式每次运行前是否清空 session 历史(默认 true,即未设置时视为 true)。
    *
    * - 未设置或 true:每次运行前删除 session JSONL,避免跨 run 的历史消息(含旧数据)污染上下文

@@ -10,18 +10,10 @@
 
 // ── 全局日志时间戳注入（daemon 进程，在所有 import 之前执行）────────────────
 {
-  const _log = console.log.bind(console);
-  const _err = console.error.bind(console);
-  const _warn = console.warn.bind(console);
-  const ts = () => new Date().toISOString().replace("T", " ").slice(0, 19);
-  console.log = (...a) => _log(`[${ts()}]`, ...a);
-  console.error = (...a) => {
-    _err(`[${ts()}]`, ...a);
-    if (a.some((x) => String(x).includes("longer than the context"))) {
-      _err("[ERR STACK]", new Error().stack?.split("\n").slice(2, 6).join(" | "));
-    }
-  };
-  console.warn = (...a) => _warn(`[${ts()}]`, ...a);
+  // 若被 supervisor spawn(设置了 TINYCLAW_IS_CHILD),则跳过日志初始化(避免双时间戳)
+  if (!process.env.TINYCLAW_IS_CHILD) {
+    import("./utils/logger.js").then(({ initGlobalLogger }) => initGlobalLogger());
+  }
 }
 
 import * as fs from "node:fs";

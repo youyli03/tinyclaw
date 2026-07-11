@@ -670,21 +670,40 @@ export interface AgentRunResult {
  */
 /** 生成工具调用的单行摘要，用于日志 */
 function toolCallSummary(name: string, args: Record<string, unknown>): string {
+  const MAX_SUMMARY_LEN = 120;
+
+  // 特殊工具:展示最有价值的参数
   if (name === "exec_shell") {
     const cmd = String(args["command"] ?? "").replace(/\n/g, " ");
-    return `${name}: ${cmd.slice(0, 80)}${cmd.length > 80 ? "…" : ""}`;
+    return `${name}: "${cmd.slice(0, 80)}${cmd.length > 80 ? "…" : ""}"`;
   }
-  if (
-    name === "write_file" ||
-    name === "read_file" ||
-    name === "delete_file" ||
-    name === "edit_file"
-  ) {
-    return `${name}: ${args["path"] ?? ""}`;
+  if (name === "write_file" || name === "read_file" || name === "delete_file" || name === "edit_file") {
+    return `${name}: ${args["path"] ?? "?"}`;
   }
-  if (name === "cron_add") return `${name}: ${args["name"] ?? ""} (${args["schedule"] ?? ""})`;
-  if (name === "cron_remove") return `${name}: ${args["id"] ?? ""}`;
-  return name;
+  if (name === "cron_add") {
+    const desc = String(args["message"] ?? "").slice(0, 30);
+    return `${name}: type=${args["type"]} msg="${desc}"`;
+  }
+  if (name === "cron_remove") return `${name}: id=${args["id"] ?? "?"}`;
+  if (name === "session_send") {
+    const msg = String(args["message"] ?? "").slice(0, 30);
+    return `${name}: target=${(args["target_session_id"] ?? "?").toString().slice(0, 12)} "${msg}"`;
+  }
+  if (name === "project_switch") {
+    const task = String(args["task"] ?? "").slice(0, 30);
+    return `${name}: → ${args["project"] ?? "?"} "${task}"`;
+  }
+
+  // 通用:取前 3 个参数,截断值
+  const keys = Object.keys(args).filter((k) => k !== "_meta" && k !== "requestId");
+  if (keys.length === 0) return name;
+
+  const parts = keys.slice(0, 3).map((k) => {
+    const v = String(args[k] ?? "").replace(/\n/g, " ");
+    return `${k}=${v.slice(0, 20)}${v.length > 20 ? "…" : ""}`;
+  });
+  const summary = `${name}: ${parts.join(" ")}`;
+  return summary.length > MAX_SUMMARY_LEN ? summary.slice(0, MAX_SUMMARY_LEN - 3) + "..." : summary;
 }
 
 /**

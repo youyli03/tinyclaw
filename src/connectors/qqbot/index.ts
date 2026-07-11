@@ -14,8 +14,6 @@ import { loadConfig, loadSecretsConfig } from "../../config/loader.js";
 import { MFAError } from "../../auth/mfa.js";
 import type { QQBotConfig } from "../../config/schema.js";
 
-const ts = () => new Date().toLocaleTimeString("zh-CN", { hour12: false });
-
 /**
  * 解析 clientSecret 中的 $KEY 占位符，从 secrets.toml 读取真实值。
  * 若不是 $KEY 格式则原样返回（明文）。
@@ -155,14 +153,14 @@ export class QQBotConnector implements Connector {
         }
       },
       onReady: () => {
-        console.log(`[${ts()}] [qqbot:${this.botId}] Ready`);
+        console.log(`[qqbot:${this.botId}] Ready`);
         this.onReady?.();
       },
       log: {
-        info: (m) => console.log(`[${ts()}] [${this.botId}] ${m}`),
-        error: (m) => console.error(`[${ts()}] [${this.botId}] ${m}`),
+        info: (m) => console.log(`[qqbot:${this.botId}] ${m}`),
+        error: (m) => console.error(`[qqbot:${this.botId}] ${m}`),
         ...(process.env["QQBOT_DEBUG"]
-          ? { debug: (m: string) => console.debug(`[${ts()}] [${this.botId}] ${m}`) }
+          ? { debug: (m: string) => console.debug(`[qqbot:${this.botId}] ${m}`) }
           : {}),
       },
     });
