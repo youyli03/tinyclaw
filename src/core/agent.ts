@@ -1301,26 +1301,30 @@ export async function runAgent(
         formatRetryPending = false;
         break;
       }
-      // 判断是否疑似工具调用尝试（以 { 开头，或含常见工具调用关键词）
-      const trimmedContent = content.trim();
-      const looksLikeToolAttempt =
-        trimmedContent.startsWith("{") ||
+      // textMode=true(不支持 function calling):检测疑似工具调用尝试
+      // textMode=false(支持 function calling):不做格式检测,
+      // 纠错注入的 <tool_call> XML 指令会误导支持 native tool_calls 的模型输出 XML 文本
+      if (textMode) {
+        const trimmedContent = content.trim();
+        const looksLikeToolAttempt =
+          trimmedContent.startsWith("{") ||
         /"(tool|function|exec_shell|tool_call)"\s*:/.test(trimmedContent);
-      if (looksLikeToolAttempt) {
-        console.log(
-          `${logPrefix} ⚠️ 格式错误：无 tool_call（textMode=${textMode}，round=${round}），` +
-            `内容：${trimmedContent.slice(0, 60).replace(/\n/g, " ")}${trimmedContent.length > 60 ? "…" : ""}`
-        );
-        console.log(`${logPrefix} ⚠️ 注入格式纠错提示，重试本轮`);
-        session.addAssistantMessage(content);
-        session.addSystemMessage(
-          "[格式纠错] 工具调用格式不正确。请严格使用以下格式，整条回复只包含此块，不附加任何其他文字：\n" +
-            "<tool_call>\n" +
-            '{"name": "工具名", "args": {"参数名": "值"}}\n' +
-            "</tool_call>"
-        );
-        formatRetryPending = true;
-        continue;
+        if (looksLikeToolAttempt) {
+          console.log(
+            `${logPrefix} ⚠️ 格式错误:无 tool_call(textMode=${textMode},round=${round}),` +
+              `内容:${trimmedContent.slice(0, 60).replace(/\n/g, " ")}${trimmedContent.length > 60 ? "..." : ""}`
+          );
+          console.log(`${logPrefix} ⚠️ 注入格式纠错提示,重试本轮`);
+          session.addAssistantMessage(content);
+          session.addSystemMessage(
+            "[格式纠错] 工具调用格式不正确。请严格使用以下格式,整条回复只包含此块,不附加任何其他文字:\n" +
+              "<tool_call>\n" +
+              '{"name": "工具名", "args": {"参数名": "值"}}\n' +
+              "</tool_call>"
+          );
+          formatRetryPending = true;
+          continue;
+        }
       }
     }
     // 成功解析到工具调用（含纠错后成功）→ 重置纠错标记，后续轮次仍可纠错
