@@ -765,9 +765,14 @@ function parseAndWriteDistillJson(
 ): boolean {
   try {
     let jsonStr = raw.trim();
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1]!.trim();
+    // 剥离 markdown code fence(```json ... ```),兼容各种换行格式
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+    // 若 LLM 没有用 code fence,尝试从第一个 { 开始提取(处理前缀文本)
+    if (!jsonStr.startsWith("{") && !jsonStr.startsWith("[")) {
+      const firstBrace = jsonStr.indexOf("{");
+      const firstBracket = jsonStr.indexOf("[");
+      const start = firstBrace >= 0 && (firstBrace < firstBracket || firstBracket < 0) ? firstBrace : firstBracket;
+      if (start >= 0) jsonStr = jsonStr.slice(start);
     }
 
     const data = JSON.parse(jsonStr);
@@ -1859,8 +1864,18 @@ async function distillChatCompression(toSummarize: ChatMessage[], agentId: strin
     let data: { cards?: unknown[]; mem_updates?: Record<string, string[]> };
     try {
       let jsonStr = raw;
-      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-      if (codeBlockMatch) jsonStr = codeBlockMatch[1]!.trim();
+      // 剥离 markdown code fence,兼容各种换行格式
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+      // 若 LLM 没有用 code fence,尝试从第一个 { 开始提取
+      if (!jsonStr.startsWith("{") && !jsonStr.startsWith("[")) {
+        const firstBrace = jsonStr.indexOf("{");
+        const firstBracket = jsonStr.indexOf("[");
+        const start =
+          firstBrace >= 0 && (firstBrace < firstBracket || firstBracket < 0)
+            ? firstBrace
+            : firstBracket;
+        if (start >= 0) jsonStr = jsonStr.slice(start);
+      }
       data = JSON.parse(jsonStr);
     } catch {
       console.warn("[distillChat] JSON 解析失败:", raw.slice(0, 200));
