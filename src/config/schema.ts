@@ -133,6 +133,11 @@ const BackendRoleSchema = z.object({
   maxContextWindow: z.number().int().positive().optional(),
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
+  /** 模型支持的最大 thinking token 预算。
+   *  仅在 agent 通过 ChatOptions.enableThinking 显式开启时才发送 thinking 参数。
+   *  例如 4000 = 模型最多用 4000 token 做内部推理。
+   *  与 disableThinking 互斥:设置了 thinkingBudget 则 disableThinking 被忽略。 */
+  thinkingBudget: z.number().int().positive().optional(),
   /**
    * 历史视觉消息保留数量:发送 API 请求时保留最近 N 条含图消息(含 read_image 注入的图片),
    * 超出部分降级为"[历史图片: path]"文本提示。默认 3。

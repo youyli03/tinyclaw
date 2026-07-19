@@ -168,6 +168,7 @@ export function responsesCompletedToResult(response: OpenAIResponse): ChatResult
 
   const usage = response.usage;
   const result: ChatResult = {
+    reasoningContent: undefined,
     content,
     usage: {
       promptTokens: usage?.input_tokens ?? 0,

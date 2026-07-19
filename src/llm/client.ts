@@ -295,7 +295,12 @@ export interface ResolvedBackend {
    * 非 Copilot 后端不设此字段，不发送 X-Initiator。
    */
   isCopilotProvider?: boolean;
-  /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型） */
+  /** 模型支持的 thinking 最大 token 预算。
+   *  仅在 ChatOptions.enableThinking 为 true 时，client 才会发送
+   *  {thinking: {type: "enabled", budget_tokens: budget}} 给 API。
+   *  undefined = 模型不支持 thinking 或未配置。 */
+  thinkingBudget?: number;
+  /** [保留兼容] 禁用 thinking。设置 thinkingBudget 时此字段被忽略。 */
   disableThinking?: boolean;
   /** 历史视觉消息保留数量,保留最近 N 条含图消息,默认 3 */
   maxHistoryImages?: number;
@@ -336,7 +341,7 @@ export interface OpenAIToolCall {
 export type ChatMessage =
   | { role: "system"; content: string | ContentPart[] }
   | { role: "user"; content: string | ContentPart[] }
-  | { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }
+  | { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[]; reasoning_content?: string }
   | { role: "tool"; tool_call_id: string; content: string };
 
 /**
@@ -347,7 +352,7 @@ export type ChatMessage =
 export type LLMChatMessage =
   | { role: "system"; content: string | ContentPart[] }
   | { role: "user"; content: string | ContentPart[] }
-  | { role: "assistant"; content?: string | ContentPart[]; tool_calls?: OpenAIToolCall[] }
+  | { role: "assistant"; content?: string | ContentPart[]; tool_calls?: OpenAIToolCall[]; reasoning_content?: string }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export function getContentParts(content: string | ContentPart[] | undefined): ContentPart[] {
@@ -419,6 +424,12 @@ export interface ChatOptions {
    */
   includeReasoningInStream?: boolean;
   /**
+   * 是否开启模型 thinking(内部推理)。
+   *  仅在 backend.thinkingBudget 已配置时生效。
+   *  Code 模式默认 true，Chat 模式默认 false。
+   */
+  enableThinking?: boolean;
+  /**
    * 覆盖本轮的 X-Request-Id（UUID）。
    * /retry 命令传入上次失败请求的 requestId，服务端识别相同 ID 不重复计费。
    * 不传时 streamChat/chat 每轮自动生成新 UUID。
@@ -428,6 +439,8 @@ export interface ChatOptions {
 
 export interface ChatResult {
   content: string;
+  /** 模型的内部推理过程(DeepSeek/Claude thinking 等),仅在 enableThinking 时有效 */
+  reasoningContent: string | undefined;
   /** 模型请求执行的工具调用列表（function calling 格式） */
   toolCalls?: ToolCallResult[];
   /** 本次请求消耗的 token 数 */
@@ -886,7 +899,11 @@ export class LLMClient {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             messages: resolved as any,
             ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-            ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
+            ...(opts.enableThinking && this.backend.thinkingBudget
+              ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
+              : this.backend.disableThinking
+                ? { thinking: { type: "disabled" } }
+                : {}),
             ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
             ...(canUseTools
               ? {
@@ -940,7 +957,7 @@ export class LLMClient {
 
     return {
       content: choice.message.content ?? "",
-      ...(toolCalls ? { toolCalls } : {}),
+      reasoningContent: (choice.message as any)?.reasoning_content || undefined,
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
@@ -1042,7 +1059,11 @@ export class LLMClient {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               messages: resolvedForStream as any,
               ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-              ...(this.backend.disableThinking ? { thinking: { type: "disabled" } } : {}),
+              ...(opts.enableThinking && this.backend.thinkingBudget
+              ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
+              : this.backend.disableThinking
+                ? { thinking: { type: "disabled" } }
+                : {}),
               ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
               ...(canUseTools
                 ? {
@@ -1066,6 +1087,7 @@ export class LLMClient {
           );
 
           let fullContent = "";
+          let reasoningContent = "";
           let streamedContent = "";
           let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
           // 聚合流式 tool_calls delta（各 index 独立累积）
@@ -1084,10 +1106,12 @@ export class LLMClient {
               // 文本 delta(兼容 reasoning_content: mimo-v2-omni 等思考模型把内容放在 reasoning_content 里)
               const contentDelta = delta?.content ?? "";
               const reasoningDelta = (delta as any)?.reasoning_content ?? "";
+              // 始终捕获 reasoning_content(内部存储用)
+              if (reasoningDelta) reasoningContent += reasoningDelta;
               const textDelta = contentDelta || reasoningDelta;
               if (textDelta) {
                 fullContent += textDelta;
-                // content 始终推给 onChunk；reasoning_content 仅在显式 opt-in 时推
+                // content 始终推给 onChunk;reasoning_content 仅在显式 opt-in 时推
                 if (contentDelta) {
                   onChunk(contentDelta);
                   streamedContent += contentDelta;
@@ -1174,7 +1198,7 @@ export class LLMClient {
                   }))
               : undefined;
 
-          return { content: streamedContent, ...(toolCalls ? { toolCalls } : {}), usage };
+          return { content: streamedContent, reasoningContent: reasoningContent, ...(toolCalls ? { toolCalls } : {}), usage };
         },
         opts.signal,
         opts._retryHooks,

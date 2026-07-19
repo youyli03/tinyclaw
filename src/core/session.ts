@@ -426,8 +426,12 @@ export class Session {
     this.chatTurnCount++;
   }
 
-  addAssistantMessage(content: string): void {
-    this.messages.push({ role: "assistant", content });
+  addAssistantMessage(content: string, reasoningContent?: string): void {
+    this.messages.push({
+      role: "assistant",
+      content,
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+    });
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
@@ -435,7 +439,7 @@ export class Session {
    * 添加 assistant 消息并附带 tool_calls（function calling 模式专用）。
    * 仅在 textMode=false（模型支持原生 function calling）时调用。
    */
-  addAssistantWithToolCalls(content: string, calls: ToolCallResult[]): void {
+  addAssistantWithToolCalls(content: string, calls: ToolCallResult[], reasoningContent?: string): void {
     const maxArgChars = (() => {
       try {
         return loadConfig().tools.maxToolCallArgChars;
@@ -460,7 +464,12 @@ export class Session {
       })();
       return { id: c.callId, type: "function", function: { name: c.name, arguments: args } };
     });
-    this.messages.push({ role: "assistant", content, tool_calls });
+    this.messages.push({
+      role: "assistant",
+      content,
+      tool_calls,
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+    });
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
@@ -992,6 +1001,7 @@ export class Session {
     if (m.role === "assistant") {
       const base: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
+      if ((m as any).reasoning_content) base["reasoning_content"] = (m as any).reasoning_content;
       if (ts) base["ts"] = ts;
       return JSON.stringify(base);
     }
@@ -1193,6 +1203,11 @@ export class Session {
                 }
               ).tool_calls = validCalls;
             }
+          }
+          // 恢复 reasoning_content(thinking 过程)
+          const reasoningContent = entry["reasoning_content"];
+          if (typeof reasoningContent === "string" && reasoningContent.length > 0) {
+            (msg as any).reasoning_content = reasoningContent;
           }
           messages.push(msg);
         } else if (

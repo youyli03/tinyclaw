@@ -1198,6 +1198,8 @@ export async function runAgent(
               },
             },
             // code 模式：首 chunk 后禁用 idle timeout（长代码生成 token 间隔可 >60s）
+            // code 模式开启 thinking(内部推理),chat 模式不开启
+            ...(isCodeMode ? { enableThinking: true } : {}),
             ...(isCodeMode ? { disableIdleAfterFirstChunk: true } : {}),
             // /retry 命令传入的 requestId override（首轮才有意义）
             ...(round === 0 && opts.turnRequestIdOverride
@@ -1390,7 +1392,7 @@ export async function runAgent(
         }
       }
       finalContent = content;
-      session.addAssistantMessage(finalContent);
+      session.addAssistantMessage(finalContent, _parsed.reasoningContent);
       break;
     }
 
@@ -1400,9 +1402,9 @@ export async function runAgent(
     // 过滤掉 null/undefined（LLM 返回稀疏 index 时可能出现），避免孤立 tool_call_id
     const validToolCalls = toolCalls.filter(Boolean);
     if (!textMode) {
-      session.addAssistantWithToolCalls(content || "", validToolCalls);
+      session.addAssistantWithToolCalls(content || "", validToolCalls, _parsed.reasoningContent);
     } else {
-      session.addAssistantMessage(content || "");
+      session.addAssistantMessage(content || "", _parsed.reasoningContent);
     }
 
     // tool call 伴随的文本内容（如"好的，我来查一下"）也发给用户
@@ -1924,7 +1926,7 @@ export async function runAgent(
           signal: llmAc.signal,
         });
         finalContent = summary.content;
-        session.addAssistantMessage(finalContent);
+        session.addAssistantMessage(finalContent, summary.reasoningContent);
       } catch (err) {
         if (err instanceof Error && (err.name === "AbortError" || err.message.includes("abort"))) {
           break;
@@ -2100,6 +2102,7 @@ interface ToolCall {
 interface ParsedResponse {
   content: string;
   toolCalls?: ToolCall[];
+  reasoningContent: string | undefined;
 }
 
 function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
@@ -2108,6 +2111,7 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
     if (result.toolCalls && result.toolCalls.length > 0) {
       return {
         content: result.content,
+        reasoningContent: result.reasoningContent,
         toolCalls: result.toolCalls.map((tc) => ({
           name: tc.name,
           args: tc.args,
@@ -2115,13 +2119,15 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
         })),
       };
     }
-    return { content: result.content };
+    return { content: result.content,
+        reasoningContent: result.reasoningContent };
   }
 
   // ── 文字模式：从 content 里提取 <tool_call>...</tool_call> 块 ─────────────
   const TAG_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
   const matches = [...result.content.matchAll(TAG_RE)];
-  if (matches.length === 0) return { content: result.content };
+  if (matches.length === 0) return { content: result.content,
+        reasoningContent: result.reasoningContent };
 
   const toolCalls: ToolCall[] = [];
   for (const m of matches) {
@@ -2147,6 +2153,7 @@ function parseResponse(result: ChatResult, textMode = false): ParsedResponse {
   // <tool_call> 块是中间步骤，从内容中去掉，不透传给用户
   const cleanContent = result.content.replace(TAG_RE, "").trim();
   return {
+    reasoningContent: undefined,
     content: cleanContent,
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };

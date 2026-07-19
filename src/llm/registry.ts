@@ -166,7 +166,9 @@ class LLMRegistry {
         ...(role.supportsToolCalls !== undefined
           ? { supportsToolCalls: role.supportsToolCalls }
           : {}),
-        ...(role.disableThinking ? { disableThinking: true } : {}),
+        ...(role.thinkingBudget !== undefined ? { thinkingBudget: role.thinkingBudget }
+          : role.disableThinking ? { disableThinking: true }
+          : {}),
       });
       this.clients.set(name, client);
       // DeepSeek 等非 Copilot provider：手动读取 config 中的 maxContextWindow
