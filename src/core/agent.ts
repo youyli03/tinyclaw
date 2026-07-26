@@ -1849,6 +1849,7 @@ export async function runAgent(
       session.addUserMessage(session._pendingProjectTask);
       if (isCodeMode && session.projectSlug) {
         const pctx = loadProjectContext(session.agentId, session.projectSlug);
+        session.codeWorkdir = pctx.workdir;
         const _codeProvider =
           (() => {
             try {
