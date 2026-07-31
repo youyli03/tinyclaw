@@ -101,7 +101,7 @@ registerCommand({
     }
 
     // ── Project 绑定(Code 模式且已绑定 project 时显示) ──────────────
-    if (session.projectSlug) {
+    if (isCodeMode && session.projectSlug) {
       const { slugToWorkdir, readLock } = await import("../core/project-router.js");
       const wd = slugToWorkdir(session.projectSlug);
       const lock = readLock(session.agentId, session.projectSlug);
