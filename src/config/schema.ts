@@ -133,6 +133,13 @@ const BackendRoleSchema = z.object({
   maxContextWindow: z.number().int().positive().optional(),
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
+  /**
+   * DeepSeek V4 思考强度控制(low/high/max),替代旧的 budget_tokens。
+   * 设置后 client 发送 {reasoning_effort: X} + {thinking:{type:"enabled"}}。
+   * 与 thinkingBudget 互斥:设置了 reasoningEffort 则 thinkingBudget 被忽略。
+   * 不设置时沿用 thinkingBudget / disableThinking 旧逻辑。
+   */
+  reasoningEffort: z.enum(["low", "high", "max"]).optional(),
   /** 模型支持的最大 thinking token 预算。
    *  仅在 agent 通过 ChatOptions.enableThinking 显式开启时才发送 thinking 参数。
    *  例如 4000 = 模型最多用 4000 token 做内部推理。

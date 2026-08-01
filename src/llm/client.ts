@@ -300,6 +300,10 @@ export interface ResolvedBackend {
    *  {thinking: {type: "enabled", budget_tokens: budget}} 给 API。
    *  undefined = 模型不支持 thinking 或未配置。 */
   thinkingBudget?: number;
+  /** DeepSeek V4 思考强度(low/high/max)。
+   *  设置后 client 发送 {reasoning_effort: X} + {thinking:{type:"enabled"}}。
+   *  与 thinkingBudget 互斥:设置了 reasoningEffort 则 thinkingBudget 被忽略。 */
+  reasoningEffort?: "low" | "high" | "max";
   /** [保留兼容] 禁用 thinking。设置 thinkingBudget 时此字段被忽略。 */
   disableThinking?: boolean;
   /** 历史视觉消息保留数量,保留最近 N 条含图消息,默认 3 */
@@ -899,11 +903,17 @@ export class LLMClient {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             messages: resolved as any,
             ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-            ...(opts.enableThinking && this.backend.thinkingBudget
-              ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
-              : this.backend.disableThinking
-                ? { thinking: { type: "disabled" } }
-                : {}),
+            ...(this.backend.disableThinking
+              ? { thinking: { type: "disabled" } }
+              : this.backend.reasoningEffort
+                ? {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    reasoning_effort: this.backend.reasoningEffort as any,
+                    thinking: { type: "enabled" },
+                  }
+                : opts.enableThinking && this.backend.thinkingBudget
+                  ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
+                  : {}),
             ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
             ...(canUseTools
               ? {
@@ -962,7 +972,10 @@ export class LLMClient {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
         totalTokens: response.usage?.total_tokens ?? 0,
-        cacheReadTokens: (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheReadTokens:
+          (response.usage as any)?.prompt_tokens_details?.cached_tokens ??
+          (response.usage as any)?.prompt_cache_hit_tokens ??
+          0,
         cacheCreationTokens: (response.usage as any)?.cache_creation_input_tokens ?? 0,
       },
     };
@@ -1059,11 +1072,17 @@ export class LLMClient {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               messages: resolvedForStream as any,
               ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-              ...(opts.enableThinking && this.backend.thinkingBudget
-              ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
-              : this.backend.disableThinking
+              ...(this.backend.disableThinking
                 ? { thinking: { type: "disabled" } }
-                : {}),
+                : this.backend.reasoningEffort
+                  ? {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      reasoning_effort: this.backend.reasoningEffort as any,
+                      thinking: { type: "enabled" },
+                    }
+                  : opts.enableThinking && this.backend.thinkingBudget
+                    ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
+                    : {}),
               ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
               ...(canUseTools
                 ? {
@@ -1144,7 +1163,10 @@ export class LLMClient {
                   promptTokens: chunk.usage.prompt_tokens,
                   completionTokens: chunk.usage.completion_tokens,
                   totalTokens: chunk.usage.total_tokens,
-                  cacheReadTokens: (chunk.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+                  cacheReadTokens:
+                    (chunk.usage as any)?.prompt_tokens_details?.cached_tokens ??
+                    (chunk.usage as any)?.prompt_cache_hit_tokens ??
+                    0,
                   cacheCreationTokens: (chunk.usage as any)?.cache_creation_input_tokens ?? 0,
                 };
               }

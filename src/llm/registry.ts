@@ -166,7 +166,8 @@ class LLMRegistry {
         ...(role.supportsToolCalls !== undefined
           ? { supportsToolCalls: role.supportsToolCalls }
           : {}),
-        ...(role.thinkingBudget !== undefined ? { thinkingBudget: role.thinkingBudget }
+        ...(role.reasoningEffort !== undefined ? { reasoningEffort: role.reasoningEffort }
+          : role.thinkingBudget !== undefined ? { thinkingBudget: role.thinkingBudget }
           : role.disableThinking ? { disableThinking: true }
           : {}),
       });
