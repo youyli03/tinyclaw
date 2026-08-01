@@ -228,7 +228,7 @@ export class Session {
     // 否则 → 从 .code.jsonl + .code.active 恢复
     // .code.active 不存在说明用户主动切回了 chat,不做恢复
     const codeActive = fs.existsSync(Session.getCodeActivePath(sessionId));
-    if (codeActive || this.projectSlug) {
+    if (codeActive) {
       let restored: { messages: ChatMessage[]; lastPromptTokens: number } | null = null;
       if (this.projectSlug) {
         // 从 project session 恢复
@@ -247,7 +247,7 @@ export class Session {
       if (!restored || restored.messages.length === 0) {
         restored = Session.loadFromJsonl(sessionId, "code");
       }
-      if (restored && restored.messages.length > 0 && (codeActive || this.projectSlug)) {
+      if (restored && restored.messages.length > 0 && codeActive) {
         this.mode = "code";
         this.messages = restored.messages;
         this.lastPromptTokens = restored.lastPromptTokens;
