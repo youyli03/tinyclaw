@@ -141,7 +141,7 @@ class LLMRegistry {
       this.clients.set(name, client);
       if (role.idleContextWindow) {
         this.idleContextWindows.set(name, role.idleContextWindow);
-        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 4 * 3600_000);
       }
       return client;
     }
@@ -186,7 +186,7 @@ class LLMRegistry {
       }
       if (role.idleContextWindow) {
         this.idleContextWindows.set(name, role.idleContextWindow);
-        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 4 * 3600_000);
       }
       return client;
     }
@@ -213,7 +213,7 @@ class LLMRegistry {
       }
       if (role.idleContextWindow) {
         this.idleContextWindows.set(name, role.idleContextWindow);
-        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 4 * 3600_000);
       }
       return client;
     }
@@ -243,7 +243,7 @@ class LLMRegistry {
       }
       if (role.idleContextWindow) {
         this.idleContextWindows.set(name, role.idleContextWindow);
-        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 4 * 3600_000);
       }
       return client;
     }
@@ -272,7 +272,7 @@ class LLMRegistry {
     }
     const base = this.contextWindows.get(name) ?? loadConfig().memory.contextWindow;
     if (lastResponseAt && lastResponseAt > 0 && this.idleContextWindows.has(name)) {
-      const idleAfter = this.idleAfterMsMap.get(name) ?? 6 * 3600_000;
+      const idleAfter = this.idleAfterMsMap.get(name) ?? 4 * 3600_000;
       if (Date.now() - lastResponseAt > idleAfter) {
         return this.idleContextWindows.get(name)!;
       }

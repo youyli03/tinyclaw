@@ -139,7 +139,7 @@ const BackendRoleSchema = z.object({
    * 默认 undefined = 不启用闲置窗口,始终用 maxContextWindow。
    */
   idleContextWindow: z.number().int().positive().optional(),
-  /** 闲置判定时长(毫秒):距上次 LLM 响应超过该时长视为闲置。默认 6 小时(21600000)。 */
+  /** 闲置判定时长(毫秒):距上次 LLM 响应超过该时长视为闲置。默认 4 小时(14400000)。 */
   idleAfterMs: z.number().int().positive().optional(),
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
