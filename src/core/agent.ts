@@ -995,8 +995,8 @@ export async function runAgent(
     // 在 pre-flight 压缩之前执行，降低 token 水位，减少触发全量压缩的频率
     {
       const mcCtx = isCodeMode
-        ? llmRegistry.getContextWindow("code")
-        : llmRegistry.getContextWindow("daily");
+        ? llmRegistry.getContextWindow("code", session.lastResponseAt)
+        : llmRegistry.getContextWindow("daily", session.lastResponseAt);
       session.microCompact(mcCtx, session.lastPromptTokens);
     }
 
@@ -1004,7 +1004,7 @@ export async function runAgent(
     // 防止上次 run 结束后 session 继续膨胀，导致本次首次 LLM 调用直接 408
     // 优先使用上一轮实际 promptTokens（session.lastPromptTokens），0 时 fallback 字符估算
     if (!session.abortRequested) {
-      if (!isCodeMode && shouldSummarize(session.getMessages(), session.lastPromptTokens)) {
+      if (!isCodeMode && shouldSummarize(session.getMessages(), session.lastPromptTokens, session.lastResponseAt)) {
         // chat 模式：完整摘要压缩
         opts.onCompress?.("start");
         const summary = await session.compress();
@@ -1014,7 +1014,7 @@ export async function runAgent(
       } else if (isCodeMode) {
         // code 模式：pre-flight 检测 session 是否已超限（如上次 run 400 后 session 未清理）
         // 用 lastPromptTokens（API 实测值）或字符估算进行判断；若超限则先压缩再执行
-        const codeCtx = llmRegistry.getContextWindow("code");
+        const codeCtx = llmRegistry.getContextWindow("code", session.lastResponseAt);
         const exceedsWindowThreshold =
           codeCtx > 0 &&
           shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
@@ -1074,7 +1074,7 @@ export async function runAgent(
     : (loadConfig().tools.maxChatToolRounds ?? MAX_TOOL_ROUNDS);
   const maxToolRounds = configuredRounds === 0 ? Infinity : configuredRounds;
   // code 模型 context window（供 token 预算检查用）
-  const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code") : 0;
+  const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code", session.lastResponseAt) : 0;
 
   // 5. ReAct 循环
   // 每次用户消息生成一个固定 taskId，供所有 round 共享 X-Agent-Task-Id。
@@ -1120,7 +1120,7 @@ export async function runAgent(
       round > 0 &&
       !isCodeMode &&
       !session.abortRequested &&
-      shouldSummarize(session.getMessages(), session.lastPromptTokens)
+      shouldSummarize(session.getMessages(), session.lastPromptTokens, session.lastResponseAt)
     ) {
       console.log(`${logPrefix} ℹ️ Chat session 轮间检测到上下文超限（round ${round}），执行压缩`);
       opts.onCompress?.("start");
@@ -1266,6 +1266,13 @@ export async function runAgent(
       session.sessionId,
       session.mode === "code" ? "code" : "chat",
       lastUsage.promptTokens
+    );
+    // 记录该 session 最后一次 LLM 响应完成时刻(闲置判定 + crash 恢复用)
+    session.lastResponseAt = Date.now();
+    Session.persistLastResponseAt(
+      session.sessionId,
+      session.mode === "code" ? "code" : "chat",
+      session.lastResponseAt
     );
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
@@ -1942,7 +1949,7 @@ export async function runAgent(
   // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查；code 模式跳过）
   // 使用最后一轮实际 promptTokens（比字符估算更准确）
   if (!session.abortRequested && !isCodeMode) {
-    if (shouldSummarize(session.getMessages(), lastUsage.promptTokens)) {
+    if (shouldSummarize(session.getMessages(), lastUsage.promptTokens, session.lastResponseAt)) {
       opts.onCompress?.("start");
       const summary = await session.compress();
       opts.onCompress?.("done", summary);
@@ -1959,7 +1966,7 @@ export async function runAgent(
   }
 
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-  const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily");
+  const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily", session.lastResponseAt);
   const fmtK = (n: number) => (n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n));
   const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
   if (toolsUsed.length > 0) {

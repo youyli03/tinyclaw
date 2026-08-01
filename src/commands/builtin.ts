@@ -59,7 +59,7 @@ registerCommand({
     const isRunning = session.running;
     const isCodeMode = session.mode === "code";
     const backendName = isCodeMode ? "code" : "daily";
-    const contextWindow = llmRegistry.getContextWindow(backendName);
+    const contextWindow = llmRegistry.getContextWindow(backendName, session.lastResponseAt);
 
     // ── 模式行 ───────────────────────────────────────────────────────────────
     let modeLine: string;

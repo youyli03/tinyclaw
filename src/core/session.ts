@@ -168,6 +168,14 @@ export class Session {
   lastPromptTokens = 0;
 
   /**
+   * 该 session 最后一次 LLM 响应完成的时刻(毫秒时间戳,0 = 从未响应过)。
+   * 持久化到 JSONL _meta:lastResponseAt 行,供闲置判定(shouldSummarize)与 crash 恢复使用。
+   * 依据 DeepSeek 磁盘缓存 TTL:距上次响应超过 idleAfterMs 视为闲置,
+   * 用 idleContextWindow(200K)提前压缩,避免缓存清空后全 miss 的高成本。
+   */
+  lastResponseAt = 0;
+
+  /**
    * 最近一次执行 searchMemory 注入记忆时的 lastPromptTokens 快照（-1 = 尚未搜索过）。
    * 用于节流：若距上次搜索 promptTokens 增量过小且已有记忆注入，则跳过本轮向量搜索复用旧结果。
    */
@@ -229,7 +237,7 @@ export class Session {
     // .code.active 不存在说明用户主动切回了 chat,不做恢复
     const codeActive = fs.existsSync(Session.getCodeActivePath(sessionId));
     if (codeActive) {
-      let restored: { messages: ChatMessage[]; lastPromptTokens: number } | null = null;
+      let restored: { messages: ChatMessage[]; lastPromptTokens: number; lastResponseAt: number } | null = null;
       if (this.projectSlug) {
         // 从 project session 恢复
         const projFile = path.join(
@@ -251,6 +259,7 @@ export class Session {
         this.mode = "code";
         this.messages = restored.messages;
         this.lastPromptTokens = restored.lastPromptTokens;
+        this.lastResponseAt = restored.lastResponseAt;
         this.codeWorkdir = Session.readCodeDir(agentManager.codeDirPath(this.agentId));
         this.codeSubMode = Session.readCodeSubMode(agentManager.codeSubModePath(this.agentId));
         // 项目 session: 从 metadata.json 读取 workdir 覆盖（优先于 .code.dir）
@@ -284,6 +293,7 @@ export class Session {
     if (restored) {
       this.messages = restored.messages;
       this.lastPromptTokens = restored.lastPromptTokens;
+      this.lastResponseAt = restored.lastResponseAt;
     } else if (opts.systemPrompt) {
       this.messages.push({ role: "system", content: opts.systemPrompt });
     }
@@ -731,7 +741,7 @@ export class Session {
    */
   async maybeCompress(): Promise<string | undefined> {
     if (this.mode === "code") return undefined;
-    if (shouldSummarize(this.messages)) {
+    if (shouldSummarize(this.messages, undefined, this.lastResponseAt)) {
       return await this.compress();
     }
     return undefined;
@@ -1097,16 +1107,31 @@ export class Session {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
-      // 重写后追加 _meta:promptTokens，确保压缩后 lastPromptTokens 不丢失
-      const metaLine =
-        this.lastPromptTokens > 0
-          ? JSON.stringify({
-              _meta: "promptTokens",
-              value: this.lastPromptTokens,
-              ts: new Date().toISOString(),
-            }) + "\n"
-          : "";
-      fs.writeFileSync(filePath, lines + metaLine, "utf-8");
+      // 重写后追加 _meta:promptTokens + _meta:lastResponseAt,确保压缩后不丢失
+      const metaLines: string[] = [];
+      if (this.lastPromptTokens > 0) {
+        metaLines.push(
+          JSON.stringify({
+            _meta: "promptTokens",
+            value: this.lastPromptTokens,
+            ts: new Date().toISOString(),
+          })
+        );
+      }
+      if (this.lastResponseAt > 0) {
+        metaLines.push(
+          JSON.stringify({
+            _meta: "lastResponseAt",
+            value: this.lastResponseAt,
+            ts: new Date().toISOString(),
+          })
+        );
+      }
+      fs.writeFileSync(
+        filePath,
+        lines + (metaLines.length > 0 ? metaLines.join("\n") + "\n" : ""),
+        "utf-8"
+      );
     } catch (err) {
       console.error("[session] JSONL rewrite failed:", err);
     }
@@ -1123,7 +1148,15 @@ export class Session {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
-      fs.writeFileSync(filePath, lines, "utf-8");
+      const metaLine =
+        this.lastResponseAt > 0
+          ? JSON.stringify({
+              _meta: "lastResponseAt",
+              value: this.lastResponseAt,
+              ts: new Date().toISOString(),
+            }) + "\n"
+          : "";
+      fs.writeFileSync(filePath, lines + metaLine, "utf-8");
     } catch (err) {
       console.error("[session] code JSONL rewrite failed:", err);
     }
@@ -1151,9 +1184,10 @@ export class Session {
    */
   private static _parseJsonlLines(
     lines: string[]
-  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  ): { messages: ChatMessage[]; lastPromptTokens: number; lastResponseAt: number } | null {
     const messages: ChatMessage[] = [];
     let lastPromptTokens = 0;
+    let lastResponseAt = 0;
     for (const line of lines) {
       try {
         const entry = JSON.parse(line) as Record<string, unknown>;
@@ -1161,6 +1195,11 @@ export class Session {
         if (entry["_meta"] === "promptTokens") {
           const v = entry["value"];
           if (typeof v === "number" && v > 0) lastPromptTokens = v;
+          continue;
+        }
+        if (entry["_meta"] === "lastResponseAt") {
+          const v = entry["value"];
+          if (typeof v === "number" && v > 0) lastResponseAt = v;
           continue;
         }
         const role = entry["role"];
@@ -1283,7 +1322,7 @@ export class Session {
       validated.forEach((m) => sanitized.push(m));
     }
 
-    return sanitized.length > 0 ? { messages: sanitized, lastPromptTokens } : null;
+    return sanitized.length > 0 ? { messages: sanitized, lastPromptTokens, lastResponseAt } : null;
   }
 
   /**
@@ -1291,7 +1330,7 @@ export class Session {
    */
   private static loadFromFile(
     filePath: string
-  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  ): { messages: ChatMessage[]; lastPromptTokens: number; lastResponseAt: number } | null {
     if (!fs.existsSync(filePath)) return null;
     try {
       const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
@@ -1305,7 +1344,7 @@ export class Session {
   private static loadFromJsonl(
     sessionId: string,
     mode: "chat" | "code" = "chat"
-  ): { messages: ChatMessage[]; lastPromptTokens: number } | null {
+  ): { messages: ChatMessage[]; lastPromptTokens: number; lastResponseAt: number } | null {
     const filePath = Session.getJsonlPath(sessionId, mode);
     if (!fs.existsSync(filePath)) return null;
     try {
@@ -1332,6 +1371,26 @@ export class Session {
       fs.appendFileSync(filePath, line, "utf-8");
     } catch (err) {
       console.error("[session] persistPromptTokens failed:", err);
+    }
+  }
+
+  /**
+   * 将该 session 最后一次 LLM 响应完成时刻持久化到 JSONL 末尾(_meta 行)。
+   * loadFromJsonl 读取时识别并恢复到 session.lastResponseAt,
+   * 供闲置判定(shouldSummarize / shouldSummarizeCode)与 crash 恢复使用。
+   * 依据 DeepSeek 磁盘缓存 TTL:闲置 session 缓存已清空,应用 200K 窗口提前压缩。
+   */
+  static persistLastResponseAt(sessionId: string, mode: "chat" | "code", ts: number): void {
+    if (ts <= 0) return;
+    try {
+      const filePath = Session.getJsonlPath(sessionId, mode);
+      if (!fs.existsSync(filePath)) return;
+      const line =
+        JSON.stringify({ _meta: "lastResponseAt", value: ts, ts: new Date().toISOString() }) +
+        "\n";
+      fs.appendFileSync(filePath, line, "utf-8");
+    } catch (err) {
+      console.error("[session] persistLastResponseAt failed:", err);
     }
   }
 
@@ -1465,6 +1524,7 @@ export class Session {
     if (restored && restored.messages.length > 0) {
       this.messages = restored.messages;
       this.lastPromptTokens = restored.lastPromptTokens;
+      this.lastResponseAt = restored.lastResponseAt;
       return true;
     }
     this.messages = [];

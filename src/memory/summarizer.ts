@@ -222,9 +222,13 @@ function stripCompletedToolCalls(messages: ChatMessage[]): ChatMessage[] {
  * @param messages 当前 session messages
  * @param actualTokens LLM 上次响应报告的实际 prompt token 数（0 或 undefined = 使用估算）
  */
-export function shouldSummarize(messages: ChatMessage[], actualTokens?: number): boolean {
+export function shouldSummarize(
+  messages: ChatMessage[],
+  actualTokens?: number,
+  lastResponseAt?: number
+): boolean {
   const cfg = loadConfig();
-  const contextWindow = llmRegistry.getContextWindow("daily");
+  const contextWindow = llmRegistry.getContextWindow("daily", lastResponseAt);
   const threshold = Math.floor(contextWindow * cfg.memory.tokenThreshold);
 
   if (actualTokens && actualTokens > 0) {

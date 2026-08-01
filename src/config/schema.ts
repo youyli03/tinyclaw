@@ -131,6 +131,16 @@ const BackendRoleSchema = z.object({
    * 注意：设置超过模型实际支持值可能导致 400 错误。
    */
   maxContextWindow: z.number().int().positive().optional(),
+  /**
+   * 闲置 session 触发压缩的上下文窗口(tokens)。
+   * 依据 DeepSeek 磁盘缓存 TTL(官方:缓存不再使用后几小时到几天自动清空):
+   * - 活跃 session(距上次响应 < idleAfterMs)→ 用 maxContextWindow,缓存命中,长任务不压缩
+   * - 闲置 session(距上次响应 >= idleAfterMs)→ 用 idleContextWindow,超此值即压缩,避免全 miss 高成本
+   * 默认 undefined = 不启用闲置窗口,始终用 maxContextWindow。
+   */
+  idleContextWindow: z.number().int().positive().optional(),
+  /** 闲置判定时长(毫秒):距上次 LLM 响应超过该时长视为闲置。默认 6 小时(21600000)。 */
+  idleAfterMs: z.number().int().positive().optional(),
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
   /**

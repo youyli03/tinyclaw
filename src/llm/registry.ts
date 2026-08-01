@@ -36,6 +36,10 @@ class LLMRegistry {
   private clients = new Map<BackendName, AnyLLMClient>();
   /** 从 Copilot 模型元数据获取的上下文窗口大小（tokens） */
   private contextWindows = new Map<BackendName, number>();
+  /** idle session compress window (tokens), paired with contextWindows */
+  private idleContextWindows = new Map<BackendName, number>();
+  /** idle judge duration (ms), paired with idleContextWindows */
+  private idleAfterMsMap = new Map<BackendName, number>();
 
   /**
    * 预初始化所有 Copilot 后端（异步，需在 main 启动时 await）。
@@ -135,6 +139,10 @@ class LLMRegistry {
           : {}),
       });
       this.clients.set(name, client);
+      if (role.idleContextWindow) {
+        this.idleContextWindows.set(name, role.idleContextWindow);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+      }
       return client;
     }
 
@@ -176,6 +184,10 @@ class LLMRegistry {
       if (role.maxContextWindow && role.maxContextWindow > 0) {
         this.contextWindows.set(name, role.maxContextWindow);
       }
+      if (role.idleContextWindow) {
+        this.idleContextWindows.set(name, role.idleContextWindow);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+      }
       return client;
     }
 
@@ -198,6 +210,10 @@ class LLMRegistry {
       this.clients.set(name, client);
       if (role.maxContextWindow && role.maxContextWindow > 0) {
         this.contextWindows.set(name, role.maxContextWindow);
+      }
+      if (role.idleContextWindow) {
+        this.idleContextWindows.set(name, role.idleContextWindow);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
       }
       return client;
     }
@@ -225,6 +241,10 @@ class LLMRegistry {
         // gemini-2.5-flash 支持 1M context
         this.contextWindows.set(name, 1_000_000);
       }
+      if (role.idleContextWindow) {
+        this.idleContextWindows.set(name, role.idleContextWindow);
+        this.idleAfterMsMap.set(name, role.idleAfterMs ?? 6 * 3600_000);
+      }
       return client;
     }
 
@@ -235,13 +255,29 @@ class LLMRegistry {
    * 获取指定后端对应模型的上下文窗口大小（tokens）。
    * Copilot 后端由模型元数据决定；OpenAI 后端使用 memory.contextWindow 配置。
    */
-  getContextWindow(name: BackendName = "daily"): number {
-    // AutoFreeClient 动态维护 contextWindow，优先取其值
+  /**
+   * 获取指定后端的上下文窗口(tokens)。
+   * 支持闲置判定:传 lastResponseAt(该 session 最后 LLM 响应时刻)时,
+   * 若距上次响应超过 idleAfterMs,返回 idleContextWindow(闲置压缩窗口),
+   * 否则返回活跃窗口 maxContextWindow。
+   * 依据 DeepSeek 磁盘缓存 TTL:闲置 session 的缓存已清空,再发大请求 = 全 miss,
+   * 应提前压缩(默认 200K)避免高成本。
+   * @param lastResponseAt 该 session 最后一次 LLM 响应完成时刻(ms),0/undefined = 视为活跃
+   */
+  getContextWindow(name: BackendName = "daily", lastResponseAt?: number): number {
+    // AutoFreeClient 动态维护 contextWindow,优先取其值
     const cached = this.clients.get(name);
     if (cached instanceof AutoFreeClient && cached.contextWindow > 0) {
       return cached.contextWindow;
     }
-    return this.contextWindows.get(name) ?? loadConfig().memory.contextWindow;
+    const base = this.contextWindows.get(name) ?? loadConfig().memory.contextWindow;
+    if (lastResponseAt && lastResponseAt > 0 && this.idleContextWindows.has(name)) {
+      const idleAfter = this.idleAfterMsMap.get(name) ?? 6 * 3600_000;
+      if (Date.now() - lastResponseAt > idleAfter) {
+        return this.idleContextWindows.get(name)!;
+      }
+    }
+    return base;
   }
 
   /** 清除所有缓存的 client（用于配置热重载） */
