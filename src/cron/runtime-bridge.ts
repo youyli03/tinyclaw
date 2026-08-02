@@ -26,6 +26,12 @@ export class ChatRuntimeBridge implements CronRuntimeBridge {
     prompt: string,
     timeoutMs: number
   ): Promise<string> {
-    return requestQQBotUserInput({ peerId, msgType, prompt, timeoutMs });
+    return requestQQBotUserInput({
+      peerId,
+      msgType,
+      prompt,
+      timeoutMs,
+      ...(this.botId ? { botId: this.botId } : {}),
+    });
   }
 }

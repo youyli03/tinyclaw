@@ -108,6 +108,12 @@ export class Session {
   llmAbortController: AbortController | null = null;
   /** 当前 runAgent() 的 Promise（用于等待其自然结束） */
   currentRunPromise: Promise<unknown> | null = null;
+  /**
+   * 最后触发 run 的 QQBot connector 的 botId。
+   * 用于多 bot 场景：同 bot 的新消息可软中断当前 run（用户打断为预期行为），
+   * 跨 bot 的消息只排队等待（不 abort，避免另一 bot 触发的任务被误打断）。
+   */
+  lastRunBotId?: string;
 
   // ── MFA 状态 ──────────────────────────────────────────────────────────────
   /** 同一次 runAgent() 中，MFA 一旦通过即设为 true，后续工具跳过验证 */

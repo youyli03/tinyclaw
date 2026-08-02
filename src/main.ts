@@ -380,14 +380,21 @@ async function main(): Promise<void> {
   ): Promise<string> {
     // ── 软中断：若当前有 runAgent() 正在运行则中断它 ──────────────────
     if (session.running) {
-      session.abortRequested = true;
-      session.llmAbortController?.abort();
-      session.abortPendingApproval();
-      session.abortPendingPlanApproval();
-      session.abortPendingAskUser();
+      // 多 bot 场景：sessionId 不含 botId，同一 peerId 的消息可能来自不同 bot。
+      // 同 bot 新消息 → 软中断当前 run（用户打断为预期行为）；
+      // 跨 bot 消息 → 只排队等待当前 run 自然结束，不 abort（避免另一 bot 触发的任务被误打断）。
+      const sameBot = !session.lastRunBotId || session.lastRunBotId === connector.botId;
+      if (sameBot) {
+        session.abortRequested = true;
+        session.llmAbortController?.abort();
+        session.abortPendingApproval();
+        session.abortPendingPlanApproval();
+        session.abortPendingAskUser();
+      }
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
       await session.currentRunPromise?.catch(() => {});
     }
+    session.lastRunBotId = connector.botId;
 
     // ── 构建 MFA callbacks ─────────────────────────────────────────────
     const mfaTimeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;

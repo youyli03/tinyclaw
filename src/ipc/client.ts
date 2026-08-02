@@ -547,8 +547,9 @@ export async function requestQQBotUserInput(opts: {
   msgType: InboundMessage["type"];
   prompt: string;
   timeoutMs: number;
+  botId?: string;
 }): Promise<string> {
-  const { peerId, msgType, prompt, timeoutMs } = opts;
+  const { peerId, msgType, prompt, timeoutMs, botId } = opts;
   return new Promise<string>((resolve, reject) => {
     const socket = connect(IPC_SOCKET_PATH);
     let buf = "";
@@ -561,7 +562,14 @@ export async function requestQQBotUserInput(opts: {
     };
 
     socket.on("connect", () => {
-      const req: IpcRequest = { type: "qqbot_prompt", peerId, msgType, prompt, timeoutMs };
+      const req: IpcRequest = {
+        type: "qqbot_prompt",
+        peerId,
+        msgType,
+        prompt,
+        timeoutMs,
+        ...(botId ? { botId } : {}),
+      };
       socket.write(JSON.stringify(req) + "\n");
     });
     socket.on("data", (data) => {

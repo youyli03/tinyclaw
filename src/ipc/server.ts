@@ -225,19 +225,21 @@ async function handleRequest(
   }
 
   if (req.type === "qqbot_prompt") {
-    if (!connector) {
-      send({ type: "error", message: "QQBot connector 未运行" });
-      return;
-    }
-    const { peerId, msgType, prompt, timeoutMs } = req as {
+    const { peerId, msgType, prompt, timeoutMs, botId } = req as {
       type: "qqbot_prompt";
       peerId: string;
       msgType: InboundMessage["type"];
       prompt: string;
       timeoutMs: number;
+      botId?: string;
     };
+    const targetConnector = resolveConnector(botId);
+    if (!targetConnector) {
+      send({ type: "error", message: "QQBot connector 未运行" });
+      return;
+    }
     try {
-      const answer = await connector.requestUserInput(peerId, msgType, prompt, timeoutMs);
+      const answer = await targetConnector.requestUserInput(peerId, msgType, prompt, timeoutMs);
       send({ type: "qqbot_prompt_result", answer });
     } catch (err) {
       send({ type: "error", message: err instanceof Error ? err.message : String(err) });

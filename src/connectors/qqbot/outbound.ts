@@ -205,19 +205,25 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
         }
       }
       // ── 纯文本分块发送 ──────────────────────────────────────────────────
+      // 超过 QQ 被动回复次数上限(同 msg_id 4 次)时降级为主动消息(不带 replyToId),
+      // 避免继续使用已超限的 msg_id 导致静默失败(与上方长文本图片/富媒体路径一致)。
+      const textReplyToId =
+        replyToId && checkLimit(replyToId).allowed ? replyToId : undefined;
       const chunks = chunkText(segment.content);
       for (const chunk of chunks) {
         let backoffMs = 2_000;
          
+        // 超时重试为无限循环(有意设计):若消息发不出去,通常意味着收消息的通道也已断开,
+        // 无限重试保证网络恢复后消息最终送达;请勿添加 maxAttempts 上限(会导致消息永久丢失)。
         while (true) {
           try {
-            await doSend(token, appId, type, peerId, chunk, replyToId);
+            await doSend(token, appId, type, peerId, chunk, textReplyToId);
             break;
           } catch (err) {
             if (isTokenError(err)) {
               clearTokenCache(appId);
               token = await getAccessToken(appId, clientSecret);
-              await doSend(token, appId, type, peerId, chunk, replyToId);
+              await doSend(token, appId, type, peerId, chunk, textReplyToId);
               break;
             } else if (isTimeoutError(err)) {
               console.warn(`[qqbot] 发送超时，${backoffMs / 1000}s 后重试...`);
@@ -232,7 +238,7 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
             }
           }
         }
-        if (replyToId) recordReply(replyToId);
+        if (textReplyToId) recordReply(textReplyToId);
       }
     } else {
       // ── 富媒体发送 ────────────────────────────────────────────────────

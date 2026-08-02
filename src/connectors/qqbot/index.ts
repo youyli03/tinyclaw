@@ -222,33 +222,44 @@ export class QQBotConnector implements Connector {
     timeoutMs: number
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      const timer =
-        timeoutMs > 0
-          ? setTimeout(() => {
-              this.pendingInputMap.delete(peerId);
-              reject(new MFAError("等待用户输入超时,操作已取消"));
-              void this.send(peerId, type, "⏰ 等待输入超时,操作已自动取消").catch((e: unknown) =>
-                console.error("[qqbot] send error:", e)
-              );
-            }, timeoutMs)
-          : null;
-
       // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
       const remindCleanup = this.startRemind(peerId, type, "⏳ 还在等待您的输入...");
 
-      const originalResolve = resolve;
-      const originalReject = reject;
-      this.pendingInputMap.set(peerId, {
+      const entry: PendingInput = {
         resolve: (v) => {
           remindCleanup?.();
-          originalResolve(v);
+          resolve(v);
         },
         reject: (e) => {
           remindCleanup?.();
-          originalReject(e);
+          reject(e);
         },
-        timer,
-      });
+        timer: null,
+      };
+
+      entry.timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              // 仅当自己仍是当前 pending 时才清理:若已被新请求覆盖,旧 promise 已由覆盖逻辑 reject,
+              // 此处不能再 delete 新 entry(否则新请求会收不到用户回复)
+              if (this.pendingInputMap.get(peerId) === entry) {
+                this.pendingInputMap.delete(peerId);
+                reject(new MFAError("等待用户输入超时,操作已取消"));
+                void this.send(peerId, type, "⏰ 等待输入超时,操作已自动取消").catch((e: unknown) =>
+                  console.error("[qqbot] send error:", e)
+                );
+              }
+            }, timeoutMs)
+          : null;
+
+      // 覆盖保护:同一 peerId 已有 pending 时,先清理旧请求(避免旧 timer 到期误删新 entry)
+      const prev = this.pendingInputMap.get(peerId);
+      if (prev) {
+        clearTimeout(prev.timer ?? undefined);
+        prev.reject(new Error("等待被新的请求覆盖,已取消"));
+      }
+
+      this.pendingInputMap.set(peerId, entry);
       void this.send(peerId, type, prompt).catch((e: unknown) =>
         console.error("[qqbot] send error:", e)
       );
@@ -264,35 +275,45 @@ export class QQBotConnector implements Connector {
     verifyCode?: (code: string) => boolean
   ): Promise<boolean> {
     return new Promise<boolean>((resolve, reject) => {
-      // timeoutMs === 0 表示不超时,永久等待用户确认
-      const timer =
-        timeoutMs > 0
-          ? setTimeout(() => {
-              this.pendingMFAMap.delete(peerId);
-              reject(new MFAError("MFA 确认超时,操作已取消"));
-              void this.send(peerId, type, "⏰ MFA 超时,操作已自动取消").catch((e: unknown) =>
-                console.error("[qqbot] send error:", e)
-              );
-            }, timeoutMs)
-          : null;
-
       // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
       const remindCleanup = this.startRemind(peerId, type, "⏳ 还在等待您的确认...");
 
-      const originalResolve = resolve;
-      const originalReject = reject;
-      this.pendingMFAMap.set(peerId, {
+      const entry: PendingMFA = {
         resolve: (v) => {
           remindCleanup?.();
-          originalResolve(v);
+          resolve(v);
         },
         reject: (e) => {
           remindCleanup?.();
-          originalReject(e);
+          reject(e);
         },
-        timer,
+        timer: null,
         ...(verifyCode ? { verifyCode } : {}),
-      });
+      };
+
+      // timeoutMs === 0 表示不超时,永久等待用户确认
+      entry.timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              // 仅当自己仍是当前 pending 时才清理(防止误删被新请求覆盖的 entry)
+              if (this.pendingMFAMap.get(peerId) === entry) {
+                this.pendingMFAMap.delete(peerId);
+                reject(new MFAError("MFA 确认超时,操作已取消"));
+                void this.send(peerId, type, "⏰ MFA 超时,操作已自动取消").catch((e: unknown) =>
+                  console.error("[qqbot] send error:", e)
+                );
+              }
+            }, timeoutMs)
+          : null;
+
+      // 覆盖保护:同一 peerId 已有 pending 时,先清理旧请求
+      const prev = this.pendingMFAMap.get(peerId);
+      if (prev) {
+        clearTimeout(prev.timer ?? undefined);
+        prev.reject(new Error("MFA 请求被新的请求覆盖,已取消"));
+      }
+
+      this.pendingMFAMap.set(peerId, entry);
       void this.send(peerId, type, warningMessage).catch((e: unknown) =>
         console.error("[qqbot] send error:", e)
       );
@@ -302,6 +323,17 @@ export class QQBotConnector implements Connector {
   async stop(): Promise<void> {
     this.abortController?.abort();
     this.abortController = null;
+    // 清理所有挂起的输入/MFA 等待(取消 timer 并 reject,避免泄漏与悬挂 promise)
+    for (const [, p] of this.pendingInputMap) {
+      clearTimeout(p.timer ?? undefined);
+      p.reject(new Error("connector 已停止,等待已取消"));
+    }
+    this.pendingInputMap.clear();
+    for (const [, p] of this.pendingMFAMap) {
+      clearTimeout(p.timer ?? undefined);
+      p.reject(new Error("connector 已停止,等待已取消"));
+    }
+    this.pendingMFAMap.clear();
   }
 
   async send(

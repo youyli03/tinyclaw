@@ -55,6 +55,7 @@ export type IpcRequest =
       msgType: "c2c" | "group" | "guild" | "dm";
       prompt: string;
       timeoutMs: number;
+      botId?: string;
     }
   | { type: "memorize"; sessionId: string }
   /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
