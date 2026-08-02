@@ -274,13 +274,13 @@ registerTool({
     type: "function",
     function: {
       name: "cron_list",
-      description: "列出所有 cron jobs(含调度/状态/最近结果摘要/下次触发时间)。可选 includeLogs=true 附加每个 job 最近 3 条运行日志。",
+      description: "列出 cron jobs(含调度/状态/结果摘要/下次触发时间),includeLogs 可附加最近 3 条日志",
       parameters: {
         type: "object",
         properties: {
           includeLogs: {
             type: "boolean",
-            description: "是否附加每个 job 最近 3 条运行日志(默认 false)",
+            description: "附加最近 3 条日志(默认 false)",
           },
         },
         required: [],

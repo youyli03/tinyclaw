@@ -151,14 +151,13 @@ registerTool({
     type: "function",
     function: {
       name: "create_skill",
-      description:
-        "获取 tinyclaw Skill 创建指南。调用后按照指南使用 write_file 和 exec_shell 完成 skill 创建和注册。",
+      description: "获取 Skill 创建指南(含目标 agent 已注册 skills)",
       parameters: {
         type: "object",
         properties: {
           agent_id: {
             type: "string",
-            description: '要在哪个 Agent 下创建 skill，默认为 "default"。',
+            description: '目标 agent，默认 "default"',
           },
         },
         required: [],
