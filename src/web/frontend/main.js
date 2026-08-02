@@ -81,6 +81,16 @@ function fmtTime(ts) {
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// 执行耗时格式化:<1s → "x.xs", <60s → "xs", <3600s → "xm xs", 否则 "xh xm"
+function fmtDuration(ms) {
+  if (ms === undefined || ms === null) return '';
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
 // 只显示 HH:MM（用于当天趋势图横轴）
 function fmtHHMM(ts) {
   if (!ts) return '';
@@ -1219,7 +1229,7 @@ const app = createApp({
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, metricCards, mDays,
       expandedReports,
-      shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime,
+      shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime, fmtDuration,
       navigateToMetric, loadAllMetricCharts, toggleReport,
       notesTree, notesSelectedPath, notesSelectedName, notesPath, notesMarkdownHtml,
       notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults, notesExpandedPaths,

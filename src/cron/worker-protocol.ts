@@ -1,6 +1,6 @@
 export type CronWorkerRequest =
-  | { type: "run"; requestId: string; jobId: string }
-  /** 主进程通知 worker：某 agent 的 skill 文件已变更，需刷新缓存 */
+  | { type: "run"; requestId: string; jobId: string; trigger: "schedule" | "manual" }
+  /** 主进程通知 worker:某 agent 的 skill 文件已变更,需刷新缓存 */
   | { type: "skills_changed"; agentId: string };
 
 export type CronWorkerResponse =

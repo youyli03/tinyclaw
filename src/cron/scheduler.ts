@@ -113,7 +113,7 @@ class CronScheduler {
     const jobs = loadJobs();
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return false;
-    void this.fire(job);
+    void this.fire(job, "manual");
     return true;
   }
 
@@ -158,7 +158,7 @@ class CronScheduler {
     }
     const handle = setTimeout(() => {
       this.timers.delete(job.id);
-      void this.fire(job).then(() => removeJob(job.id));
+      void this.fire(job, "schedule").then(() => removeJob(job.id));
     }, ms);
     this.timers.set(job.id, handle);
   }
@@ -171,7 +171,7 @@ class CronScheduler {
     if (job.lastRunAt) {
       const elapsed = Date.now() - new Date(job.lastRunAt).getTime();
       if (elapsed >= intervalMs) {
-        if (isInTimeRange(job)) void this.fire(job);
+        if (isInTimeRange(job)) void this.fire(job, "schedule");
       }
     }
 
@@ -180,7 +180,7 @@ class CronScheduler {
         // out of timeRange 静默跳过，不打印日志
         return;
       }
-      void this.fire(job);
+      void this.fire(job, "schedule");
     }, intervalMs);
     this.timers.set(job.id, handle);
   }
@@ -204,7 +204,7 @@ class CronScheduler {
     const key = `${job.id}_${hhmm}`;
     const ms = msUntilTimeOfDay(hhmm);
     const arm = () => {
-      void this.fire(job).then(() => {
+      void this.fire(job, "schedule").then(() => {
         const handle = setTimeout(() => arm(), msUntilTimeOfDay(hhmm));
         this.timers.set(key, handle);
       });
@@ -213,25 +213,25 @@ class CronScheduler {
     this.timers.set(key, handle);
   }
 
-  private async fire(job: CronJob): Promise<void> {
+  private async fire(job: CronJob, trigger: "schedule" | "manual"): Promise<void> {
     if (this.running.has(job.id)) {
-      console.warn(`[cron] Job ${job.id} skipped: previous run still in progress`);
+      console.warn(`[cron] job=${job.id} skipped: previous run still in progress`);
       return;
     }
     console.log(
-      `[cron] Firing job: ${job.id} (${job.type}) — "${job.message.slice(0, 40)}"`
+      `[cron] job=${job.id} firing (${job.type}, ${trigger})${job.name ? ` — ${job.name}` : ""}`
     );
     this.running.add(job.id);
     try {
-      await this.runInWorker(job.id);
+      await this.runInWorker(job.id, trigger);
     } catch (err) {
-      console.error(`[cron] Job ${job.id} failed:`, err);
+      console.error(`[cron] job=${job.id} failed:`, err);
     } finally {
       this.running.delete(job.id);
     }
   }
 
-  private async runInWorker(jobId: string): Promise<void> {
+  private async runInWorker(jobId: string, trigger: "schedule" | "manual"): Promise<void> {
     await this.ensureWorker();
     const requestId = `req_${++this.nextRequestId}_${Date.now()}`;
     await new Promise<void>((resolve, reject) => {
@@ -241,7 +241,7 @@ class CronScheduler {
         reject(new Error("cron runtime IPC channel unavailable"));
         return;
       }
-      this.worker.send({ type: "run", requestId, jobId }, (err) => {
+      this.worker.send({ type: "run", requestId, jobId, trigger }, (err) => {
         if (!err) return;
         this.pendingRuns.delete(requestId);
         reject(err);

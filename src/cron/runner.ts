@@ -266,7 +266,11 @@ async function runPipelineJob(
 
 // ── 执行单个 Job ──────────────────────────────────────────────────────────────
 
-export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Promise<void> {
+export async function runJob(
+  job: CronJob,
+  bridge: CronRuntimeBridge | null,
+  trigger: "schedule" | "manual" = "schedule"
+): Promise<void> {
   const now = new Date().toISOString();
 
   // ── 按 job.logLevel 控制日志输出量 ────────────────────────────────────
@@ -280,7 +284,7 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
   // normal: 保持当前 level 不变
 
   try {
-    await _runJob(job, bridge, now);
+    await _runJob(job, bridge, now, trigger);
   } finally {
     // 恢复日志级别(即使 job 抛异常也要恢复)
     setLogLevel(prevLevel);
@@ -290,8 +294,10 @@ export async function runJob(job: CronJob, bridge: CronRuntimeBridge | null): Pr
 async function _runJob(
   job: CronJob,
   bridge: CronRuntimeBridge | null,
-  now: string
+  now: string,
+  trigger: "schedule" | "manual"
 ): Promise<void> {
+  const startMs = Date.now();
 
   // Pipeline 模式强制使用 stateful session（步骤间需共享上下文）
   const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;
@@ -418,7 +424,15 @@ ${message}`;
   }
 
   // ── 写日志 ────────────────────────────────────────────────────────────────
-  appendLog({ ts: now, status, result: resultText, jobId: job.id });
+  appendLog({
+    ts: now,
+    status,
+    result: resultText,
+    jobId: job.id,
+    durationMs: Date.now() - startMs,
+    trigger,
+    model: job.model ?? loadConfig().llm.backends.daily.model,
+  });
 
   // ── 通知策略 ──────────────────────────────────────────────────────────────
   const shouldNotify = ((): boolean => {

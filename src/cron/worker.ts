@@ -38,7 +38,7 @@ async function initRuntime(): Promise<void> {
   agentManager.ensureDefault();
 }
 
-async function handleRun(requestId: string, jobId: string): Promise<void> {
+async function handleRun(requestId: string, jobId: string, trigger: "schedule" | "manual"): Promise<void> {
   try {
     const job = getJob(jobId);
     if (!job) {
@@ -46,8 +46,8 @@ async function handleRun(requestId: string, jobId: string): Promise<void> {
       return;
     }
 
-    console.log(`[cron-worker] request=${requestId} job=${jobId} route=${classifyJob(job)}`);
-    await runJob(job, new ChatRuntimeBridge(job.output?.botId ?? undefined));
+    console.log(`[cron-worker] request=${requestId} job=${jobId} route=${classifyJob(job)} trigger=${trigger}`);
+    await runJob(job, new ChatRuntimeBridge(job.output?.botId ?? undefined), trigger);
     send({ type: "job_done", requestId });
   } catch (err) {
     send({
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   process.on("message", (msg: CronWorkerRequest) => {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "run") {
-      void handleRun(msg.requestId, msg.jobId);
+      void handleRun(msg.requestId, msg.jobId, msg.trigger);
     } else if (msg.type === "skills_changed") {
       // 主进程 watcher 通知 skill 文件已变更，刷新本进程缓存
       skillRegistry.refresh(msg.agentId);

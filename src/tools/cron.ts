@@ -6,7 +6,7 @@
  */
 
 import { registerTool, type ToolContext } from "./registry.js";
-import { addJob, removeJob, loadJobs, updateJob, getJob } from "../cron/store.js";
+import { addJob, removeJob, loadJobs, updateJob, getJob, readLogs } from "../cron/store.js";
 import { cronScheduler } from "../cron/scheduler.js";
 
 // ── nanoid 轻量替代 ───────────────────────────────────────────────────────────
@@ -20,6 +20,47 @@ function nanoid(size = 8): string {
   return id;
 }
 
+// ── 下次触发时间估算(不依赖 timer 状态,纯计算) ───────────────────────────────
+
+function estimateNextRun(job: import("../cron/schema.js").CronJob): string | null {
+  if (!job.enabled) return null;
+  switch (job.type) {
+    case "once":
+      return job.runAt ?? null;
+    case "every": {
+      if (!job.intervalSecs) return null;
+      const base = job.lastRunAt
+        ? new Date(job.lastRunAt).getTime() + job.intervalSecs * 1000
+        : Date.now();
+      return new Date(Math.max(base, Date.now())).toISOString();
+    }
+    case "daily": {
+      const times =
+        job.timesOfDay && job.timesOfDay.length > 0
+          ? job.timesOfDay
+          : job.timeOfDay
+            ? [job.timeOfDay]
+            : [];
+      if (times.length === 0) return null;
+      const now = new Date();
+      for (const t of times) {
+        const [hh, mm] = t.split(":").map(Number);
+        const d = new Date(now);
+        d.setHours(hh!, mm!, 0, 0);
+        if (d.getTime() > now.getTime()) return d.toISOString();
+      }
+      // 今天全部已过 → 明天最早时段
+      const [hh, mm] = times[0]!.split(":").map(Number);
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      d.setHours(hh!, mm!, 0, 0);
+      return d.toISOString();
+    }
+    case "manual":
+      return null;
+  }
+}
+
 // ── cron_add ──────────────────────────────────────────────────────────────────
 
 registerTool({
@@ -30,34 +71,30 @@ registerTool({
       name: "cron_add",
       description: `创建定时任务。
 
-## 运行模式选择（重要）
+## 运行模式
+- **Pipeline 模式(steps,推荐)**:纯工具步骤,不调用 LLM,零配额消耗。适合定期脚本/监控/固定通知
+- **Message 模式(message)**:调用 LLM,消耗配额。适合语义推理/总结类任务,创建前必须明确告知用户并获得确认
 
-### ✅ 推荐：Pipeline 模式（steps 字段，不调用 LLM，不消耗配额）
-适用于：定期执行脚本、监控状态、采集数据、发送固定格式通知等纯脚本任务。
-- 用 steps: [{type:"tool", name:"exec_shell", args:{command:"..."}}] 定义
-- 脚本可自行输出 [NOTIFY]...[/NOTIFY] 块控制是否推送（配合 notify:"llm"）
-- 无 msg step = 不会调用 LLM，零配额消耗
-
-### ⚠️ 需确认：Message 模式（message 字段，会调用 LLM，消耗配额）
-适用于：需要 LLM 做语义推理、内容总结、动态判断的任务。
-**创建前必须明确告知用户"此任务会调用 LLM"，获得确认后才能使用 message 模式。**
-若任务只需执行命令 + 条件通知，请改用 Pipeline 模式，不要用 message 模式。
-
-## 创建前确认清单
-
-⚠️ 调用此工具前,必须先向用户确认以下信息,不得跳过:
+## 创建前必须确认(不得跳过)
 1. 任务意图与执行流程(做什么、操作对象、数据来源/关键步骤)
-2. 调度时间(具体时间点 / 间隔 / 一次性时间)
+2. 调度时间(具体时间点/间隔/一次性)
 3. 是否需要推送到 QQ(若是,推送给谁)
-4. 通知策略(每次推送 / 仅变化时 / 仅出错时 / 不推送)
-5. 输出要求(输出什么内容、格式;若不需要输出则说明)
-6. **是否需要 LLM 推理**（若否，用 Pipeline 模式；若是，需用户明确确认）
+4. 通知策略(每次/仅变化/仅出错/不推送)
+5. 输出要求(内容与格式)
+6. 是否需要 LLM 推理(若否用 Pipeline 模式;若是需用户确认)
 
-只有在用户明确回答了以上关键信息后,才能调用此工具创建任务。
-若用户描述模糊(如"帮我设置个天气提醒"),须追问细节后再创建。`,
+用户描述模糊(如"设置个天气提醒")时须追问细节后再创建。
+
+## message 指令四要素(Message 模式)
+① 意图:做什么、操作对象 ② 执行流程:数据来源/关键步骤(如"用 exec_shell 执行 curl wttr.in/Shanghai") ③ 约束:失败时输出"数据获取失败:原因",禁止编造数值 ④ 输出要求:输出什么、什么格式
+示例:'查询上海实时天气,用 exec_shell 执行 curl wttr.in/Shanghai?format=j1,提取温度和天气描述,失败则输出"数据获取失败",最终中文输出:城市/温度/天气/穿衣建议'`,
       parameters: {
         type: "object",
         properties: {
+          name: {
+            type: "string",
+            description: "任务短名称/描述(可选),用于列表与日志展示;不填则用 message 截断",
+          },
           message: {
             type: "string",
             description:
@@ -150,6 +187,7 @@ registerTool({
       id: nanoid(),
       enabled: true,
       agentId: ctx?.agentId ?? String(args["agentId"] ?? "default"),
+      name: args["name"] ? String(args["name"]).trim() : undefined,
       message,
       type,
       runAt: args["runAt"] ? String(args["runAt"]) : undefined,
@@ -197,35 +235,54 @@ registerTool({
     type: "function",
     function: {
       name: "cron_list",
-      description: "列出所有 cron jobs，返回 JSON 字符串。",
-      parameters: { type: "object", properties: {}, required: [] },
+      description: "列出所有 cron jobs(含调度/状态/最近结果摘要/下次触发时间)。可选 includeLogs=true 附加每个 job 最近 3 条运行日志。",
+      parameters: {
+        type: "object",
+        properties: {
+          includeLogs: {
+            type: "boolean",
+            description: "是否附加每个 job 最近 3 条运行日志(默认 false)",
+          },
+        },
+        required: [],
+      }
     },
   },
-  execute: async () => {
+  execute: async (args: Record<string, unknown>) => {
     const jobs = loadJobs();
     if (jobs.length === 0) return "暂无 cron jobs";
-    return JSON.stringify(
-      jobs.map((j) => ({
-        id: j.id,
-        enabled: j.enabled,
-        type: j.type,
-        schedule:
-          j.type === "once"
-            ? j.runAt
-            : j.type === "every"
-              ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`
-              : j.type === "daily"
-                ? `每天 ${(j.timesOfDay && j.timesOfDay.length > 0 ? j.timesOfDay : j.timeOfDay ? [j.timeOfDay] : []).join(", ")}`
-                : "手动触发",
-        message: j.message.slice(0, 60),
-        model: j.model ?? "daily（默认）",
-        lastRunAt: j.lastRunAt,
-        lastRunStatus: j.lastRunStatus,
-        output: j.output,
-      })),
-      null,
-      2
-    );
+    const includeLogs = Boolean(args["includeLogs"]);
+    const result = jobs.map((j) => ({
+      id: j.id,
+      name: j.name ?? null,
+      enabled: j.enabled,
+      type: j.type,
+      schedule:
+        j.type === "once"
+          ? j.runAt
+          : j.type === "every"
+            ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`
+            : j.type === "daily"
+              ? `每天 ${(j.timesOfDay && j.timesOfDay.length > 0 ? j.timesOfDay : j.timeOfDay ? [j.timeOfDay] : []).join(", ")}`
+              : "手动触发",
+      nextRunAt: estimateNextRun(j),
+      message: j.message.slice(0, 60),
+      model: j.model ?? "daily(默认)",
+      lastRunAt: j.lastRunAt,
+      lastRunStatus: j.lastRunStatus,
+      lastResultBrief: (j.lastRunResult ?? "").replace(/\n+/g, " ").slice(0, 100),
+      ...(includeLogs
+        ? {
+            recentLogs: readLogs(j.id, 3).map((l) => ({
+              ts: l.ts,
+              status: l.status,
+              durationMs: l.durationMs,
+              trigger: l.trigger,
+            })),
+          }
+        : {}),
+    }));
+    return JSON.stringify(result, null, 2);
   },
 });
 

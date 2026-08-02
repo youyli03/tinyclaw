@@ -313,7 +313,7 @@
           <div class="cron-item-header" @click="toggleReport(job.id)">
             <div class="cron-item-left">
               <span :class="statusClass(job)">{{ statusText(job) }}</span>
-              <span class="cron-item-name" :title="job.message">{{ shortName(job.message) }}</span>
+              <span class="cron-item-name" :title="job.message">{{ job.name || shortName(job.message) }}</span>
             </div>
             <div class="cron-item-right">
               <span class="cron-item-schedule">{{ scheduleStr(job) }}</span>
@@ -326,6 +326,8 @@
             <div class="cron-log-row" v-for="(log, i) in job.recentLogs" :key="i">
               <div class="cron-log-meta">
                 <span class="cron-log-ts">{{ fmtTime(log.ts) }}</span>
+                <span v-if="log.trigger" :class="log.trigger==='manual'?'status-badge status-pending':'status-badge status-disabled'">{{ log.trigger==='manual'?'手动':'定时' }}</span>
+                <span v-if="log.durationMs" class="cron-log-dur">{{ fmtDuration(log.durationMs) }}</span>
                 <span :class="log.status==='success'?'status-badge status-success':'status-badge status-error'">{{ log.status }}</span>
               </div>
               <div class="cron-log-result">{{ log.result }}</div>

@@ -191,10 +191,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         const logs = readLogs(job.id, 5);
         return {
           id: job.id,
+          name: job.name ?? null,
           message: job.message,
           type: job.type,
           enabled: job.enabled,
           agentId: job.agentId,
+          model: job.model ?? null,
           runAt: job.runAt,
           intervalSecs: job.intervalSecs,
           timeOfDay: job.timeOfDay,
@@ -204,6 +206,9 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
             ts: l.ts,
             status: l.status,
             result: l.result.slice(0, 200), // 截断避免过大
+            durationMs: l.durationMs,
+            trigger: l.trigger,
+            model: l.model,
           })),
         };
       });

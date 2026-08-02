@@ -57,6 +57,8 @@ export const CronJobSchema = z.object({
   enabled: z.boolean().default(true),
   /** 使用的 agent(默认 "default") */
   agentId: z.string().default("default"),
+  /** 短名称/描述,用于列表展示与日志标识;不填则回退到 message 截断 */
+  name: z.string().optional(),
   /** 触发时传给 agent 的 prompt */
   message: z.string().min(1),
 

@@ -130,13 +130,36 @@ export interface CronLogEntry {
   status: "success" | "error";
   result: string;
   jobId: string;
+  /** 执行耗时(ms) */
+  durationMs?: number;
+  /** 触发方式:定时调度 / 手动触发 */
+  trigger?: "schedule" | "manual";
+  /** 实际使用的模型 */
+  model?: string;
 }
 
-/** 追加一条运行日志到 ~/.tinyclaw/cron/logs/<jobId>.jsonl */
+/** 单文件日志大小上限(超过后截断保留最近 MAX_LOG_LINES 行) */
+const MAX_LOG_BYTES = 1024 * 1024; // 1MB
+const MAX_LOG_LINES = 200;
+
+/** 追加一条运行日志到 ~/.tinyclaw/cron/logs/<jobId>.jsonl,超过大小上限时截断旧日志 */
 export function appendLog(entry: CronLogEntry): void {
   ensureDirs();
   const file = path.join(LOGS_DIR, `${entry.jobId}.jsonl`);
   fs.appendFileSync(file, JSON.stringify(entry) + "\n", "utf-8");
+
+  // 轮转:文件超过 1MB 时保留最近 200 行(旧日志截断)。低频操作(append 后偶尔触发),直接同步重写
+  try {
+    const size = fs.statSync(file).size;
+    if (size > MAX_LOG_BYTES) {
+      const lines = fs.readFileSync(file, "utf-8").split("\n").filter(Boolean);
+      if (lines.length > MAX_LOG_LINES) {
+        fs.writeFileSync(file, lines.slice(-MAX_LOG_LINES).join("\n") + "\n", "utf-8");
+      }
+    }
+  } catch {
+    /* 轮转失败不影响主流程(下次 append 会重试) */
+  }
 }
 
 /** 读取最近 n 条日志（默认 20） */
