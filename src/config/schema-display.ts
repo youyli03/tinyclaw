@@ -36,6 +36,7 @@ export const DISPLAY_META: Record<string, FieldMeta> = {
   voice: { sectionTitle: "Voice（语音识别）" },
   retry: { sectionTitle: "Retry（重试策略）" },
   web: { sectionTitle: "Web Dashboard" },
+  interactive: { sectionTitle: "Interactive(交互提醒)" },
 
   // ── 敏感字段 ────────────────────────────────────────────────────────────────
   "providers.copilot.githubToken": { sensitive: true },

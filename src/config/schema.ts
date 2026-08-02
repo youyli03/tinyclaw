@@ -295,6 +295,24 @@ const MFASchema = z.object({
 });
 
 /**
+ * 交互等待提醒配置。
+ *
+ * 所有需要等待用户回复的场景(MFA 确认 / ask_user / plan 审批 / 等待输入)在注册
+ * 等待事件时自动启动提醒定时器:超过 remindAfterSecs 未回复则发送简短提示,
+ * 之后每隔 remindIntervalSecs 提醒一次,最多 maxReminds 次。
+ * 用户回复或等待超时后定时器自动清理,不会残留刷屏。
+ */
+const InteractiveSchema = z.object({
+  /** 首次提醒延迟(秒),0 = 不提醒(永久静默等待),默认 600(10 分钟) */
+  remindAfterSecs: z.number().int().min(0).default(600),
+  /** 提醒间隔(秒),默认 600(10 分钟) */
+  remindIntervalSecs: z.number().int().min(1).default(600),
+  /** 最多提醒次数,0 = 不限,默认 3 */
+  maxReminds: z.number().int().min(0).default(3),
+});
+export type InteractiveConfig = z.infer<typeof InteractiveSchema>;
+
+/**
  * Secret 文件权限守卫配置。
  *
  * tinyclaw 启动加载 secrets.toml / config.toml 时,检查文件权限是否过宽
@@ -778,6 +796,7 @@ export const ConfigSchema = z.object({
   channels: ChannelsSchema.default({}),
   memory: MemorySchema.default({}),
   submitter: SubmitterSchema.default({}),
+  interactive: InteractiveSchema.default({}),
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,

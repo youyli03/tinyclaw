@@ -808,7 +808,10 @@ export class Session {
    * 挂起当前执行，等待用户回复 确认/取消。
    * resolve(true) = 确认，resolve(false) = 取消，reject = 超时。
    */
-  waitForApproval(timeoutSecs: number): Promise<boolean> {
+  waitForApproval(
+    timeoutSecs: number,
+    remind?: import("./inbound-bus.js").WaiterRemind
+  ): Promise<boolean> {
     if (this.pendingApproval) {
       this.pendingApproval.reject(new Error("新的 MFA 请求覆盖了未完成的请求"));
       this.pendingApproval = null;
@@ -824,6 +827,7 @@ export class Session {
           this.pendingApproval = null;
           resolve(content.trim() === "确认");
         },
+        ...(remind ? { remind } : {}),
       });
       this.pendingApproval = {
         resolve: (approved) => {
@@ -855,7 +859,11 @@ export class Session {
    * - resolve({ approved: false, feedback }) = 用户拒绝 / 提供反馈
    * - reject = 超时
    */
-  waitForPlanApproval(timeoutSecs: number, actions: string[]): Promise<PlanApprovalResult> {
+  waitForPlanApproval(
+    timeoutSecs: number,
+    actions: string[],
+    remind?: import("./inbound-bus.js").WaiterRemind
+  ): Promise<PlanApprovalResult> {
     if (this.pendingPlanApproval) {
       this.pendingPlanApproval.reject(new Error("新的 Plan 审批请求覆盖了未完成的请求"));
       this.pendingPlanApproval = null;
@@ -884,6 +892,7 @@ export class Session {
             resolve({ approved: false, feedback: trimmed });
           }
         },
+        ...(remind ? { remind } : {}),
       });
       this.pendingPlanApproval = {
         actions,
@@ -916,7 +925,11 @@ export class Session {
    * - resolve({ answer, isFreeform: true })  = 用户自由输入
    * - reject = 超时或会话被中断
    */
-  waitForAskUser(optionLabels: string[], allowFreeform: boolean): Promise<AskUserResult> {
+  waitForAskUser(
+    optionLabels: string[],
+    allowFreeform: boolean,
+    remind?: import("./inbound-bus.js").WaiterRemind
+  ): Promise<AskUserResult> {
     if (this.pendingAskUser) {
       this.pendingAskUser.reject(new Error("新的 ask_user 请求覆盖了未完成的请求"));
       this.pendingAskUser = null;
@@ -957,6 +970,7 @@ export class Session {
             reject(new Error(`INVALID_CHOICE:请输入选项编号(1~${optionLabels.length}):\n${hint}`));
           }
         },
+        ...(remind ? { remind } : {}),
       });
       this.pendingAskUser = {
         optionLabels,

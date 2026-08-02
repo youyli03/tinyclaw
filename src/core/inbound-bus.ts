@@ -19,6 +19,17 @@ export interface InboundExtras {
   enrichedContent?: string;
 }
 
+export interface WaiterRemind {
+  /** 首次提醒延迟(秒),0 = 不提醒 */
+  afterSecs: number;
+  /** 提醒间隔(秒) */
+  intervalSecs: number;
+  /** 最多提醒次数,0 = 不限 */
+  maxReminds: number;
+  /** 发送提醒消息(由注册方提供,通常用 connector.send) */
+  send: () => Promise<void> | void;
+}
+
 export interface Waiter {
   /** 唯一标识，如 "session:xxx:mfa"、"skill:bilibili:askuser:1748000000" */
   id: string;
@@ -37,6 +48,12 @@ export interface Waiter {
   match: (content: string, extras: InboundExtras) => boolean;
   /** 处理消息，调用后通常会 resolve 对应的 Promise */
   handle: (content: string, extras: InboundExtras) => void;
+  /**
+   * 等待提醒配置(可选)。
+   * 注册后自动启动提醒定时器:超过 afterSecs 未收到用户回复则调用 send() 发送简短提示,
+   * 之后每隔 intervalSecs 提醒一次,最多 maxReminds 次。注销/消费后定时器自动清理。
+   */
+  remind?: WaiterRemind;
 }
 
 export class InboundMessageBus {
@@ -47,8 +64,41 @@ export class InboundMessageBus {
    */
   register(waiter: Waiter): () => void {
     this.waiters.push(waiter);
+
+    // 等待提醒:注册时启动定时器,注销时清理
+    let remindCleanup: (() => void) | null = null;
+    const remind = waiter.remind;
+    if (remind && remind.afterSecs > 0 && remind.send) {
+      let remindCount = 0;
+      let remindTimer: ReturnType<typeof setTimeout> | null = null;
+      let remindStopped = false;
+      const scheduleRemind = (delayMs: number) => {
+        remindTimer = setTimeout(() => {
+          if (remindStopped) return;
+          if (remind.maxReminds > 0 && remindCount >= remind.maxReminds) {
+            remindCleanup?.();
+            return;
+          }
+          remindCount++;
+          Promise.resolve()
+            .then(() => remind.send())
+            .catch((e: unknown) => console.error("[inbound-bus] remind send error:", e));
+          scheduleRemind(remind.intervalSecs * 1000);
+        }, delayMs);
+      };
+      scheduleRemind(remind.afterSecs * 1000);
+      remindCleanup = () => {
+        remindStopped = true;
+        if (remindTimer) {
+          clearTimeout(remindTimer);
+          remindTimer = null;
+        }
+      };
+    }
+
     return () => {
       this.waiters = this.waiters.filter((w) => w.id !== waiter.id);
+      remindCleanup?.();
     };
   }
 

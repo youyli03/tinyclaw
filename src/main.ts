@@ -583,7 +583,16 @@ async function main(): Promise<void> {
           await connector.send(msg.peerId, msg.type, plainMsg).catch(() => {});
         }
 
-        return session.waitForPlanApproval(planTimeoutSecs, resolvedActions);
+        const interactiveCfg = loadConfig().interactive;
+        return session.waitForPlanApproval(planTimeoutSecs, resolvedActions, {
+          afterSecs: interactiveCfg.remindAfterSecs,
+          intervalSecs: interactiveCfg.remindIntervalSecs,
+          maxReminds: interactiveCfg.maxReminds,
+          send: () =>
+            connector
+              .send(msg.peerId, msg.type, "⏳ 还在等待您的选择...")
+              .catch(() => {}),
+        });
       };
     };
 
@@ -694,9 +703,17 @@ async function main(): Promise<void> {
 
       // 等待用户回复，INVALID_CHOICE 时重新提示并循环
        
+      const interactiveCfg = loadConfig().interactive;
+      const askRemind = {
+        afterSecs: interactiveCfg.remindAfterSecs,
+        intervalSecs: interactiveCfg.remindIntervalSecs,
+        maxReminds: interactiveCfg.maxReminds,
+        send: () =>
+          connector.send(msg.peerId, msg.type, "⏳ 还在等待您的回答...").catch(() => {}),
+      };
       while (true) {
         try {
-          return await session.waitForAskUser(optionLabels, allowFreeform);
+          return await session.waitForAskUser(optionLabels, allowFreeform, askRemind);
         } catch (e) {
           if (e instanceof Error && e.message.startsWith("INVALID_CHOICE:")) {
             const hint = e.message.slice("INVALID_CHOICE:".length);
@@ -1237,7 +1254,16 @@ ${message}`;
                       : "") +
                     (resumeAllowFreeform ? "\n\n或直接输入你的想法..." : "");
                   await connector!.send(marker.peerId, marker.msgType, plainMsg).catch(() => {});
-                  return codeSession.waitForAskUser(optionLabels, resumeAllowFreeform);
+                  const resumeInteractive = loadConfig().interactive;
+                  return codeSession.waitForAskUser(optionLabels, resumeAllowFreeform, {
+                    afterSecs: resumeInteractive.remindAfterSecs,
+                    intervalSecs: resumeInteractive.remindIntervalSecs,
+                    maxReminds: resumeInteractive.maxReminds,
+                    send: () =>
+                      connector!
+                        .send(marker.peerId, marker.msgType, "⏳ 还在等待您的回答...")
+                        .catch(() => {}),
+                  });
                 };
                 const resumeOnNotify = async (notifyMessage: string) => {
                   await connector!

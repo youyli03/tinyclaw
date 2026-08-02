@@ -214,3 +214,12 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 #   "google/gemini-2.5-flash-lite-preview-05-20",   # 500 RPD 保底
 #   "copilot/oswe-vscode-prime",                    # Copilot 兜底
 # ]
+
+# ── 交互等待提醒 ────────────────────────────────────────────────────────────────
+# 所有需要用户确认的场景(MFA 确认 / ask_user / plan 审批 / 等待输入)在等待期间自动提醒:
+# 超过 remindAfterSecs 未回复则发送简短提示,之后每隔 remindIntervalSecs 提醒一次,
+# 最多 maxReminds 次。用户回复或等待超时后自动清理,不刷屏。
+[interactive]
+# remindAfterSecs = 600    # 首次提醒延迟(秒),0 = 不提醒(默认 600 = 10 分钟)
+# remindIntervalSecs = 600 # 提醒间隔(秒,默认 600)
+# maxReminds = 3           # 最多提醒次数,0 = 不限(默认 3)

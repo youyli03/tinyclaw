@@ -186,7 +186,55 @@ export class QQBotConnector implements Connector {
               );
             }, timeoutMs)
           : null;
-      this.pendingInputMap.set(peerId, { resolve, reject, timer });
+
+      // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
+      let remindCleanup: (() => void) | null = null;
+      try {
+        const icfg = loadConfig().interactive;
+        if (icfg.remindAfterSecs > 0) {
+          let remindCount = 0;
+          let remindTimer: ReturnType<typeof setTimeout> | null = null;
+          let stopped = false;
+          const scheduleRemind = (delayMs: number) => {
+            remindTimer = setTimeout(() => {
+              if (stopped) return;
+              if (icfg.maxReminds > 0 && remindCount >= icfg.maxReminds) {
+                remindCleanup?.();
+                return;
+              }
+              remindCount++;
+              void this.send(peerId, type, "⏳ 还在等待您的输入...").catch((e: unknown) =>
+                console.error("[qqbot] send error:", e)
+              );
+              scheduleRemind(icfg.remindIntervalSecs * 1000);
+            }, delayMs);
+          };
+          scheduleRemind(icfg.remindAfterSecs * 1000);
+          remindCleanup = () => {
+            stopped = true;
+            if (remindTimer) {
+              clearTimeout(remindTimer);
+              remindTimer = null;
+            }
+          };
+        }
+      } catch {
+        // 配置读取失败则跳过提醒
+      }
+
+      const originalResolve = resolve;
+      const originalReject = reject;
+      this.pendingInputMap.set(peerId, {
+        resolve: (v) => {
+          remindCleanup?.();
+          originalResolve(v);
+        },
+        reject: (e) => {
+          remindCleanup?.();
+          originalReject(e);
+        },
+        timer,
+      });
       void this.send(peerId, type, prompt).catch((e: unknown) =>
         console.error("[qqbot] send error:", e)
       );
@@ -213,9 +261,53 @@ export class QQBotConnector implements Connector {
               );
             }, timeoutMs)
           : null;
+
+      // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
+      let remindCleanup: (() => void) | null = null;
+      try {
+        const icfg = loadConfig().interactive;
+        if (icfg.remindAfterSecs > 0) {
+          let remindCount = 0;
+          let remindTimer: ReturnType<typeof setTimeout> | null = null;
+          let stopped = false;
+          const scheduleRemind = (delayMs: number) => {
+            remindTimer = setTimeout(() => {
+              if (stopped) return;
+              if (icfg.maxReminds > 0 && remindCount >= icfg.maxReminds) {
+                remindCleanup?.();
+                return;
+              }
+              remindCount++;
+              void this.send(peerId, type, "⏳ 还在等待您的确认...").catch((e: unknown) =>
+                console.error("[qqbot] send error:", e)
+              );
+              scheduleRemind(icfg.remindIntervalSecs * 1000);
+            }, delayMs);
+          };
+          scheduleRemind(icfg.remindAfterSecs * 1000);
+          remindCleanup = () => {
+            stopped = true;
+            if (remindTimer) {
+              clearTimeout(remindTimer);
+              remindTimer = null;
+            }
+          };
+        }
+      } catch {
+        // 配置读取失败则跳过提醒
+      }
+
+      const originalResolve = resolve;
+      const originalReject = reject;
       this.pendingMFAMap.set(peerId, {
-        resolve,
-        reject,
+        resolve: (v) => {
+          remindCleanup?.();
+          originalResolve(v);
+        },
+        reject: (e) => {
+          remindCleanup?.();
+          originalReject(e);
+        },
         timer,
         ...(verifyCode ? { verifyCode } : {}),
       });
