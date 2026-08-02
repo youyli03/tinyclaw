@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { registerTool, type ToolContext } from "./registry.js";
 import { mdToImage } from "../connectors/utils/md-to-image.js";
 import { agentManager } from "../core/agent-manager.js";
+import { loadConfig } from "../config/loader.js";
 
 registerTool({
   requiresMFA: false,
@@ -130,6 +131,13 @@ export function createAskMasterCallback(
 
     // 阻塞等待用户通过 main.ts 回复（通过 InboundMessageBus 路由）
     return new Promise<string>((resolve) => {
+      // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
+      let icfg: { remindAfterSecs: number; remindIntervalSecs: number; maxReminds: number };
+      try {
+        icfg = loadConfig().interactive;
+      } catch {
+        icfg = { remindAfterSecs: 0, remindIntervalSecs: 600, maxReminds: 3 };
+      }
       const unregister = masterSession.inboundBus.register({
         id: `${masterSession.sessionId}:askmaster:${Date.now()}`,
         label: "ask_master",
@@ -138,6 +146,12 @@ export function createAskMasterCallback(
           unregister();
           masterSession.pendingSlaveQuestion = null;
           resolve(content.trim());
+        },
+        remind: {
+          afterSecs: icfg.remindAfterSecs,
+          intervalSecs: icfg.remindIntervalSecs,
+          maxReminds: icfg.maxReminds,
+          send: () => onNotify("⏳ 还在等待您的回答..."),
         },
       });
       masterSession.pendingSlaveQuestion = {

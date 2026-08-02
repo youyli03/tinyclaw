@@ -58,6 +58,8 @@ export interface Waiter {
 
 export class InboundMessageBus {
   private waiters: Waiter[] = [];
+  /** 已注册 waiter 的清理函数集合,clear() 时统一调用,避免 remind 定时器泄漏 */
+  private cleanups: Array<() => void> = [];
 
   /**
    * 注册一个等待者，返回注销函数（调用后从队列中移除该 Waiter）。
@@ -96,10 +98,12 @@ export class InboundMessageBus {
       };
     }
 
-    return () => {
+    const cleanup = () => {
       this.waiters = this.waiters.filter((w) => w.id !== waiter.id);
       remindCleanup?.();
     };
+    this.cleanups.push(cleanup);
+    return cleanup;
   }
 
   /**
@@ -116,8 +120,10 @@ export class InboundMessageBus {
     return false;
   }
 
-  /** 强制清除所有等待者（会话结束或重置时调用） */
+  /** 强制清除所有等待者(会话结束或重置时调用),同时清理所有 remind 定时器 */
   clear(): void {
+    for (const c of this.cleanups) c();
+    this.cleanups = [];
     this.waiters = [];
   }
 

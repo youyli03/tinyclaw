@@ -169,6 +169,52 @@ export class QQBotConnector implements Connector {
     void mfaTimeoutMs; // used in closure above
   }
 
+  /**
+   * 启动等待提醒定时器:超过 remindAfterSecs 未回复则发送 message,
+   * 之后每隔 remindIntervalSecs 提醒一次,最多 maxReminds 次。
+   * 返回清理函数;配置为 0 或读取失败时返回 null(不提醒)。
+   */
+  private startRemind(
+    peerId: string,
+    type: InboundMessage["type"],
+    message: string
+  ): (() => void) | null {
+    let remindCleanup: (() => void) | null = null;
+    try {
+      const icfg = loadConfig().interactive;
+      if (icfg.remindAfterSecs > 0) {
+        let remindCount = 0;
+        let remindTimer: ReturnType<typeof setTimeout> | null = null;
+        let stopped = false;
+        const scheduleRemind = (delayMs: number) => {
+          remindTimer = setTimeout(() => {
+            if (stopped) return;
+            if (icfg.maxReminds > 0 && remindCount >= icfg.maxReminds) {
+              remindCleanup?.();
+              return;
+            }
+            remindCount++;
+            void this.send(peerId, type, message).catch((e: unknown) =>
+              console.error("[qqbot] send error:", e)
+            );
+            scheduleRemind(icfg.remindIntervalSecs * 1000);
+          }, delayMs);
+        };
+        scheduleRemind(icfg.remindAfterSecs * 1000);
+        remindCleanup = () => {
+          stopped = true;
+          if (remindTimer) {
+            clearTimeout(remindTimer);
+            remindTimer = null;
+          }
+        };
+      }
+    } catch {
+      // 配置读取失败则跳过提醒
+    }
+    return remindCleanup;
+  }
+
   requestUserInput(
     peerId: string,
     type: InboundMessage["type"],
@@ -188,39 +234,7 @@ export class QQBotConnector implements Connector {
           : null;
 
       // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
-      let remindCleanup: (() => void) | null = null;
-      try {
-        const icfg = loadConfig().interactive;
-        if (icfg.remindAfterSecs > 0) {
-          let remindCount = 0;
-          let remindTimer: ReturnType<typeof setTimeout> | null = null;
-          let stopped = false;
-          const scheduleRemind = (delayMs: number) => {
-            remindTimer = setTimeout(() => {
-              if (stopped) return;
-              if (icfg.maxReminds > 0 && remindCount >= icfg.maxReminds) {
-                remindCleanup?.();
-                return;
-              }
-              remindCount++;
-              void this.send(peerId, type, "⏳ 还在等待您的输入...").catch((e: unknown) =>
-                console.error("[qqbot] send error:", e)
-              );
-              scheduleRemind(icfg.remindIntervalSecs * 1000);
-            }, delayMs);
-          };
-          scheduleRemind(icfg.remindAfterSecs * 1000);
-          remindCleanup = () => {
-            stopped = true;
-            if (remindTimer) {
-              clearTimeout(remindTimer);
-              remindTimer = null;
-            }
-          };
-        }
-      } catch {
-        // 配置读取失败则跳过提醒
-      }
+      const remindCleanup = this.startRemind(peerId, type, "⏳ 还在等待您的输入...");
 
       const originalResolve = resolve;
       const originalReject = reject;
@@ -263,39 +277,7 @@ export class QQBotConnector implements Connector {
           : null;
 
       // 等待提醒:超过 remindAfterSecs 未回复则发送简短提示(配置见 [interactive])
-      let remindCleanup: (() => void) | null = null;
-      try {
-        const icfg = loadConfig().interactive;
-        if (icfg.remindAfterSecs > 0) {
-          let remindCount = 0;
-          let remindTimer: ReturnType<typeof setTimeout> | null = null;
-          let stopped = false;
-          const scheduleRemind = (delayMs: number) => {
-            remindTimer = setTimeout(() => {
-              if (stopped) return;
-              if (icfg.maxReminds > 0 && remindCount >= icfg.maxReminds) {
-                remindCleanup?.();
-                return;
-              }
-              remindCount++;
-              void this.send(peerId, type, "⏳ 还在等待您的确认...").catch((e: unknown) =>
-                console.error("[qqbot] send error:", e)
-              );
-              scheduleRemind(icfg.remindIntervalSecs * 1000);
-            }, delayMs);
-          };
-          scheduleRemind(icfg.remindAfterSecs * 1000);
-          remindCleanup = () => {
-            stopped = true;
-            if (remindTimer) {
-              clearTimeout(remindTimer);
-              remindTimer = null;
-            }
-          };
-        }
-      } catch {
-        // 配置读取失败则跳过提醒
-      }
+      const remindCleanup = this.startRemind(peerId, type, "⏳ 还在等待您的确认...");
 
       const originalResolve = resolve;
       const originalReject = reject;
