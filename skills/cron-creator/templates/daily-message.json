@@ -1,0 +1,7 @@
+{
+  "name": "上海天气日报",
+  "message": "查询上海实时天气,用 exec_shell 执行 curl wttr.in/Shanghai?format=j1,提取当前温度、天气描述和体感温度,若 curl 失败则输出\"数据获取失败\",最终中文输出:城市/温度/天气/穿衣建议",
+  "type": "daily",
+  "timeOfDay": "08:00",
+  "notify": "always"
+}

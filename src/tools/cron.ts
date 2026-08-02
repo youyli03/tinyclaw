@@ -8,6 +8,7 @@
 import { registerTool, type ToolContext } from "./registry.js";
 import { addJob, removeJob, loadJobs, updateJob, getJob, readLogs } from "../cron/store.js";
 import { cronScheduler } from "../cron/scheduler.js";
+import { ZodError } from "zod";
 
 // ── nanoid 轻量替代 ───────────────────────────────────────────────────────────
 
@@ -103,19 +104,20 @@ registerTool({
           type: {
             type: "string",
             enum: ["once", "every", "daily", "manual"],
-            description: "调度类型（once/every/daily/manual）",
+            description: "调度类型。once/every/daily 三选一;manual=无自动调度,仅 cron_run 手动触发",
           },
-          runAt: { type: "string", description: "[once] ISO 8601 触发时间" },
-          intervalSecs: { type: "number", description: "[every] 间隔秒数" },
+          runAt: { type: "string", description: "[once] ISO 8601 触发时间(type=once 时必填)" },
+          intervalSecs: { type: "number", description: "[every] 间隔秒数,如 300=每5分钟(type=every 时必填)" },
           timeOfDay: {
             type: "string",
-            description: "[daily] 单个触发时间,格式 HH:MM(本地时间);多时段请用 timesOfDay",
+            description:
+              "[daily] 单个触发时间,格式 HH:MM(本地时间);type=daily 时必填 timeOfDay 或 timesOfDay;多时段请用 timesOfDay",
           },
           timesOfDay: {
             type: "array",
             items: { type: "string" },
             description:
-              '[daily] 多个触发时间点,格式 ["HH:MM", ...],优先于 timeOfDay。例:["09:00","12:00","20:00"]',
+              '[daily] 多个触发时间点,格式 ["HH:MM", ...],优先于 timeOfDay。例:["09:00","12:00","20:00"];type=daily 时必填其一',
           },
           timeRange: {
             type: "object",
@@ -183,6 +185,7 @@ registerTool({
     const sessionId = ctx?.sessionId ?? null;
     const msgType = (args["msgType"] as "c2c" | "group" | "guild" | "dm") ?? "c2c";
 
+    try {
     const job = addJob({
       id: nanoid(),
       enabled: true,
@@ -223,7 +226,43 @@ registerTool({
     });
 
     cronScheduler.reschedule(job.id);
-    return `✓ 已创建 cron job: ${job.id}（类型: ${job.type}，绑定 session: ${sessionId ?? "无"}）`;
+
+    // 回显完整配置供 LLM 自查(含 nextRunAt 估算)与用户复核
+    const schedule =
+      job.type === "once"
+        ? job.runAt ?? "-"
+        : job.type === "every"
+          ? `每 ${job.intervalSecs}s${job.timeRange ? ` [时段 ${job.timeRange.start}-${job.timeRange.end}${job.timeRange.weekdays && job.timeRange.weekdays.length > 0 ? ` 周${job.timeRange.weekdays.join("/")}` : ""}]` : ""}`
+          : job.type === "daily"
+            ? `每天 ${job.timesOfDay && job.timesOfDay.length > 0 ? job.timesOfDay.join(", ") : (job.timeOfDay ?? "-")}`
+            : "手动触发(cron_run)";
+    return `✓ 已创建 cron job: ${job.id}（类型: ${job.type}，绑定 session: ${sessionId ?? "无"}）
+
+${JSON.stringify(
+  {
+    id: job.id,
+    name: job.name ?? "(未填 name,列表将显示 message 截断)",
+    type: job.type,
+    schedule,
+    nextRunAt: estimateNextRun(job),
+    notify: job.output.notify,
+    pushTo: job.output.peerId ? `${job.output.msgType}:${job.output.peerId}` : "仅写日志(未绑定推送)",
+    model: job.model ?? "daily(默认)",
+    mode: job.steps && job.steps.length > 0 ? `pipeline(${job.steps.length} steps)` : "message",
+    message: message.slice(0, 80) + (message.length > 80 ? "…" : ""),
+  },
+  null,
+  2
+)}`;
+    } catch (err) {
+      if (err instanceof ZodError) {
+        const issues = err.issues
+          .map((i) => `- ${i.path.join(".") || "整体"}: ${i.message}`)
+          .join("\n");
+        return `❌ 创建失败,请修正后重试:\n${issues}`;
+      }
+      throw err;
+    }
   },
 });
 

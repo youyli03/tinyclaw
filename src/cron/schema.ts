@@ -50,17 +50,21 @@ const CronOutputSchema = z.object({
 
 // ── CronJob Schema ────────────────────────────────────────────────────────────
 
-export const CronJobSchema = z.object({
-  /** nanoid */
-  id: z.string(),
-  /** 是否启用 */
-  enabled: z.boolean().default(true),
-  /** 使用的 agent(默认 "default") */
-  agentId: z.string().default("default"),
-  /** 短名称/描述,用于列表展示与日志标识;不填则回退到 message 截断 */
-  name: z.string().optional(),
-  /** 触发时传给 agent 的 prompt */
-  message: z.string().min(1),
+export const CronJobSchema = z
+  .object({
+    /** nanoid */
+    id: z.string(),
+    /** 是否启用 */
+    enabled: z.boolean().default(true),
+    /** 使用的 agent(默认 "default") */
+    agentId: z.string().default("default"),
+    /** 短名称/描述,用于列表展示与日志标识;不填则回退到 message 截断 */
+    name: z.string().optional(),
+    /**
+     * 触发时传给 agent 的 prompt(Message 模式须含四要素:意图/执行流程/约束/输出要求,≥15 字;
+     * Pipeline 模式仅作描述,≥5 字即可)
+     */
+    message: z.string().min(1),
 
   // ── 调度类型(四选一)────────────────────────────────────────────────────
   /**
@@ -155,7 +159,47 @@ export const CronJobSchema = z.object({
   lastRunStatus: z.enum(["success", "error"]).optional(),
   /** on_change 策略比对用,存储上次结果摘要 */
   lastRunResult: z.string().optional(),
-});
+  })
+  .superRefine((job, ctx) => {
+    // ── 交叉校验:type 与调度参数必须匹配 ───────────────────────────────────
+    if (job.type === "once" && !job.runAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runAt"],
+        message: "type=once 的 job 必须提供 runAt(ISO 8601 触发时间,如 2026-08-02T15:00:00+08:00)",
+      });
+    }
+    if (job.type === "every" && !job.intervalSecs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["intervalSecs"],
+        message: "type=every 的 job 必须提供 intervalSecs(间隔秒数,如 300=每5分钟)",
+      });
+    }
+    if (
+      job.type === "daily" &&
+      !job.timeOfDay &&
+      !(job.timesOfDay && job.timesOfDay.length > 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timeOfDay"],
+        message: "type=daily 的 job 必须提供 timeOfDay 或 timesOfDay(触发时间点,如 \"08:00\")",
+      });
+    }
+    // ── message 长度:Message 模式须四要素齐全 ───────────────────────────────
+    const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;
+    const minLen = isPipeline ? 5 : 15;
+    if ((job.message ?? "").trim().length < minLen) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["message"],
+        message: isPipeline
+          ? `message 太短(${(job.message ?? "").trim().length} 字),至少 ${minLen} 字:简要描述任务用途`
+          : `message 太短(${(job.message ?? "").trim().length} 字),至少 ${minLen} 字:须包含意图/执行流程/约束/输出要求四要素`,
+      });
+    }
+  });
 
 export type CronJob = z.infer<typeof CronJobSchema>;
 export type CronOutput = z.infer<typeof CronOutputSchema>;

@@ -1,0 +1,6 @@
+{
+  "name": "手动日报生成",
+  "message": "生成今日股市日报,用 exec_shell 调用 ~/.tinyclaw/agents/default/skills/stock-daily-report 脚本获取 A 股数据,失败则输出\"数据获取失败\",最终输出 Markdown 格式日报",
+  "type": "manual",
+  "notify": "on_change"
+}

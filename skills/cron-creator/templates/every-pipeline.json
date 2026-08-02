@@ -1,0 +1,14 @@
+{
+  "name": "服务健康监控",
+  "type": "every",
+  "intervalSecs": 3600,
+  "timeRange": { "start": "08:00", "end": "23:00" },
+  "notify": "on_error",
+  "steps": [
+    {
+      "type": "tool",
+      "name": "exec_shell",
+      "args": { "command": "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health" }
+    }
+  ]
+}
