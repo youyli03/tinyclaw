@@ -36,17 +36,15 @@ registerTool({
     function: {
       name: "skill_run",
       description:
-        "执行一个已注册的 skill（技能工作流）。会 fork 一个独立 sub-agent，" +
-        "注入 skill 文档作为执行指南，同步等待完成后返回结果。\n\n" +
-        "**使用场景**：当用户请求匹配某个可用技能时，优先调用此工具执行，而不是自行尝试。\n" +
-        "**注意**：执行耗时较长的 skill 时请告知用户正在执行中。",
+        "执行一个已注册 skill:fork sub-agent 注入 skill 文档作为指南,同步等待结果。\n" +
+        "用户请求匹配可用技能时优先调用;长耗时 skill 先告知用户。async=true 后台执行完自动通知",
       parameters: {
         type: "object",
         properties: {
           skill_name: {
             type: "string",
             description:
-              "要执行的 skill 名称（与 SKILLS.md 中的 name 一致，如 stock-daily-report）",
+              "skill 名称(与 SKILLS.md 中 name 一致,如 stock-daily-report)",
           },
           args: {
             type: "string",

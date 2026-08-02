@@ -414,22 +414,19 @@ registerTool({
     function: {
       name: "code_note_read",
       description:
-        "读取指定项目的跨 session 记忆(MEMORY.md 索引或 topic 文件)。" +
-        "默认返回摘要模式(各条目标题 + 前 200 字),避免全量加载撑 prompt。" +
-        "传 summary=false 可获取全文;不传 project 时列出所有已知项目。" +
-        "适合在 code session 开始时快速了解历史约束和进度。",
+        "读取指定项目的跨 session 记忆(MEMORY.md 索引或 topic 文件)。默认摘要模式(各条目标题+前200字);" +
+        "summary=false 全文;topic 传文件名(不含 .md);section 传分区名;不传 project 列出所有已知项目。",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
             description:
-              "项目 slug(如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app)。" +
-              "不传则返回所有已知项目列表。",
+              "项目 slug(如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app);不传则列出所有已知项目",
           },
           summary: {
             type: "boolean",
-            description: "摘要模式(默认 true):只返回各条目标题 + 前 200 字;false 返回全文。",
+            description: "摘要模式(默认 true):标题+前 200 字;false 返回全文",
           },
           limit: {
             type: "number",
@@ -438,13 +435,12 @@ registerTool({
           topic: {
             type: "string",
             description:
-              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
-              "传此参数时直接读取对应 topic 文件全文,并自动附带 age warning。",
+              "topic 文件名(不含 .md 后缀,如 constraints/architecture),读其全文并附 age warning",
           },
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" + "传此参数时仅返回该章节内容,而非整个文件。",
+              "分点/章节标题(不含 ## 前缀),仅返回该章节内容",
           },
         },
         required: [],
@@ -585,44 +581,37 @@ registerTool({
     function: {
       name: "code_note_write",
       description:
-        "向指定项目的跨 session 记忆（MEMORY.md）写入或追加内容。\n" +
-        "在以下情况立即调用（不要等 session 结束）：\n" +
-        '1. 发现跨 session 有价值的约束（如"此进程不能自行 kill"）\n' +
-        '2. 完成重要里程碑（如"pathname 路由已完成"）\n' +
-        "3. 定位到非显而易见的根因\n" +
-        '4. 任务完成（说"已完成"）前更新进度\n' +
-        "mode=append 追加新行；mode=overwrite 全量覆写（谨慎使用）。",
+        "向指定项目的跨 session 记忆(MEMORY.md 或 topic 文件)写入/追加。" +
+        "发现跨 session 约束/重要里程碑/非显而易见根因、任务完成(说已完成)前立即调用,不等 session 结束。" +
+        "mode=append(默认)追加;overwrite 覆写(谨慎)。详细格式与示例见 skill memory-keeper",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
             description:
-              "项目 slug（如 _home_lyy_tinyclaw）。" +
-              "根据当前操作的仓库/服务器语义自行命名，不确定时调用 code_clarify_project。",
+              "项目 slug(如 _home_lyy_tinyclaw)。按仓库/服务器语义命名,不确定先 code_clarify_project",
           },
           topic: {
             type: "string",
             description:
-              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
-              "不传则写入 MEMORY.md 索引。",
+              "topic 文件名(不含 .md 后缀,如 constraints/architecture);不传则写 MEMORY.md 索引",
           },
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" + "传此参数时 upsert 该章节内容,而非操作整个文件。",
+              "分点/章节标题(不含 ## 前缀),upsert 该章节内容而非整个文件",
           },
           content: {
             type: "string",
             description:
-              "要写入的内容(Markdown 格式)。" +
-              "写入 MEMORY.md 时,摘要行格式: - [YYYY-MM-DD] [s:5] 摘要 → topic.md。" +
-              "[s:N] 为稳定性(1-10),默认新建条目用 s:5。s 越高该记忆在 prompt 中存活越久。",
+              "要写入的内容(Markdown)。写 MEMORY.md 索引时格式: - [YYYY-MM-DD] [s:5] 摘要 → topic.md;" +
+              "[s:N]=稳定性(1-10),默认 5,越高在 prompt 中存活越久",
           },
           mode: {
             type: "string",
             enum: ["append", "overwrite"],
-            description: "append（默认）追加到末尾；overwrite 全量覆写",
+            description: "append(默认)追加到末尾;overwrite 全量覆写",
           },
         },
         required: ["content"],
@@ -759,20 +748,18 @@ registerTool({
     function: {
       name: "code_clarify_project",
       description:
-        "当无法通过 workdir 路径或对话语义确定当前操作属于哪个项目时，调用此工具向用户确认。\n" +
-        "会列出所有已知项目，并让用户选择或输入新项目名。\n" +
-        "若提供了 ssh_host，会自动做 DNS 解析并与已有 IP 映射比对，找到已知项目直接返回，无需打扰用户。",
+        "无法确定当前操作属于哪个项目时调用:列出已知项目让用户选择/输入新项目名;传 ssh_host 自动 DNS 比对已有 IP 映射",
       parameters: {
         type: "object",
         properties: {
           hint: {
             type: "string",
-            description: "当前操作的线索（如仓库名、服务描述），帮助用户做出判断",
+            description: "当前操作的线索(如仓库名、服务描述),帮助用户做出判断",
           },
           ssh_host: {
             type: "string",
             description:
-              "若当前操作涉及 SSH，传入 hostname（如 m1saka.cc），工具会自动 DNS 解析比对",
+              "当前操作涉及 SSH 时传 hostname(如 m1saka.cc),自动 DNS 解析比对",
           },
         },
         required: [],

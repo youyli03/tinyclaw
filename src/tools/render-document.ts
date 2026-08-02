@@ -180,9 +180,7 @@ registerTool({
     function: {
       name: "render_document",
       description:
-        "将文档或任意文件渲染为图片,通过 QQ 发送。支持 PDF/Office/文本/代码等所有 LibreOffice 可打开的格式。\n" +
-        "像 vi 一样,任何文件都可尝试打开查看。PDF 直接用 pdftoppm 转图,其余格式先经 LibreOffice 转 PDF。\n" +
-        "多页文档每页生成一张图片。适合快速预览文件内容而不离开聊天窗口。",
+        "将文档/文件渲染为图片通过 QQ 发送。支持 PDF/Office/文本/代码等 LibreOffice 可打开格式;多页每页一张图",
       parameters: {
         type: "object",
         properties: {
@@ -193,7 +191,7 @@ registerTool({
           pages: {
             type: "string",
             description:
-              "页码范围。支持: 单页 \"3\" / 范围 \"1-5\" / 逗号分隔 \"1,3,5\"。默认渲染第 1 页。",
+              "页码范围:单页 \"3\" / 范围 \"1-5\" / 逗号分隔 \"1,3,5\"。默认第 1 页",
           },
           dpi: {
             type: "number",

@@ -19,13 +19,9 @@ registerTool({
     function: {
       name: "agent_fork",
       description:
-        "在后台 fork 一个 Slave agent 异步执行任务。" +
-        "Slave 会继承 Master 最近的对话上下文，知道当前背景信息，然后独立完成指定任务。" +
-        "立即返回 slave_id，不阻塞当前对话。\n\n" +
-        "**结果交付模式（result_mode）**：\n" +
-        "- `inject`（默认）：Slave 完成后自动将结果注入 Master session，触发新一轮 LLM 推理后回复用户。适合一次性后台任务。\n" +
-        "- `wait`：Slave 完成后静默，Master 需主动调用 `agent_wait(slave_id)` 等待并获取结果。" +
-        "适合需要在同一 ReAct 循环中并行启动多个 Slave、然后统一汇总结果的场景。",
+        "后台 fork 一个 Slave agent 异步执行任务(继承 Master 最近上下文),立即返回 slave_id 不阻塞。\n" +
+        "result_mode: inject(默认,完成后自动注入 Master 并通知用户)/ wait(静默,需 agent_wait 取结果)。" +
+        "详细编排说明见 skill agent-orchestration",
       parameters: {
         type: "object",
         properties: {
@@ -40,15 +36,13 @@ registerTool({
           progress_interval_secs: {
             type: "number",
             description:
-              "定期进度汇报间隔（秒）。设置后 Slave 每隔该时间向用户推送一次进度快照。" +
-              "最小 30 秒，最大 3600 秒。不设置则仅在任务完成时通知。",
+              "进度汇报间隔(秒,30~3600);不设置则仅完成时通知",
           },
           result_mode: {
             type: "string",
             enum: ["inject", "wait"],
             description:
-              "结果交付模式。`inject`（默认）：Slave 完成后自动注入 Master 触发 LLM 推理；" +
-              "`wait`：静默完成，Master 主动调用 agent_wait(slave_id) 获取结果。",
+              "inject(默认):完成自动注入 Master;wait:静默,用 agent_wait 取结果",
           },
         },
         required: ["task"],
@@ -122,9 +116,7 @@ registerTool({
     function: {
       name: "agent_status",
       description:
-        "查询后台 Slave agent 的运行状态和进度。" +
-        "不传 slave_id 则列出所有 Slave（可用 status_filter 过滤）。" +
-        "运行中的任务排在最前。",
+        "查询后台 Slave 运行状态/进度;不传 slave_id 列出全部(status_filter 过滤),运行中排最前",
       parameters: {
         type: "object",
         properties: {
@@ -183,13 +175,8 @@ registerTool({
     function: {
       name: "agent_wait",
       description:
-        "等待后台 Slave agent 完成并返回结果。\n\n" +
-        "**两种用法**：\n" +
-        '1. `agent_wait(slave_id="xxx")`：等待指定单个 Slave 完成，返回其结果。' +
-        '适合用 `result_mode="wait"` fork 出的 Slave。\n' +
-        "2. `agent_wait()`（不传 slave_id）：等待**当前会话**创建的所有 Slave 完成，返回全部结果。\n\n" +
-        '**注意**：`result_mode="inject"` 的 Slave 完成后已自动注入 Master，' +
-        "对其调用 agent_wait 时若已完成则立即返回已有结果，若仍运行中则阻塞等待。",
+        "等待后台 Slave 完成并返回结果。传 slave_id 等单个;不传等当前会话全部。\n" +
+        "timeout_secs 默认 300,超时标记 error。inject 模式已完成则立即返回。详细见 skill agent-orchestration",
       parameters: {
         type: "object",
         properties: {

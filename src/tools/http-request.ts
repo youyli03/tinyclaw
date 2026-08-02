@@ -153,9 +153,8 @@ registerTool({
     function: {
       name: "http_request",
       description:
-        "发送 HTTPS 请求（GET/POST），返回响应状态码和响应体。仅支持 https:// URL，不支持 http。\n\n" +
-        "headers 的 value 支持 `$SECRET_NAME` 占位符，运行时自动从 ~/.tinyclaw/secrets.toml 读取真实值（AI 不可见）。" +
-        "占位符只在 headers 中生效，url 和 body 中的 $xxx 不会被替换（防止凭证泄露）。",
+        "发送 HTTPS 请求(GET/POST),返回状态码+响应体。仅支持 https。\n" +
+        "headers 的 value 支持 `$SECRET_NAME` 占位符,从 ~/.tinyclaw/secrets.toml 读取真实值(AI 不可见,仅 headers 生效)",
       parameters: {
         type: "object",
         properties: {
@@ -171,8 +170,7 @@ registerTool({
           headers: {
             type: "object",
             description:
-              "请求头 KV 对象（可选）。value 可使用 `$SECRET_NAME` 占位符引用 secrets.toml 中的凭证，" +
-              '例如：{ "Authorization": "$TB_TOKEN", "Content-Type": "application/json" }',
+              "请求头 KV(可选)。value 可用 `$SECRET_NAME` 占位符引用 secrets.toml 凭证,如 { \"Authorization\": \"$TB_TOKEN\" }",
             additionalProperties: { type: "string" },
           },
           body: {

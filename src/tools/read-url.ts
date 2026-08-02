@@ -36,9 +36,7 @@ registerTool({
     function: {
       name: "read_url",
       description:
-        "通过无头浏览器访问 URL，提取页面文本和/或截图，缓存到本地。\n" +
-        "适合访问财经新闻链接（华尔街见闻/财联社等）读取正文，支持动态渲染页面（JS 渲染）。\n" +
-        "缓存路径：~/.tinyclaw/cache/web/{hostname}/{date}-{hash}.{md|png}",
+        "通过无头浏览器访问 URL,提取文本/截图,支持 JS 渲染,结果缓存本地",
       parameters: {
         type: "object",
         properties: {
@@ -62,7 +60,7 @@ registerTool({
           offset: {
             type: "number",
             description:
-              "截图模式:起始 Y 像素(设置后只截 offset~offset+900px 区域)；文字模式:字符偏移量(从第 offset 个字符开始返回)",
+              "截图模式:起始 Y 像素(截 offset~offset+900px);文字模式:字符偏移",
           },
         },
         required: ["url"],

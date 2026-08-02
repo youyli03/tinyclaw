@@ -71,35 +71,20 @@ registerTool({
     function: {
       name: "cron_add",
       description: `创建定时任务。
-
-## 运行模式
-- **Pipeline 模式(steps,推荐)**:纯工具步骤,不调用 LLM,零配额消耗。适合定期脚本/监控/固定通知
-- **Message 模式(message)**:调用 LLM,消耗配额。适合语义推理/总结类任务,创建前必须明确告知用户并获得确认
-
-## 创建前必须确认(不得跳过)
-1. 任务意图与执行流程(做什么、操作对象、数据来源/关键步骤)
-2. 调度时间(具体时间点/间隔/一次性)
-3. 是否需要推送到 QQ(若是,推送给谁)
-4. 通知策略(每次/仅变化/仅出错/不推送)
-5. 输出要求(内容与格式)
-6. 是否需要 LLM 推理(若否用 Pipeline 模式;若是需用户确认)
-
-用户描述模糊(如"设置个天气提醒")时须追问细节后再创建。
-
-## message 指令四要素(Message 模式)
-① 意图:做什么、操作对象 ② 执行流程:数据来源/关键步骤(如"用 exec_shell 执行 curl wttr.in/Shanghai") ③ 约束:失败时输出"数据获取失败:原因",禁止编造数值 ④ 输出要求:输出什么、什么格式
-示例:'查询上海实时天气,用 exec_shell 执行 curl wttr.in/Shanghai?format=j1,提取温度和天气描述,失败则输出"数据获取失败",最终中文输出:城市/温度/天气/穿衣建议'`,
+- 模式: pipeline(steps,纯工具零消耗,推荐)/ message(调 LLM,创建前须告知用户)/ manual(仅手动触发)
+- 创建前须确认: 意图与执行流程 / 调度时间 / 推送给谁 / 通知策略 / 输出要求 / 是否需 LLM;描述模糊先 ask_user
+- 详细教程与 JSON 模板见 skill cron-creator(说"定时任务/每天提醒/每N分钟"等自动触发)`,
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "任务短名称/描述(可选),用于列表与日志展示;不填则用 message 截断",
+            description: "任务短名称(可选),列表与日志展示;不填则用 message 截断",
           },
           message: {
             type: "string",
             description:
-              "发给 cron agent 的自然语言任务指令。cron agent 拥有完整工具调用能力，支持语义理解，无需手写 shell 命令。指令须包含以下四个要素：\n① 意图：做什么、操作对象是什么（例：查上海实时天气）\n② 执行流程：数据来源 / 关键步骤（例：用 exec_shell 调用 curl wttr.in/Shanghai 获取 JSON）\n③ 约束：异常处理方式、数据必须实时获取而非凭知识编造（例：curl 失败时报错而非捏造数值）\n④ 输出要求：输出什么内容、用什么格式；若不需要输出则明确说明（例：中文输出\"城市/温度/天气/穿衣建议\"）\n\n示例（好）：'查询上海实时天气，用 exec_shell 执行 curl wttr.in/Shanghai?format=j1，提取温度和天气描述，若 curl 失败则输出\"数据获取失败\"，最终中文输出：城市/温度/天气/穿衣建议'\n示例（坏）：'查询天气'——缺少城市、数据来源、输出格式，cron agent 无法可靠执行",
+              "发给 cron agent 的自然语言任务指令(无需手写 shell)。须含四要素:①意图(做什么)②执行流程(数据来源/关键步骤)③约束(失败处理,禁止编造)④输出要求(内容+格式)。模板见 skill cron-creator",
           },
           type: {
             type: "string",
@@ -122,43 +107,43 @@ registerTool({
           timeRange: {
             type: "object",
             description:
-              '[every] 限制触发时段；格式 {start:"HH:MM", end:"HH:MM", weekdays?:[0-6]}，0=周日...6=周六，不填=每天。段外跳过不触发',
+              '[every] 限制触发时段;格式 {start:"HH:MM", end:"HH:MM", weekdays?:[0-6]},0=周日...6=周六,不填=每天。段外跳过不触发',
           },
           agentId: {
             type: "string",
             description:
-              "使用的 agent（默认 default）。注意：在交互式会话中，实际使用的 agentId 由调用方 agent 决定，此参数仅在 CLI 等无 agent 上下文的场景下生效。",
+              "使用的 agent(默认 default)。交互式会话中由调用方 agent 决定,仅 CLI 等无 agent 上下文场景生效",
           },
           notify: {
             type: "string",
             enum: ["always", "on_change", "on_error", "never", "llm"],
-            description: "通知策略（默认 always）。llm=由LLM决定，输出含[NOTIFY]块时才推送",
+            description: "通知策略(默认 always)。llm=由LLM决定,输出含[NOTIFY]块时才推送",
           },
-          stateful: { type: "boolean", description: "是否保留跨 run 对话历史（默认 false）" },
-          peerId: { type: "string", description: "推送目标的 QQ peerId（不填则仅写 log）" },
+          stateful: { type: "boolean", description: "是否保留跨 run 对话历史(默认 false)" },
+          peerId: { type: "string", description: "推送目标的 QQ peerId(不填则仅写 log)" },
           msgType: {
             type: "string",
             enum: ["c2c", "group", "guild", "dm"],
-            description: "消息类型（默认 c2c）",
+            description: "消息类型(默认 c2c)",
           },
           botId: {
             type: "string",
             description:
-              "(可选)指定使用哪个 QQBot connector。对应 config.toml [channels.qqbots] 中的 key(如 \"main\"/\"chat\")。多 QQBot 部署时用于指定由哪个 Bot 推送定时结果。不填则自动从当前调用 session 推断。",
+              "(可选)指定推送用 QQBot connector,对应 config.toml [channels.qqbots] 的 key(如 main/chat)。不填自动从 session 推断",
           },
           model: {
             type: "string",
             description:
-              '（可选）运行此 job 使用的模型，格式 "provider/model-id"，如 "copilot/claude-sonnet-4.6"。不填则使用 daily 后端。',
+              '(可选)运行模型,格式 "provider/model-id",如 "copilot/claude-sonnet-4.6"。不填用 daily 后端',
           },
           steps: {
             type: "array",
             description:
-              "【Pipeline 模式】多步骤流水线列表。提供此字段时，job 以 Pipeline 模式运行（忽略 message 字段的 prompt 用途，仅作描述）。所有步骤共享同一个 stateful session，前步的工具输出对后续 LLM 步骤完全可见。步骤按顺序串行执行：\n- { type: 'tool', name: '工具名', args: {...} }：直接调用工具，不走 LLM，输出注入 session 上下文\n- { type: 'msg', content: '...' }：向 session 注入 user 消息，触发 LLM 生成回复\n最后一个 msg step 的 LLM 输出作为最终推送内容；若无 msg step，则取最后一个 tool step 的输出。",
+              "【Pipeline 模式】串行步骤: {type:'tool',name,args}=直接调工具不走 LLM; {type:'msg',content}=注入消息触发 LLM。最后 msg 的 LLM 输出为推送内容;无 msg 则取最后 tool 输出。模板见 skill cron-creator",
             items: {
               type: "object",
               description:
-                "Pipeline 步骤：{ type: 'tool', name, args } 或 { type: 'msg', content }",
+                "Pipeline 步骤:{ type: 'tool', name, args } 或 { type: 'msg', content }",
             },
           },
         },

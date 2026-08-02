@@ -29,14 +29,8 @@ registerTool({
     function: {
       name: "send_report",
       description:
-        "将 Markdown 格式的快报渲染为图片，立即推送给用户。\n\n" +
-        "适用于：定时简报、数据汇总、结构化通知等需要精美排版的主动推送场景。\n" +
-        "调用后立即发送，不等当前任务结束，不影响后续工具调用。\n" +
-        "支持三种内容类型：\n" +
-        "（1）markdown（默认）：支持标题、列表、表格、代码块、粗体等完整 Markdown 语法；\n" +
-        "（2）mermaid：流程图/时序图/类图/甘特图/饼图等，传入 mermaid 语法代码；\n" +
-        "（3）python：任意 Python 绘图代码（matplotlib/graphviz 等）。\n" +
-        "渲染失败时自动降级为纯文本发送。",
+        "将 Markdown 渲染为图片立即推送。type: markdown(默认,支持标题/列表/表格/代码块)/ mermaid(图表代码)/ python(绘图代码)。\n" +
+        "渲染失败自动降级为纯文本发送",
       parameters: {
         type: "object",
         properties: {
