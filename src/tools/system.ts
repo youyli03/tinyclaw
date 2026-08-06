@@ -316,21 +316,45 @@ registerTool({
 
 /** 全角标点 -> 半角(1:1 码元映射,长度不变),用于 edit_file 容错定位 */
 const FULL_TO_HALF_PUNCT: Record<string, string> = {
-  "（": "(",
-  "）": ")",
-  "，": ",",
+  "(": "(",
+  ")": ")",
+  ",": ",",
   "。": ".",
-  "；": ";",
-  "：": ":",
-  "！": "!",
-  "？": "?",
+  ";": ";",
+  ":": ":",
+  "!": "!",
+  "?": "?",
   "、": ",",
-  "　": " ",
+  " ": " ",
   "“": '"',
   "”": '"',
   "‘": "'",
   "’": "'",
+  "—": "-", // U+2014 em dash(1:1)
+  "–": "-", // U+2013 en dash(1:1)
+  // 注意:…(U+2026) 为 1 个码元,展开为 "..." 会改变长度,不能放进 1:1 映射表,
+  // 由 expandEllipsis 在归一化匹配路径单独处理
 };
+
+/** 省略号展开:U+2026 → "..."(长度 1→3,仅用于归一化匹配,命中后偏移需 unexpandPos 换算) */
+function expandEllipsis(s: string): string {
+  return s.replace(/\u2026/g, "...");
+}
+
+/**
+ * 把"展开省略号后文本"中的位置映射回原文本位置。
+ * 原文本中每个 U+2026 展开后占 3 字符,故展开坐标 = 原坐标 + 2×前缀省略号数。
+ */
+function unexpandPos(orig: string, expandedPos: number): number {
+  let len = 0;
+  for (let i = 0; i < orig.length; i++) {
+    const w = orig.charCodeAt(i) === 0x2026 ? 3 : 1;
+    if (len + w > expandedPos) return i; // 落在 U+2026 展开的中间,返回其起始
+    len += w;
+    if (len === expandedPos) return i + 1;
+  }
+  return orig.length;
+}
 
 function normalizePunct(s: string): string {
   let out = "";
@@ -419,17 +443,29 @@ async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): P
   const content = fs.readFileSync(resolved, "utf-8");
 
   // 1) 精确匹配
-  let positions = findAllPositions(content, oldStr);
-  let matchedViaNormalize = false;
+  const positions = findAllPositions(content, oldStr);
 
-  // 2) 精确匹配失败时:全角/半角标点归一化后重试(1:1 码元映射,长度不变,偏移可安全复用)。
-  //    场景:AI 生成 old_str 时把文件中的全角标点(（），。：)写成了半角。
+  // 2) 精确匹配失败时:全角/半角标点归一化 + 省略号展开后重试。
+  //    场景:AI 生成 old_str 时把文件中的全角标点((),。:)、省略号(…)写成了半角变体。
   if (positions.length === 0) {
-    const normOld = normalizePunct(oldStr);
-    const normContent = normalizePunct(content);
+    const expOld = expandEllipsis(oldStr);
+    const expContent = expandEllipsis(content);
+    const normOld = normalizePunct(expOld);
+    const normContent = normalizePunct(expContent);
     if (normOld !== oldStr || normContent !== content) {
-      positions = findAllPositions(normContent, normOld);
-      matchedViaNormalize = positions.length > 0;
+      const expandedPositions = findAllPositions(normContent, normOld);
+      if (expandedPositions.length > 1) {
+        return `错误:old_str 在文件中出现 ${expandedPositions.length} 次(按归一化匹配),必须唯一才能安全替换。请提供更多上下文使其唯一`;
+      }
+      if (expandedPositions.length === 1) {
+        // 展开坐标 → 原文本坐标;替换区间用展开坐标换算 start/end,避免 U+2026(1→3 码元)导致多切
+        const endExpanded = (expandedPositions[0] as number) + normOld.length;
+        const posOrig = unexpandPos(content, expandedPositions[0] as number);
+        const endOrig = unexpandPos(content, endExpanded);
+        const updated = content.slice(0, posOrig) + newStr + content.slice(endOrig);
+        fs.writeFileSync(resolved, updated, "utf-8");
+        return `已替换:${resolved}(注:old_str 与文件存在全角/半角标点或省略号差异,已按归一化匹配定位)`;
+      }
     }
   }
 
@@ -444,9 +480,7 @@ async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): P
   const pos = positions[0] as number;
   const updated = content.slice(0, pos) + newStr + content.slice(pos + oldStr.length);
   fs.writeFileSync(resolved, updated, "utf-8");
-  return matchedViaNormalize
-    ? `已替换:${resolved}(注:old_str 与文件存在全角/半角标点差异,已按归一化匹配定位)`
-    : `已替换:${resolved}`;
+  return `已替换:${resolved}`;
 }
 
 registerTool({

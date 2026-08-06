@@ -88,15 +88,17 @@ export const CronJobSchema = z
   /** "daily": 多个触发时间点,格式 ["HH:MM", ...](优先于 timeOfDay) */
   timesOfDay: z.array(z.string().regex(/^\d{2}:\d{2}$/)).optional(),
   /**
-   * "every" 模式专用：限制触发时段（段外跳过，不触发）
-   * - start/end: "HH:MM" 本地时间
-   * - weekdays: 允许触发的星期数组（0=周日, 1=周一 … 6=周六），不填=每天
+   * "every" 模式专用:限制触发时段(段外跳过,不触发)
+   * - start/end: "HH:MM" 目标时区时间(支持跨午夜,如 21:30→04:00)
+   * - weekdays: 允许触发的星期数组(0=周日, 1=周一 … 6=周六),不填=每天
+   * - timezone: IANA 时区名(如 "America/New_York"),不填=本地时区;DST 夏令时自动处理
    */
   timeRange: z
     .object({
       start: z.string().regex(/^\d{2}:\d{2}$/),
       end: z.string().regex(/^\d{2}:\d{2}$/),
       weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+      timezone: z.string().optional(),
     })
     .optional(),
 
@@ -186,6 +188,18 @@ export const CronJobSchema = z
         path: ["timeOfDay"],
         message: "type=daily 的 job 必须提供 timeOfDay 或 timesOfDay(触发时间点,如 \"08:00\")",
       });
+    }
+    // ── timezone 合法性:IANA 时区名,Intl 试构造验证 ─────────────────────────
+    if (job.timeRange?.timezone) {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: job.timeRange.timezone });
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["timeRange", "timezone"],
+          message: `无效的 IANA 时区名 "${job.timeRange.timezone}"(示例: America/New_York, Asia/Shanghai)`,
+        });
+      }
     }
     // ── message 长度:Message 模式须四要素齐全 ───────────────────────────────
     const isPipeline = Array.isArray(job.steps) && job.steps.length > 0;

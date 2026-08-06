@@ -107,7 +107,7 @@ registerTool({
           timeRange: {
             type: "object",
             description:
-              '[every] 限制触发时段;格式 {start:"HH:MM", end:"HH:MM", weekdays?:[0-6]},0=周日...6=周六,不填=每天。段外跳过不触发',
+              '[every] 限制触发时段;格式 {start:"HH:MM", end:"HH:MM", weekdays?:[0-6], timezone?:IANA时区名},0=周日...6=周六,不填=每天。段外跳过不触发;支持跨午夜(如 21:30→04:00);timezone 如 "America/New_York",不填=本地时区',
           },
           agentId: {
             type: "string",
@@ -192,7 +192,7 @@ registerTool({
             ? undefined
             : undefined,
       timeRange: args["timeRange"]
-        ? (args["timeRange"] as { start: string; end: string; weekdays?: number[] })
+        ? (args["timeRange"] as { start: string; end: string; weekdays?: number[]; timezone?: string })
         : undefined,
       output: {
         sessionId,
@@ -217,7 +217,7 @@ registerTool({
       job.type === "once"
         ? job.runAt ?? "-"
         : job.type === "every"
-          ? `每 ${job.intervalSecs}s${job.timeRange ? ` [时段 ${job.timeRange.start}-${job.timeRange.end}${job.timeRange.weekdays && job.timeRange.weekdays.length > 0 ? ` 周${job.timeRange.weekdays.join("/")}` : ""}]` : ""}`
+          ? `每 ${job.intervalSecs}s${job.timeRange ? ` [时段 ${job.timeRange.start}-${job.timeRange.end}${job.timeRange.weekdays && job.timeRange.weekdays.length > 0 ? ` 周${job.timeRange.weekdays.join("/")}` : ""}${job.timeRange.timezone ? ` ${job.timeRange.timezone}` : ""}]` : ""}`
           : job.type === "daily"
             ? `每天 ${job.timesOfDay && job.timesOfDay.length > 0 ? job.timesOfDay.join(", ") : (job.timeOfDay ?? "-")}`
             : "手动触发(cron_run)";
@@ -285,7 +285,7 @@ registerTool({
         j.type === "once"
           ? j.runAt
           : j.type === "every"
-            ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}]` : ""}`
+            ? `每 ${j.intervalSecs}s${j.timeRange ? ` [时段 ${j.timeRange.start}-${j.timeRange.end}${j.timeRange.weekdays && j.timeRange.weekdays.length > 0 ? ` 周${j.timeRange.weekdays.join("/")}` : ""}${j.timeRange.timezone ? ` ${j.timeRange.timezone}` : ""}]` : ""}`
             : j.type === "daily"
               ? `每天 ${(j.timesOfDay && j.timesOfDay.length > 0 ? j.timesOfDay : j.timeOfDay ? [j.timeOfDay] : []).join(", ")}`
               : "手动触发",

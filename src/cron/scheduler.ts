@@ -6,7 +6,7 @@
  *
  * 调度策略：
  *   once   — setTimeout(msUntilRunAt);触发后自动从 jobs.json 删除
- *   every  — setInterval(intervalSecs * 1000);有 timeRange 则段外跳过
+ *   every  — setInterval(intervalSecs * 1000);有 timeRange 则按目标时区(可选 timezone,缺省本地)判断段外跳过
  *   daily  — setTimeout(msUntilNextHH:MM) + 触发后重新 arm 明日同一时间
  *   manual — 无自动调度，只能通过 cron_run 手动触发
  */
@@ -41,18 +41,68 @@ function msUntilTimeOfDay(timeOfDay: string): number {
   return next.getTime() - now.getTime();
 }
 
-/** 判断当前时刻是否在 job.timeRange 指定的时段内(无 timeRange 始终返回 true) */
-function isInTimeRange(job: CronJob): boolean {
+/** 换算指定 IANA 时区的 时分+星期(0=周日...6=周六);hour=24 归一为 0(部分时区午夜输出 "24") */
+function getZoneTime(
+  zone: string,
+  now: Date
+): { hour: number; minute: number; weekday: number } {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hour12: false,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  let hour = Number(get("hour"));
+  if (hour === 24) hour = 0;
+  const weekdayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  return { hour, minute: Number(get("minute")), weekday: weekdayMap[get("weekday")] ?? 0 };
+}
+
+/**
+ * 判断当前时刻是否在 job.timeRange 指定的时段内(无 timeRange 始终返回 true)。
+ * - timezone: 按 IANA 时区换算时分+星期后判断(缺省=本地时区),DST 由 Intl 自动处理
+ * - 跨午夜时段(如 21:30→04:00):拆为晚段 [start,24:00) + 早段 [00:00,end);
+ *   早段属于"前一天"的调度日(北京周二 01:00 = 美东周一盘中),weekday 按昨天计算
+ * - start == end 视为全天
+ */
+export function isInTimeRange(job: CronJob, now: Date = new Date()): boolean {
   if (!job.timeRange) return true;
-  const now = new Date();
-  const weekday = now.getDay(); // 0=周日 ... 6=周六
-  if (job.timeRange.weekdays && !job.timeRange.weekdays.includes(weekday)) return false;
+  const zone = job.timeRange.timezone;
+  const { hour, minute, weekday } = zone
+    ? getZoneTime(zone, now)
+    : { hour: now.getHours(), minute: now.getMinutes(), weekday: now.getDay() };
+  const nowMins = hour * 60 + minute;
   const [sh, sm] = job.timeRange.start.split(":").map(Number);
   const [eh, em] = job.timeRange.end.split(":").map(Number);
-  const nowMins = now.getHours() * 60 + now.getMinutes();
   const startMins = sh! * 60 + sm!;
   const endMins = eh! * 60 + em!;
-  return nowMins >= startMins && nowMins < endMins;
+
+  if (startMins === endMins) {
+    // start == end 视为全天
+    return !job.timeRange.weekdays || job.timeRange.weekdays.includes(weekday);
+  }
+
+  const crossesMidnight = endMins < startMins;
+  const inLateSegment = nowMins >= startMins && (crossesMidnight || nowMins < endMins);
+  const inEarlySegment = crossesMidnight && nowMins < endMins;
+  if (!inLateSegment && !inEarlySegment) return false;
+
+  // 早段(跨午夜后 00:00~end)归属前一天的调度日
+  const effWeekday = inEarlySegment ? (weekday + 6) % 7 : weekday;
+  if (job.timeRange.weekdays && !job.timeRange.weekdays.includes(effWeekday)) return false;
+
+  return true;
 }
 
 // ── 调度器 ────────────────────────────────────────────────────────────────────
