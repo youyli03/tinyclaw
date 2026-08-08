@@ -1,5 +1,6 @@
 import { detectPromptInjection } from "../security/injection-detector.js";
 import { Session } from "./session.js";
+import { AgentEventBus, resolveEventBus, type AgentEventSink } from "./agent-events.js";
 import { llmRegistry, buildFallbackClient } from "../llm/registry.js";
 import { LLMConnectionError, pathToDataUrlCompressed } from "../llm/client.js";
 import { APIError } from "openai";
@@ -656,6 +657,13 @@ export interface AgentRunOptions {
   continueAsAgentRound?: boolean;
   /** 当前 connector 的 botId(从 main.ts 透传,供工具自动推断输出通道) */
   botId?: string;
+  /**
+   * 事件流订阅(事件流化重构)。
+   * 传入 AgentEventBus 或单个 sink;循环内部可观测事件(生命周期/preamble/turn/工具/压缩/MFA/收尾)
+   * 统一走此通道。旧回调(onChunk/onToolCall/onToolResult/onCompress/onHeartbeat/onMFAPrompt)
+   * 仍保留并同步触发,迁移期两者并存。
+   */
+  onEvent?: AgentEventSink | AgentEventBus;
 }
 
 export interface AgentRunResult {
@@ -750,10 +758,38 @@ class ToolCallThrottler {
   }
 }
 
+/**
+ * 事件流化门面:创建事件总线,包 try/catch 保证异常也能被观测(agent:error),
+ * 然后委托给 runAgentInner。任何错误原样 rethrow,不改变调用方语义。
+ */
 export async function runAgent(
   session: Session,
   userContent: string,
   opts: AgentRunOptions = {}
+): Promise<AgentRunResult> {
+  const bus = resolveEventBus(opts.onEvent);
+  try {
+    return await runAgentInner(session, userContent, opts, bus);
+  } catch (err) {
+    bus.emit({
+      type: "agent:error",
+      sessionId: session.sessionId,
+      mode: session.mode === "code" ? "code" : "chat",
+      stage: "run",
+      error: {
+        name: err instanceof Error ? err.name : "Error",
+        message: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
+  }
+}
+
+async function runAgentInner(
+  session: Session,
+  userContent: string,
+  opts: AgentRunOptions = {},
+  bus: AgentEventBus
 ): Promise<AgentRunResult> {
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
@@ -798,6 +834,24 @@ export async function runAgent(
   if (!opts.skipAddUserMessage || userContent) {
     console.log(`${logPrefix} ← "${msgPreview}${userContent.length > 60 ? "..." : ""}"`);
   }
+
+  // ── 事件总线(事件流化)─────────────────────────────────────────────
+  // 整个 run 的生命周期事件统一走 bus(由 runAgent 门面创建传入);异步 sink fire-and-forget,不阻塞循环
+  const providerName = (() => {
+    try {
+      return String(client.model).split("/")[0] ?? "unknown";
+    } catch {
+      return "unknown";
+    }
+  })();
+  bus.emit({
+    type: "agent:start",
+    sessionId: session.sessionId,
+    mode: isCodeMode ? "code" : "chat",
+    userContent: userContent.slice(0, 200),
+    provider: providerName,
+    model: String(client.model),
+  });
   const startMs = Date.now();
 
   // code 模式工具调用节流：每分钟汇总一次通知
@@ -948,6 +1002,11 @@ export async function runAgent(
       }
 
       session.replaceOrPrependSystemMessage(sysPrompt);
+      bus.emit({
+        type: "preamble:system-prompt",
+        provider: providerName,
+        vision: client.supportsVision,
+      });
     }
 
     // system prompt 刷新后更新回滚点
@@ -976,6 +1035,11 @@ export async function runAgent(
               session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
             }
             session.lastMemorySearchPromptTokens = _curTokens;
+            bus.emit({
+              type: "preamble:memory-search",
+              found: !!(_memResult && _memResult.trim()),
+              chars: _memResult ? _memResult.length : 0,
+            });
           } catch {
             /* 静默跳过,不阻断主流程 */
           }
@@ -989,6 +1053,7 @@ export async function runAgent(
       if (reminder) {
         session.replaceOrAddSkillReminder(reminder);
       }
+      bus.emit({ type: "preamble:skill-reminder", skills: reminder ? 1 : 0 });
     }
 
     // 2.5 MicroCompact：截断几轮前过长的 tool 结果（chat + code 均触发，不走 LLM）
@@ -997,7 +1062,15 @@ export async function runAgent(
       const mcCtx = isCodeMode
         ? llmRegistry.getContextWindow("code", session.lastResponseAt)
         : llmRegistry.getContextWindow("daily", session.lastResponseAt);
-      session.microCompact(mcCtx, session.lastPromptTokens);
+      const mcBefore = session.getMessages().length;
+      const mcDid = session.microCompact(mcCtx, session.lastPromptTokens);
+      if (mcDid) {
+        bus.emit({
+          type: "preamble:micro-compact",
+          before: mcBefore,
+          after: session.getMessages().length,
+        });
+      }
     }
 
     // 3. Pre-flight 压缩：在添加用户消息前检测 session 是否已超阈值
@@ -1006,9 +1079,15 @@ export async function runAgent(
     if (!session.abortRequested) {
       if (!isCodeMode && shouldSummarize(session.getMessages(), session.lastPromptTokens, session.lastResponseAt)) {
         // chat 模式：完整摘要压缩
+        const pfBefore = session.getMessages().length;
         opts.onCompress?.("start");
         const summary = await session.compress();
         opts.onCompress?.("done", summary);
+        bus.emit({
+          type: "preamble:compress",
+          before: pfBefore,
+          after: session.getMessages().length,
+        });
         // 压缩后更新回滚点（压缩已清空历史，只剩 system + 摘要）
         preRunLength = session.getMessages().length;
       } else if (isCodeMode) {
@@ -1020,7 +1099,13 @@ export async function runAgent(
           shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
         if (exceedsWindowThreshold) {
           console.log(`${logPrefix} ℹ️ Code session pre-flight：上下文超限，执行滑动窗口压缩`);
+          const pfBefore = session.getMessages().length;
           await session.compressForCode();
+          bus.emit({
+            type: "preamble:compress",
+            before: pfBefore,
+            after: session.getMessages().length,
+          });
           preRunLength = session.getMessages().length;
         }
       }
@@ -1083,6 +1168,7 @@ export async function runAgent(
   session.currentAgentTaskId = agentTaskId;
   let promptExceededRetried = false; // guard: compress+retry at most once per run
   for (let round = 0; round < maxToolRounds; round++) {
+    bus.emit({ type: "turn:start", round });
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
     // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
     // 非 code 模式不暴露 restart_tool；code 模式排除 agent fork 系列
@@ -1114,6 +1200,12 @@ export async function runAgent(
           `${logPrefix} ⚠️ Code 轮间检测到上下文达 ${Math.round((estimatedNow / codeContextWindow) * 100)}%(round ${round}),执行压缩`
         );
         await session.compressForCode();
+        bus.emit({
+          type: "turn:compress",
+          reason: "pre-round-code",
+          usageRatio: estimatedNow / codeContextWindow,
+          msgCount: session.getMessages().length,
+        });
       }
     }
     if (
@@ -1126,6 +1218,12 @@ export async function runAgent(
       opts.onCompress?.("start");
       await session.compress();
       opts.onCompress?.("done");
+      bus.emit({
+        type: "turn:compress",
+        reason: "pre-round-chat",
+        usageRatio: session.estimatedTokens() / Math.max(1, llmRegistry.getContextWindow("daily", session.lastResponseAt)),
+        msgCount: session.getMessages().length,
+      });
       // 压缩后更新 preRunLength：指向当前 user 消息位置，确保后续 LLM 失败时回滚正确
       const msgsAfterCompress = session.getMessages();
       for (let i = msgsAfterCompress.length - 1; i >= 0; i--) {
@@ -1146,6 +1244,7 @@ export async function runAgent(
       if (heartbeatSecs > 0 && opts.onHeartbeat) {
         heartbeatTimer = setInterval(() => {
           const elapsed = Math.round((Date.now() - roundStart) / 1000);
+          bus.emit({ type: "heartbeat", elapsedSec: elapsed });
           opts.onHeartbeat!(`⏳ Agent 仍在处理中，请稍候…（已用时 ${elapsed}s）`);
         }, heartbeatSecs * 1000);
       }
@@ -1169,6 +1268,7 @@ export async function runAgent(
         response = await client.streamChat(
           session.getMessagesForLLM(),
           (delta) => {
+            bus.emit({ type: "turn:chunk", delta });
             opts.onChunk?.(delta);
             streamBytes += Buffer.byteLength(delta, "utf8");
             const now = Date.now();
@@ -1260,6 +1360,13 @@ export async function runAgent(
     totalPromptTokens += lastUsage.promptTokens;
     totalCacheReadTokens += lastUsage.cacheReadTokens ?? 0;
     totalCacheCreationTokens += lastUsage.cacheCreationTokens ?? 0;
+    bus.emit({
+      type: "turn:usage",
+      promptTokens: lastUsage.promptTokens,
+      completionTokens: lastUsage.completionTokens,
+      cacheReadTokens: lastUsage.cacheReadTokens ?? 0,
+      cacheCreationTokens: lastUsage.cacheCreationTokens ?? 0,
+    });
     // 记录到 session,供 /status 展示实际 token 用量
     session.lastPromptTokens = lastUsage.promptTokens;
     Session.persistPromptTokens(
@@ -1288,6 +1395,12 @@ export async function runAgent(
             `${logPrefix} ⚠️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），尝试滑动窗口压缩`
           );
           const compressed = await session.compressForCode();
+          bus.emit({
+            type: "turn:compress",
+            reason: "post-call-code-95",
+            usageRatio,
+            msgCount: session.getMessages().length,
+          });
           if (compressed) {
             const msgCount = session.getMessages().length;
             console.log(`${logPrefix} ✅ 压缩完成,消息数:${msgCount}`);
@@ -1305,6 +1418,12 @@ export async function runAgent(
             `${logPrefix} ℹ️ Code context 已达 ${Math.round(usageRatio * 100)}%（实际 ${actualTokens} tokens），静默压缩`
           );
           await session.compressForCode();
+          bus.emit({
+            type: "turn:compress",
+            reason: "post-call-code-75",
+            usageRatio,
+            msgCount: session.getMessages().length,
+          });
         }
       }
       // (post-call 绝对 token 数阈值压缩已移除：headers 修复后无 60s 超时，由正常滑动窗口处理)
@@ -1350,6 +1469,7 @@ export async function runAgent(
               '{"name": "工具名", "args": {"参数名": "值"}}\n' +
               "</tool_call>"
           );
+          bus.emit({ type: "turn:format-retry", reason: "bare-json-without-tool-call" });
           formatRetryPending = true;
           continue;
         }
@@ -1374,6 +1494,7 @@ export async function runAgent(
           const _chk = checkCanary(content, _nonce);
           // strip 掉 canary 标记,避免泄露给用户
           content = stripCanary(content);
+          bus.emit({ type: "turn:canary", ok: _chk.ok });
           if (!_chk.ok) {
             const _detail = _chk.found
               ? `回显 nonce 不匹配(期望 ${_nonce.slice(0, 6)}… 实得 ${_chk.gotNonce?.slice(0, 6)}…)`
@@ -1400,6 +1521,7 @@ export async function runAgent(
       }
       finalContent = content;
       session.addAssistantMessage(finalContent, _parsed.reasoningContent);
+      bus.emit({ type: "turn:assistant", content, hasToolCalls: false });
       break;
     }
 
@@ -1408,11 +1530,13 @@ export async function runAgent(
     // 文本模式：普通 assistant 消息即可
     // 过滤掉 null/undefined（LLM 返回稀疏 index 时可能出现），避免孤立 tool_call_id
     const validToolCalls = toolCalls.filter(Boolean);
+    let interruptEmitted = false;
     if (!textMode) {
       session.addAssistantWithToolCalls(content || "", validToolCalls, _parsed.reasoningContent);
     } else {
       session.addAssistantMessage(content || "", _parsed.reasoningContent);
     }
+    bus.emit({ type: "turn:assistant", content: content || "", hasToolCalls: true });
 
     // tool call 伴随的文本内容（如"好的，我来查一下"）也发给用户
     if (content && content.trim() && opts.onNotify) {
@@ -1459,9 +1583,20 @@ export async function runAgent(
      */
     const runOneTool = async (call: (typeof validToolCalls)[number]): Promise<string> => {
       const toolDef = getTool(call.name);
-      if (!toolDef) return "未知工具";
+      if (!toolDef) {
+        bus.emit({ type: "tool:blocked", name: call.name, reason: "unknown" });
+        return "未知工具";
+      }
 
       console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
+      bus.emit({
+        type: "tool:call",
+        name: call.name,
+        args: call.args as Record<string, unknown>,
+        summary: toolCallSummary(call.name, call.args),
+        round,
+      });
+      const toolStartMs = Date.now();
       if (call.name !== "notify_user") {
         toolThrottler?.add(call.name);
       }
@@ -1530,6 +1665,12 @@ export async function runAgent(
           result.slice(origLen - tailLen);
       }
       opts.onToolResult?.(call.name, result);
+      bus.emit({
+        type: "tool:result",
+        name: call.name,
+        durationMs: Date.now() - toolStartMs,
+        truncated: result.includes("[...内容过长"),
+      });
 
       // ── Prompt Injection 检测 ────────────────────────────────────────────
       const injAlert = detectPromptInjection(call.name, result, loadConfig());
@@ -1658,6 +1799,11 @@ export async function runAgent(
       if (concurrentBatch.length === 0) return;
       const batch = concurrentBatch;
       concurrentBatch = [];
+      bus.emit({
+        type: "tool:batch",
+        mode: batch.length === 1 ? "sequential" : "parallel",
+        names: batch.map((c) => c.name),
+      });
       if (batch.length === 1) {
         // 单个工具无需 Promise.all 开销
         const result = await runOneTool(batch[0]!);
@@ -1673,6 +1819,11 @@ export async function runAgent(
       // ── 软中断检测 ────────────────────────────────────────────────────
       if (session.abortRequested) {
         await flushConcurrentBatch();
+        if (!interruptEmitted) {
+          interruptEmitted = true;
+          bus.emit({ type: "user:interrupt" });
+        }
+        bus.emit({ type: "tool:blocked", name: call.name, reason: "interrupted" });
         if (!textMode) {
           session.addToolResultMessage(call.callId, "操作被用户新消息中断，此工具调用未执行");
         } else {
@@ -1686,6 +1837,7 @@ export async function runAgent(
       const toolDef = getTool(call.name);
       if (!toolDef) {
         await flushConcurrentBatch();
+        bus.emit({ type: "tool:blocked", name: call.name, reason: "unknown" });
         if (!textMode) {
           session.addToolResultMessage(call.callId, "未知工具");
         } else {
@@ -1701,6 +1853,7 @@ export async function runAgent(
         await flushConcurrentBatch();
         const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
         if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
+          bus.emit({ type: "tool:blocked", name: call.name, reason: "max-calls" });
           const msg = `已达本次最大调用次数（${maxCalls}），此次调用未执行。请在当前回复中告知用户任务状态，用户可发新消息继续。`;
           if (!textMode) session.addToolResultMessage(call.callId, msg);
           else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
@@ -1717,6 +1870,7 @@ export async function runAgent(
         !session.mfaPreApproved
       ) {
         await flushConcurrentBatch();
+        bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, call.args) });
         let mfaPassed = false;
         try {
           if (mfaCfg?.interface === "msal") {
@@ -1744,23 +1898,40 @@ export async function runAgent(
           }
         } catch {
           const msg = "操作被取消：MFA 未通过";
+          bus.emit({ type: "mfa:timeout" });
           if (!textMode) session.addToolResultMessage(call.callId, msg);
           else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
           continue;
         }
 
         if (!mfaPassed) {
+          bus.emit({ type: "mfa:denied" });
           const msg = "操作被取消：用户拒绝了 MFA 确认";
           if (!textMode) session.addToolResultMessage(call.callId, msg);
           else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
           continue;
         }
         session.mfaApprovedForThisRun = true;
+        bus.emit({ type: "mfa:approved" });
       }
 
       // ── 分类:串行工具先 flush 再单独执行;其余加入并发批次 ──────────
       if (SERIAL_TOOLS.has(call.name)) {
         await flushConcurrentBatch();
+        bus.emit({
+          type: "tool:serial",
+          name: call.name,
+          reason:
+            call.name === "ask_user" || call.name === "ask_master"
+              ? "ask_user"
+              : call.name === "code_assist" || call.name === "code_assist_run"
+                ? "code_assist"
+                : call.name === "agent_fork" || call.name === "run_code_subagent"
+                  ? "fork"
+                  : call.name === "restart_tool"
+                    ? "restart"
+                    : "limit",
+        });
         // restart_tool 必须等本轮所有其他工具执行完再重启
         if (call.name === "restart_tool") {
           const restIdx = validToolCalls.indexOf(call);
@@ -1999,12 +2170,14 @@ export async function runAgent(
         if (lastUser && lastAssistant) break;
       }
       if (lastUser && lastAssistant) {
-        distillTurnToDiary(lastUser, lastAssistant, session.agentId).catch((err) =>
-          console.warn(
-            "[agent] chat diary distill failed:",
-            err instanceof Error ? err.message : err
-          )
-        );
+        distillTurnToDiary(lastUser, lastAssistant, session.agentId)
+          .then(() => bus.emit({ type: "finalize:diary", ok: true }))
+          .catch((err) =>
+            console.warn(
+              "[agent] chat diary distill failed:",
+              err instanceof Error ? err.message : err
+            )
+          );
       }
     }
   }
@@ -2022,6 +2195,7 @@ export async function runAgent(
         const hms = now.toTimeString().slice(0, 8);
         const uniqueTools = [...new Set(toolsUsed)].join(", ");
         appendFileSync(planPath, `- [${hms}] 本轮工具：${uniqueTools}\n`, "utf-8");
+        bus.emit({ type: "finalize:plan-log", path: planPath });
       }
     } catch (err) {
       console.warn("[agent] PLAN.md 执行日志追加失败:", err instanceof Error ? err.message : err);
@@ -2063,6 +2237,7 @@ export async function runAgent(
         if (!isMetricKeyAllowed(LLM_CAT, e.key)) addMetricKey(LLM_CAT, e.key, e.desc, "bar");
         insertMetric({ category: LLM_CAT, key: e.key, value: e.value, note: client.model });
       }
+      bus.emit({ type: "finalize:dashboard", entries: entries.length });
 
       // vision token 用量(独立模型,独立 source)
       if (totalVisionPromptTokens > 0 || totalVisionCompletionTokens > 0) {
@@ -2094,6 +2269,22 @@ export async function runAgent(
   } catch {
     /* 写 db 失败不影响主流程 */
   }
+
+  bus.emit({
+    type: "agent:end",
+    sessionId: session.sessionId,
+    mode: isCodeMode ? "code" : "chat",
+    result: { content: finalContent, toolsUsed },
+    stats: {
+      durationMs: Date.now() - startMs,
+      promptTokens: totalPromptTokens,
+      completionTokens: totalCompletionTokens,
+      cacheReadTokens: totalCacheReadTokens,
+      cacheCreationTokens: totalCacheCreationTokens,
+      visionPromptTokens: totalVisionPromptTokens,
+      visionCompletionTokens: totalVisionCompletionTokens,
+    },
+  });
 
   return { content: finalContent, toolsUsed };
 }
