@@ -785,19 +785,23 @@ export async function runAgent(
   }
 }
 
-async function runAgentInner(
+/**
+ * 阶段 0: 准备(prepare)。确定 LLM client / 工具快照 / textMode,重置并发状态,发射 agent:start。
+ * 事件流化拆分(提交 2):逻辑与原 runAgentInner 头部完全一致,仅物理移动。
+ */
+async function prepareRun(
   session: Session,
   userContent: string,
-  opts: AgentRunOptions = {},
+  opts: AgentRunOptions,
   bus: AgentEventBus
-): Promise<AgentRunResult> {
+): Promise<PrepareResult> {
   const isCodeMode = session.mode === "code";
   let client = opts.overrideClient ?? llmRegistry.get(isCodeMode ? "code" : "daily");
   const visionClient = !client.supportsVision ? llmRegistry.getVisionClientChain() : undefined;
-  let totalVisionPromptTokens = 0; // vision 模型 input token 累计
-  let totalVisionCompletionTokens = 0; // vision 模型 output token 累计
-  let totalVisionCacheReadTokens = 0; // vision 模型 cache read token 累计
-  let totalVisionCacheCreationTokens = 0; // vision 模型 cache creation token 累计
+  const totalVisionPromptTokens = 0; // vision 模型 input token 累计
+  const totalVisionCompletionTokens = 0; // vision 模型 output token 累计
+  const totalVisionCacheReadTokens = 0; // vision 模型 cache read token 累计
+  const totalVisionCacheCreationTokens = 0; // vision 模型 cache creation token 累计
 
   // 恢复该 session 上次已启用的 MCP server
   void mcpManager.restoreSession(session.sessionId, isCodeMode ? "code" : "chat", session.agentId);
@@ -903,8 +907,92 @@ async function runAgentInner(
   const textMode = !client.supportsToolCalls;
 
   // preRunLength：连接失败时用于回滚本次注入的消息
-  let preRunLength = session.getMessages().length;
+  const preRunLength = session.getMessages().length;
 
+  return {
+    isCodeMode,
+    client,
+    visionClient,
+    isSlave,
+    logPrefix,
+    providerName,
+    toolsUsed,
+    textMode,
+    initialTools,
+    CODE_MODE_EXCLUDED,
+    CODE_ONLY_TOOLS,
+    preRunLength,
+    startMs,
+    toolThrottler,
+    llmAc,
+    totalVisionPromptTokens,
+    totalVisionCompletionTokens,
+    totalVisionCacheReadTokens,
+    totalVisionCacheCreationTokens,
+  };
+}
+
+interface PrepareResult {
+  /** code 模式(会话 mode === "code") */
+  isCodeMode: boolean;
+  client: ReturnType<typeof llmRegistry.get>;
+  visionClient: ReturnType<typeof llmRegistry.getVisionClientChain> | undefined;
+  isSlave: boolean;
+  logPrefix: string;
+  /** provider 名(如 copilot/openai),供 agent:start / preamble 事件使用 */
+  providerName: string;
+  toolsUsed: string[];
+  textMode: boolean;
+  initialTools: import("openai/resources/chat/completions").ChatCompletionTool[];
+  CODE_MODE_EXCLUDED: Set<string>;
+  CODE_ONLY_TOOLS: Set<string>;
+  /** 连接失败时用于回滚本次注入的消息 */
+  preRunLength: number;
+  startMs: number;
+  toolThrottler: ToolCallThrottler | null;
+  llmAc: AbortController;
+  totalVisionPromptTokens: number;
+  totalVisionCompletionTokens: number;
+  totalVisionCacheReadTokens: number;
+  totalVisionCacheCreationTokens: number;
+}
+
+async function runAgentInner(
+  session: Session,
+  userContent: string,
+  opts: AgentRunOptions = {},
+  bus: AgentEventBus
+): Promise<AgentRunResult> {
+  // 阶段 0: 准备(client/工具快照/textMode/并发状态重置 + agent:start)
+  const prep = await prepareRun(session, userContent, opts, bus);
+  const {
+    isCodeMode,
+    client,
+    visionClient,
+    isSlave,
+    logPrefix,
+    providerName,
+    toolsUsed,
+    textMode,
+    initialTools,
+    CODE_MODE_EXCLUDED,
+    CODE_ONLY_TOOLS,
+    startMs,
+    toolThrottler,
+    llmAc,
+  } = prep;
+  // 以下变量在后续阶段会被重新赋值,需 let 解构
+  let {
+    preRunLength,
+    totalVisionPromptTokens,
+    totalVisionCompletionTokens,
+    totalVisionCacheReadTokens,
+    totalVisionCacheCreationTokens,
+  } = prep;
+
+
+  // ── 阶段 1: Preamble(system prompt / 记忆 / skill / microcompact / 压缩 / 加用户消息)──
+  // skipPreamble=true(auto-fork continuation)时整段跳过
   if (!opts.skipPreamble) {
     // 1. 每次 run 都刷新 system prompt（替换已有的，或首次插到最前）
     // 这样配置变更、能力更新（如 supportsVision）和 session 恢复后都能生效
@@ -1161,7 +1249,7 @@ async function runAgentInner(
   // code 模型 context window（供 token 预算检查用）
   const codeContextWindow = isCodeMode ? llmRegistry.getContextWindow("code", session.lastResponseAt) : 0;
 
-  // 5. ReAct 循环
+  // ── 阶段 2: ReAct 循环(多轮 turn:LLM 调用 → 工具执行 → 下一轮)────────────
   // 每次用户消息生成一个固定 taskId，供所有 round 共享 X-Agent-Task-Id。
   // Copilot 服务端据此将整次 agent 运行识别为同一任务，只对首轮（X-Initiator: user）计费。
   const agentTaskId = opts.agentTaskIdOverride ?? crypto.randomUUID();
@@ -2117,6 +2205,11 @@ async function runAgentInner(
 
   // 5. JSONL 持久化：各消息在 addUserMessage / addAssistantMessage 等调用时已逐条写入，无需在此重复。
 
+/**
+ * 阶段 3: 收尾(finalize)。压缩检查、diary 蒸馏、PLAN.md 日志、dashboard 统计、agent:end。
+ * 事件流化拆分(提交 2):逻辑与原 runAgentInner 尾部完全一致,仅物理移动。
+ */
+async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
   // 6. 检查是否需要压缩（工具调用后 session 继续增长，此处再次检查；code 模式跳过）
   // 使用最后一轮实际 promptTokens（比字符估算更准确）
   if (!session.abortRequested && !isCodeMode) {
@@ -2287,6 +2380,53 @@ async function runAgentInner(
   });
 
   return { content: finalContent, toolsUsed };
+}
+
+interface FinalizeContext {
+  session: Session;
+  opts: AgentRunOptions;
+  bus: AgentEventBus;
+  client: ReturnType<typeof llmRegistry.get>;
+  isCodeMode: boolean;
+  isSlave: boolean;
+  logPrefix: string;
+  toolsUsed: string[];
+  finalContent: string;
+  lastUsage: ChatResult["usage"];
+  startMs: number;
+  toolThrottler: ToolCallThrottler | null;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  totalVisionPromptTokens: number;
+  totalVisionCompletionTokens: number;
+  totalVisionCacheReadTokens: number;
+  totalVisionCacheCreationTokens: number;
+}
+
+  return finalizeRun({
+    session,
+    opts,
+    bus,
+    client,
+    isCodeMode,
+    isSlave,
+    logPrefix,
+    toolsUsed,
+    finalContent,
+    lastUsage,
+    startMs,
+    toolThrottler,
+    totalPromptTokens,
+    totalCompletionTokens,
+    totalCacheReadTokens,
+    totalCacheCreationTokens,
+    totalVisionPromptTokens,
+    totalVisionCompletionTokens,
+    totalVisionCacheReadTokens,
+    totalVisionCacheCreationTokens,
+  });
 }
 
 // ── tool_call 解析 ────────────────────────────────────────────────────────────
