@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand } from "./path-guard.js";
+import { locateAndReplace } from "./edit-file-core.js";
 import { loadConfig } from "../config/loader.js";
 
 const _require = createRequire(import.meta.url);
@@ -312,110 +313,6 @@ registerTool({
   execute: (args, ctx) => deleteFileImpl(args, ctx),
 });
 
-// ── edit_file ─────────────────────────────────────────────────────────────────
-
-/** 全角标点 -> 半角(1:1 码元映射,长度不变),用于 edit_file 容错定位 */
-const FULL_TO_HALF_PUNCT: Record<string, string> = {
-  "(": "(",
-  ")": ")",
-  ",": ",",
-  "。": ".",
-  ";": ";",
-  ":": ":",
-  "!": "!",
-  "?": "?",
-  "、": ",",
-  " ": " ",
-  "“": '"',
-  "”": '"',
-  "‘": "'",
-  "’": "'",
-  "—": "-", // U+2014 em dash(1:1)
-  "–": "-", // U+2013 en dash(1:1)
-  // 注意:…(U+2026) 为 1 个码元,展开为 "..." 会改变长度,不能放进 1:1 映射表,
-  // 由 expandEllipsis 在归一化匹配路径单独处理
-};
-
-/** 省略号展开:U+2026 → "..."(长度 1→3,仅用于归一化匹配,命中后偏移需 unexpandPos 换算) */
-function expandEllipsis(s: string): string {
-  return s.replace(/\u2026/g, "...");
-}
-
-/**
- * 把"展开省略号后文本"中的位置映射回原文本位置。
- * 原文本中每个 U+2026 展开后占 3 字符,故展开坐标 = 原坐标 + 2×前缀省略号数。
- */
-function unexpandPos(orig: string, expandedPos: number): number {
-  let len = 0;
-  for (let i = 0; i < orig.length; i++) {
-    const w = orig.charCodeAt(i) === 0x2026 ? 3 : 1;
-    if (len + w > expandedPos) return i; // 落在 U+2026 展开的中间,返回其起始
-    len += w;
-    if (len === expandedPos) return i + 1;
-  }
-  return orig.length;
-}
-
-function normalizePunct(s: string): string {
-  let out = "";
-  for (const ch of s) out += FULL_TO_HALF_PUNCT[ch] ?? ch;
-  return out;
-}
-
-/** 返回 needle 在 content 中的所有出现位置 */
-function findAllPositions(content: string, needle: string): number[] {
-  const positions: number[] = [];
-  let idx = content.indexOf(needle);
-  while (idx !== -1) {
-    positions.push(idx);
-    idx = content.indexOf(needle, idx + 1);
-  }
-  return positions;
-}
-
-/**
- * 未匹配时的诊断:在文件中找与 oldStr 最相似的片段,报告位置与首个差异字符。
- * 只从 oldStr 首字符出现的位置开始比较并限制候选数量,避免大文件 O(n*m) 卡顿。
- */
-function closestMatchDiagnostic(content: string, oldStr: string): string {
-  const len = oldStr.length;
-  if (!len || !content.length) return "";
-  let bestPos = -1;
-  let bestDiff = Infinity;
-  const first = oldStr[0] ?? "";
-  let idx = content.indexOf(first);
-  let candidates = 0;
-  while (idx !== -1 && candidates < 500) {
-    candidates++;
-    let diff = 0;
-    for (let j = 0; j < len && idx + j < content.length; j++) {
-      if (content[idx + j] !== oldStr[j]) diff++;
-      if (diff >= bestDiff) break;
-    }
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestPos = idx;
-    }
-    idx = content.indexOf(first, idx + 1);
-  }
-  if (bestPos < 0) return "";
-  const bp = bestPos;
-  const lineNo = content.slice(0, bp).split("\n").length;
-  const snippet = content.slice(bp, bp + Math.min(len, 60)).replace(/\n/g, "\\n");
-  let detail = "";
-  for (let j = 0; j < len && bp + j < content.length; j++) {
-    const fc = content[bp + j] ?? "";
-    const sc = oldStr[j] ?? "";
-    if (fc !== sc) {
-      const fcHex = fc.codePointAt(0)?.toString(16).toUpperCase() ?? "?";
-      const scHex = sc.codePointAt(0)?.toString(16).toUpperCase() ?? "?";
-      detail = `;首个差异字符(第${j + 1}位):文件中是「${fc}」(U+${fcHex}),你提供的是「${sc}」(U+${scHex})`;
-      break;
-    }
-  }
-  return `文件中与之最接近的片段在第 ${lineNo} 行附近:"${snippet}"${detail}`;
-}
-
 async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const filePath = String(args["path"] ?? "");
   const oldStr = String(args["old_str"] ?? "");
@@ -441,46 +338,12 @@ async function editFileImpl(args: Record<string, unknown>, ctx?: ToolContext): P
   if (!fs.existsSync(resolved)) return `文件不存在:${resolved}`;
 
   const content = fs.readFileSync(resolved, "utf-8");
-
-  // 1) 精确匹配
-  const positions = findAllPositions(content, oldStr);
-
-  // 2) 精确匹配失败时:全角/半角标点归一化 + 省略号展开后重试。
-  //    场景:AI 生成 old_str 时把文件中的全角标点((),。:)、省略号(…)写成了半角变体。
-  if (positions.length === 0) {
-    const expOld = expandEllipsis(oldStr);
-    const expContent = expandEllipsis(content);
-    const normOld = normalizePunct(expOld);
-    const normContent = normalizePunct(expContent);
-    if (normOld !== oldStr || normContent !== content) {
-      const expandedPositions = findAllPositions(normContent, normOld);
-      if (expandedPositions.length > 1) {
-        return `错误:old_str 在文件中出现 ${expandedPositions.length} 次(按归一化匹配),必须唯一才能安全替换。请提供更多上下文使其唯一`;
-      }
-      if (expandedPositions.length === 1) {
-        // 展开坐标 → 原文本坐标;替换区间用展开坐标换算 start/end,避免 U+2026(1→3 码元)导致多切
-        const endExpanded = (expandedPositions[0] as number) + normOld.length;
-        const posOrig = unexpandPos(content, expandedPositions[0] as number);
-        const endOrig = unexpandPos(content, endExpanded);
-        const updated = content.slice(0, posOrig) + newStr + content.slice(endOrig);
-        fs.writeFileSync(resolved, updated, "utf-8");
-        return `已替换:${resolved}(注:old_str 与文件存在全角/半角标点或省略号差异,已按归一化匹配定位)`;
-      }
-    }
+  const result = locateAndReplace(content, oldStr, newStr);
+  if (result.status === "ok") {
+    fs.writeFileSync(resolved, result.content, "utf-8");
+    return `已替换:${resolved}${result.note ? `(${result.note})` : ""}`;
   }
-
-  if (positions.length === 0) {
-    const diag = closestMatchDiagnostic(content, oldStr);
-    return `错误:old_str 在文件中未找到(已尝试全角/半角标点归一化匹配)。${diag}\n请检查是否完全匹配(含空格、换行、全角/半角标点)`;
-  }
-  if (positions.length > 1) {
-    return `错误:old_str 在文件中出现 ${positions.length} 次,必须唯一才能安全替换。请提供更多上下文使其唯一(含全角/半角归一化匹配)`;
-  }
-
-  const pos = positions[0] as number;
-  const updated = content.slice(0, pos) + newStr + content.slice(pos + oldStr.length);
-  fs.writeFileSync(resolved, updated, "utf-8");
-  return `已替换:${resolved}`;
+  return result.message;
 }
 
 registerTool({
@@ -490,7 +353,7 @@ registerTool({
     function: {
       name: "edit_file",
       description:
-        "精确替换文件中的一段文本(需要 MFA 确认)。old_str 须与文件内容匹配且唯一出现;支持全角/半角标点容错,未匹配时返回差异诊断。适合局部修改,避免 write_file 覆写整个文件。",
+        "精确替换文件中的一段文本(需要 MFA 确认)。old_str 须与文件内容匹配且唯一出现;支持全角/半角标点、省略号(U+2026)、首尾空白自动容错,未匹配时返回差异诊断(含行号与 Unicode 码点)。适合局部修改,避免 write_file 覆写整个文件。",
       parameters: {
         type: "object",
         properties: {
