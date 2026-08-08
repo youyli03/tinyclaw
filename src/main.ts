@@ -275,7 +275,7 @@ async function main(): Promise<void> {
       }
 
       // ── InboundMessageBus 分发:将消息路由给注册的等待者 ──────────────────
-      // 覆盖:MFA pendingApproval、plan approval、ask_master、ask_user(含 async slave)
+      // 覆盖:MFA pendingApproval、plan approval、ask_user(含 async slave)
       // 严格 FIFO:按注册时间顺序,找到第一个 match() 的 Waiter 并调用其 handle()
       if (session.inboundBus.dispatch(enrichedForBus, inboundExtras)) {
         return "";

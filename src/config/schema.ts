@@ -525,30 +525,8 @@ const MemorySchema = z.object({
 
 // ── 工具配置 ─────────────────────────────────────────────────────────────────
 
-const CodeAssistSchema = z.object({
-  /**
-   * 底层执行后端：
-   * - `"copilot"` — 调用 `copilot -p <task> --allow-all -s [--model <model>]`（默认）
-   * - `"codex"`   — 调用 `codex --quiet [--model <model>] <task>`
-   * - `"api"`     — 直接用 daily LLM 做一次无历史调用，忽略 model 字段
-   */
-  backend: z.enum(["copilot", "codex", "api"]).default("copilot"),
-  /**
-   * 透传给 CLI 的 --model 参数（可选）。
-   * backend = "api" 时此字段无效（使用 daily backend 的模型）。
-   */
-  model: z.string().optional(),
-  /**
-   * 每次用户消息处理中 code_assist 工具的最大调用次数，默认 5。
-   * 0 = 不限制。超出后注入限制提示，LLM 告知用户需再次发送消息继续。
-   */
-  maxCallsPerRun: z.number().int().min(0).default(5),
-});
-export type CodeAssistConfig = z.infer<typeof CodeAssistSchema>;
-
 const ToolsSchema = z
   .object({
-    code_assist: CodeAssistSchema.default({}),
     /**
      * Code 模式下 ReAct 循环的最大工具调用轮次，默认 0（无限制）。
      * 0 = 无限制，agent 将持续执行直到任务完成或被用户中断。

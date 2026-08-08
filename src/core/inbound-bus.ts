@@ -1,8 +1,8 @@
 /**
  * InboundMessageBus — 用户入站消息统一调度总线
  *
- * 所有需要等待用户回复的操作（MFA 确认、Plan 审批、ask_master、ask_user、
- * async slave ask_user）都通过此 Bus 注册 Waiter。
+ * 所有需要等待用户回复的操作(MFA 确认、Plan 审批、ask_user、
+ * async slave ask_user)都通过此 Bus 注册 Waiter。
  *
  * 用户消息到达时，handleMessage 调用 dispatch()，Bus 按 FIFO 顺序遍历等待队列，
  * 找到第一个 match() 返回 true 的 Waiter 并调用其 handle()，消费该消息。

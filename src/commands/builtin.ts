@@ -95,7 +95,6 @@ registerCommand({
     if (session.pendingPlanApproval) waitingStates.push("📋 等待 Plan 审批");
     if (session.pendingAskUser) waitingStates.push("🤔 等待 ask_user 回复");
     if (session.pendingApproval) waitingStates.push("🔐 等待 MFA 确认");
-    if (session.pendingSlaveQuestion) waitingStates.push("🪢 等待子任务提问回复");
     if (waitingStates.length > 0) {
       lines.push(`等待态：${waitingStates.join(" / ")}`);
     }

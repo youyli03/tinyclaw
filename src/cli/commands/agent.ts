@@ -70,7 +70,6 @@ export const BUILTIN_TOOLS = [
   "send_report",
   "render_diagram",
   "search_store",
-  "code_assist",
   "create_skill",
   "mcp_list_servers",
   "mcp_enable_server",

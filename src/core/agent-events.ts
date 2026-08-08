@@ -97,7 +97,7 @@ export type AgentEvent =
   | {
       type: "tool:serial";
       name: string;
-      reason: "mfa" | "ask_user" | "code_assist" | "fork" | "restart" | "limit";
+      reason: "mfa" | "ask_user" | "fork" | "restart" | "limit";
     }
   | {
       type: "tool:blocked";

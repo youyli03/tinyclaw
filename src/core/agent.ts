@@ -35,7 +35,6 @@ import {
 import { skillRegistry } from "../skills/registry.js";
 
 // 确保所有工具在模块加载时注册
-import "../tools/code-assist.js";
 import "../tools/system.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
@@ -50,8 +49,6 @@ import "../tools/search-store.js";
 import "../tools/search-newsnow.js";
 import "../tools/read-url.js";
 import "../tools/ask-user-tool.js";
-import "../tools/ask-master.js";
-import "../tools/run-code-subagent.js";
 import "../tools/memory.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
@@ -175,19 +172,14 @@ function isToolAvailable(toolName: string, agentId: string): boolean {
 }
 
 /**
- * 内置系统提示词（动态生成，含 code_assist 次数限制）。
- * agentId 仅用于读取 tools.toml 以决定 MEM.md 操作说明的措辞，与记忆的操作对象无关。
+ * 内置系统提示词(动态生成)。
+ * agentId 仅用于读取 tools.toml 以决定 MEM.md 操作说明的措辞,与记忆的操作对象无关。
  */
 function buildBuiltinSystem(
-  maxCodeAssistCalls: number,
   workspacePath: string,
   supportsVision = false,
   agentId = "default"
 ): string {
-  const limitNote =
-    maxCodeAssistCalls > 0
-      ? `每次用户消息处理中最多调用 ${maxCodeAssistCalls} 次 code_assist，超出后需告知用户任务未完成，请求继续`
-      : "code_assist 调用次数不限制";
   const agentDir = join(workspacePath, "..");
   const memFilePath = join(agentDir, "MEM.md");
   const activeFilePath = join(agentDir, "ACTIVE.md");
@@ -246,7 +238,7 @@ function buildBuiltinSystem(
 
 处理任务时，按以下顺序选择执行方式：
 
-1. **内置工具**（exec_shell / write_file / read_file / code_assist 等）——直接调用，响应最快
+1. **内置工具**(exec_shell / write_file / read_file 等)——直接调用,响应最快
 2. **MCP 工具**（mcp_* 前缀）——若内置工具无法满足，先用 mcp_list_servers 查看可用服务，再用 mcp_enable_server 激活对应服务后调用其工具
 3. **Skill（工作流文档）**——若前两类均不适用，且用户意图与可用技能的 description/trigger_phrases 精确匹配，使用 skill_run 工具执行
 
@@ -254,15 +246,6 @@ function buildBuiltinSystem(
 - \`exec_shell\` 默认超时为 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
 - build / test / install / 大型网络请求 / 仓库级扫描等长任务，不要直接使用默认 60 秒硬跑
 
-## code_assist 工具使用规范
-- 需要执行代码编写/修改/调试任务时，调用 code_assist 工具，不要自己生成大段代码
-- code_assist 采用 **两阶段工作流**（plan→execute）：
-  1. 调用 code_assist(task) → 子 Agent 探索代码库并返回计划摘要 + sessionId
-  2. 审阅计划后：
-     - 批准并执行：调用 code_assist_run(sessionId)，等待执行完成
-     - 修改计划：调用 code_assist_run(sessionId, "反馈意见")，子 Agent 重规划后返回新计划
-- task 参数必须自包含完整背景：相关文件路径、现有代码片段（如有）、明确目标——不能只写修改上面的代码
-- ${limitNote}
 
 ## 工作区规范
 
@@ -486,9 +469,8 @@ function buildSystemPrompt(
   suffix?: string,
   currentProvider?: string
 ): string {
-  const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
   const workspacePath = agentManager.workspaceDir(agentId);
-  const parts: string[] = [buildBuiltinSystem(maxCalls, workspacePath, supportsVision, agentId)];
+  const parts: string[] = [buildBuiltinSystem(workspacePath, supportsVision, agentId)];
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
@@ -606,8 +588,8 @@ export interface AgentRunOptions {
    */
   autoForkThresholdMs?: number;
   /**
-   * 额外注入给 LLM 的工具列表（追加到 getAllToolSpecs() 之后）。
-   * 用于向特定 Agent（如 daily subagent）暴露 hidden 工具（ask_master / run_code_subagent 等）。
+   * 额外注入给 LLM 的工具列表(追加到 getAllToolSpecs() 之后)。
+   * 用于向特定 Agent(如 fork 出的 slave)暴露 hidden 工具。
    */
   customTools?: import("openai/resources/chat/completions").ChatCompletionTool[];
   /**
@@ -616,17 +598,7 @@ export interface AgentRunOptions {
    */
   overrideClient?: import("../llm/client.js").LLMClient | import("../llm/registry.js").AnyLLMClient;
   /**
-   * ask_master 回调（由 code_assist 注入给 daily subagent）。
-   * 透传到 ToolContext，供 ask_master 工具使用。
-   */
-  onAskMaster?: import("../tools/registry.js").ToolContext["onAskMaster"];
-  /**
-   * code subagent 调用函数（由 code_assist 注入给 daily subagent）。
-   * 透传到 ToolContext，供 run_code_subagent 工具使用。
-   */
-  codeRunFn?: import("../tools/registry.js").ToolContext["codeRunFn"];
-  /**
-   * 跨 session 消息注入函数（由 main.ts 注入）。
+   * 跨 session 消息注入函数(由 main.ts 注入)。
    * 透传到 ToolContext，供 session_send 工具使用。
    */
   sessionSendFn?: import("../tools/registry.js").ToolContext["sessionSendFn"];
@@ -874,12 +846,9 @@ async function prepareRun(
 
   // 工具列表和模式在 system prompt 注入前确定（textMode 会影响 prompt 内容）
   // initialTools 快照用于 textMode 系统提示构建；ReAct 循环内每轮重新取最新快照
-  // code 模式过滤 code_assist / code_assist_run（code 模式本身即代码助手）
-  // 非 code 模式过滤 restart_tool（该工具仅 code 模式下有意义）
-  // code 模式过滤 agent fork 系列（code 模式本身是子 agent，不应再向下 fork）
+  // code 模式过滤 restart_tool(该工具仅 code 模式下有意义)
+  // code 模式过滤 agent fork 系列(code 模式本身是子 agent,不应再向下 fork)
   const CODE_MODE_EXCLUDED = new Set([
-    "code_assist",
-    "code_assist_run",
     "skill_run",
     "agent_fork",
     "agent_status",
@@ -1232,7 +1201,6 @@ async function runAgentInner(
   }
 
   let finalContent = "";
-  let codeAssistCallCount = 0;
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let totalCompletionTokens = 0; // 本次 runAgent 所有 LLM 轮次的 output token 累计
   let totalPromptTokens = 0; // input token 累计
@@ -1258,7 +1226,7 @@ async function runAgentInner(
   for (let round = 0; round < maxToolRounds; round++) {
     bus.emit({ type: "turn:start", round });
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
-    // code 模式本身就是代码助手，无需 code_assist / code_assist_run（避免递归委派）
+    // code 模式本身是子 agent,不应再向下 fork(agent_fork 等已被 CODE_MODE_EXCLUDED 过滤)
     // 非 code 模式不暴露 restart_tool；code 模式排除 agent fork 系列
     const rawTools = [
       ...getAllToolSpecs(session.agentId).filter((t) => {
@@ -1635,9 +1603,8 @@ async function runAgentInner(
     // ── 工具执行（支持批量并发）────────────────────────────────────────────
     //
     // 并发策略：
-    //   - 需要用户交互的工具（ask_user / ask_master / notify_user / MFA 工具）必须串行
-    //   - code_assist 需要维护调用计数器，必须串行
-    //   - agent_fork / run_code_subagent 涉及子 agent 状态，必须串行
+    //   - 需要用户交互的工具(ask_user / notify_user / MFA 工具)必须串行
+    //   - agent_fork 涉及子 agent 状态,必须串行
     //   - 其余只读/幂等工具（exec_shell、read_file、mcp_*、search_store 等）可并发
     //
     // 并发执行时，结果按原始顺序写入 session，保证 function calling 模式下
@@ -1650,14 +1617,10 @@ async function runAgentInner(
     let hasAskedUser = false;
     const SERIAL_TOOLS = new Set([
       "ask_user",
-      "ask_master",
       "notify_user",
       "send_report",
       "render_diagram",
-      "code_assist",
-      "code_assist_run",
       "agent_fork",
-      "run_code_subagent",
       "exit_plan_mode",
       "create_skill",
       "session_send",
@@ -1721,8 +1684,6 @@ async function runAgentInner(
           ...(opts.onPlanRequest ? { onPlanRequest: opts.onPlanRequest } : {}),
           ...(opts.onAskUser ? { onAskUser: opts.onAskUser } : {}),
           ...(opts.onMFARequest ? { onMFARequest: opts.onMFARequest } : {}),
-          ...(opts.onAskMaster ? { onAskMaster: opts.onAskMaster } : {}),
-          ...(opts.codeRunFn ? { codeRunFn: opts.codeRunFn } : {}),
           ...(opts.sessionSendFn ? { sessionSendFn: opts.sessionSendFn } : {}),
           ...(opts.sessionGetFn ? { sessionGetFn: opts.sessionGetFn } : {}),
           ...(opts.onLoopExit ? { onLoopExit: opts.onLoopExit } : {}),
@@ -1936,21 +1897,7 @@ async function runAgentInner(
 
       toolsUsed.push(call.name);
 
-      // ── code_assist 调用次数限制（串行处理）──────────────────────────
-      if (call.name === "code_assist") {
-        await flushConcurrentBatch();
-        const maxCalls = loadConfig().tools.code_assist.maxCallsPerRun;
-        if (maxCalls > 0 && codeAssistCallCount >= maxCalls) {
-          bus.emit({ type: "tool:blocked", name: call.name, reason: "max-calls" });
-          const msg = `已达本次最大调用次数（${maxCalls}），此次调用未执行。请在当前回复中告知用户任务状态，用户可发新消息继续。`;
-          if (!textMode) session.addToolResultMessage(call.callId, msg);
-          else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
-          continue;
-        }
-        codeAssistCallCount++;
-      }
-
-      // ── MFA 检查（需要用户交互，先 flush 并发批次再串行）────────────
+      // ── MFA 检查(需要用户交互,先 flush 并发批次再串行)────────────
       const mfaCfg = loadConfig().auth.mfa;
       if (
         (toolNeedsMFA(call.name, call.args, mfaCfg) || getTool(call.name)?.requiresMFA) &&
@@ -2010,12 +1957,10 @@ async function runAgentInner(
           type: "tool:serial",
           name: call.name,
           reason:
-            call.name === "ask_user" || call.name === "ask_master"
+            call.name === "ask_user"
               ? "ask_user"
-              : call.name === "code_assist" || call.name === "code_assist_run"
-                ? "code_assist"
-                : call.name === "agent_fork" || call.name === "run_code_subagent"
-                  ? "fork"
+              : call.name === "agent_fork"
+                ? "fork"
                   : call.name === "restart_tool"
                     ? "restart"
                     : "limit",

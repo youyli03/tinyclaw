@@ -88,8 +88,8 @@ export class Session {
   readonly agentId: string;
 
   /**
-   * 入站消息总线：所有需要等待用户回复的操作（MFA、plan approval、ask_master、ask_user、
-   * async slave ask_user）均注册到此 Bus，handleMessage 通过 bus.dispatch() 路由消息。
+   * 入站消息总线:所有需要等待用户回复的操作(MFA、plan approval、ask_user、
+   * async slave ask_user)均注册到此 Bus,handleMessage 通过 bus.dispatch() 路由消息。
    */
   readonly inboundBus: InboundMessageBus = new InboundMessageBus();
 
@@ -118,7 +118,7 @@ export class Session {
   // ── MFA 状态 ──────────────────────────────────────────────────────────────
   /** 同一次 runAgent() 中，MFA 一旦通过即设为 true，后续工具跳过验证 */
   mfaApprovedForThisRun = false;
-  /** 由父 Agent 预授权（code_assist 启动子 Agent 时设置），整个 Session 生命周期内跳过 MFA 检查 */
+  /** 由父 Agent 机制(agent_fork 等)预授权,整个 Session 生命周期内跳过 MFA 检查 */
   mfaPreApproved = false;
   /** Interface A：等待用户回复 确认/取消 的控制柄 */
   pendingApproval: PendingApproval | null = null;
@@ -218,19 +218,10 @@ export class Session {
   private _persistReady = false;
 
   // ── Agent Bind（父子关系）──────────────────────────────────────────────────
-  /** 父 Session ID（由 code_assist / agent_fork 等创建时设置） */
+  /** 父 Session ID(由 agent_fork 等创建时设置) */
   parentId?: string;
   /** 子 Session ID 列表 */
   readonly childIds: string[] = [];
-
-  /**
-   * 子 Agent 通过 ask_master 发起提问时，此字段被设置；
-   * main.ts 收到用户下一条消息后将其作为答案 resolve，并清空此字段。
-   */
-  pendingSlaveQuestion: {
-    question: string;
-    resolve: (answer: string) => void;
-  } | null = null;
 
   constructor(sessionId: string, opts: SessionOptions = {}) {
     this.sessionId = sessionId;

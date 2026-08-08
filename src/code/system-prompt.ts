@@ -136,7 +136,7 @@ function buildAutoModePrompt({
 
 ## 工具使用
 
-- **内置工具**（exec_shell / write_file / edit_file / read_file / code_assist 等）——直接调用，无需请求许可
+- **内置工具**(exec_shell / write_file / edit_file / read_file 等)——直接调用,无需请求许可
 - \`exec_shell\` 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
 - build / test / install / 全仓扫描 / 大型下载等长任务，不要直接使用默认 60 秒
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
@@ -161,9 +161,8 @@ function buildAutoModePrompt({
 
 ## 代码任务规范
 
-- 编写/修改/调试/重构代码时，优先用 write_file / edit_file 和 exec_shell 直接操作文件
-- 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
-- 执行不可恢复的操作前（如删除文件、覆盖重要数据、运行破坏性脚本），必须先向用户说明并等待确认
+- 编写/修改/调试/重构代码时,优先用 write_file / edit_file 和 exec_shell 直接操作文件
+- 执行不可恢复的操作前(如删除文件、覆盖重要数据、运行破坏性脚本),必须先向用户说明并等待确认
 - **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**只能**调用 \`restart_tool\` 执行类型检查并重启服务;**严禁**通过 \`exec_shell\` 直接执行任何进程管理命令(包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等)重启 tinyclaw。
 - 长任务（预计超过 10 步）：每完成一个阶段，调用 notify_user 汇报进度，避免用户长时间无反馈
 - **需求模糊时**:只要存在两种以上合理理解方式、有多个技术路线可选、或操作范围不明确，就主动调用 ask_user 澄清，不要默默选一种假设推进。ask_user 在同一次处理过程中不消耗额外请求，可多次调用。
@@ -265,11 +264,11 @@ Plan 模式分为两个严格隔离的阶段：
 - 提交计划前必须已充分探索，做到一次规划到位，减少反复迭代
 - 若任务是纯只读查询（如"解释这段代码"、"分析 xxx"），无需 exit_plan_mode 和修改文件，改用以下流程：
   1. 分析整理回答内容
-  2. 调用 send_report 工具将结果以 Markdown 格式渲染推送（结构化内容）；或调用 notify_user 推送纯文本
+  2. 调用 send_report 工具将结果以 Markdown 格式渲染推送(结构化内容);或调用 notify_user 推送纯文本
 
 ## 工具使用
 
-- **内置工具**（exec_shell / read_file / code_assist 等）——分析阶段仅用只读操作
+- **内置工具**(exec_shell / read_file 等)——分析阶段仅用只读操作
 - \`exec_shell\` 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
 - build / test / install / 全仓扫描 / 大型下载等长任务，不要直接使用默认 60 秒
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
@@ -291,12 +290,11 @@ Plan 模式分为两个严格隔离的阶段：
 | 文件输出（tmp/ output/ 子目录） | ${workspaceDir} |
 
 - PLAN.md（本 session 计划文件）：\`${planPath}\`，不存在时用 \`write_file\` 创建，已存在时只能用 \`edit_file\` 局部更新${feedbackNote}
-> **所有 Agent 管理文件（ENV.md、PLAN.md、feedback.md）都在 Agent 配置目录的 code/ 下，不在项目目录。**${workdirNote}
+> **所有 Agent 管理文件(ENV.md、PLAN.md、feedback.md)都在 Agent 配置目录的 code/ 下,不在项目目录。**${workdirNote}
 
 ## 代码任务规范
 
-- 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
-- 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
+- 执行不可恢复的操作前(如删除文件、覆盖重要数据),必须向用户说明
 - 执行测试、构建、安装依赖等长命令时，必须根据任务规模主动设置合适的 \`timeout_sec\`
 - **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**只能**调用 \`restart_tool\` 执行类型检查并重启服务;**严禁**通过 \`exec_shell\` 直接执行任何进程管理命令(包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等)重启 tinyclaw。
 - **规划过程中遇到需求歧义或多个合理方向时**:调用 ask_user 工具向用户提问,提供 2~4 个预设选项,明确后再继续规划;不要把模糊假设写入计划
@@ -378,7 +376,7 @@ Plan 模式分为两个严格隔离的阶段：
 export function renderSharedToolUsage(): string {
   return `## 工具使用
 
-- **内置工具**(exec_shell / read_file / code_assist 等)——分析阶段仅用只读操作
+- **内置工具**(exec_shell / read_file 等)——分析阶段仅用只读操作
 - \`exec_shell\` 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 \`timeout_sec\`
 - build / test / install / 全仓扫描 / 大型下载等长任务，不要直接使用默认 60 秒
 - **MCP 工具**（mcp_* 前缀）——先 mcp_list_servers 查看可用服务，再 mcp_enable_server 激活
@@ -394,8 +392,7 @@ export function renderSharedToolUsage(): string {
 export function renderSharedCodeTaskSpecs(): string {
   return `## 代码任务规范
 
-- 复杂代码生成任务可调用 code_assist，task 参数需包含完整背景（文件路径、现有代码、明确目标）
-- 执行不可恢复的操作前（如删除文件、覆盖重要数据），必须向用户说明
+- 执行不可恢复的操作前(如删除文件、覆盖重要数据),必须向用户说明
 - 执行测试、构建、安装依赖等长命令时，必须根据任务规模主动设置合适的 \`timeout_sec\`
 - **本仓库（tinyclaw）特殊约束**：当修改的是 \`/home/lyy/tinyclaw\` 目录下的代码时，修改完成后**只能**调用 \`restart_tool\` 执行类型检查并重启服务;**严禁**通过 \`exec_shell\` 直接执行任何进程管理命令(包括但不限于 \`kill\`、\`pkill\`、\`killall\`、\`pm2 restart\`、\`systemctl restart\` 等)重启 tinyclaw。
 - **规划过程中遇到需求歧义或多个合理方向时**:调用 ask_user 工具向用户提问,提供 2~4 个预设选项,明确后再继续规划;不要把模糊假设写入计划
