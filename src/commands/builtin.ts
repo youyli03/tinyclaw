@@ -389,11 +389,13 @@ registerCommand({
 /** 项目根目录（src/commands/builtin.ts → ../../） */
 const PROJECT_ROOT = new URL("../../", import.meta.url).pathname;
 
-/** 运行 tsc --noEmit 检查，返回 {ok, output} */
+/** 运行 tsc --noEmit 检查,返回 {ok, output} */
 function runTypecheck(): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
-    const proc = spawn("bun", ["run", "typecheck"], {
+    // 直接用 node 跑 tsc,不依赖 bun/PATH(服务进程 PATH 不含 ~/.bun/bin,spawn("bun") 会 ENOENT)
+    const tscPath = path.join(PROJECT_ROOT, "node_modules", "typescript", "bin", "tsc");
+    const proc = spawn(process.execPath, [tscPath, "--noEmit"], {
       cwd: PROJECT_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });
