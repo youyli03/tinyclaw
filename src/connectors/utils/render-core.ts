@@ -11,9 +11,21 @@ import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
-// ── 主题配置（改这里换主题）──────────────────────────────────────────────────
+// ── 主题配置(改这里换主题)──────────────────────────────────────────────────
 export const MERMAID_THEME_LIGHT = "solarized-light";
 export const MERMAID_THEME_DARK = "tokyo-night";
+
+// 自定义加深主题:solarized-light 系低对比度(fg #657b83 ~4.6:1,line/muted #93a1a1 ~2.4:1),
+// 保留米黄底但加深文字/边框,提升可读性。dark 主题 tokyo-night 对比度已足够,无需覆盖。
+const CUSTOM_THEMES: Record<string, Record<string, string>> = {
+  "solarized-light": {
+    bg: "#fdf6e3",
+    fg: "#37474f", // ~10:1 对比
+    line: "#64767c", // ~5:1
+    accent: "#1a6fb5",
+    muted: "#54646a", // ~5.5:1
+  },
+};
 
 // ── 输出目录 ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +109,9 @@ export async function tryBeautifulMermaid(
   }
 
   const themeName = theme === "dark" ? MERMAID_THEME_DARK : MERMAID_THEME_LIGHT;
-  const themeOpts = THEMES[themeName];
+  // 优先使用自定义加深主题,包内主题作 fallback
+  const themeOpts =
+    (CUSTOM_THEMES[themeName] as Record<string, unknown>) ?? THEMES[themeName];
   if (!themeOpts) return `未找到主题：${themeName}`;
 
   let svg: string;
