@@ -4,6 +4,8 @@
 > **动手改任何文件之前，先读完本文件。**
 >
 > 人类贡献者同样适用；与 README 冲突时，**以本文件为准**（README 有已知滞后，见 §7）。
+>
+> **若仓库根存在 `AGENTS.local.md`，必须先读它**——机器/环境私有的约束（SSH 主机与用户名、部署路径、本地端口等）都在那里，不进 git。模板见 `AGENTS.local.example.md`，规则见 §11。
 
 ---
 
@@ -89,6 +91,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `src/utils/` | logger / redact / file-perm / tls |
 | `mcp-servers/` | 独立 MCP server（browser / news / notes / polymarket / sts2） |
 | `docs/` | 项目文档（**R1 要求同步维护**） |
+| `AGENTS.local.md` | **私有约束，不进 git**（gitignored）；模板 `AGENTS.local.example.md`，见 §11 |
 | `tmp/` | **唯一允许的临时目录**（gitignored） |
 
 ---
@@ -278,6 +281,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - ❌ 在未确认的情况下修改 `docs/architecture/overview.md` 之外的"设计意图"段落来掩盖代码缺陷——**修代码，或如实标注未实现**
 - ❌ 未经用户明确同意执行 `git commit` / `git commit --amend` / `git push` / `git reset --hard`（见 §10.2）
 - ❌ 用无 type 前缀的裸标题提交（如 `修复：xxx`、`update`、`fix bug`）（见 §10.1）
+- ❌ `git add -f AGENTS.local.md`，或把它的内容复制进任何进 git 的文件 / 日志 / 提交信息（见 §11）
 
 ---
 
@@ -342,3 +346,50 @@ refactor(mcp): agent-centric MCP access control via per-agent mcp.toml
 ### 10.3 例外
 
 `src/core/tinyclaw-submitter.ts` 是**独立的定时备份调度器**（每 4h 自动提交 `~/.tinyclaw` 配置仓库，设计上无人值守），不属于"agent 提交行为"，不适用 §10.2。如需对其也加审批，须单独改该模块。
+
+---
+
+## 11. 私有约束：`AGENTS.local.md`
+
+机器/环境相关、**不应进 git** 的约束集中放这里，避免污染本文件。
+
+### 三个文件的分工
+
+| 文件 | 进 git | 用途 |
+|---|---|---|
+| `AGENTS.md`（本文件） | ✅ | 通用规则，所有环境一致 |
+| `AGENTS.local.md` | ❌ **不进**（`.gitignore` 已忽略） | 本机 / 本环境的私有约束 |
+| `AGENTS.local.example.md` | ✅ | 格式模板，含示例字段 |
+
+- **不存在 `AGENTS.local.md` 时**：跳过，不影响任何规则。
+- **存在则必读**：开始任何任务前先读它。
+- **优先级**：`AGENTS.local.md` 的约束**优先于**本文件的通用规则（更具体）；
+  但与 **§0 五条硬规则**冲突时，**以 §0 为准**（私有文件不能放宽 R1–R5）。
+
+### 适合写在这里的内容
+
+- **SSH**：主机别名 / IP / 端口 / 用户名 / 私钥路径（例：`ssh -i ~/.ssh/id_ed25519_deploy USER@HOST`）
+- **部署与运行**：远端目录、服务名、容器名、日志路径
+- **本地环境**：端口、代理、镜像源、内网地址、解释器路径
+- **机器差异**：本机 `python3` 实为 `python3.11`、某依赖未安装等
+- **个人偏好**：默认分支、提交署名、通知方式
+
+### 不要写在这里的内容
+
+- **明文密钥 / token / 密码**——它只是"不进 git"，不是保险箱。密钥仍放
+  `~/.tinyclaw/config.toml` 与 `~/.tinyclaw/secrets.toml`；本文件只写**引用方式**
+  （例：`SSH key 见 ~/.ssh/id_ed25519_deploy`、`token 见 secrets.toml 的 $FOO_TOKEN`）。
+- 可复用的项目规则——那是本文件的职责（按 R1 同步维护）。
+
+### 硬性禁止
+
+- ❌ `git add -f AGENTS.local.md`
+- ❌ 把它的内容复制进任何进 git 的文件、日志或提交信息
+- ❌ 在其中写明文密码
+
+### 用法
+
+```bash
+cp AGENTS.local.example.md AGENTS.local.md   # 然后按本机情况填写
+git status --porcelain                        # 应看不到 AGENTS.local.md
+```

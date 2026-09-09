@@ -21,6 +21,10 @@ config.toml
 !mcp.example.toml
 !memstores.example.toml
 
+# 私有 agent 约束（机器/环境特定：SSH、部署路径、本地端口等，永不提交）
+# 模板见 AGENTS.local.example.md
+AGENTS.local.md
+
 # 运行时数据
 data/
 
