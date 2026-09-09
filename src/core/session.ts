@@ -14,6 +14,7 @@ import {
   summarizeAndCompress,
   shouldSummarizeCode,
   summarizeAndCompressCode,
+  CHAT_RETAIN_RATIO,
 } from "../memory/summarizer.js";
 import {
   pruneToolResults as pruneMessagesToolResults,
@@ -830,7 +831,10 @@ export class Session {
    * 返回摘要文本，供调用方通知用户。
    */
   async compress(): Promise<string> {
-    const compressed = await summarizeAndCompress(this.messages, this.agentId);
+    // 逐字保留的近期尾部预算 = 上下文窗口 × CHAT_RETAIN_RATIO（对齐 DSH retainRatio 0.16）
+    const ctxWindow = llmRegistry.getContextWindow("daily", this.lastResponseAt);
+    const retainTokens = Math.max(1, Math.floor(ctxWindow * CHAT_RETAIN_RATIO));
+    const compressed = await summarizeAndCompress(this.messages, this.agentId, retainTokens);
     this.messages = compressed;
     this._foldPreambleInjections();
     this.rewriteJsonl();

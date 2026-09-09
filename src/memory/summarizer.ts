@@ -624,8 +624,65 @@ export async function summarizeAndCompressCode(
   return messages;
 }
 
-/** Chat 模式压缩后保留的最近完整轮次数（以 user 消息为轮次边界） */
-const CHAT_KEEP_TURNS = 4;
+/**
+ * Chat 压缩时逐字保留的近期尾部预算，占上下文窗口的比例
+ * （对齐 DSH `dsh-compaction-basic` 的 `retainRatio` 默认值 0.16）。
+ * 由调用方 `Session.compress()` 按实际 contextWindow 换算成绝对 token 预算传入。
+ */
+export const CHAT_RETAIN_RATIO = 0.16;
+
+/** 调用方未传预算时的兜底值（约 20k token） */
+const DEFAULT_CHAT_RETAIN_TOKENS = 20_000;
+
+/** 估算一组消息的 token 数（与 shouldSummarize 同口径：字符 / 3.5，含 tool_calls） */
+function estimateMessagesTokens(messages: ChatMessage[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    if (typeof m.content === "string") chars += m.content.length;
+    else if (Array.isArray(m.content)) {
+      for (const p of m.content as { text?: string }[]) {
+        chars += typeof p.text === "string" ? p.text.length : 200;
+      }
+    }
+    const calls = (m as { tool_calls?: unknown[] }).tool_calls;
+    if (calls) chars += JSON.stringify(calls).length;
+  }
+  return Math.ceil(chars / 3.5);
+}
+
+/**
+ * 按 token 预算选出需要逐字保留的近期尾部（对齐 DSH 的 `retainTokens` 语义）。
+ *
+ * - 从尾部向前累计估算 token 直到达到预算（**至少包含最后一条消息**）；
+ * - **边界对齐**：起点若落在 `role:"tool"` 上，向前扩展，避免以孤立的 tool 消息开头
+ *   （对应的 assistant 必须一起保留，否则 OpenAI API 会 400）。
+ *
+ * 不强制"保留最后一整轮"：工具密集的长尾会因此超出预算；用户的意图由摘要检查点承载。
+ *
+ * @returns 保留区在 nonSystemMessages 中的起始下标
+ */
+export function selectRetainedFromIndex(
+  nonSystemMessages: ChatMessage[],
+  retainTokens: number
+): number {
+  const total = nonSystemMessages.length;
+  if (total === 0) return 0;
+
+  let used = 0;
+  let idx = total;
+  for (let i = total - 1; i >= 0; i--) {
+    const t = estimateMessagesTokens([nonSystemMessages[i]!]);
+    // 第一条总是保留；之后超出预算即停
+    if (idx !== total && used + t > retainTokens) break;
+    used += t;
+    idx = i;
+  }
+
+  // 边界对齐：不要以孤立的 tool 消息开头
+  while (idx > 0 && nonSystemMessages[idx]!.role === "tool") idx--;
+
+  return idx;
+}
 
 /** 轻量 diary 提炼：单轮 user+assistant 交互提炼提示词 */
 const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
@@ -1417,12 +1474,15 @@ export async function distillTurnToDiary(
 /**
  * 将对话历史压缩：
  * 1. 存档到 QMD
- * 2. 用 summarizer LLM 生成摘要
- * 3. 返回 system + 摘要 + 最近 CHAT_KEEP_TURNS 轮完整对话的新 messages[]
+ * 2. 用 summarizer LLM 生成结构化检查点
+ * 3. 返回 system + 检查点 + **按 token 预算**逐字保留的近期尾部
+ *
+ * @param retainTokens 逐字保留的近期尾部 token 预算（默认 DEFAULT_CHAT_RETAIN_TOKENS）
  */
 export async function summarizeAndCompress(
   messages: ChatMessage[],
-  agentId = "default"
+  agentId = "default",
+  retainTokens = DEFAULT_CHAT_RETAIN_TOKENS
 ): Promise<ChatMessage[]> {
   const client = llmRegistry.get("summarizer");
 
@@ -1440,45 +1500,16 @@ export async function summarizeAndCompress(
   });
   const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
-  // 找出最后 CHAT_KEEP_TURNS 个 user 消息的起始位置，保留该位置起的全部消息
-  const userIndices = nonSystemMessages
-    .map((m, i) => (m.role === "user" ? i : -1))
-    .filter((i) => i >= 0);
-  const keepFromIdx =
-    userIndices.length > CHAT_KEEP_TURNS ? userIndices[userIndices.length - CHAT_KEEP_TURNS]! : 0;
+  // 按 token 预算选取逐字保留的近期尾部（边界对齐 + 至少保留最后一轮），
+  // 替代旧的"保留最近 N 轮"——后者在一轮里塞入大工具结果时仍会超预算。
+  const keepFromIdx = selectRetainedFromIndex(nonSystemMessages, retainTokens);
 
   const toSummarize = nonSystemMessages.slice(0, keepFromIdx);
-  let toKeep = nonSystemMessages.slice(keepFromIdx);
+  const toKeep = nonSystemMessages.slice(keepFromIdx);
 
   // 如果没有足够旧的内容可压缩，直接返回原始消息
   if (toSummarize.length === 0) {
     return messages;
-  }
-
-  // 去除 toKeep 开头的孤立 role=tool 消息：
-  // 当对应的 assistant+tool_calls 已被移入 toSummarize 时，tool_call_id 找不到对应 assistant，
-  // OpenAI API 会拒绝该序列（400 Bad Request）
-  {
-    const validIds = new Set<string>();
-    for (const m of toKeep) {
-      if (m.role === "assistant") {
-        const calls = (m as { role: "assistant"; tool_calls?: Array<{ id: string }> }).tool_calls;
-        if (calls) calls.forEach((c) => validIds.add(c.id));
-      }
-    }
-    let keepStart = 0;
-    while (keepStart < toKeep.length) {
-      const m = toKeep[keepStart]!;
-      if (
-        m.role === "tool" &&
-        !validIds.has((m as { role: "tool"; tool_call_id: string }).tool_call_id)
-      ) {
-        keepStart++;
-      } else {
-        break;
-      }
-    }
-    toKeep = toKeep.slice(keepStart);
   }
 
   // 构建待摘要文本，使用 formatMsgForSummary 展开 tool_calls

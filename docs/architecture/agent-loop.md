@@ -236,6 +236,10 @@ threshold       = contextWindow × memory.tokenThreshold  // 默认 0.6
 
 ### 超过阈值 → summarizeAndCompress()
 
+**保留策略**：按 **token 预算**逐字保留近期尾部 = `contextWindow × CHAT_RETAIN_RATIO`（0.16，
+对齐 DSH `retainRatio`），而不是按轮数——后者在一轮里塞入大工具结果时仍会超预算。
+切点会对齐到工具调用／结果配对边界（绝不以孤立的 `role:"tool"` 消息开头）。
+
 ```
 第一步：用 summarizer LLM 生成结构化检查点
   取所有非 system 消息，拼成纯文本
