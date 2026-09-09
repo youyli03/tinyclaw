@@ -1120,32 +1120,38 @@ async function runAgentInner(
       bus.emit({ type: "preamble:skill-reminder", skills: reminder ? 1 : 0 });
     }
 
-    // 2.5 MicroCompact:截断几轮前过长的 tool 结果(chat + code 均触发,不走 LLM)
-    // ⛔ 2026-08-09 已禁用:MICRO_COMPACT_THRESHOLD=0.45 触发过于频繁,原地改写
-    //    头部历史破坏 LLM prompt 前缀缓存(后端自动缓存,前缀一变全失效),
-    //    省 10~20% 输入 token 却丢 100% 前缀缓存,属负优化。
-    //    恢复方法:取消下方注释 + 将 MICRO_COMPACT_THRESHOLD 调至 0.7 左右
-    //    (summarizer.ts L1935)。
-    // {
-    //   const mcCtx = isCodeMode
-    //     ? llmRegistry.getContextWindow("code", session.lastResponseAt)
-    //     : llmRegistry.getContextWindow("daily", session.lastResponseAt);
-    //   const mcBefore = session.getMessages().length;
-    //   const mcDid = session.microCompact(mcCtx, session.lastPromptTokens);
-    //   if (mcDid) {
-    //     bus.emit({
-    //       type: "preamble:micro-compact",
-    //       before: mcBefore,
-    //       after: session.getMessages().length,
-    //     });
-    //   }
-    // }
+    // 2.5 工具结果剪枝（参考 DSH dsh-compaction-tool-result-pruner）
+    // 先做**无模型**剪枝：把超大的历史工具结果替换为「头部 + 标记 + 尾部」（有界、幂等）。
+    // 剪完用估算值重新判断压力——若已回到阈值以下，下面的压缩步骤会自然跳过摘要。
+    // 与已废弃的旧 MicroCompact 的区别：只在压力触发时执行一次，不再每轮反复改写前缀。
+    let _effectiveTokens = session.lastPromptTokens;
+    {
+      const _pruneCtx = isCodeMode
+        ? llmRegistry.getContextWindow("code", session.lastResponseAt)
+        : llmRegistry.getContextWindow("daily", session.lastResponseAt);
+      const _overThreshold = isCodeMode
+        ? _pruneCtx > 0 && shouldSummarizeCode(session.getMessages(), _pruneCtx, _effectiveTokens)
+        : shouldSummarize(session.getMessages(), _effectiveTokens, session.lastResponseAt);
+      if (_overThreshold) {
+        const _before = _effectiveTokens > 0 ? _effectiveTokens : session.estimatedTokens();
+        const pr = session.pruneToolResults();
+        if (pr.prunedCount > 0) {
+          _effectiveTokens = session.estimatedTokens();
+          console.log(
+            `${logPrefix} ✂️ 剪枝 ${pr.prunedCount} 条历史工具结果（省 ${pr.savedChars} 字符）` +
+              (_pruneCtx > 0
+                ? `，压力 ${Math.round((_before / _pruneCtx) * 100)}% → ${Math.round((_effectiveTokens / _pruneCtx) * 100)}%`
+                : "")
+          );
+        }
+      }
+    }
 
     // 3. Pre-flight 压缩:在添加用户消息前检测 session 是否已超阈值
     // 防止上次 run 结束后 session 继续膨胀,导致本次首次 LLM 调用直接 408
-    // 优先使用上一轮实际 promptTokens(session.lastPromptTokens),0 时 fallback 字符估算
+    // 优先使用上一轮实际 promptTokens；若上面做过剪枝，则用剪枝后的估算值
     if (!session.abortRequested) {
-      if (!isCodeMode && shouldSummarize(session.getMessages(), session.lastPromptTokens, session.lastResponseAt)) {
+      if (!isCodeMode && shouldSummarize(session.getMessages(), _effectiveTokens, session.lastResponseAt)) {
         // chat 模式：完整摘要压缩
         const pfBefore = session.getMessages().length;
         opts.onCompress?.("start");
@@ -1164,7 +1170,7 @@ async function runAgentInner(
         const codeCtx = llmRegistry.getContextWindow("code", session.lastResponseAt);
         const exceedsWindowThreshold =
           codeCtx > 0 &&
-          shouldSummarizeCode(session.getMessages(), codeCtx, session.lastPromptTokens);
+          shouldSummarizeCode(session.getMessages(), codeCtx, _effectiveTokens);
         if (exceedsWindowThreshold) {
           console.log(`${logPrefix} ℹ️ Code session pre-flight：上下文超限，执行滑动窗口压缩`);
           const pfBefore = session.getMessages().length;

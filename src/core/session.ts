@@ -14,8 +14,11 @@ import {
   summarizeAndCompress,
   shouldSummarizeCode,
   summarizeAndCompressCode,
-  microCompactMessages,
 } from "../memory/summarizer.js";
+import {
+  pruneToolResults as pruneMessagesToolResults,
+  type PruneOptions,
+} from "../memory/tool-result-pruner.js";
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 import { InboundMessageBus } from "./inbound-bus.js";
@@ -795,25 +798,28 @@ export class Session {
   }
 
   /**
-   * 工具输出截断（MicroCompact）：
-   * 把「几轮前」过长的 tool 结果原地替换为占位符，不走 LLM，同步执行。
-   * chat 和 code 模式均支持。截断后立即持久化到 JSONL。
+   * 剪枝历史中超大的工具结果（**cache 友好版**，替代已废弃的 microCompact）。
    *
-   * @param contextWindow  模型 context window 大小（tokens）
-   * @param actualTokens   LLM 上次返回的真实 prompt token 数（0 = fallback 估算）
-   * @returns true 表示已执行截断，false 表示未触发（token 不够高或无可截断内容）
+   * 有界且幂等：每条结果被替换为「头部 + 固定标记 + 尾部」，长度严格小于原文，
+   * 且已含标记的结果不再处理，因此反复调用不会反复改写。
+   * 由调用方在 **token 压力达到阈值时**触发（不是每轮），改动后立即回写 JSONL。
+   *
+   * @returns 剪枝条数与节省字符数
    */
-  microCompact(contextWindow: number, actualTokens: number): boolean {
-    const result = microCompactMessages(this.messages, contextWindow, actualTokens);
-    if (!result) return false;
-    this.messages = result;
-    // 持久化：chat → rewriteJsonl，code → rewriteCodeJsonl
-    if (this.mode === "code") {
-      this.rewriteCodeJsonl();
-    } else {
-      this.rewriteJsonl();
+  pruneToolResults(opts?: PruneOptions): { prunedCount: number; savedChars: number } {
+    const r = pruneMessagesToolResults(this.messages, opts);
+    if (r.prunedCount === 0) return { prunedCount: 0, savedChars: 0 };
+    this.messages = r.messages;
+    try {
+      if (this.mode === "code") {
+        this.rewriteCodeJsonl();
+      } else {
+        this.rewriteJsonl();
+      }
+    } catch {
+      /* 回写失败不阻塞主流程 */
     }
-    return true;
+    return { prunedCount: r.prunedCount, savedChars: r.savedChars };
   }
 
   /**
@@ -832,7 +838,10 @@ export class Session {
     const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
     const summary =
       (typeof summaryMsg?.content === "string"
-        ? summaryMsg.content.replace(/^\[对话历史摘要\]\n/, "")
+        ? summaryMsg.content
+            .replace(/^\[对话历史摘要\]\n/, "")
+            .replace(/^<compacted-summary>\n/, "")
+            .replace(/\n<\/compacted-summary>$/, "")
         : "") ?? "";
     this.lastSummary = summary;
     return summary;

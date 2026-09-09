@@ -215,8 +215,20 @@ runAgent(session, userContent, opts)
 ```
 estimatedTokens = sum(所有 message.content.length) / 3.5
 contextWindow   = llmRegistry.getContextWindow("daily")  // 从 Copilot 模型元数据读取
-threshold       = contextWindow × memory.tokenThreshold  // 默认 0.8
+threshold       = contextWindow × memory.tokenThreshold  // 默认 0.6
 ```
+
+### 触发前的无模型剪枝（参考 DSH）
+
+压力超过阈值时，**先做一次不需要模型调用的工具结果剪枝**（`src/memory/tool-result-pruner.ts`）：
+
+- 把超大的 `role:"tool"` 结果替换为「头部 + `[... 工具结果中间部分已剪枝 ...]` + 尾部」
+- 默认 `thresholdChars=8192` / `headChars=4096` / `tailChars=1024`（对齐 DSH `dsh-compaction-tool-result-pruner`）
+- **有界且幂等**：结果长度严格小于原文，且已含标记的不再处理 → 反复调用不会反复改写
+- 剪枝后用估算值重新判断压力；**若已回到阈值以下，就跳过下面的摘要调用**
+
+> 这一版取代了旧的 MicroCompact。旧版在 0.45 阈值**每轮**触发、反复原地改写头部历史，
+> 前缀缓存每次全失效（省 10~20% 输入 token 却丢 100% 前缀缓存），因此被禁用。
 
 ### 未超过阈值
 
@@ -225,13 +237,14 @@ threshold       = contextWindow × memory.tokenThreshold  // 默认 0.8
 ### 超过阈值 → summarizeAndCompress()
 
 ```
-第一步：用 summarizer LLM 生成摘要
+第一步：用 summarizer LLM 生成结构化检查点
   取所有非 system 消息，拼成纯文本
   发给 llm.backends.summarizer（独立后端，可配置轻量模型）
-  生成 ≤400 token 的中文摘要，保留：
-    - 用户关键需求、偏好、结论
-    - 已完成操作及结果
-    - 未解决的待办事项
+  按固定 Markdown 结构输出（参考 DSH compaction-basic 的检查点模板）：
+    主要请求与意图 / 关键技术概念 / 涉及的文件与代码 / 错误与修复 /
+    待办任务 / 当前工作 / 下一步 / 关键上下文 / 用户原始消息
+  规则：每个章节都要保留（空则写「(无)」）；精确保留路径、命令、错误串、标识符、数值；
+        不要提及本次摘要或"上下文被压缩"；已有 <compacted-summary> 时合并而非照抄
 
 第二步：persistSummary(summaryText)
   将摘要追加到 ~/.tinyclaw/memory/YYYY-MM-DD.md
@@ -244,7 +257,7 @@ threshold       = contextWindow × memory.tokenThreshold  // 默认 0.8
     同类记忆 / skill 注入各只保留最新一条
   新 messages = [
     永久 system messages（含折叠后的最新 system prompt）,
-    { role:"assistant", content:"[对话历史摘要]\n摘要内容..." }
+    { role:"assistant", content:"[对话历史摘要]\n<compacted-summary>\n检查点正文\n</compacted-summary>" }
   ]
   更早的 user / assistant / tool_result 消息全部丢弃
 
@@ -462,7 +475,7 @@ IPC `memory_rebuild` 流程:
 | `auth.mfa.timeoutSecs` | `config.toml` | 60 | MFA 等待超时（秒） |
 | `searchMemory limit` | `memory/qmd.ts` 硬编码 | 5 | 每次检索返回最多 5 条记忆 |
 | `searchMemory minScore` | `memory/qmd.ts` 硬编码 | 0.3 | 相似度低于此阈值的结果丢弃 |
-| 摘要最大长度 | `summarizer.ts` SUMMARIZE_SYSTEM | 400 token | summarizer LLM 生成摘要的目标长度 |
+| 摘要结构 | `summarizer.ts` SUMMARIZE_SYSTEM / CODE_SUMMARIZE_SYSTEM | 9 个固定章节 | 检查点模板，每章必留、空则写「(无)」 |
 
 
 ---

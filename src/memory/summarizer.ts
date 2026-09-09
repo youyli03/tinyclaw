@@ -47,41 +47,85 @@ function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void 
   }
 }
 
-const SUMMARIZE_SYSTEM = `你是一个对话摘要助手。你的任务是将给定的对话历史压缩为结构化摘要（不超过 20000 token），
-以便在新的对话中无缝续接，不丢失重要的用户意图和对话脉络。
+const SUMMARIZE_SYSTEM = `你是一个对话压缩引擎。把给定的对话历史压缩成一个结构化检查点，让另一个模型能够零损耗地接续工作。
 
-摘要须包含以下章节（若某章节无内容可跳过，不要输出空章节）：
+严格按以下 Markdown 结构输出：**每个章节都要保留、顺序不变**；章节无内容时写「(无)」，不要删除章节。用简短的项目符号，不要写散文段落。
 
-1. 主要话题与意图：详细描述用户在此对话中的核心诉求、目标和关注点。
-2. 关键结论与决策：对话中达成的重要结论、用户做出的决定、AI 给出的关键建议。
-3. 用户偏好与习惯：用户明确表达或隐含的偏好、风格要求、不喜欢的做法（尤其是纠正过 AI 的地方）。
-4. 待解决的问题：尚未完成或明确提出但未解决的问题、用户的疑虑。
-5. 用户所有原始消息：逐条列出用户发送的所有非工具结果消息原文（保持原意，防止意图漂移）。
-6. 当前话题：对话结束前正在讨论的具体内容，以及对话的当前状态。
-7. 下一步（可选）：仅在有明确待续任务时填写，直接引用最近对话中的相关表述，确保不发生任务漂移。
+## 主要请求与意图
+- 用户最初及演变后的目标；措辞重要时原文引用
 
-使用中文，直接输出摘要内容，不要使用"摘要："等前缀。`;
+## 关键技术概念
+- 涉及的技术、框架、模式与约定
 
-/** Code 模式专属摘要提示词，重点保留技术上下文 */
-const CODE_SUMMARIZE_SYSTEM = `你是一个代码会话摘要助手。你的任务是将给定的编码会话历史压缩为技术摘要（不超过 20000 token），
-以便在新的 code session 中无缝续接，不丢失任何关键的技术上下文。
+## 涉及的文件与代码
+- 精确路径：为什么重要、关键改动或代码片段
 
-摘要须包含以下章节（若某章节无内容可跳过，不要输出空章节）：
+## 错误与修复
+- 错误信息：如何解决，以及相关的用户反馈
 
-1. 主要请求与意图：详细描述用户要求实现、修改或调试的具体内容，包括所有明确需求。
-2. 关键技术概念：涉及的语言、框架、依赖、架构模式等重要技术概念。
-3. 涉及的文件与代码：列举所有被读取、修改或创建的文件（含完整路径），每个文件注明：
-   - 文件的作用和重要性
-   - 做了哪些改动（如有）
-   - 关键代码片段（函数签名、核心逻辑等）
-4. 错误与修复：遇到的错误信息（越详细越好）及修复方法，以及用户纠正过的做法。
-5. 问题解决过程：已解决的问题和仍在进行中的排查工作。
-6. 用户所有原始消息：逐条列出用户发送的所有非工具结果消息原文（防止意图漂移）。
-7. 待办任务：用户明确要求但尚未完成的任务。
-8. 当前工作：压缩发生前正在进行的具体工作，包括文件名、代码片段、执行的命令及结果。
-9. 下一步（可选）：仅在有明确续接任务时填写，直接引用最近对话中的相关表述。
+## 待办任务
+- 用户明确要求但尚未完成的工作
 
-使用中文，直接输出摘要内容，不要使用"摘要："等前缀。`;
+## 当前工作
+- 压缩发生时正在进行的精确工作
+
+## 下一步
+- 紧接着要做的唯一动作，或「(无)」
+
+## 关键上下文
+- 决策及其理由、约束、用户偏好、未决问题、继续所需的数据
+
+## 用户原始消息
+- 逐条列出用户发送的所有非工具结果消息原文（防止意图漂移）
+
+规则：
+- 用简洁的中文工程语言；**精确保留**文件路径、命令、错误串、标识符、数值、函数签名与语法片段
+- 忠实记录用户反馈与明确指令，尤其是纠正
+- 不要提及本次摘要请求，也不要提及上下文被压缩
+- 只输出检查点正文，不要调用任何工具
+- 若对话中已存在 <compacted-summary> 块，它是**先前的检查点**：不要原样照抄，保留仍然成立的事实、丢弃过时的、把新信息合并进同一结构`;
+
+/** Code 模式专属摘要提示词，结构同上但强化技术上下文与命令/结果 */
+const CODE_SUMMARIZE_SYSTEM = `你是一个编码会话压缩引擎。把给定的编码会话历史压缩成结构化检查点，让另一个模型能够零损耗地接续编码工作。
+
+严格按以下 Markdown 结构输出：**每个章节都要保留、顺序不变**；章节无内容时写「(无)」。用简短的项目符号。
+
+## 主要请求与意图
+- 用户要求实现 / 修改 / 调试的具体内容，含所有明确需求；措辞重要时原文引用
+
+## 关键技术概念
+- 语言、框架、依赖、架构模式与约定
+
+## 涉及的文件与代码
+- 精确路径：文件作用、做了哪些改动、关键代码片段（函数签名 / 核心逻辑）
+
+## 错误与修复
+- 错误信息（越详细越好）、修复方法，以及用户纠正过的做法
+
+## 问题解决过程
+- 已解决的问题与仍在排查的工作
+
+## 待办任务
+- 用户明确要求但尚未完成的任务
+
+## 当前工作
+- 压缩发生时正在进行的具体工作：文件名、代码片段、执行的命令及结果
+
+## 下一步
+- 紧接着要做的唯一动作，或「(无)」
+
+## 关键上下文
+- 决策及理由、约束、环境 / 端口 / 路径等事实、未决问题
+
+## 用户原始消息
+- 逐条列出用户发送的所有非工具结果消息原文（防止意图漂移）
+
+规则：
+- 用简洁的中文工程语言；**精确保留**文件路径、命令、错误串、标识符、数值、函数签名与语法片段
+- 忠实记录用户反馈与明确指令，尤其是纠正
+- 不要提及本次摘要请求，也不要提及上下文被压缩
+- 只输出检查点正文，不要调用任何工具
+- 若会话中已存在 <compacted-summary> 块，它是**先前的检查点**：不要照抄，保留仍成立的事实、丢弃过时的、合并新信息`;
 
 /** Code 模式 context window 触发压缩的阈值（75%） */
 const CODE_SUMMARIZE_THRESHOLD = 0.6;
@@ -568,7 +612,7 @@ export async function summarizeAndCompressCode(
       ...systemMessages,
       {
         role: "assistant",
-        content: `[编码会话历史摘要]\n${result.content}`,
+        content: `[编码会话历史摘要]\n<compacted-summary>\n${result.content}\n</compacted-summary>`,
       },
       ...compressedKeep,
     ];
@@ -1465,7 +1509,7 @@ export async function summarizeAndCompress(
     ...systemMessages,
     {
       role: "assistant",
-      content: `[对话历史摘要]\n${result.content}`,
+      content: `[对话历史摘要]\n<compacted-summary>\n${result.content}\n</compacted-summary>`,
     },
     ...toKeep,
   ];
@@ -1924,133 +1968,4 @@ async function distillChatCompression(toSummarize: ChatMessage[], agentId: strin
   } catch (e) {
     console.warn("[distillChat] 蒸馏失败:", e instanceof Error ? e.message : e);
   }
-}
-
-// ── MicroCompact ──────────────────────────────────────────────────────────────
-
-/**
- * 工具输出截断（MicroCompact）触发阈值：context 使用率超过此比例时触发。
- * 比全量压缩的 75% 更早介入，在上下文明显偏高时清理旧工具结果。
- */
-const MICRO_COMPACT_THRESHOLD = 0.45;
-
-/** 保留最近 N 条可截断工具结果不动（更早的才截断） */
-const MICRO_COMPACT_KEEP_RECENT = 5;
-
-/** 工具结果 content 超过此字符数才截断（太短的截断意义不大） */
-const MICRO_COMPACT_MIN_LENGTH = 500;
-
-/** 截断占位符（与 CC 保持一致） */
-export const MICRO_COMPACT_CLEARED = "[Old tool result content cleared]";
-
-/**
- * 需要截断输出的工具名集合。
- * 这些工具产生的 role:"tool" 消息往往是上下文膨胀的主要来源。
- */
-const COMPACTABLE_TOOLS = new Set([
-  "exec_shell",
-  "read_file",
-  "write_file",
-  "edit_file",
-  "http_request",
-  "search_store",
-  "mcp_enable_server",
-]);
-
-/**
- * 对 messages 做工具输出截断（MicroCompact）：
- * - 找到所有属于 COMPACTABLE_TOOLS 的 role:"tool" 消息
- * - 保留最近 MICRO_COMPACT_KEEP_RECENT 条不动
- * - 更早且 content 超过 MICRO_COMPACT_MIN_LENGTH 字符的替换为占位符
- * - token 未超阈值时直接返回 null（未触发）
- *
- * @param messages       当前 session 全量消息
- * @param contextWindow  模型 context window 大小（tokens）
- * @param actualTokens   LLM 上次返回的真实 prompt token 数（0 = fallback 估算）
- * @returns 修改后的新 messages 数组，或 null（未触发/无效果）
- */
-export function microCompactMessages(
-  messages: ChatMessage[],
-  contextWindow: number,
-  actualTokens: number
-): ChatMessage[] | null {
-  if (contextWindow <= 0) return null;
-
-  const threshold = Math.floor(contextWindow * MICRO_COMPACT_THRESHOLD);
-
-  // token 检查：优先实测值，fallback 字符估算
-  let tokens = actualTokens;
-  if (!tokens || tokens <= 0) {
-    const totalChars = messages.reduce((sum, m) => {
-      if (typeof m.content === "string") return sum + m.content.length;
-      if (Array.isArray(m.content)) {
-        return (
-          sum +
-          (m.content as Array<{ type?: string; text?: string }>).reduce((cs, p) => {
-            return cs + (p.type === "text" ? (p.text?.length ?? 0) : 200);
-          }, 0)
-        );
-      }
-      return sum;
-    }, 0);
-    tokens = Math.ceil(totalChars / 3.5);
-  }
-
-  if (tokens < threshold) return null;
-
-  // 收集所有属于 COMPACTABLE_TOOLS 的 tool 消息索引，按先后顺序
-  // 需要找到对应 assistant.tool_calls 里的工具名
-  // 先建立 tool_call_id → tool_name 映射
-  const callIdToName = new Map<string, string>();
-  for (const m of messages) {
-    if (m.role === "assistant") {
-      const calls = (
-        m as { role: "assistant"; tool_calls?: Array<{ id: string; function: { name: string } }> }
-      ).tool_calls;
-      if (calls) {
-        for (const c of calls) {
-          callIdToName.set(c.id, c.function.name);
-        }
-      }
-    }
-  }
-
-  // 收集可截断的 tool 消息索引（按出现顺序）
-  const compactableIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i]!;
-    if (m.role === "tool") {
-      const toolMsg = m as { role: "tool"; tool_call_id: string; content: string };
-      const toolName = callIdToName.get(toolMsg.tool_call_id);
-      if (toolName && COMPACTABLE_TOOLS.has(toolName)) {
-        compactableIndices.push(i);
-      }
-    }
-  }
-
-  // 保留最近 MICRO_COMPACT_KEEP_RECENT 条，对更早的执行截断
-  const toKeepSet = new Set(compactableIndices.slice(-MICRO_COMPACT_KEEP_RECENT));
-  const toClearIndices = new Set(
-    compactableIndices
-      .filter((idx) => !toKeepSet.has(idx))
-      .filter((idx) => {
-        const content = (messages[idx] as { content: string }).content;
-        return typeof content === "string" && content.length > MICRO_COMPACT_MIN_LENGTH;
-      })
-  );
-
-  if (toClearIndices.size === 0) return null;
-
-  // 复制 messages 并替换内容
-  const result = messages.map((m, i) => {
-    if (!toClearIndices.has(i)) return m;
-    return { ...m, content: MICRO_COMPACT_CLEARED } as ChatMessage;
-  });
-
-  console.log(
-    `[microcompact] 截断 ${toClearIndices.size} 条工具结果` +
-      `（tokens: ${tokens}/${contextWindow}，阈值: ${threshold}）`
-  );
-
-  return result;
 }

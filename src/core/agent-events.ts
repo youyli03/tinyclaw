@@ -62,7 +62,6 @@ export type AgentEvent =
     }
   | { type: "preamble:memory-search"; found: boolean; chars: number }
   | { type: "preamble:skill-reminder"; skills: number }
-  | { type: "preamble:micro-compact"; before: number; after: number }
   | { type: "preamble:compress"; before: number; after: number }
   // ── Turn 循环 ─────────────────────────────────────────────
   | { type: "turn:start"; round: number }
