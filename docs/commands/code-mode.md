@@ -332,3 +332,54 @@ src/core/
 
 src/main.ts                 — pendingPlanApproval 处理；onPlanRequest 回调构建
 ```
+
+---
+
+## 十一、提交需用户批准（Commit with Approval）
+
+Code 模式任务完成且语法/编译检查通过后，**不再自动提交**——必须取得用户明确同意。
+
+> 规则来源：仓库根 `AGENTS.md` §10（R5）。
+
+### 流程
+
+1. `git add -A` 暂存
+2. `git diff --cached --name-only` 自检暂存文件
+   - 禁止提交：`*.tgz` / `*.log` / `workspace/` / `tmp/` 等无关文件
+   - 禁止提交：含敏感信息的配置（`config.toml` / `secrets.toml` / `*.key`）
+   - 发现无关/隐私文件 → `git restore --staged <file>`
+3. 向用户展示「待提交文件清单 + 拟用的 commit message」
+4. 调用 `ask_user` 请求确认（选项：提交 / 修改 message / 取消）
+5. **仅在用户明确同意后**才执行 `git commit`
+
+### commit message 格式
+
+Conventional Commits：
+
+```
+<type>(<scope>): <subject>
+
+<body>
+```
+
+- `type`：`feat` / `fix` / `docs` / `refactor` / `perf` / `test` / `chore` / `style` / `revert`
+- `scope`：可选，模块名（`llm` / `cron` / `qqbot` / `code-prompt` …）
+- `subject`：单行、不加句号；中英文均可
+- `body`：涉及多文件或行为变更时必写
+
+### 同样需用户同意的操作
+
+`git commit --amend`、`git push`、`git push --force`、`git rebase`、`git reset --hard`、`git tag`
+
+### 不受此约束的部分
+
+`src/core/tinyclaw-submitter.ts` 是独立的定时备份调度器（每 4h 自动提交 `~/.tinyclaw` 配置仓库，无人值守），不适用上述审批流程。
+
+### 相关文件
+
+```
+src/code/
+  system-prompt.ts   — buildCodeSystemPrompt()：Commit with Approval 段落
+  project-prompt.ts  — 项目会话「执行完毕前」流程
+AGENTS.md            — §10 Git 提交规范（仓库级权威定义）
+```

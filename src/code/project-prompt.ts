@@ -140,7 +140,7 @@ MEMORY.md 按分区组织,每分区下按日期存放摘要行:
 
 MEMORY.md 超过约 200 行时,将旧条目详情移到对应 topic 文件,索引中只留摘要行。
 
-**执行完毕前**: code_note_write 更新进度 → git commit → 告知用户。
+**执行完毕前**: code_note_write 更新进度 → 向用户请求提交确认(获准后才 git commit) → 告知用户。
 **发现约束/根因**: 立即调 code_note_write,不等任务完成。`;
 }
 
