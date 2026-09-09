@@ -700,7 +700,11 @@ export class Session {
    * 在每次 runAgent() 开始时调用，确保上一次异常退出遗留的不完整工具调用链不会导致 400 错误。
    *
    * - Pass 1：移除孤立的 role=tool 消息（缺少对应 assistant.tool_calls[].id）
-   * - Pass 2：移除末尾不完整的工具调用链（assistant+tool_calls 但缺少部分 tool result）
+   * - Pass 2：修复不完整的工具调用链，**优先补全而不是删除**（前缀缓存友好）：
+   *   - 位于**末尾**的不完整链（进程/会话中断的常见形态）→ 追加合成 tool result 补全，
+   *     只在尾部追加，前缀逐字节不变；
+   *   - 位于**历史中间**的不完整链 → 无法就地补全（tool result 必须紧跟 assistant），
+   *     只能删除，会从该位置起破坏前缀缓存，因此打 warning。
    */
   sanitizeMessages(): void {
     // ── Pass 1：清理孤立的 role=tool 消息 ────────────────────────────────────
@@ -722,9 +726,9 @@ export class Session {
       }
     }
 
-    // ── Pass 2：全量扫描并移除所有不完整的工具调用链 ────────────────────────
+    // ── Pass 2：修复不完整的工具调用链（补全优先，删除兜底）────────────────
     // 与 loadFromJsonl 的算法保持一致：线性扫描，对每个 assistant+tool_calls 验证
-    // 其紧跟的 tool 结果是否完整；不完整则移除该 assistant 及已有的部分 tool result。
+    // 其紧跟的 tool 结果是否完整。
     {
       const validated: ChatMessage[] = [];
       let i = 0;
@@ -743,15 +747,27 @@ export class Session {
             j++;
           }
           const missingIds = [...expectedIds].filter((id) => !gotIds.has(id));
-          if (missingIds.length > 0) {
-            console.warn(
-              `[session] sanitizeMessages: 检测到不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链`
-            );
-            i = j;
-          } else {
+          if (missingIds.length === 0) {
             validated.push(...sanitized.slice(i, j));
-            i = j;
+          } else if (j >= sanitized.length) {
+            // 末尾不完整链：追加占位结果补全（仅追加，前缀缓存不受影响）
+            validated.push(...sanitized.slice(i, j));
+            for (const id of missingIds) {
+              validated.push({
+                role: "tool",
+                tool_call_id: id,
+                content: "（会话中断，该工具未执行；无结果）",
+              });
+            }
+            console.warn(
+              `[session] sanitizeMessages: 末尾工具链缺少 ${missingIds.length} 个 tool result，已追加占位补全（保留前缀缓存）`
+            );
+          } else {
+            console.warn(
+              `[session] sanitizeMessages: 检测到历史中间的不完整工具调用链（缺少 tool result for ids: ${missingIds.join(", ")}），已丢弃该工具链（会破坏前缀缓存）`
+            );
           }
+          i = j;
         } else {
           validated.push(m);
           i++;

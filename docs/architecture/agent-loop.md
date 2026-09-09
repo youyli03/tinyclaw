@@ -46,6 +46,7 @@ cli:<uuid>               CLI tinyclaw chat
 | system prompt | session 内**冻结**：`applySystemPrompt()` 内容相同则完全不动；变化时**追加**一条 `<!-- system-prompt-update -->` 消息（`[上下文更新] …`），不回写 `messages[0]` |
 | 记忆注入 / skill reminder | `appendMemoryContext()` / `appendSkillReminder()` **只追加**；与最近一条同类注入逐字节相同则跳过 |
 | 压缩 | **唯一**允许重写前缀的时机：`_foldPreambleInjections()` 把 system prompt 更新折叠回 `messages[0]`，并把同类注入收敛为最新一条 |
+| 异常工具链修复 | `sanitizeMessages()` **优先补全**：末尾缺 tool result → 追加占位结果（仅追加，前缀不变）；只有位于历史中间的不完整链才删除（会破坏前缀缓存并打 warning） |
 
 > 代价是尾部累积带来的 token 增长，由压缩回收；收益是两次压缩之间的所有请求都命中同一前缀。
 
