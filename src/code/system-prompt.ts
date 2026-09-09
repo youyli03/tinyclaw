@@ -15,7 +15,7 @@ pt 构建器。
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { agentManager } from "../core/agent-manager.js";
-import { readFeedback } from "../core/feedback-writer.js";
+import { readFeedback, FEEDBACK_INJECT_MAX_CHARS } from "../core/feedback-writer.js";
 import { loadConfig } from "../config/loader.js";
 
 export function buildCodeSystemPrompt(
@@ -45,8 +45,8 @@ export function buildCodeSystemPrompt(
 当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。`
     : "";
 
-  // 读取 code/feedback.md（跨 session 永久有效的行为约束）
-  const feedbackContent = readFeedback(agentId, "code");
+  // 读取 code/feedback.md（跨 session 永久有效的行为约束；注入长度受限）
+  const feedbackContent = readFeedback(agentId, "code", FEEDBACK_INJECT_MAX_CHARS);
 
   // PLAN.md 不再自动注入 system prompt，AI 在 session 开始时主动用 read_file 读取
   const existingPlan: string | undefined = undefined;
@@ -121,7 +121,7 @@ function buildAutoModePrompt({
     ? `\n- PLAN.md（本 session 计划与执行日志）：\`${planPath}\`，用 \`edit_file\` 追加执行进度`
     : "";
   const feedbackNote = planPath
-    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录到 \`${agentDir}/code/feedback.md\`（无需 MFA，自动去重）`
     : "";
 
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Auto）**，本次会话不保留长期历史。
@@ -229,7 +229,7 @@ function buildPlanModePrompt({
     ? `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`
     : "";
   const feedbackNote = planPath
-    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+    ? `\n- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录到 \`${agentDir}/code/feedback.md\`（无需 MFA，自动去重）`
     : "";
 
   return `你是一名专业的 AI 编程助手，拥有跨语言、跨框架的专家级知识。当前处于 **Code 模式（Plan）**，本次会话不保留长期历史。

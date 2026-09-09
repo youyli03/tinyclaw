@@ -20,6 +20,9 @@ import { agentManager } from "./agent-manager.js";
 /** 反馈文件的字符上限；超出时从最早的条目开始裁剪 */
 export const MAX_FEEDBACK_CHARS = 4_000;
 
+/** 注入 system prompt 时的最大字符数（只保留最近的部分）；chat / code 共用 */
+export const FEEDBACK_INJECT_MAX_CHARS = 3_000;
+
 /** 单条反馈的最大字符数 */
 const MAX_ENTRY_CHARS = 300;
 

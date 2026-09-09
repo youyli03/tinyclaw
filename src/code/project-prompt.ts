@@ -315,6 +315,6 @@ function renderProjectWorkspace(
 | 文件输出（tmp/ output/ 子目录） | ${workspaceDir} |
 
 - PLAN.md（本 session 计划文件）：\`${planPath}\`，不存在时用 \`write_file\` 创建，已存在时只能用 \`edit_file\` 局部更新
-- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${agentDir}/code/feedback.md\`，格式：\`- [YYYY-MM-DD] 纠正内容\`
+- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录到 \`${agentDir}/code/feedback.md\`（无需 MFA，自动去重）
 > **所有 Agent 管理文件（ENV.md、PLAN.md、feedback.md）都在 Agent 配置目录的 code/ 下，不在项目目录。**`;
 }

@@ -172,6 +172,9 @@ token 消耗极小（几十个 key 名）。
 
 - 每行一条纠正，格式 `- [YYYY-MM-DD] 纠正内容`
 - 日期前缀由解析器自动添加（LLM 只输出 content）
+- **两条路径**：`code/feedback.md`（Code / 项目会话）与 `agents/<agentId>/feedback.md`（Chat 会话）
+- **写入方式**：模型调用 `memory_append_feedback(content="…")` —— 按 `ctx.mode` 自动路由到对应文件，
+  **无需 MFA**，写入时自动去重并按上限裁剪；每日维护 Step 6 会对两份文件再做一次去重 + 裁剪
 
 ### 4.2 JSON schema（蒸馏 LLM 输出）
 

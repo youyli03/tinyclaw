@@ -23,7 +23,7 @@ import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
 import { buildProjectSystemPrompt, loadProjectContext } from "../code/project-prompt.js";
-import { readFeedback } from "./feedback-writer.js";
+import { readFeedback, FEEDBACK_INJECT_MAX_CHARS } from "./feedback-writer.js";
 import { sanitizeUserInput } from "../tools/sanitize.js";
 import {
   isPromptIntegrityActive,
@@ -158,8 +158,6 @@ const MAX_SLAVE_DEPTH = 1;
 const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
-/** feedback.md 注入 system prompt 的最大字符数（只保留最近的部分） */
-const FEEDBACK_INJECT_MAX_CHARS = 3_000;
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
