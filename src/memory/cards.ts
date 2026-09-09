@@ -32,6 +32,13 @@ export interface MemoryCard {
   ts: string;
   title: string;
   summary: string;
+  /**
+   * 支撑该卡片的**逐字原文片段**（取自 transcript 逐字层）。
+   * 卡片是有损摘要，细节容易丢；带上原文引用后，检索/注入时能看到原话。
+   */
+  quote?: string;
+  /** 原文来源文件（相对 agent 目录，如 `memory/transcript/2026-09-09.md`） */
+  source?: string;
   tags?: string[];
   supersedes?: string[];
 }
@@ -80,6 +87,9 @@ function normalizeCard(raw: unknown): MemoryCard | null {
   const idRaw = String(obj.id ?? "").trim();
   const id = idRaw || `${ts.slice(0, 10)}-${type}-${normalizeSlug(title)}`;
 
+  const quote = String(obj.quote ?? "").trim();
+  const source = String(obj.source ?? "").trim();
+
   return {
     id,
     type,
@@ -90,6 +100,8 @@ function normalizeCard(raw: unknown): MemoryCard | null {
     ts,
     title,
     summary,
+    ...(quote ? { quote } : {}),
+    ...(source ? { source } : {}),
     tags: safeArray(obj.tags),
     supersedes: safeArray(obj.supersedes),
   };
@@ -129,7 +141,7 @@ function cardPath(agentId: string, card: MemoryCard): string {
 function serializeCard(card: MemoryCard): string {
   const tags = (card.tags ?? []).join(", ");
   const supersedes = (card.supersedes ?? []).join(", ");
-  return [
+  const out = [
     "---",
     `id: ${card.id}`,
     `type: ${card.type}`,
@@ -146,7 +158,13 @@ function serializeCard(card: MemoryCard): string {
     "",
     card.summary,
     "",
-  ].join("\n");
+  ];
+  // 原文引用（逐字）放在正文里，确保卡片被检索/注入时能看到原话
+  if (card.quote) {
+    out.push(`> **原文**：${card.quote.replace(/\n+/g, " ").trim()}`, "");
+    if (card.source) out.push(`> 来源：\`${card.source}\``, "");
+  }
+  return out.join("\n");
 }
 
 function parseFrontmatterValue(line: string): string {
@@ -172,7 +190,11 @@ export function readExistingCards(agentId: string): MemoryCard[] {
   const cards: MemoryCard[] = [];
   for (const entry of files) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    const fullPath = path.join(entry.parentPath, entry.name);
+    // Node 20.12 起 Dirent 用 parentPath；更早版本（含 RK3588 上的 20.11）只有 path。
+    // 不做兼容会导致 path.join(undefined, ...) 抛错，卡片读取整条链路失效。
+    const dirent = entry as unknown as { parentPath?: string; path?: string };
+    const dirPath = dirent.parentPath ?? dirent.path ?? root;
+    const fullPath = path.join(dirPath, entry.name);
     const content = fs.readFileSync(fullPath, "utf-8");
     const match = content.match(/^---\n([\s\S]*?)\n---\n\n#\s+(.+)\n\n([\s\S]*)$/);
     if (!match) continue;
@@ -183,6 +205,14 @@ export function readExistingCards(agentId: string): MemoryCard[] {
       if (!key) continue;
       meta[key] = parseFrontmatterValue(line);
     }
+    const bodyRaw = match[3]!.trim();
+    // 正文里可能带「> **原文**：…」引用块，需从 summary 中剥离
+    const quoteIdx = bodyRaw.indexOf("\n\n> **原文**：");
+    const summaryText = (quoteIdx >= 0 ? bodyRaw.slice(0, quoteIdx) : bodyRaw).trim();
+    const quoteBlock = quoteIdx >= 0 ? bodyRaw.slice(quoteIdx) : "";
+    const quote = quoteBlock.match(/^> \*\*原文\*\*：(.+)$/m)?.[1]?.trim();
+    const source = quoteBlock.match(/^> 来源：`(.+)`$/m)?.[1]?.trim();
+
     const normalized = normalizeCard({
       id: meta.id,
       type: meta.type,
@@ -194,7 +224,9 @@ export function readExistingCards(agentId: string): MemoryCard[] {
       tags: parseFrontmatterArray(meta.tags ?? "[]"),
       supersedes: parseFrontmatterArray(meta.supersedes ?? "[]"),
       title: match[2]!.trim(),
-      summary: match[3]!.trim(),
+      summary: summaryText,
+      ...(quote ? { quote } : {}),
+      ...(source ? { source } : {}),
     });
     if (normalized) cards.push(normalized);
   }

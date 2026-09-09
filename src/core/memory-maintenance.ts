@@ -107,6 +107,8 @@ const DISTILL_CARDS_SYSTEM = `你是一个结构化记忆卡片提炼助手。
 - ts: ISO 时间字符串
 - title: 简短标题（能直接告诉 AI"要怎么做"，而不是"用户是什么人"）
 - summary: 1~4 句中文摘要（内容必须能直接指导 AI 行为或作为事实参考）
+- quote: 支撑该卡片的**逐字原文片段**（从下面提供的原文里**原样摘抄**，≤120 字，禁止改写/润色）
+- source: 该片段来源的文件路径（形如 memory/transcript/2026-09-09.md，从原文小节标题里取）
 - tags: 字符串数组(可选)
 - supersedes: 字符串数组(可选)
 
@@ -117,8 +119,9 @@ const DISTILL_CARDS_SYSTEM = `你是一个结构化记忆卡片提炼助手。
    ✅ 好例：股票分析只输出结论，不给操作建议 → AI 直接遵守
 3. 同时覆盖生活和项目,不能只围绕工程任务
 4. 不要输出低价值流水账，不要重复 MEM.md 里已有的条目
-5. 若没有合适卡片,只输出 []
-6. 只输出合法 JSON,不要 markdown 代码块
+5. **quote 必须逐字来自提供的原文**（细节容易在摘要里丢失，原文引用是防丢关键）；找不到合适片段时省略 quote/source
+6. 若没有合适卡片,只输出 []
+7. 只输出合法 JSON,不要 markdown 代码块
 `;
 
 function msUntilTimeOfDay(timeOfDay: string): number {
@@ -361,15 +364,17 @@ class MemoryMaintenanceScheduler {
     const cardsDir = agentManager.cardsDir(agentId);
     fs.mkdirSync(cardsDir, { recursive: true });
 
-    const diaryContent = this.readRecentDiary(memDir, 4, 14);
-    if (!diaryContent) return "无近期日记,跳过提炼";
+    // 优先用逐字层 transcript（含原文，便于生成 quote）；没有则回退到 diary 摘要
+    const sourceText =
+      this.readRecentTranscripts(agentId, 4, 14) ?? this.readRecentDiary(memDir, 4, 14);
+    if (!sourceText) return "无近期原文/日记,跳过提炼";
 
     const client = llmRegistry.get("summarizer");
     const result = await client.chat([
       { role: "system", content: DISTILL_CARDS_SYSTEM },
       {
         role: "user",
-        content: `## 近期日记内容\n\n${diaryContent.slice(0, 9000)}`,
+        content: `## 近期对话原文\n\n${sourceText.slice(0, 12000)}`,
       },
     ]);
 
@@ -471,6 +476,42 @@ class MemoryMaintenanceScheduler {
     }
 
     return contents.length > 0 ? contents.join("\n\n---\n\n") : null;
+  }
+
+  /**
+   * 读取最近几天的逐字层 transcript（`memory/transcript/YYYY-MM-DD.md`）。
+   * 每个文件前标注相对路径，供 LLM 在卡片的 `source` 字段里引用。
+   */
+  private readRecentTranscripts(
+    agentId: string,
+    daysToRead: number,
+    maxLookback: number
+  ): string | null {
+    const dir = path.join(
+      os.homedir(),
+      ".tinyclaw",
+      "agents",
+      agentId,
+      "memory",
+      "transcript"
+    );
+    if (!fs.existsSync(dir)) return null;
+
+    const now = new Date();
+    const blocks: string[] = [];
+    let found = 0;
+    for (let offset = 0; found < daysToRead && offset < maxLookback; offset++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - offset);
+      const day = d.toISOString().slice(0, 10);
+      const filePath = path.join(dir, `${day}.md`);
+      if (!fs.existsSync(filePath)) continue;
+      const content = fs.readFileSync(filePath, "utf-8").trim();
+      if (!content) continue;
+      blocks.push(`### 原文（memory/transcript/${day}.md）\n\n${content}`);
+      found++;
+    }
+    return blocks.length > 0 ? blocks.join("\n\n---\n\n") : null;
   }
 }
 
