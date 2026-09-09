@@ -530,6 +530,68 @@ export class Session {
     }
   }
 
+  // ── 缓存友好的 system prompt 应用（前缀稳定）─────────────────────────────────
+  /** 本轮渲染出的 system prompt 最新内容，供压缩后回填 messages[0] 使用 */
+  private _latestSystemPrompt: string | undefined;
+
+  /** system prompt 更新消息的标记（压缩时会被折叠回 messages[0] 并删除） */
+  private static readonly SYS_PROMPT_UPDATE_MARKER = "<!-- system-prompt-update -->";
+
+  /**
+   * 应用本轮渲染出的 system prompt，**优先保持请求前缀逐字节稳定**（KV cache 友好）。
+   *
+   * - messages[0] 已是 system 且内容逐字节相同 → 不做任何改动（缓存命中的关键路径）
+   * - messages[0] 不是 system → unshift（首次注入 / JSONL 恢复后）
+   * - 内容已变化 → **不回写 messages[0]**，改为在尾部追加一条"上下文更新"消息
+   *
+   * 为什么追加而不原地替换：任何对历史前缀的改写都会让从该位置起的 KV cache 失效，
+   * 而 messages[0] 是最靠前的位置，原地重写等于每轮全量 cache miss。
+   * 代价是 token 增长，由压缩回收：`_foldSystemPromptUpdates()` 会在压缩后把更新
+   * 折叠回 messages[0] 并删除更新消息（压缩本身就是一次允许的前缀重写）。
+   *
+   * @returns 本次动作，供日志与遥测使用
+   */
+  applySystemPrompt(content: string): "unchanged" | "prepended" | "appended" {
+    this._latestSystemPrompt = content;
+    const first = this.messages[0];
+    if (first?.role === "system" && typeof first.content === "string") {
+      if (first.content === content) return "unchanged";
+      this.messages.push({
+        role: "system",
+        content:
+          `${Session.SYS_PROMPT_UPDATE_MARKER}\n` +
+          `[上下文更新] 系统提示已更新。以下内容**取代**此前系统提示中的对应部分，请以本消息为准：\n\n` +
+          content,
+      });
+      return "appended";
+    }
+    this.prependSystemMessage(content);
+    return "prepended";
+  }
+
+  /**
+   * 压缩后调用：把尾部累积的 system prompt 更新折叠回 messages[0] 并删除更新消息。
+   * 压缩本身就是一次前缀重写，因此这里回写不会额外损失缓存。
+   */
+  private _foldSystemPromptUpdates(): void {
+    const latest = this._latestSystemPrompt;
+    if (latest === undefined) return;
+    this.messages = this.messages.filter(
+      (m) =>
+        !(
+          m.role === "system" &&
+          typeof m.content === "string" &&
+          m.content.startsWith(Session.SYS_PROMPT_UPDATE_MARKER)
+        )
+    );
+    const first = this.messages[0];
+    if (first?.role === "system") {
+      first.content = latest;
+    } else {
+      this.messages.unshift({ role: "system", content: latest });
+    }
+  }
+
   /**
    * 替换或新增 skill reminder system 消息。
    * 用特殊前缀标记识别上轮注入的 reminder，找到则原地替换，否则追加。
@@ -719,6 +781,7 @@ export class Session {
   async compress(): Promise<string> {
     const compressed = await summarizeAndCompress(this.messages, this.agentId);
     this.messages = compressed;
+    this._foldSystemPromptUpdates();
     this.rewriteJsonl();
     // 摘要内容在最后一条 assistant 消息中
     const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
@@ -781,6 +844,7 @@ export class Session {
       return false;
     }
     this.messages = compressed;
+    this._foldSystemPromptUpdates();
     this.rewriteCodeJsonl();
 
     return true;

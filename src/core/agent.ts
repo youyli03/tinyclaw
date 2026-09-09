@@ -1042,11 +1042,13 @@ async function runAgentInner(
               }
             }
           }
-          // (b) 中转站 canary:在 system prompt 注入 nonce,回复校验回显
+          // (b) 中转站 canary:回复校验回显
+          // ⚠️ nonce 每轮都不同,若注入 system prompt 会让每轮前缀都变化(缓存全失效),
+          //    因此改为追加一条独立的尾部消息,冻结的 system prompt 保持逐字节稳定。
           if (_piCfg.canary && !textMode) {
-            const _inj = injectCanary(sysPrompt);
-            sysPrompt = _inj.prompt;
+            const _inj = injectCanary("");
             session.pendingCanaryNonce = _inj.nonce;
+            session.addSystemMessage(_inj.prompt.trim());
           } else {
             session.pendingCanaryNonce = undefined;
           }
@@ -1058,11 +1060,16 @@ async function runAgentInner(
         // 配置读取等异常不阻断主流程
       }
 
-      session.replaceOrPrependSystemMessage(sysPrompt);
+      // 缓存友好:内容未变时完全不改动 messages[0];变了则追加到尾部而非原地重写
+      const _spAction = session.applySystemPrompt(sysPrompt);
+      if (_spAction === "appended") {
+        console.log(`${logPrefix} 🔁 system prompt 变化 → 追加到尾部(保持前缀缓存)`);
+      }
       bus.emit({
         type: "preamble:system-prompt",
         provider: providerName,
         vision: client.supportsVision,
+        action: _spAction,
       });
     }
 
@@ -2079,7 +2086,8 @@ async function runAgentInner(
           ...(_codeProvider ? { currentProvider: _codeProvider } : {}),
         };
         const newSysPrompt = buildProjectSystemPrompt(session.agentId, pctx, projOpts);
-        session.replaceOrPrependSystemMessage(newSysPrompt);
+        // 同样走缓存友好的应用路径（内容变化 → 追加到尾部，而非原地重写前缀）
+        session.applySystemPrompt(newSysPrompt);
       }
       session._projectJustSwitched = false;
       delete session._pendingProjectTask;

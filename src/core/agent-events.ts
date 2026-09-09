@@ -51,7 +51,13 @@ export type AgentEvent =
       error: { name: string; message: string };
     }
   // ── Preamble 阶段 ─────────────────────────────────────────
-  | { type: "preamble:system-prompt"; provider: string; vision: boolean }
+  | {
+      type: "preamble:system-prompt";
+      provider: string;
+      vision: boolean;
+      /** 本轮对 system prompt 采取的动作（unchanged = 前缀稳定，缓存友好） */
+      action: "unchanged" | "prepended" | "appended";
+    }
   | { type: "preamble:memory-search"; found: boolean; chars: number }
   | { type: "preamble:skill-reminder"; skills: number }
   | { type: "preamble:micro-compact"; before: number; after: number }
