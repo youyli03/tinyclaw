@@ -364,8 +364,8 @@ Conventional Commits：
 
 - `type`：`feat` / `fix` / `docs` / `refactor` / `perf` / `test` / `chore` / `style` / `revert`
 - `scope`：可选，模块名（`llm` / `cron` / `qqbot` / `code-prompt` …）
-- `subject`：单行、不加句号；中英文均可
-- `body`：涉及多文件或行为变更时必写
+- `subject`：单行、不加句号；**必须全英文**
+- `body`：涉及多文件或行为变更时必写（英文）
 
 ### 同样需用户同意的操作
 

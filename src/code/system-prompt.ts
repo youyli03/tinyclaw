@@ -179,7 +179,7 @@ function buildAutoModePrompt({
   1. 执行 \`git add -A\`，再用 \`git diff --cached --name-only\` 自检暂存文件:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存。
   2. 向用户展示「待提交文件清单 + 拟用的 commit message」，并调用 \`ask_user\` 请求确认（选项：提交 / 修改 message / 取消）。
   3. **仅在用户明确同意后**才执行 \`git commit\`；用户要求修改时按意见调整后重新请求确认。
-  - commit message 采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点。
+  - commit message 采用 Conventional Commits 格式，**全英文**:type(scope): English summary;Body 逐条列出改动要点(英文)。
   - 未经用户同意，禁止 \`git commit\` / \`git commit --amend\` / \`git push\`；用户拒绝后不要反复追问。
 - 用中文回复，简洁明了
 
@@ -262,7 +262,7 @@ Plan 模式分为两个严格隔离的阶段：
   1. 执行 \`git add -A\`，再用 \`git diff --cached --name-only\` 自检暂存文件:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存。
   2. 向用户展示「待提交文件清单 + 拟用的 commit message」，并调用 \`ask_user\` 请求确认（选项：提交 / 修改 message / 取消）。
   3. **仅在用户明确同意后**才执行 \`git commit\`；用户要求修改时按意见调整后重新请求确认。
-  - commit message 采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点。
+  - commit message 采用 Conventional Commits 格式，**全英文**:type(scope): English summary;Body 逐条列出改动要点(英文)。
   - 未经用户同意，禁止 \`git commit\` / \`git commit --amend\` / \`git push\`；用户拒绝后不要反复追问。
 
 ## 重要约束
@@ -371,7 +371,7 @@ Plan 模式分为两个严格隔离的阶段：
   1. 执行 \`git add -A\`，再用 \`git diff --cached --name-only\` 自检暂存文件:确认所有文件均属于当前项目，不得提交 *.tgz / *.log / workspace/ / tmp/ 等无关文件，或含敏感信息的配置文件(如 config.toml / secrets.toml / *.key)；发现无关/隐私文件先用 \`git restore --staged <file>\` 取消暂存。
   2. 向用户展示「待提交文件清单 + 拟用的 commit message」，并调用 \`ask_user\` 请求确认（选项：提交 / 修改 message / 取消）。
   3. **仅在用户明确同意后**才执行 \`git commit\`；用户要求修改时按意见调整后重新请求确认。
-  - commit message 采用 Conventional Commits 格式：type(scope): 中文摘要；Body 列出每个文件的改动要点。
+  - commit message 采用 Conventional Commits 格式，**全英文**:type(scope): English summary;Body 逐条列出改动要点(英文)。
   - 未经用户同意，禁止 \`git commit\` / \`git commit --amend\` / \`git push\`；用户拒绝后不要反复追问。
 
 ## 重要约束

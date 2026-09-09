@@ -299,8 +299,11 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 |---|---|
 | `type` | 必填，取值见下表 |
 | `scope` | 可选，用模块名，与 `src/` 目录对应（`llm` / `cron` / `qqbot` / `memory/qmd` / `code-prompt` …） |
-| `subject` | 必填，单行，不加句号；动宾式说明"做了什么"；**中英文均可**（仓库历史混用） |
-| `body` | 可选；涉及多文件或行为变更时必写，逐条列出关键改动 |
+| `subject` | 必填，单行，不加句号；动宾式说明"做了什么"；**必须全英文** |
+| `body` | 可选；涉及多文件或行为变更时必写，逐条列出关键改动；**必须全英文** |
+
+> **提交信息一律全英文**（`type` / `scope` / `subject` / `body` 全部英文，禁止中英混排）。
+> 仓库历史中存在中文提交，那是旧约定；**新提交一律英文**。
 
 **允许的 type**（与仓库历史一致）：
 
@@ -316,16 +319,16 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `style` | 格式（不影响语义） |
 | `revert` | 回滚某次提交 |
 
-**真实示例**（取自本仓库历史）：
+**示例**：
 
 ```
-feat(llm): 补强 LLM 连接稳定性 — 重试、jitter、流 idle timeout、429 Retry-After
-fix(cron): pipeline tool step 改用合成 tool call 对注入 session，修复幻觉问题
-docs: 新增 LOOP_SESSION.md，更新过时文档
+feat(llm): harden connection stability with retries, jitter, stream idle timeout, 429 Retry-After
+fix(cron): inject pipeline tool steps as synthetic tool calls to stop hallucinated data
+docs: add LOOP_SESSION.md and refresh outdated sections
 refactor(mcp): agent-centric MCP access control via per-agent mcp.toml
 ```
 
-**禁止**：`修复：xxx` 这类无 type 前缀的裸中文标题；`update` / `修改` / `fix bug` 这类无信息量标题；一次提交混杂多个不相关改动（拆成多次提交）。
+**禁止**：中文或任何非英文的提交信息；`修复：xxx` 这类无 type 前缀的裸标题；`update` / `修改` / `fix bug` 这类无信息量标题；一次提交混杂多个不相关改动（拆成多次提交）。
 
 ### 10.2 每次提交前必须取得用户同意（R5，强制）
 
@@ -345,7 +348,7 @@ refactor(mcp): agent-centric MCP access control via per-agent mcp.toml
 
 ### 10.3 例外
 
-`src/core/tinyclaw-submitter.ts` 是**独立的定时备份调度器**（每 4h 自动提交 `~/.tinyclaw` 配置仓库，设计上无人值守），不属于"agent 提交行为"，不适用 §10.2。如需对其也加审批，须单独改该模块。
+`src/core/tinyclaw-submitter.ts` 是**独立的定时备份调度器**（每 4h 自动提交 `~/.tinyclaw` 配置仓库，设计上无人值守），不属于"agent 提交行为"，不适用 §10.2。如需对其也加审批，须单独改该模块。其提交信息仍遵循 §10.1（全英文 Conventional Commits）。
 
 ---
 

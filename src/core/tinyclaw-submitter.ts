@@ -166,13 +166,13 @@ async function generateCommitMessage(files: string[], diffText: string): Promise
 根据用户提供的变更文件列表和 diff，生成一条符合 Conventional Commits 规范的提交信息。
 
 格式要求：
-第一行（subject）：<type>(<scope>): <简洁中文描述>，不超过72字符
+第一行（subject）：<type>(<scope>): <concise English summary>, 不超过72字符
   - type 选：feat / fix / chore / refactor / docs / style
   - scope 选：skills / memory / cron / config / agents（取变更最多的类别）
 空行
 Body（可选，最多5条 bullet）：
   - 每条描述一个具体变更点，说明改了什么/为什么
-  - 用中文，简洁明了
+  - 用英文，简洁明了
 
 只输出 commit message 本身，不要任何解释、代码块或额外文字。`;
 
@@ -196,7 +196,7 @@ Body（可选，最多5条 bullet）：
       return "config";
     }));
     const mainCat = [...cats][0] ?? "config";
-    return `chore(${mainCat}): 自动提交 ${files.length} 处变更\n\n${files.map((f) => `- ${f}`).join("\n")}`;
+    return `chore(${mainCat}): auto-commit ${files.length} change(s)\n\n${files.map((f) => `- ${f}`).join("\n")}`;
   }
 }
 
