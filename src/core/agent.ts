@@ -158,6 +158,8 @@ const MAX_SLAVE_DEPTH = 1;
 const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
+/** feedback.md 注入 system prompt 的最大字符数（只保留最近的部分） */
+const FEEDBACK_INJECT_MAX_CHARS = 3_000;
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
@@ -185,10 +187,8 @@ function buildBuiltinSystem(
   const memFilePath = join(agentDir, "MEM.md");
   const activeFilePath = join(agentDir, "ACTIVE.md");
   const skillsFilePath = join(agentDir, "SKILLS.md");
-  const chatFeedbackPath = agentManager.feedbackPath(agentId, "chat");
-
-  // ── chat feedback.md（跨 session 用户行为纠正，若存在则注入） ───────────────
-  const chatFeedbackContent = readFeedback(agentId, "chat");
+  // ── chat feedback.md（跨 session 用户行为纠正，若存在则注入；注入长度受限） ──
+  const chatFeedbackContent = readFeedback(agentId, "chat", FEEDBACK_INJECT_MAX_CHARS);
 
   // ── MEM.md 操作说明（动态，根据 agent tools.toml 决定使用哪种工具描述） ──────
   const hasWriteFile = isToolAvailable("write_file", agentId);
@@ -360,11 +360,11 @@ function buildBuiltinSystem(
 
 ${chatFeedbackContent}
 
-> 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+> 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录（无需 MFA，自动去重）`
       : `
 
 ## 行为反馈记录
-当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），用 \`edit_file\` 追加到 \`${chatFeedbackPath}\`，格式：\`- [YYYY-MM-DD] 纠正内容\``
+当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录（无需 MFA，自动去重）`
   }`;
 }
 

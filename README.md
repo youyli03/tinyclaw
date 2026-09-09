@@ -149,7 +149,10 @@ tinyclaw completions install           # 安装 tab 补全
 | 工具 | 说明 |
 |------|------|
 | `memory_read_mem` | 读取当前 Agent 的 MEM.md |
-| `memory_write_mem` | 写入 MEM.md(覆盖或追加) |
+| `memory_write_mem` | 写入 MEM.md(章节级覆盖或追加) |
+| `memory_read_active` / `memory_write_active` | 读写 ACTIVE.md 活跃上下文 |
+| `memory_append_feedback` | 记录用户行为纠正到 feedback.md(去重 + 自动裁剪,无需 MFA) |
+| `memory_append_card` | 主动追加一张结构化记忆卡片(可带原文引用) |
 | `memory_append` | 追加一条记忆到当日历史存档并触发向量索引更新 |
 | `memory_search` | 手动触发 QMD 向量搜索历史记忆 |
 | `search_store` | 在本地知识库(如 `news`)做语义向量搜索 |

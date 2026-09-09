@@ -23,6 +23,7 @@ import { updateJob, getJob } from "../cron/store.js";
 import { cronScheduler } from "../cron/scheduler.js";
 import { parseCardJson, saveCards, ageOpenLoopCards } from "../memory/cards.js";
 import { summarizeActiveSections } from "../memory/summarizer.js";
+import { compactFeedback } from "./feedback-writer.js";
 
 const MEM_SECTION_KEYS = [
   "👤 用户偏好",
@@ -40,6 +41,9 @@ const ACTIVE_SECTION_KEYS = [
   "近期生活上下文",
   "近期项目上下文",
 ] as const;
+
+/** MEM.md 备份保留份数 */
+const MEM_BACKUP_KEEP = 10;
 
 const DISTILL_MEM_SYSTEM = `你是一个记忆提炼助手。
 你的任务是基于近期对话摘要日记(diary),对 MEM.md 进行全量重构:合并语义相同的条目,
@@ -260,6 +264,20 @@ class MemoryMaintenanceScheduler {
     } catch (err) {
       console.error(`[memory-maintenance] [${agentId}] age open_loop error:`, err);
     }
+
+    console.log(`[memory-maintenance] [${agentId}] Step 6: compacting feedback.md...`);
+    for (const mode of ["chat", "code"] as const) {
+      try {
+        const r = compactFeedback(agentId, mode);
+        if (r.before > 0) {
+          console.log(
+            `[memory-maintenance] [${agentId}] feedback(${mode}) ${r.before} → ${r.after} 字符`
+          );
+        }
+      } catch (err) {
+        console.error(`[memory-maintenance] [${agentId}] feedback(${mode}) compact error:`, err);
+      }
+    }
   }
 
   private async distillMem(agentId: string): Promise<string> {
@@ -287,11 +305,17 @@ class MemoryMaintenanceScheduler {
     const fullMem = result.content.trim();
     if (!fullMem) return "LLM 返回为空,跳过";
 
-    // 验证输出是否包含必要的章节结构
-    if (!fullMem.includes("## ")) {
-      console.warn(`[memory-maintenance] [${agentId}] LLM 输出不含章节结构,跳过`);
-      return "LLM 输出不含章节结构,跳过";
+    // 结构校验：必需章节必须齐全，否则拒绝写入——防止 LLM 幻觉把 MEM.md 改坏
+    const missingSections = MEM_SECTION_KEYS.filter((k) => !fullMem.includes(`## ${k}`));
+    if (!fullMem.includes("## ") || missingSections.length > 0) {
+      console.warn(
+        `[memory-maintenance] [${agentId}] LLM 输出缺少章节「${missingSections.join("、") || "全部"}」，已拒绝写入`
+      );
+      return `输出缺少必需章节(${missingSections.join("、") || "全部"})，已拒绝写入`;
     }
+
+    // 写入前备份（保留最近 10 份，供人工回滚）
+    this.backupMem(agentId, currentMem);
 
     // 直接写入 LLM 输出的全量 MEM.md
     const originalSize = currentMem.length;
@@ -307,6 +331,33 @@ class MemoryMaintenanceScheduler {
 
     const pct = originalSize > 0 ? Math.round((1 - newSize / originalSize) * 100) : 0;
     return `已重写 MEM.md (${originalSize} → ${newSize} 字符, 缩减 ${pct}%)`;
+  }
+
+  /**
+   * MEM.md 写入前备份到 `memory/mem-backup/<时间戳>.md`，只保留最近 MEM_BACKUP_KEEP 份。
+   * MEM.md 每日被 LLM 全量重写，一次幻觉就会覆盖旧内容；备份提供人工回滚点。
+   */
+  private backupMem(agentId: string, content: string): void {
+    if (!content.trim()) return;
+    try {
+      const dir = path.join(os.homedir(), ".tinyclaw", "agents", agentId, "memory", "mem-backup");
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
+      fs.writeFileSync(path.join(dir, `${stamp}.md`), content, "utf-8");
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".md"))
+        .sort();
+      while (files.length > MEM_BACKUP_KEEP) {
+        const oldest = files.shift();
+        if (oldest) fs.unlinkSync(path.join(dir, oldest));
+      }
+    } catch (err) {
+      console.warn(
+        `[memory-maintenance] [${agentId}] MEM.md 备份失败:`,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   private async distillActive(agentId: string): Promise<string> {

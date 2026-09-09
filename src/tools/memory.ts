@@ -5,6 +5,7 @@
  *
  * - memory_read_mem     : 读取当前 agent 的 MEM.md
  * - memory_write_mem    : 覆写或追加当前 agent 的 MEM.md
+ * - memory_append_feedback : 记录用户行为纠正到 feedback.md（去重 + 自动裁剪）
  * - memory_read_active  : 读取当前 agent 的 ACTIVE.md
  * - memory_write_active : 覆写或追加当前 agent 的 ACTIVE.md
  * - memory_append_card  : 主动追加一张结构化记忆卡片
@@ -21,6 +22,7 @@ import * as projectMemory from "../core/project-memory.js";
 import { searchMemory, searchStore, updateStore } from "../memory/qmd.js";
 import { persistSummary } from "../memory/store.js";
 import { CARD_STATUSES, CARD_TYPES, appendCard } from "../memory/cards.js";
+import { appendFeedback } from "../core/feedback-writer.js";
 
 function readTextFileOrMissing(
   filePath: string,
@@ -182,6 +184,41 @@ registerTool({
     const mode = String(args["mode"] ?? "upsert") === "append" ? "append" : "upsert";
     if (!section) return "错误:缺少 section 参数,请指定目标章节标题(如「👤 用户偏好」)";
     return upsertMemSection(agentManager.memPath(agentId), section, content, mode, agentId);
+  },
+});
+
+registerTool({
+  requiresMFA: false,
+  spec: {
+    type: "function",
+    function: {
+      name: "memory_append_feedback",
+      description:
+        "记录用户对 AI 行为的纠正/要求到 feedback.md（跨 session 永久生效，会注入后续每一轮的 system prompt）。\n" +
+        "当用户明确说「不要…」「以后…」「每次都要…」这类纠正时调用。\n" +
+        "无需 MFA；自动去重（同义条目不会重复记录）并自动裁剪（文件超长时丢弃最早的条目）。",
+      parameters: {
+        type: "object",
+        properties: {
+          content: {
+            type: "string",
+            description:
+              "一句话描述要遵守的行为约束，例如「回复不要用奉承性语言」「股票分析只给结论不给操作建议」",
+          },
+        },
+        required: ["content"],
+      },
+    },
+  },
+  execute: async (args: Record<string, unknown>, ctx?: ToolContext): Promise<string> => {
+    const agentId = ctx?.agentId ?? "default";
+    const mode = ctx?.mode === "code" ? "code" : "chat";
+    const content = String(args["content"] ?? "").trim();
+    if (!content) return "错误：缺少 content 参数";
+    const result = appendFeedback(agentId, mode, content);
+    return result.added
+      ? `已记入行为反馈（${mode}）：${content}`
+      : "该行为反馈已存在（或内容为空），未重复记录";
   },
 });
 
