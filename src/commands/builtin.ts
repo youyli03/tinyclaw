@@ -88,6 +88,11 @@ registerCommand({
       `绑定 Agent：\`${session.agentId}\``,
       `消息数：${msgCount} 条`,
       tokenLine,
+      ...(session.lastPromptTokens > 0
+        ? [
+            `缓存命中：${Math.round(session.lastCacheHitRate * 100)}%（${session.lastCacheReadTokens.toLocaleString()} token 复用）`,
+          ]
+        : []),
       `当前状态：${isRunning ? "⏳ 运行中" : "✅ 空闲"}`,
     ];
 

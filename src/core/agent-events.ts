@@ -39,6 +39,8 @@ export type AgentEvent =
         completionTokens: number;
         cacheReadTokens: number;
         cacheCreationTokens: number;
+        /** 缓存命中率 = cacheReadTokens / promptTokens（0 = 无数据或后端不上报） */
+        cacheHitRate: number;
         visionPromptTokens: number;
         visionCompletionTokens: number;
       };

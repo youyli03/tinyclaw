@@ -2189,7 +2189,13 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   const contextWindow = llmRegistry.getContextWindow(isCodeMode ? "code" : "daily", session.lastResponseAt);
   const fmtK = (n: number) => (n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n));
-  const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}`;
+  // 缓存命中率：命中 token 占本轮 run 输入 token 的比例（服务端 KV cache 复用情况）。
+  // 前缀稳定性优化（system prompt 冻结 / 注入只追加）的收益直接体现在这个数字上。
+  const cacheHitRate = totalPromptTokens > 0 ? totalCacheReadTokens / totalPromptTokens : 0;
+  session.lastCacheReadTokens = totalCacheReadTokens;
+  session.lastCacheHitRate = cacheHitRate;
+  const cacheInfo = totalPromptTokens > 0 ? ` cache ${Math.round(cacheHitRate * 100)}%` : "";
+  const tokenInfo = `${fmtK(lastUsage.promptTokens)}/${fmtK(contextWindow)}${cacheInfo}`;
   if (toolsUsed.length > 0) {
     console.log(
       `${logPrefix} → done in ${elapsed}s (tools: ${[...new Set(toolsUsed)].join(", ")}) [${tokenInfo}]`
@@ -2331,6 +2337,7 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
       completionTokens: totalCompletionTokens,
       cacheReadTokens: totalCacheReadTokens,
       cacheCreationTokens: totalCacheCreationTokens,
+      cacheHitRate,
       visionPromptTokens: totalVisionPromptTokens,
       visionCompletionTokens: totalVisionCompletionTokens,
     },

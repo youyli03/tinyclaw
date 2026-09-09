@@ -49,6 +49,9 @@ cli:<uuid>               CLI tinyclaw chat
 
 > 代价是尾部累积带来的 token 增长，由压缩回收；收益是两次压缩之间的所有请求都命中同一前缀。
 
+**如何验证**：每次 run 结束的日志尾部与 `/status` 都会显示 `cache N%`（= 命中 token / 本轮输入 token），
+`agent:end` 事件的 `stats.cacheHitRate` 同样带该值。前缀稳定时该比例应显著高于优化前。
+
 **Session 持久化（JSONL 崩溃恢复）**
 
 每个 session 对应一个 JSONL 文件：

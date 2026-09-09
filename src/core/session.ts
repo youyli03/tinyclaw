@@ -173,6 +173,12 @@ export class Session {
   /** 最近一次 LLM 响应报告的实际 prompt token 数（0 = 尚未发送过请求） */
   lastPromptTokens = 0;
 
+  /** 最近一次 run 中命中服务端缓存（cache read）的 token 数；后端不上报时为 0 */
+  lastCacheReadTokens = 0;
+
+  /** 最近一次 run 的缓存命中率 = cacheRead / promptTokens（0 = 无数据） */
+  lastCacheHitRate = 0;
+
   /**
    * 该 session 最后一次 LLM 响应完成的时刻(毫秒时间戳,0 = 从未响应过)。
    * 持久化到 JSONL _meta:lastResponseAt 行,供闲置判定(shouldSummarize)与 crash 恢复使用。
