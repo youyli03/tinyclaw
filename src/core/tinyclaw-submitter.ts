@@ -51,6 +51,12 @@ const ALLOW_PREFIXES = [
 
 // ── 黑名单：即使匹配白名单也排除 ─────────────────────────────────────────────
 
+/**
+ * 覆盖黑名单：命中这些模式的路径**即使被 DENY_PATTERNS 排除也要提交**。
+ * 逐字层 transcript 是记忆的原文来源，需要版本化（cards/diary 是摘要，价值低于原文）。
+ */
+const ALLOW_OVERRIDES = [/\/memory\/transcript\//];
+
 const DENY_PATTERNS = [
   /\/workspace\//,
   /\/sessions\//,
@@ -122,8 +128,11 @@ function getChangedFiles(): string[] {
   } catch { return []; }
 }
 
-function shouldCommit(relPath: string): boolean {
-  for (const p of DENY_PATTERNS) if (p.test(relPath)) return false;
+export function shouldCommit(relPath: string): boolean {
+  // 逐字层等需要版本化的路径，跳过黑名单检查
+  if (!ALLOW_OVERRIDES.some((p) => p.test(relPath))) {
+    for (const p of DENY_PATTERNS) if (p.test(relPath)) return false;
+  }
   for (const pfx of ALLOW_PREFIXES) if (relPath === pfx || relPath.startsWith(pfx)) return true;
   return false;
 }

@@ -165,7 +165,7 @@ tinyclaw/
 │   │   ├── MEM.md            # 持久记忆（跨 session 偏好与结论）
 │   │   ├── SKILLS.md         # 技能目录（技能名 → 主文档路径）
 │   │   ├── TASK.md           # Loop Session 默认任务指令（相对 agentDir；可在 loop 配置中覆盖）
-│   │   ├── memory/           # 向量索引（index.sqlite）+ 压缩摘要 YYYY-MM-DD.md
+│   │   ├── memory/           # 向量索引（index.sqlite）+ 逐字层（transcript/）+ 压缩摘要 YYYY-MM-DD.md
 │   │   ├── notes/            # Notes MCP 数据（index.json + <category>.md + remind_state.json）
 │   │   ├── skills/           # 技能脚本目录
 │   │   └── workspace/        # exec_shell 默认 cwd

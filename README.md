@@ -195,7 +195,7 @@ tinyclaw completions install           # 安装 tab 补全
 │   ├── SKILLS.md        # 技能目录
 │   ├── TASK.md          # Loop Session 默认任务指令
 │   ├── access.toml      # 跨 session 通信权限(can_access / allow_from)
-│   ├── memory/          # 向量索引(index.sqlite) + 压缩摘要 YYYY-MM-DD.md
+│   ├── memory/          # 向量索引(index.sqlite) + 逐字层(transcript/) + 压缩摘要 YYYY-MM-DD.md
 │   ├── notes/           # Notes MCP 数据
 │   ├── skills/          # Skill 脚本目录
 │   └── workspace/       # Shell 命令默认 cwd

@@ -120,7 +120,9 @@ const store = await createStore({ dbPath, collections });
 ---
 ## 四、存储位置（重要约束）
 
-> ⚠️ **QMD 索引与摘要文件全部存储在 `~/.tinyclaw/` 下，与 tinyclaw 仓库目录完全隔离，不会进入 git 仓库。**
+> ⚠️ **QMD 索引与摘要文件存储在 `~/.tinyclaw/` 下，与 tinyclaw 仓库目录完全隔离。**
+> 其中**唯一会被自动提交进 git 的是逐字层 `memory/transcript/`**（见 `tinyclaw-submitter` 的
+> `ALLOW_OVERRIDES`），其余（索引、摘要、日记）都不进仓库。
 
 ```
 ~/.tinyclaw/
@@ -129,9 +131,10 @@ const store = await createStore({ dbPath, collections });
     <agentId>/
       memory/
         index.sqlite              向量索引数据库（SQLite vec0，维度取决于 embed 后端）
+        transcript/               逐字层：每轮对话原文按天归档（YYYY-MM-DD.md）
         2026-05-01.md             当日压缩摘要（由 summarizer 写入）
         ...
-      cards/                      MemoryCard 持久化目录
+      cards/                      MemoryCard 持久化目录（卡片正文可带「> **原文**：…」引用）
       code/
         projects/                 代码项目跨 session 记忆（NOTES.md）
         sessions/                 code session 摘要
@@ -144,6 +147,8 @@ const store = await createStore({ dbPath, collections });
 - 此文件**不属于任何 git 仓库**，不会被提交或覆盖
 - 多 Agent 各自有独立的 `index.sqlite`，互不干扰
 - 摘要 `.md` 文件也存于 `memory/` 下，同样不进仓库
+- **逐字层 `memory/transcript/**` 例外**：它位于 `memory` collection（模式 `**/*.md`）内，
+  会被向量索引，且由 `tinyclaw-submitter` 自动提交进 `~/.tinyclaw` 的 git 仓库
 
 ---
 

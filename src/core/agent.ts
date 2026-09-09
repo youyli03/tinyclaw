@@ -8,6 +8,7 @@ import type { ChatResult } from "../llm/client.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { searchMemory } from "../memory/qmd.js";
+import { appendTranscript } from "../memory/transcript.js";
 import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
@@ -1218,6 +1219,8 @@ async function runAgentInner(
   }
 
   let finalContent = "";
+  /** 本轮所有工具调用的紧凑摘要（供逐字层 transcript 记录细节） */
+  const toolCallSummaries: string[] = [];
   let lastUsage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let totalCompletionTokens = 0; // 本次 runAgent 所有 LLM 轮次的 output token 累计
   let totalPromptTokens = 0; // input token 累计
@@ -1656,12 +1659,14 @@ async function runAgentInner(
         return "未知工具";
       }
 
-      console.log(`${logPrefix} tool: ${toolCallSummary(call.name, call.args)}`);
+      const callSummary = toolCallSummary(call.name, call.args);
+      toolCallSummaries.push(callSummary);
+      console.log(`${logPrefix} tool: ${callSummary}`);
       bus.emit({
         type: "tool:call",
         name: call.name,
         args: call.args as Record<string, unknown>,
-        summary: toolCallSummary(call.name, call.args),
+        summary: callSummary,
         round,
       });
       const toolStartMs = Date.now();
@@ -2374,6 +2379,20 @@ interface FinalizeContext {
   totalVisionCacheReadTokens: number;
   totalVisionCacheCreationTokens: number;
 }
+
+  // ── 逐字层：把本轮原文追加到 transcript，供 QMD 检索命中原话 ──
+  // 仅交互式 chat 会话（code / slave / loop 任务跳过）；失败不影响主流程
+  if (!isCodeMode && !isSlave && !opts.skipAddUserMessage && finalContent) {
+    try {
+      appendTranscript(session.agentId, {
+        user: userContent,
+        assistant: finalContent,
+        tools: toolCallSummaries,
+      });
+    } catch (err) {
+      console.warn("[agent] transcript 写入失败:", err instanceof Error ? err.message : err);
+    }
+  }
 
   return finalizeRun({
     session,
