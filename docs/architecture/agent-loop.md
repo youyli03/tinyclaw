@@ -19,22 +19,35 @@ qqbot:guild:<channelId>  QQ 频道
 cli:<uuid>               CLI tinyclaw chat
 ```
 
-`Session` 内部维护一个 `messages: ChatMessage[]` 数组。消息只会 **append**，不会删除（直到触发压缩）。每次调用 `runAgent()` 都将完整的 `messages[]` 发给 LLM，LLM 通过上下文感知全部多轮历史。
+`Session` 内部维护一个 `messages: ChatMessage[]` 数组。**除压缩外，消息只追加、不原地改写**——任何对历史前缀的修改都会让服务端 KV cache 从该位置起失效。每次调用 `runAgent()` 都将完整的 `messages[]` 发给 LLM。
 
 **典型 messages 结构（多轮后）**
 
 ```
-[0] system   ← BUILTIN_SYSTEM + SYSTEM.md（第一轮追加，后续不再重复）
-[1] system   ← "## 相关历史记忆 ..."（本轮 QMD 检索结果，可能没有）
-[2] user     ← 第一轮用户输入
-[3] assistant ← LLM 中间回复（有工具调用时）
-[4] system   ← [tool_result:exec_shell] 工具执行结果
-[5] assistant ← 最终回复
-[6] system   ← 下一轮：相关历史记忆（可能没有）
-[7] user     ← 第二轮用户输入
-[8] assistant ← 第二轮最终回复
+[0] system   ← 冻结的 system prompt（本 session 内逐字节稳定）
+[1] system   ← "<!-- memory:## 相关历史记忆 -->"（QMD 检索结果，可能没有）
+[2] system   ← "<!-- skill-reminder -->"（可用技能列表，可能没有）
+[3] user     ← 第一轮用户输入
+[4] assistant ← LLM 中间回复（有工具调用时）
+[5] system   ← [tool_result:exec_shell] 工具执行结果
+[6] assistant ← 最终回复
+[7] system   ← 下一轮：新的记忆注入（内容变化时才追加）
+[8] user     ← 第二轮用户输入
+[9] assistant ← 第二轮最终回复
 ...          ← 继续 append
 ```
+
+**前缀稳定性（KV cache 友好）**
+
+请求前缀逐字节不变时，服务端 KV cache 才能复用；`messages[0]` 位置最靠前，原地重写等于全量 cache miss。三条规则：
+
+| 内容 | 策略 |
+|---|---|
+| system prompt | session 内**冻结**：`applySystemPrompt()` 内容相同则完全不动；变化时**追加**一条 `<!-- system-prompt-update -->` 消息（`[上下文更新] …`），不回写 `messages[0]` |
+| 记忆注入 / skill reminder | `appendMemoryContext()` / `appendSkillReminder()` **只追加**；与最近一条同类注入逐字节相同则跳过 |
+| 压缩 | **唯一**允许重写前缀的时机：`_foldPreambleInjections()` 把 system prompt 更新折叠回 `messages[0]`，并把同类注入收敛为最新一条 |
+
+> 代价是尾部累积带来的 token 增长，由压缩回收；收益是两次压缩之间的所有请求都命中同一前缀。
 
 **Session 持久化（JSONL 崩溃恢复）**
 
@@ -221,12 +234,15 @@ threshold       = contextWindow × memory.tokenThreshold  // 默认 0.8
   异步触发 QMD updateMemoryIndex()（建立/更新向量索引，不阻塞）
 
 第三步：替换 session.messages[]
-  过滤掉 QMD 召回注入的临时 system messages（以"## 相关历史记忆"开头）
+  保留永久 system messages：冻结的 system prompt、skill reminder、
+  带 <!-- memory: --> 标记的记忆注入（旧格式以 "##" 开头且无标记的临时注入被丢弃）
+  → _foldPreambleInjections() 收敛：system prompt 更新折叠回 messages[0]，
+    同类记忆 / skill 注入各只保留最新一条
   新 messages = [
-    原来的永久 system messages（BUILTIN_SYSTEM、SYSTEM.md）,
+    永久 system messages（含折叠后的最新 system prompt）,
     { role:"assistant", content:"[对话历史摘要]\n摘要内容..." }
   ]
-  原来的 user / assistant / tool_result 消息全部丢弃
+  更早的 user / assistant / tool_result 消息全部丢弃
 
 第四步：rewriteJsonl()
   整体覆盖写入 JSONL，只保留 system messages + 摘要
@@ -410,7 +426,7 @@ enabled = true
 
 每次 `runAgent()` 步骤 2:以本轮用户输入为查询向量,检索最相关的历史摘要片段注入上下文。即使 session 是全新的,或历史已被压缩,过去细节仍可被召回。
 
-由于 QMD 注入的 system messages 以 `"## 相关历史记忆"` 开头,压缩时会被正确过滤,不保留到压缩后的 messages[]。
+QMD 注入的 system message 带 `<!-- memory:... -->` 标记：压缩时会被**保留**（而非过滤），随后由 `_foldPreambleInjections()` 收敛为最新一条，因此不会无限堆积。
 
 ### 索引重建(memory_rebuild)
 

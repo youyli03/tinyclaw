@@ -546,7 +546,7 @@ export class Session {
    *
    * 为什么追加而不原地替换：任何对历史前缀的改写都会让从该位置起的 KV cache 失效，
    * 而 messages[0] 是最靠前的位置，原地重写等于每轮全量 cache miss。
-   * 代价是 token 增长，由压缩回收：`_foldSystemPromptUpdates()` 会在压缩后把更新
+   * 代价是 token 增长，由压缩回收：`_foldPreambleInjections()` 会在压缩后把更新
    * 折叠回 messages[0] 并删除更新消息（压缩本身就是一次允许的前缀重写）。
    *
    * @returns 本次动作，供日志与遥测使用
@@ -570,54 +570,75 @@ export class Session {
   }
 
   /**
-   * 压缩后调用：把尾部累积的 system prompt 更新折叠回 messages[0] 并删除更新消息。
-   * 压缩本身就是一次前缀重写，因此这里回写不会额外损失缓存。
+   * 压缩后调用：收敛尾部累积的注入消息（压缩本身就是一次前缀重写，因此这里动手不额外损失缓存）。
+   *
+   * 1. system prompt 更新 → 折叠回 messages[0] 并删除更新消息
+   * 2. 同类注入（记忆按 marker 分组、skill reminder 一组）→ 每组只保留最新一条
    */
-  private _foldSystemPromptUpdates(): void {
+  private _foldPreambleInjections(): void {
     const latest = this._latestSystemPrompt;
-    if (latest === undefined) return;
-    this.messages = this.messages.filter(
-      (m) =>
-        !(
-          m.role === "system" &&
-          typeof m.content === "string" &&
-          m.content.startsWith(Session.SYS_PROMPT_UPDATE_MARKER)
-        )
-    );
-    const first = this.messages[0];
-    if (first?.role === "system") {
-      first.content = latest;
-    } else {
-      this.messages.unshift({ role: "system", content: latest });
+    if (latest !== undefined) {
+      this.messages = this.messages.filter(
+        (m) =>
+          !(
+            m.role === "system" &&
+            typeof m.content === "string" &&
+            m.content.startsWith(Session.SYS_PROMPT_UPDATE_MARKER)
+          )
+      );
+      const first = this.messages[0];
+      if (first?.role === "system") {
+        first.content = latest;
+      } else {
+        this.messages.unshift({ role: "system", content: latest });
+      }
     }
+
+    // 同类注入只保留最新一条（从后往前扫，先见到的即最新）
+    const seen = new Set<string>();
+    const kept: Array<ChatMessage & { _loopTaskRef?: string }> = [];
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i]!;
+      const c = m.role === "system" && typeof m.content === "string" ? m.content : "";
+      let key: string | null = null;
+      if (c.startsWith("<!-- memory:")) key = c.split("\n")[0] ?? "<!-- memory:";
+      else if (c.startsWith("<!-- skill-reminder -->")) key = "<!-- skill-reminder -->";
+      if (key !== null) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      kept.push(m);
+    }
+    this.messages = kept.reverse();
   }
 
   /**
-   * 替换或新增 skill reminder system 消息。
-   * 用特殊前缀标记识别上轮注入的 reminder，找到则原地替换，否则追加。
-   * 这样每轮只有一条 skill reminder，不会堆积。
+   * 追加一条记忆注入 system 消息（**缓存友好**：只追加，绝不原地改写历史中部消息）。
+   *
+   * 用内容第一行（如 "## 相关历史记忆"）作为 marker 供压缩识别；
+   * 与最近一条同类注入完全相同则跳过，避免每轮重复追加。
+   * 同类多条会在压缩时被 `_foldPreambleInjections()` 收敛为最新一条。
+   *
+   * @returns 是否真的追加
    */
-  /**
-   * 替换或新增记忆注入 system 消息。
-   * 用内容第一行（如 "## 近期日记"、"## 当前活跃上下文" 等）作为 marker 识别同类注入，
-   * 找到则原地替换，否则追加。每类记忆只保留最新一条，不无限堆积。
-   */
-  replaceOrAddMemoryContext(content: string): void {
+  appendMemoryContext(content: string): boolean {
     // 取第一行作为 marker（如 "## 近期日记"）
     const firstLine = content.split("\n")[0]?.trim() ?? "";
     const marker = firstLine ? `<!-- memory:${firstLine} -->` : "<!-- memory:context -->";
     const marked = marker + "\n" + content;
-    const idx = this.messages.findIndex(
-      (m) =>
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i]!;
+      if (
         m.role === "system" &&
         typeof m.content === "string" &&
-        (m.content as string).startsWith(marker)
-    );
-    if (idx !== -1) {
-      this.messages[idx] = { role: "system", content: marked };
-    } else {
-      this.messages.push({ role: "system", content: marked });
+        m.content.startsWith("<!-- memory:")
+      ) {
+        if (m.content === marked) return false;
+        break;
+      }
     }
+    this.messages.push({ role: "system", content: marked });
+    return true;
   }
 
   /** 当前 messages 中是否已存在记忆注入（memory: marker）。用于 searchMemory 节流判断。 */
@@ -630,20 +651,22 @@ export class Session {
     );
   }
 
-  replaceOrAddSkillReminder(content: string): void {
+  /**
+   * 追加一条 skill reminder（**缓存友好**：只追加）。内容与最近一条相同则跳过。
+   * @returns 是否真的追加
+   */
+  appendSkillReminder(content: string): boolean {
     const MARKER = "<!-- skill-reminder -->";
-    const idx = this.messages.findIndex(
-      (m) =>
-        m.role === "system" &&
-        typeof m.content === "string" &&
-        (m.content as string).startsWith(MARKER)
-    );
     const marked = MARKER + "\n" + content;
-    if (idx !== -1) {
-      this.messages[idx] = { role: "system", content: marked };
-    } else {
-      this.messages.push({ role: "system", content: marked });
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i]!;
+      if (m.role === "system" && typeof m.content === "string" && m.content.startsWith(MARKER)) {
+        if (m.content === marked) return false;
+        break;
+      }
     }
+    this.messages.push({ role: "system", content: marked });
+    return true;
   }
 
   /**
@@ -781,7 +804,7 @@ export class Session {
   async compress(): Promise<string> {
     const compressed = await summarizeAndCompress(this.messages, this.agentId);
     this.messages = compressed;
-    this._foldSystemPromptUpdates();
+    this._foldPreambleInjections();
     this.rewriteJsonl();
     // 摘要内容在最后一条 assistant 消息中
     const summaryMsg = [...compressed].reverse().find((m) => m.role === "assistant");
@@ -844,7 +867,7 @@ export class Session {
       return false;
     }
     this.messages = compressed;
-    this._foldSystemPromptUpdates();
+    this._foldPreambleInjections();
     this.rewriteCodeJsonl();
 
     return true;

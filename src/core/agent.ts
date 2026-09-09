@@ -1096,7 +1096,7 @@ async function runAgentInner(
             if (_memResult && _memResult.trim()) {
               const _truncated =
                 _memResult.length > 1000 ? _memResult.slice(0, 1000) + "..." : _memResult;
-              session.replaceOrAddMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
+              session.appendMemoryContext(`## 相关历史记忆\n\n${_truncated}`);
             }
             session.lastMemorySearchPromptTokens = _curTokens;
             bus.emit({
@@ -1115,7 +1115,7 @@ async function runAgentInner(
     if (!isCodeMode && !isSlave) {
       const reminder = buildSkillReminder(session.agentId);
       if (reminder) {
-        session.replaceOrAddSkillReminder(reminder);
+        session.appendSkillReminder(reminder);
       }
       bus.emit({ type: "preamble:skill-reminder", skills: reminder ? 1 : 0 });
     }
