@@ -26,6 +26,11 @@ function nextMsgSeq(msgId: string): number {
   return seq;
 }
 
+/** 供流式会话复用同一个 msg_seq（官方要求同一 StreamSession 复用） */
+export function reserveMsgSeq(msgId: string): number {
+  return nextMsgSeq(msgId);
+}
+
 function buildBody(
   content: string,
   extras?: Record<string, unknown>,
@@ -144,6 +149,88 @@ export async function sendGroupMessage(
     token,
     buildBody(content, { msg_id: msgId, msg_seq }, appId)
   );
+}
+
+// ── C2C 流式消息（POST /v2/users/{openid}/stream_messages）────────────────────
+
+/** 流式接口抛出的错误，携带 HTTP 状态与 QQ err_code 供重试判定 */
+export class StreamApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly errCode: number | undefined,
+    message: string
+  ) {
+    super(message);
+    this.name = "StreamApiError";
+  }
+}
+
+export interface C2CStreamChunk {
+  /** 累计正文；`input_mode=replace` 时必须是已下发正文的超集 */
+  contentRaw: string;
+  /** 1 = 生成中；10 = 生成结束 */
+  inputState: 1 | 10;
+  /** 分片序号，必须在**每次请求前**递增（含重试） */
+  index: number;
+  contentType: "text" | "markdown";
+  /** 首个分片成功后由服务端返回，后续分片必须携带 */
+  streamMsgId?: string;
+  /** 被动回复 ID */
+  msgId?: string;
+  /** 同一 StreamSession 复用同一个 msg_seq */
+  msgSeq: number;
+}
+
+/**
+ * 发送一个流式分片。
+ * @returns 首片返回 stream_msg_id；后续分片返回服务端回显的 id
+ * @throws StreamApiError 非 2xx（含 40007 前缀不可修改 / 50002 频率限制）
+ */
+export async function streamC2CMessage(
+  token: string,
+  userOpenid: string,
+  chunk: C2CStreamChunk
+): Promise<string | undefined> {
+  const body: Record<string, unknown> = {
+    input_mode: "replace",
+    input_state: chunk.inputState,
+    index: chunk.index,
+    content_type: chunk.contentType,
+    content_raw: chunk.contentRaw,
+    msg_seq: chunk.msgSeq,
+  };
+  if (chunk.streamMsgId) body["stream_msg_id"] = chunk.streamMsgId;
+  if (chunk.msgId) body["msg_id"] = chunk.msgId;
+
+  const resp = await fetch(
+    `${API_BASE}/v2/users/${userOpenid}/stream_messages`,
+    withCA({
+      method: "POST",
+      headers: {
+        Authorization: `QQBot ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    })
+  );
+
+  const text = await resp.text().catch(() => "");
+  if (!resp.ok) {
+    let errCode: number | undefined;
+    try {
+      const parsed = JSON.parse(text) as { code?: number; err_code?: number };
+      errCode = parsed.err_code ?? parsed.code;
+    } catch {
+      /* 非 JSON 响应 */
+    }
+    throw new StreamApiError(resp.status, errCode, `stream_messages ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  try {
+    return (JSON.parse(text) as { id?: string }).id;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 频道消息回复 */

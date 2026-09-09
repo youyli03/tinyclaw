@@ -8,7 +8,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import type { Connector, InboundMessage } from "../base.js";
 import { startGateway } from "./gateway.js";
-import { sendMessage } from "./outbound.js";
+import { sendMessage, C2CStreamSession, canReplyPassively } from "./outbound.js";
 import { initMarkdownSupport } from "./api.js";
 import { loadConfig, loadSecretsConfig } from "../../config/loader.js";
 import { MFAError } from "../../auth/mfa.js";
@@ -334,6 +334,30 @@ export class QQBotConnector implements Connector {
       p.reject(new Error("connector 已停止,等待已取消"));
     }
     this.pendingMFAMap.clear();
+  }
+
+  /**
+   * 打开一个 C2C 流式回复会话（**仅最终回复使用**）。
+   *
+   * 仅当该 bot 开启了 `streaming`、类型为 c2c/dm、且该 msg_id 仍有被动回复额度时返回会话；
+   * 否则返回 null，调用方走普通发送（长文本自动转图片等逻辑不变）。
+   */
+  openStream(
+    peerId: string,
+    type: InboundMessage["type"],
+    replyToId?: string
+  ): C2CStreamSession | null {
+    if (!this.botCfg.streaming) return null;
+    if (type !== "c2c" && type !== "dm") return null;
+    if (!replyToId) return null;
+    if (!canReplyPassively(replyToId)) return null;
+    return new C2CStreamSession({
+      appId: this.botCfg.appId,
+      clientSecret: resolveSecret(this.botCfg.clientSecret),
+      userOpenid: peerId,
+      replyToId,
+      contentType: this.botCfg.markdownSupport ? "markdown" : "text",
+    });
   }
 
   async send(

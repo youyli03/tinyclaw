@@ -374,6 +374,12 @@ const QQBotSchema = z.object({
   imageServerBaseUrl: z.string().url().optional(),
   /** 是否支持 markdown 消息，默认 true */
   markdownSupport: z.boolean().default(true),
+  /**
+   * 是否对**单聊**使用官方 C2C 流式消息（`/stream_messages`）输出最终回复。
+   * 开启后单聊的最终回复以流式文本呈现，整段只占 1 次被动回复额度；
+   * 代价是长文本不再自动渲染为图片。群聊 / 频道不支持流式，始终走普通发送。
+   */
+  streaming: z.boolean().default(true),
   /** 图床服务器端口，默认 18765 */
   imageServerPort: z.number().int().positive().default(18765),
 });

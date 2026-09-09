@@ -120,7 +120,7 @@ tinyclaw/
 │   │       ├── index.ts      # 实现 Connector 接口，胶水层
 │   │       ├── gateway.ts    # WS 协议 + 消息队列 + 重连 + Session 持久化
 │   │       ├── api.ts        # QQ REST API 封装（token singleflight + send + markdown 派发）
-│   │       ├── outbound.ts   # 发送限流（1h/4次）+ 降级主动消息 + 媒体预检
+│   │       ├── outbound.ts   # 发送限流（1h/4次）+ 降级主动消息 + 媒体预检 + C2C 流式会话
 │   │       ├── transcribe.ts # 语音附件转写（SILK → WAV → faster-whisper ASR）
 │   │       └── attachments.ts  # 附件下载到 workspace/downloads/ + 内容注入（图片/语音）
 │   └── config/
@@ -339,7 +339,7 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 | 传输 | `gateway.ts` | WebSocket 协议（Hello/Identify/Resume/Heartbeat/Reconnect） |
 | 队列 | `gateway.ts` | 每 peerId 独立串行队列，跨用户并行（最多 10 并发） |
 | 重连 | `gateway.ts` | 递增延迟重连（1s→60s），三档 Intent 权限自动降级 |
-| 发送 | `outbound.ts` | 被动回复限流（1h/4次），超限自动降级主动消息，长文本分块 |
+| 发送 | `outbound.ts` | 被动回复限流（1h/4次），超限自动降级主动消息，长文本分块；`C2CStreamSession` 用官方 `/stream_messages` 流式输出**单聊最终回复**（整段只占 1 次额度；失败/前缀不匹配自动回退普通发送） |
 | 接口 | `index.ts` | 实现 `Connector` 接口，胶水层 |
 
 **事件类型映射：**

@@ -137,15 +137,19 @@ backend        = "copilot"   # 底层执行方式
 # [tools.http_request]
 # allowPrivateHosts = false   # 设为 true 可放行内网(如访问本地 MCSM/Dashboard)
 
-[channels.qqbot]
-appId        = "102xxxxx"
-clientSecret = "your-client-secret"
+# 多 bot：每个 bot 一个 `[channels.qqbots.<id>]` 块（id 任意，用作 botId）
+# [channels.qqbots.main]
+# appId        = "102xxxxx"
+# clientSecret = "your-client-secret"
 
 # allowFrom = []                  # 空表示全部用户可私信，非空则白名单
 # systemPrompt = ""               # 账户级系统提示词（追加在默认 prompt 后）
 # imageServerBaseUrl = ""         # 图床公网地址，如 http://your-ip:18765（发图必填）
 # markdownSupport = true          # 是否启用 markdown 消息格式
 # imageServerPort = 18765         # 图床本地端口
+# streaming = true                # 单聊最终回复走官方 C2C 流式消息（/stream_messages）；
+#                                 # 整段只占 1 次被动回复额度，代价是长文本不再自动转图片。
+#                                 # 群聊/频道不支持流式，始终走普通发送。
 
 # ── Agent 行为 ─────────────────────────────────────────────────────────────────
 # heartbeatIntervalSecs：LLM 流式调用期间每隔多少秒推送"仍在处理中"消息，0 = 关闭

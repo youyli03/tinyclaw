@@ -733,6 +733,10 @@ async function main(): Promise<void> {
       }
     };
 
+    // ── C2C 流式回复会话（仅最终回复使用；失败自动回退普通发送）──────────────
+    // 单聊 + 该 msg_id 仍有被动回复额度时才开启；群聊/频道不支持流式。
+    const stream = connector.openStream(msg.peerId, msg.type, msg.messageId);
+
     const opts: AgentRunOptions = {
       botId: connector.botId,
       onSlaveComplete,
@@ -781,6 +785,8 @@ ${message}`;
       ...(_sessionSendFn ? { sessionSendFn: _sessionSendFn } : {}),
       ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
       onToolCall: (name: string, args: Record<string, unknown>) => {
+        // 出现工具调用 → 本轮不是最终回复：收尾已流式的内容，后续不再流式
+        if (stream?.usable) void stream.closeEarly();
         broadcastActivity(session.sessionId, {
           kind: "tool_call",
           name,
@@ -795,6 +801,7 @@ ${message}`;
         });
       },
       onChunk: (delta: string) => {
+        stream?.push(delta);
         broadcastActivity(session.sessionId, { kind: "chunk", delta });
       },
     };
@@ -919,6 +926,15 @@ ${message}`;
             toSend = `<img src="${imgPath}"/>`;
           } catch (renderErr) {
             console.warn("[main] Markdown 渲染失败，降级为文本:", renderErr);
+          }
+        }
+
+        // ── 流式收尾：最终正文已通过流式送达时跳过普通发送 ────────────────
+        if (stream) {
+          const streamed = await stream.finish(toSend);
+          if (streamed) {
+            console.log("[qqbot] 最终回复已通过流式送达，跳过普通发送");
+            return;
           }
         }
 

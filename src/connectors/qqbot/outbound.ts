@@ -19,6 +19,10 @@ import {
   sendProactiveGroupMessage,
   sendC2CMedia,
   sendGroupMedia,
+  streamC2CMessage,
+  reserveMsgSeq,
+  StreamApiError,
+  type C2CStreamChunk,
 } from "./api.js";
 import type { InboundMessage } from "../base.js";
 import { parseMediaTags } from "../utils/media-parser.js";
@@ -441,4 +445,187 @@ async function doSend(
   } else if (type === "guild") {
     await sendChannelMessage(token, appId, peerId, content, replyToId);
   }
+}
+
+// ── C2C 流式回复会话 ──────────────────────────────────────────────────────────
+
+/** 单次分片发送函数（可注入，便于测试） */
+export type StreamChunkSender = (chunk: C2CStreamChunk) => Promise<string | undefined>;
+
+export interface C2CStreamOptions {
+  appId: string;
+  clientSecret: string;
+  userOpenid: string;
+  /** 被动回复 ID（同时作为 msg_id） */
+  replyToId: string;
+  contentType: "text" | "markdown";
+  /** 两次分片之间的最小间隔（ms），默认 400 */
+  minIntervalMs?: number;
+  /** 可注入的发送函数（测试用），默认走官方 stream_messages */
+  sender?: StreamChunkSender;
+}
+
+/** 流式分片退避（对齐官方 Node SDK：1s / 2s / 4s） */
+const STREAM_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
+
+/**
+ * C2C 流式回复会话（**仅用于最终回复**）。
+ *
+ * 官方约束（`POST /v2/users/{openid}/stream_messages`）：
+ *  - `input_mode=replace`：每次提交**累计全文**，必须覆盖已下发正文，否则报 40007
+ *  - `index` 必须在**每次请求前**递增（含重试）
+ *  - 首片响应返回 `stream_msg_id`，后续分片复用；整个会话复用同一个 `msg_seq`
+ *  - 429 / `err_code=50002` 用新 index 退避重试；其它错误直接放弃并回退普通发送
+ */
+export class C2CStreamSession {
+  private readonly opts: C2CStreamOptions & { minIntervalMs: number };
+  private readonly msgSeq: number;
+  private buffer = "";
+  private sent = "";
+  private index = 0;
+  private streamMsgId: string | undefined;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private chain: Promise<void> = Promise.resolve();
+  private closed = false;
+  private failed = false;
+  private started = false;
+  private lastFlushAt = 0;
+
+  constructor(opts: C2CStreamOptions) {
+    this.opts = { minIntervalMs: 400, ...opts };
+    this.msgSeq = reserveMsgSeq(opts.replyToId);
+  }
+
+  /** 流式是否仍可用（未被放弃且未收尾） */
+  get usable(): boolean {
+    return !this.failed && !this.closed;
+  }
+
+  /** 是否已成功下发过至少一个分片 */
+  get hasSent(): boolean {
+    return this.started;
+  }
+
+  /** 追加一段增量文本（内部节流后以累计全文下发） */
+  push(delta: string): void {
+    if (this.closed || this.failed || !delta) return;
+    this.buffer += delta;
+    this.schedule();
+  }
+
+  /**
+   * 本轮触发了工具调用时调用：把已显示内容收尾，后续不再流式。
+   * 由此保证「只有最终回复走流式」——中间轮次的文字独立收尾，最终回复走普通发送。
+   */
+  async closeEarly(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.clearTimer();
+    await this.chain.catch(() => {});
+    if (this.started && !this.failed) await this.sendChunk(this.sent, 10);
+  }
+
+  /**
+   * 收尾。
+   * @param finalText 最终回复正文
+   * @returns true 表示最终回复已通过流式送达（调用方应跳过普通发送）
+   */
+  async finish(finalText: string): Promise<boolean> {
+    this.closed = true;
+    this.clearTimer();
+    await this.chain.catch(() => {});
+    if (this.failed) return false;
+
+    const final = finalText.trim();
+    if (!this.started) {
+      if (!final) return false;
+      // 一个分片都没发出去（例如极短回复）：直接用结束片发一次
+      return await this.sendChunk(final, 10);
+    }
+    // replace 模式下最终正文必须覆盖已下发正文，否则 rollover 交给普通发送
+    if (final && !final.startsWith(this.sent)) {
+      await this.sendChunk(this.sent, 10);
+      return false;
+    }
+    return await this.sendChunk(final || this.sent, 10);
+  }
+
+  private clearTimer(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private schedule(): void {
+    if (this.timer || this.closed || this.failed) return;
+    const wait = Math.max(0, this.opts.minIntervalMs - (Date.now() - this.lastFlushAt));
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.chain = this.chain.then(() => this.flush()).catch(() => {});
+    }, wait);
+  }
+
+  private async flush(): Promise<void> {
+    if (this.closed || this.failed) return;
+    const target = this.buffer;
+    if (target === this.sent) return;
+    await this.sendChunk(target, 1);
+  }
+
+  private async sendChunk(text: string, inputState: 1 | 10): Promise<boolean> {
+    const maxRetries = inputState === 1 ? STREAM_RETRY_DELAYS_MS.length : 1;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const index = this.index++; // 必须在请求前消费
+      const chunk: C2CStreamChunk = {
+        contentRaw: text,
+        inputState,
+        index,
+        contentType: this.opts.contentType,
+        msgId: this.opts.replyToId,
+        msgSeq: this.msgSeq,
+        ...(this.streamMsgId ? { streamMsgId: this.streamMsgId } : {}),
+      };
+      try {
+        const id = this.opts.sender
+          ? await this.opts.sender(chunk)
+          : await streamC2CMessage(
+              await getAccessToken(this.opts.appId, this.opts.clientSecret),
+              this.opts.userOpenid,
+              chunk
+            );
+        if (!this.streamMsgId && id) this.streamMsgId = id;
+        if (!this.started) {
+          this.started = true;
+          recordReply(this.opts.replyToId);
+        }
+        this.sent = text;
+        this.lastFlushAt = Date.now();
+        return true;
+      } catch (err) {
+        const apiErr = err instanceof StreamApiError ? err : null;
+        const retryable =
+          apiErr === null ||
+          apiErr.status === 429 ||
+          apiErr.errCode === 50002 ||
+          apiErr.status >= 500;
+        if (!retryable || attempt >= maxRetries) {
+          this.failed = true;
+          console.warn(
+            `[qqbot] 流式分片失败，回退普通发送：${err instanceof Error ? err.message : String(err)}`
+          );
+          return false;
+        }
+        const delay = STREAM_RETRY_DELAYS_MS[Math.min(attempt, STREAM_RETRY_DELAYS_MS.length - 1)]!;
+        console.warn(`[qqbot] 流式分片限流/网络错误，${delay}ms 后重试（index=${index + 1}）`);
+        await sleep(delay);
+      }
+    }
+    return false;
+  }
+}
+
+/** 该 msg_id 是否还能被动回复（流式会话开始前检查） */
+export function canReplyPassively(msgId: string): boolean {
+  return checkLimit(msgId).allowed;
 }
