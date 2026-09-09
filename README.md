@@ -145,6 +145,12 @@ tinyclaw completions install           # 安装 tab 补全
 | `session_send` | 向指定 session 注入消息,触发 Agent 处理 |
 | `ask_user` | 暂停并向用户提问(含预设选项) |
 
+### 自省
+
+| 工具 | 说明 |
+|------|------|
+| `self_status` | 查询自身运行状态(当前模型 / 上下文用量 / 缓存命中率 / 记忆规模 / 定时任务与 loop 数量 / 行为反馈条数) |
+
 ### 记忆与知识库
 
 | 工具 | 说明 |

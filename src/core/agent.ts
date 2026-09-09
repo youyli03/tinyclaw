@@ -51,6 +51,7 @@ import "../tools/search-newsnow.js";
 import "../tools/read-url.js";
 import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
+import "../tools/self-status.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
 import "../tools/web-search.js";

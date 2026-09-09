@@ -84,6 +84,7 @@ tinyclaw/
 │   │   ├── db-write.ts       # db_write(业务指标写入 dashboard.db,Dashboard 折线图展示)
 │   │   ├── search-store.ts   # search_store(向量语义搜索本地知识库,如 news)
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
+│   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务)
 │   │   ├── skill-creator.ts  # create_skill(创建 Skill 文档并注册到 SKILLS.md)
 │   │   ├── skill-run.ts      # 技能执行辅助
 │   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_wait / agent_abort
