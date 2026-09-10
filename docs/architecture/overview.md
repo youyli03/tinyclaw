@@ -348,6 +348,7 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 | 队列 | `gateway.ts` | 每 peerId 独立串行队列，跨用户并行（最多 10 并发） |
 | 重连 | `gateway.ts` | 递增延迟重连（1s→60s），三档 Intent 权限自动降级 |
 | 发送 | `outbound.ts` | 被动回复限流（1h/4次），超限自动降级主动消息，长文本分块；`C2CStreamSession` 用官方 `/stream_messages` 流式输出**单聊最终回复**（整段只占 1 次额度；失败/前缀不匹配自动回退普通发送） |
+| 富媒体 | `utils/media-parser.ts` | `<img>/<audio>/<video>/<file>` 标签解析（含 `qqimg` 等别名与代码块屏蔽）。流式路径额外用 `splitMediaText()` 把正文与媒体标签分开：**正文走流式、媒体单独走普通发送**——`sendMessage()` 才会解析标签并上传文件，若把标签直接流式推给用户，用户只会看到 `<file src=.../>` 裸文本且文件永远发不出去；推送前用 `stripMediaForStream()` 剥离标签并扣住未闭合的标签起始 |
 | 接口 | `index.ts` | 实现 `Connector` 接口，胶水层 |
 
 **事件类型映射：**

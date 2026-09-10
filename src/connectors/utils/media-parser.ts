@@ -140,10 +140,72 @@ export function parseMediaTags(text: string): MediaSegment[] {
   return segments;
 }
 
+// ── 媒体标签的拆分与流式安全剥离 ──────────────────────────────────────────────
+
+/** 与 parseMediaTags 共用同一条标签正则（保持识别口径一致） */
+const MEDIA_TAG_RE = /<([a-z_]+)((?:\s+[a-z_-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/gi;
+
+/**
+ * 把文本**无损**拆成「正文」与「媒体标签串」两部分。
+ *
+ * 与 `parseMediaTags` 的区别：后者会丢弃纯空白的文本段（用于按段落发送），
+ * 而本函数必须**逐字符保留**正文（含空行与缩进），因为它的产物会被当作
+ * "最终回复正文"展示给用户。
+ *
+ * 代码块内的示例标签同样不识别（与 parseMediaTags 口径一致）。
+ *
+ * 用途：流式回复里，正文走流式、媒体标签单独走普通发送路径——
+ * 否则 `<file src=.../>` 会被当作纯文本展示，文件永远发不出去。
+ */
+export function splitMediaText(text: string): { text: string; mediaText: string } {
+  const { masked, restore } = maskCodeBlocks(text);
+  const mediaParts: string[] = [];
+  const out = masked.replace(MEDIA_TAG_RE, (m, tag: string) => {
+    if (!ALIAS_MAP[String(tag).toLowerCase()]) return m; // 不是媒体标签 → 原样保留
+    mediaParts.push(m);
+    return "";
+  });
+  return { text: restore(out), mediaText: mediaParts.join("") };
+}
+
+/** 末尾是否是「尚未闭合的媒体标签起始」（流式期间要暂时扣住，避免闪出半截标签） */
+function looksLikeMediaTagStart(tail: string): boolean {
+  const openOnly = /^<([a-z_]*)$/i.exec(tail);
+  if (openOnly) {
+    const name = (openOnly[1] ?? "").toLowerCase();
+    if (name.length === 0) return true; // 刚收到 "<"
+    return Object.keys(ALIAS_MAP).some((alias) => alias.startsWith(name));
+  }
+  const withAttr = /^<([a-z_]+)\s/i.exec(tail);
+  return withAttr ? ALIAS_MAP[(withAttr[1] ?? "").toLowerCase()] !== undefined : false;
+}
+
+/**
+ * 流式展示专用：删除媒体标签，并**扣住末尾未完成的标签起始**。
+ *
+ * 为什么需要它：流式是把 LLM 的增量逐段推给用户的，而媒体标签只能被
+ * `sendMessage()` 正确消费（上传文件后再发消息）。若把标签原样推给用户，
+ * 用户会看到 `<file src="/path" name="x.pdf"/>` 这样的裸文本。
+ *
+ * 必须是"累计文本 → 可见文本"的纯函数，且只做删除/扣留、绝不改写其它字符，
+ * 这样调用方可以安全地只推送「可见文本的增长部分」。
+ */
+export function stripMediaForStream(text: string): string {
+  const { masked, restore } = maskCodeBlocks(text);
+  let out = masked.replace(MEDIA_TAG_RE, (m, tag: string) =>
+    ALIAS_MAP[String(tag).toLowerCase()] ? "" : m
+  );
+  // 末尾未闭合的标签起始 → 暂时扣住（下一个 delta 补齐后再整体删除）
+  const lt = out.lastIndexOf("<");
+  if (lt >= 0 && out.indexOf(">", lt) === -1 && looksLikeMediaTagStart(out.slice(lt))) {
+    out = out.slice(0, lt);
+  }
+  return restore(out);
+}
+
 // ── Vision 支持 ───────────────────────────────────────────────────────────────
 
 import type { ContentPart } from "../../llm/client.js";
-
 /**
  * 将含媒体标签的用户消息转为 LLM vision ContentPart[] 格式。
  * - 无图片标签 → 返回原始 string（不触发 vision 路径）

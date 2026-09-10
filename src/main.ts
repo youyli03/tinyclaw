@@ -26,6 +26,7 @@ import type { InboundMessage } from "./connectors/base.js";
 import { downloadAttachments, buildEnrichedContent } from "./connectors/qqbot/attachments.js";
 import { transcribeAudio } from "./connectors/qqbot/transcribe.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
+import { splitMediaText, stripMediaForStream } from "./connectors/utils/media-parser.js";
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
 import { startIpcServer, broadcastActivity, getActivityLog } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
@@ -736,6 +737,12 @@ async function main(): Promise<void> {
     // 单聊 + 该 msg_id 仍有被动回复额度时才开启；群聊/频道不支持流式。
     const stream = connector.openStream(msg.peerId, msg.type, msg.messageId);
 
+    // 流式展示文本的累计量：raw 是 LLM 原始增量，shown 是**已推送给用户的可见文本**。
+    // 推送前必须剥掉媒体标签——标签只能由 sendMessage() 正确消费（上传文件后再发消息），
+    // 直接推给用户会看到 <file src="/path" name="x.pdf"/> 这样的裸文本。
+    let streamRaw = "";
+    let streamShown = "";
+
     const opts: AgentRunOptions = {
       botId: connector.botId,
       onSlaveComplete,
@@ -802,8 +809,16 @@ ${message}`;
         });
       },
       onChunk: (delta: string) => {
-        stream?.push(delta);
         broadcastActivity(session.sessionId, { kind: "chunk", delta });
+        if (!stream?.usable) return;
+        streamRaw += delta;
+        const visible = stripMediaForStream(streamRaw);
+        // 只推送"可见文本的增长部分"；若计算结果不是已推内容的延续（极少见），
+        // 本轮不推，交由收尾时的兜底逻辑处理，避免把错乱内容推给用户。
+        if (visible.length > streamShown.length && visible.startsWith(streamShown)) {
+          stream.push(visible.slice(streamShown.length));
+          streamShown = visible;
+        }
       },
     };
 
@@ -933,8 +948,20 @@ ${message}`;
 
         // ── 流式收尾：最终正文已通过流式送达时跳过普通发送 ────────────────
         if (stream) {
-          const streamed = await stream.finish(toSend);
+          // 正文与媒体标签分开处理：媒体标签必须走普通发送路径才会被上传，
+          // 否则流式会把 <file src=.../> 当作纯文本发给用户、文件永远发不出去。
+          const { text: bodyText, mediaText } = splitMediaText(toSend);
+          const streamBody = mediaText ? bodyText.trim() || streamShown : toSend;
+          const streamed = await stream.finish(streamBody);
           if (streamed) {
+            if (mediaText) {
+              try {
+                await connector.send(msg.peerId, msg.type, mediaText, msg.messageId);
+                console.log("[qqbot] 媒体标签已通过普通发送路径送达（流式仅承载正文）");
+              } catch (mediaErr) {
+                console.error("[qqbot] 流式回复中的媒体发送失败:", mediaErr);
+              }
+            }
             console.log("[qqbot] 最终回复已通过流式送达，跳过普通发送");
             return;
           }

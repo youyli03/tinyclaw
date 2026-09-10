@@ -73,6 +73,7 @@ supportsToolCalls = false   # 不支持 function calling 的模型走文本工�
 appId        = "你的 AppID"
 clientSecret = "你的 ClientSecret"
 # streaming = true   # 单聊最终回复走官方流式消息(整段只占 1 次被动回复额度)
+#                    # 回复中的 <img>/<file> 等富媒体标签由正文剥离后单独发送,不受流式影响
 
 [auth.mfa]
 tenantId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
