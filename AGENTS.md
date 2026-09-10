@@ -200,8 +200,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 ### 7.1 安全模型是"写严读松"
 
-- **MFA 只在一条路径上生效**：检查点在 `agent.ts:1906-1955`。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:372`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
-- **MFA fail-open**：`agent.ts:1928-1937`，无交互回调时 `mfaPassed = true`。新增鉴权分支请 fail-closed。
+- **MFA 只在一条路径上生效**：检查点在 `agent.ts:2009` 起的 MFA 块。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:372`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
+- **MFA fail-open**：`agent.ts:2042-2044`（无交互回调时 `mfaPassed = true`）。新增鉴权分支请 fail-closed。
 - **读路径无边界**：`read_file`（`system.ts:409-413`）与 `read_image`（`system.ts:510-512`）只 `path.resolve` 后直接读，无白名单 → 可读 `~/.ssh/id_rsa`、`secrets.toml`。
 - **`path-guard` 不解析符号链接**（`path-guard.ts:118-193` 无 `realpathSync`），workspace 内软链可逃逸。
 - **`redactKnownSecrets` 全仓无调用点**（`utils/redact.ts:65-75`），日志脱敏实际未生效。
@@ -211,14 +211,16 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 | 死代码 / 失效项 | 位置 |
 |---|---|
-| MicroCompact 调用点整段被注释 | `agent.ts:1116-1135` |
 | `render_document` 工具：模块从未被 import | `tools/render-document.ts:176` |
-| `mfaPreApproved` 全仓无赋值 | `session.ts:122` |
-| `Session.bindParent` / `removeChild` 无调用者 | `session.ts:998-1010` |
-| `distillCodeTurnToNotes` 无调用者 | `memory/summarizer.ts:1265` |
+| `mfaPreApproved` 全仓无赋值 | `session.ts:202` |
+| `Session.bindParent` / `removeChild` 无调用者 | `session.ts:1203-1221` |
+| `distillCodeTurnToNotes` 无调用者 | `memory/summarizer.ts:1351` |
 | `getVisionClient` / `buildAutoModePrompt` / `forceReleaseLock` | `llm/registry.ts:353` / `code/system-prompt.ts:107` / `core/project-router.ts:170` |
 | `loop-runner.restartSession` 有 bug 且无调用者 | `core/loop-runner.ts:61-75` |
 | `/auto` 已废弃（只返回提示） | `code/commands.ts:180-193` |
+
+> 旧条目「MicroCompact 调用点整段被注释」已删除：那段注释块已被真正的工具结果剪枝取代
+> （`agent.ts:1171-1174` 的无模型剪枝，参考 DSH），不再是死代码。
 
 ### 7.3 文档漂移（改文档时的对照表）
 
@@ -241,10 +243,11 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `retry.md:235` copilot 指数退避+jitter | 固定延迟（`copilot.ts:236,603`） |
 | `code-mode.md:33,250` `/auto` 为默认子模式 | 已废弃 |
 | `cron-pipeline.md:257` pipeline tool step「继承 mfaExempt 豁免」 | 实为无条件绕过 MFA |
+| `loop-session.md:189-202` 整节讲 `preCheckScript` | **`LoopSessionConfig` 里没有这个字段**（只有 `enabled` / `agentId` / `tickSeconds` / `taskFile` / `stateful`），`loop-runner.ts` 也没有任何预检逻辑——该能力在 loop-session 上**不存在** |
 
 ### 7.4 其他坑
 
-- **`better-sqlite3` 未在 `package.json` 的 dependencies 声明**（`web/backend/db.ts:28` 用 `createRequire` 加载），干净环境 Dashboard 会崩。
+- **`better-sqlite3` 未在 `package.json` 的 dependencies 声明**（`web/backend/db.ts:28` 用 `createRequire` 加载），干净环境 Dashboard 会崩。本机 `node_modules/better-sqlite3` 的预编译产物还是 2026-03-14 编的（ABI 127，而 Node 20.11 要 115）→ 在 `node --import tsx/esm` 的探针里加载会报 `ERR_DLOPEN_FAILED`，但**服务进程内是好的**（`/proc/<pid>/maps` 可见已映射，chat 记忆检索确实在注入）。要修就是 `npm rebuild better-sqlite3`。
 - **`AutoFreeClient.supportsToolCalls` 恒为 `true`**（`openrouter.ts:169-171`）→ OpenRouter 免费模型永远走不到 textMode。
 - **`gateway.ts:184` 的 finally 删队列会丢新消息**；`api.ts:74` 的 token singleflight 失败后永久卡死。
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
@@ -254,6 +257,14 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
   - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
   - `tools/skill-run.ts` 的 skill 临时 session 在**失败路径不清理** JSONL（`deleteJsonl` 只在成功分支），且 300s 超时用的是 `Promise.race`，**不取消**后台仍在跑的 Slave
+
+### 7.5 Loop 引擎（确认存在、影响真实运行）
+
+> 2026-09 审查确认。这三条互相叠加，导致 `~/.tinyclaw/loops/` 里那个"盯盘"触发器**自 2026-05-01 起没有真正执行过一次**，而日志里看不出来。
+
+- **`preCheckScript` 用 `process.execPath`（= node）执行任意脚本**（`loop-trigger.ts:327`）→ 任何**非 JS** 预检脚本必然抛 `SyntaxError` 并返回非 0，于是**每一个 tick 都被静默跳过**。用户实际配置的是 Python（`is_trading_day.py`）。实测：60 天内 6139 次"返回 1 / 跳过"、**0 次"通过"、0 次"tick 完成"**。修法：按 shebang 或显式解释器执行，并把失败原因（含 stderr）写进运行日志。
+- **loop-trigger 的注入载荷被自己的配置文件顶掉**（`loop-trigger.ts:415`）→ 它把 `path.join(loopsDir, "<id>.json")` 当 `_loopTaskRef` 传给 `session.addLoopTaskMessage()`，而 `getMessagesForLLM()` 对"最后一条带该字段的消息"的语义是**展开该路径的文件内容**——于是 LLM 收到的是 **loop 的 JSON 配置**，而不是本次 tick 的步骤输出 / `message` / exitHint。该缺陷 2026-03-30 引入时因误用 `require("node:fs")`（ESM 下抛错）被 `catch` 兜底掩盖，**2026-07-06 引入 ESLint 时顺手改成 `fs.readFileSync`，缺陷才正式激活**。注意：Slave 继承路径已在 `slave-manager.ts` 剥掉该字段规避，**loop-trigger 自身未修**。
+- **loop 引擎零持久日志** → 启动/跳过/失败/完成全部只有 `console.log`，`~/.tinyclaw/loops/logs/` 根本不存在。这正是前两条能潜伏数月而无人察觉的原因：最有诊断价值的"跳过"信号没有任何消费方。
 
 ---
 
