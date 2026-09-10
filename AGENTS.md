@@ -69,9 +69,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
 | `src/main-supervisor.ts` | 进程守护、崩溃回滚 |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
-| `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 |
+| `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
 | `src/core/inbound-bus.ts` | 用户回复统一路由（MFA / Plan 审批 / ask_user 的 Waiter 队列） |
-| `src/core/slave-manager.ts` | `agent_fork` 子 Agent 生命周期 |
+| `src/core/slave-manager.ts` · `slave-trajectory.ts` | `agent_fork` 子 Agent 生命周期（按轮结构化继承 / 进度 / 等待 / 中断）与轨迹全文归档 |
 | `src/core/loop-runner.ts` · `loop-trigger.ts` | 两套 Loop 执行引擎（TASK.md / JSON 配置） |
 | `src/core/project-router.ts` · `project-memory.ts` | Code 模式项目绑定、锁、项目记忆 |
 | `src/llm/` | `client.ts`(流式+重试+idle)、`registry.ts`(多后端)、`copilot*.ts`、`responses-ws.ts` |
@@ -200,7 +200,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 ### 7.1 安全模型是"写严读松"
 
-- **MFA 只在一条路径上生效**：检查点在 `agent.ts:1906-1955`。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:377`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
+- **MFA 只在一条路径上生效**：检查点在 `agent.ts:1906-1955`。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:372`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
 - **MFA fail-open**：`agent.ts:1928-1937`，无交互回调时 `mfaPassed = true`。新增鉴权分支请 fail-closed。
 - **读路径无边界**：`read_file`（`system.ts:409-413`）与 `read_image`（`system.ts:510-512`）只 `path.resolve` 后直接读，无白名单 → 可读 `~/.ssh/id_rsa`、`secrets.toml`。
 - **`path-guard` 不解析符号链接**（`path-guard.ts:118-193` 无 `realpathSync`），workspace 内软链可逃逸。
@@ -250,6 +250,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
 - **`system-prompt.ts:1-3` 文件头注释已被误编辑破坏**，改动该文件时顺手修复。
 - **`mcp-servers/` 与 `scripts/` 不在 `tsconfig` 的 `include` 范围内**（只含 `src/**/*`），改动它们后 typecheck 不会覆盖。
+- **Subagent 未修的剩余问题**：
+  - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
+  - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
+  - `tools/skill-run.ts` 的 skill 临时 session 在**失败路径不清理** JSONL（`deleteJsonl` 只在成功分支），且 300s 超时用的是 `Promise.race`，**不取消**后台仍在跑的 Slave
 
 ---
 

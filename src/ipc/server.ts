@@ -539,63 +539,64 @@ async function handleRequest(
     return;
   }
 
-  // 并发控制：若当前有 runAgent() 正在运行，软中断并等待完成
+  // 并发控制：若当前有 runAgent() 正在运行，软中断并等待队列排空
   if (session.running) {
     session.abortRequested = true;
     session.llmAbortController?.abort();
     session.abortPendingApproval();
     session.abortPendingPlanApproval();
     session.abortPendingAskUser();
-    await session.currentRunPromise?.catch(() => {});
+    await session.waitIdle();
   }
 
   let fullContent = "";
-  session.running = true;
   // 注：user_input 事件由 main.ts handleMessage 在 runAgent 前广播（含语音转录）
-  const runPromise = runAgent(session, message, {
-    onChunk: (delta) => {
-      fullContent += delta;
-      send({ type: "chunk", delta });
-      broadcastActivity(session!.sessionId, { kind: "chunk", delta });
-    },
-    onMFAPrompt: (prompt) => {
-      send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
-    },
-    onMFARequest: (warningMessage, verifyCode) =>
-      new Promise<boolean>((resolve, reject) => {
-        // 保存 verifyCode，TOTP 模式下 mfa_response 时用其验证 6 位码
-        const mfaEntry: {
-          resolve: (v: boolean) => void;
-          reject: (e: Error) => void;
-          verifyCode?: (code: string) => boolean;
-        } = { resolve, reject };
-        if (verifyCode) mfaEntry.verifyCode = verifyCode;
-        setPendingMFA(mfaEntry);
-        send({ type: "mfa_request", warningMessage });
-      }),
-    onCompress: (phase, summary) => {
-      if (phase === "start") {
-        send({ type: "chunk", delta: "\n🧠 正在整理记忆...\n" });
-      } else if (phase === "done" && summary) {
-        send({ type: "chunk", delta: `✅ 记忆整理完成\n\n${summary}\n` });
-      }
-    },
-    onToolCall: (name, args) => {
-      broadcastActivity(session!.sessionId, {
-        kind: "tool_call",
-        name,
-        argsSummary: JSON.stringify(args).slice(0, 200),
-      });
-    },
-    onToolResult: (name, result) => {
-      broadcastActivity(session!.sessionId, {
-        kind: "tool_result",
-        name,
-        resultSummary: result.slice(0, 300),
-      });
-    },
-  });
-  session.currentRunPromise = runPromise;
+  // 统一 run 队列：running / currentRunPromise 由 runExclusive 维护
+  const runPromise = session.runExclusive(() =>
+    runAgent(session, message, {
+      onChunk: (delta) => {
+        fullContent += delta;
+        send({ type: "chunk", delta });
+        broadcastActivity(session!.sessionId, { kind: "chunk", delta });
+      },
+      onMFAPrompt: (prompt) => {
+        send({ type: "chunk", delta: `\n[MFA] ${prompt}\n` });
+      },
+      onMFARequest: (warningMessage, verifyCode) =>
+        new Promise<boolean>((resolve, reject) => {
+          // 保存 verifyCode，TOTP 模式下 mfa_response 时用其验证 6 位码
+          const mfaEntry: {
+            resolve: (v: boolean) => void;
+            reject: (e: Error) => void;
+            verifyCode?: (code: string) => boolean;
+          } = { resolve, reject };
+          if (verifyCode) mfaEntry.verifyCode = verifyCode;
+          setPendingMFA(mfaEntry);
+          send({ type: "mfa_request", warningMessage });
+        }),
+      onCompress: (phase, summary) => {
+        if (phase === "start") {
+          send({ type: "chunk", delta: "\n🧠 正在整理记忆...\n" });
+        } else if (phase === "done" && summary) {
+          send({ type: "chunk", delta: `✅ 记忆整理完成\n\n${summary}\n` });
+        }
+      },
+      onToolCall: (name, args) => {
+        broadcastActivity(session!.sessionId, {
+          kind: "tool_call",
+          name,
+          argsSummary: JSON.stringify(args).slice(0, 200),
+        });
+      },
+      onToolResult: (name, result) => {
+        broadcastActivity(session!.sessionId, {
+          kind: "tool_result",
+          name,
+          resultSummary: result.slice(0, 300),
+        });
+      },
+    })
+  );
 
   try {
     const result = await runPromise;
@@ -608,12 +609,6 @@ async function handleRequest(
   } catch (e) {
     broadcastActivity(session.sessionId, { kind: "error", message: String(e) });
     send({ type: "error", message: String(e) });
-  } finally {
-    // 只在本 run 仍是当前 run 时才清状态，防止新 run 启动后被旧 finally 覆盖
-    if (session.currentRunPromise === runPromise) {
-      session.running = false;
-      session.currentRunPromise = null;
-    }
   }
 
   // ── 路由到 QQBot(如果 sessionId 编码了 QQ 频道信息)────────────────────────

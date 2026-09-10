@@ -344,15 +344,10 @@ export class LoopTriggerManager {
         return false;
       }
 
-      // 等待 session 当前 run 完成
-      if (session.running && session.currentRunPromise) {
-        await session.currentRunPromise.catch(() => {});
-      }
-
-      // 再次检查：等待期间 session 可能切换到 code 模式
-      if ((session.mode as string) === "code") {
-        console.log(`[loop-trigger] id=${cfg.id} tick 跳过(session 在等待期间切换到 code 模式)`);
-        return false;
+      // 等待 session 空闲的职责已交给下方 session.runExclusive（统一 run 队列），
+      // 这里不再单独等待，避免双重等待与「等待→排队」之间的窗口。
+      if (session.running) {
+        console.log(`[loop-trigger] id=${cfg.id} session 忙，本轮 tick 将排队等待`);
       }
 
       // 构建 notifyFn（从 bindTo 解析 peerId）
@@ -410,10 +405,6 @@ export class LoopTriggerManager {
         return false;
       }
 
-      // 以 addLoopTaskMessage 注入（历史中折叠为占位符，不堆积 K 线数据）
-      const taskRef = path.join(this.loopsDir, `${cfg.id}.json`);
-      session.addLoopTaskMessage(taskRef, content);
-
       // allowExit=true 时通过 customTools 注入 loop_exit 和 loop_control 工具 spec
       const loopExitDef = cfg.allowExit ? getTool("loop_exit") : undefined;
       const loopControlDef = cfg.allowExit ? getTool("loop_control") : undefined;
@@ -423,17 +414,24 @@ export class LoopTriggerManager {
       ] as import("openai/resources/chat/completions").ChatCompletionTool[] | undefined;
       const customToolsFinal = customTools?.length ? customTools : undefined;
 
-      const { content: finalContent } = await this.runAgent(session, content, {
-        skipAddUserMessage: true,
-        skipMemorySearch: true,
-        ...(notifyHint ? { systemPromptSuffix: notifyHint } : {}),
-        ...(notifyFn ? { onNotify: notifyFn } : {}),
-        ...(onLoopExit ? { onLoopExit } : {}),
-        ...(customToolsFinal ? { customTools: customToolsFinal } : {}),
+      // 注入 loop task 消息 + 执行本轮：整体走 session 的统一 run 队列，
+      // 保证「追加注入消息」与「跑 runAgent」之间不会被用户消息插入（A4）。
+      // 以 addLoopTaskMessage 注入（历史中折叠为占位符，不堆积 K 线数据）
+      const taskRef = path.join(this.loopsDir, `${cfg.id}.json`);
+      const finalContent = await session.runExclusive(async () => {
+        session.addLoopTaskMessage(taskRef, content);
+        const { content: out } = await this.runAgent!(session, content, {
+          skipAddUserMessage: true,
+          skipMemorySearch: true,
+          ...(notifyHint ? { systemPromptSuffix: notifyHint } : {}),
+          ...(notifyFn ? { onNotify: notifyFn } : {}),
+          ...(onLoopExit ? { onLoopExit } : {}),
+          ...(customToolsFinal ? { customTools: customToolsFinal } : {}),
+        });
+        // loop 完成后，去掉 assistant 消息中的 [NOTIFY] 标签（保留内容），避免污染后续聊天历史
+        session.stripLoopTagsFromLastAssistantMessage();
+        return out;
       });
-
-      // loop 完成后，去掉 assistant 消息中的 [NOTIFY] 标签（保留内容），避免污染后续聊天历史
-      session.stripLoopTagsFromLastAssistantMessage();
 
       // ── 根据 notify 策略推送 LLM 最终回复 ──────────────────────────────
       if (notifyFn && finalContent.trim()) {

@@ -57,16 +57,14 @@ export function setActiveSessionsRef(m: Map<string, Session>): void {
  */
 export function waitForOtherSessions(currentSessionId: string): Promise<void> {
   if (!_activeSessions) return Promise.resolve();
-  const promises: Promise<unknown>[] = [];
+  const waits: Promise<boolean>[] = [];
   for (const [sid, session] of _activeSessions) {
     if (sid === currentSessionId) continue;
-    if (session.running && session.currentRunPromise) {
-      promises.push(session.currentRunPromise.catch(() => {}));
-    }
+    if (session.running) waits.push(session.waitIdle());
   }
-  if (promises.length === 0) return Promise.resolve();
-  console.log(`[restart] 等待 ${promises.length} 个其他 session 完成后再重启...`);
-  return Promise.all(promises).then(() => {});
+  if (waits.length === 0) return Promise.resolve();
+  console.log(`[restart] 等待 ${waits.length} 个其他 session 完成后再重启...`);
+  return Promise.all(waits).then(() => {});
 }
 
 // ── tsc --noEmit ──────────────────────────────────────────────────────────────

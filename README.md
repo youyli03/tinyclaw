@@ -7,7 +7,7 @@
 - **多后端 LLM**:GitHub Copilot(凭订阅自动发现模型)或任意 OpenAI-compatible API
 - **内置工具集**:文件读写、Shell 执行、HTTP 请求、图表渲染、Cron 定时、MCP 集成、Agent Fork 等
 - **Cron Pipeline**:`steps` 数组精确编排 tool → msg 多步流水线,结果推送到 QQ
-- **Agent Fork**:后台启动 Slave agent 异步执行耗时任务;`agent_wait` 汇总多 Slave 结果
+- **Agent Fork**:后台启动 Slave agent 异步执行耗时任务;按**轮数**继承 Master 上下文(含工具调用与结果);`agent_wait` 汇总多 Slave 结果;子 agent 轨迹**全文归档**可用 `agent_trace` 检索
 - **跨 Session 通信**:`session_get / session_send` 实现不同 Agent session 之间消息互传
 - **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server
 - **MFA 鉴权**:高危工具支持 Azure AD number-matching 推送、TOTP 验证码、文字确认三种方式
@@ -137,9 +137,10 @@ tinyclaw completions install           # 安装 tab 补全
 
 | 工具 | 说明 |
 |------|------|
-| `agent_fork` | 后台 fork Slave agent 异步执行任务(`result_mode: inject\|wait`) |
-| `agent_status` | 查询 Slave 状态与进度 |
-| `agent_wait` | 等待指定 Slave(或所有 Slave)完成并返回结果 |
+| `agent_fork` | 后台 fork Slave agent 异步执行任务(`result_mode: inject\|wait`;`context_rounds` 按轮继承 Master 上下文) |
+| `agent_status` | 查询 Slave 状态与进度(当前阶段 / 已用工具 / 实时输出) |
+| `agent_wait` | 等待指定 Slave(或所有 Slave)完成并返回结果全文;超时**不改写** Slave 状态 |
+| `agent_trace` | 检索已归档的 Slave 执行轨迹(列出最近归档,或取某个 Slave 的结果全文与轨迹路径) |
 | `agent_abort` | 软中断 Slave |
 | `session_get` | 列举对当前 Agent 可见的所有活跃 session |
 | `session_send` | 向指定 session 注入消息,触发 Agent 处理 |
@@ -215,6 +216,11 @@ tinyclaw completions install           # 安装 tab 补全
 ├── cron/
 │   ├── jobs/            # 定时任务持久化(<id>.json)
 │   └── logs/            # 每次 run 的结果日志
+├── slaves/              # Slave(sub-agent)轨迹归档
+│   └── YYYY-MM/YYYY-MM-DD-<slaveId>/
+│       ├── trajectory.jsonl   # 完整轨迹(含继承上下文 + 每次工具调用与结果)
+│       ├── meta.json          # 任务/状态/工具/起止时间
+│       └── result.md          # 最终结果全文
 ├── reports/             # 日报存档(<type>/<date>.md,供 Dashboard 展示)
 └── news/                # News MCP 新闻存档(YYYY-MM/YYYY-MM-DD.md)
 ```

@@ -52,7 +52,8 @@ tinyclaw/
 │   │   ├── router.ts         # 意图路由（扩展点，当前直通）
 │   │   ├── agent-manager.ts  # Agent 工作区管理（创建/查找/路径/repair）+ session loop 配置读写
 │   │   ├── loop-runner.ts    # Loop Session 引擎：扫描 sessions/*.toml，setInterval tick，runAgent
-│   │   └── slave-manager.ts  # Slave agent 生命周期：fork / status / abort / 进度推送
+│   │   └── slave-manager.ts  # Slave agent 生命周期：fork（按轮结构化继承）/ status / abort / 进度推送 / 轨迹归档
+│   │        （slave-trajectory.ts # Slave 轨迹归档：~/.tinyclaw/slaves/YYYY-MM/YYYY-MM-DD-<id>/）
 │   ├── llm/
 │   │   ├── client.ts         # OpenAI-compatible 统一接口（streamChat + withRetry + idle timeout）
 │   │   ├── registry.ts       # 多后端注册（providers + backends）；get(name)；async init()
@@ -87,7 +88,7 @@ tinyclaw/
 │   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务)
 │   │   ├── skill-creator.ts  # create_skill(创建 Skill 文档并注册到 SKILLS.md)
 │   │   ├── skill-run.ts      # 技能执行辅助
-│   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_wait / agent_abort
+│   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_wait / agent_trace / agent_abort
 │   │   ├── session-bridge.ts # session_get / session_send(跨 session 消息互传,双向 allow-list 权限)
 │   │   ├── path-guard.ts     # 路径安全检查(防止越权访问)
 │   │   ├── sanitize.ts       # 工具结果清理与截断
@@ -181,6 +182,11 @@ tinyclaw/
 ├── cron/
 │   ├── jobs/                 # 每个 job 独立 JSON 文件（<id>.json），调度器热加载
 │   └── logs/                 # 每次 run 的结果日志（<id>.jsonl，追加写入）
+├── slaves/                   # Slave(sub-agent)轨迹归档（结束时从 sessions/ 移动至此，不再删除）
+│   └── YYYY-MM/YYYY-MM-DD-<slaveId>/
+│       ├── trajectory.jsonl  # 完整轨迹：继承的上下文 + 本次全部工具调用与结果
+│       ├── meta.json         # task / status / toolsUsed / agentId / masterSessionId / 起止时间
+│       └── result.md         # 最终结果全文（agent_trace 读取）
 ├── reports/                  # 日报存档(<type>/<date>.md,write_report 写入,Dashboard 展示)
 ├── dashboard.db              # Dashboard 业务指标数据库(SQLite,db_write 写入)
 ├── news/                     # news MCP server 的新闻存档
@@ -415,13 +421,22 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 ### Agent Fork(Master-Slave)
 
-- `agent_fork` 工具:在后台启动 Slave agent,继承 Master 上下文快照,异步执行耗时任务
+- `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
+  - `context_rounds`:继承 Master 最近多少**轮**对话(一轮 = 一条用户消息起算,含该轮内全部工具调用与结果);默认 10,最大 30。裁剪按轮向前对齐,不会切断「assistant 发 tool_call / 结果未回」的中间态
+  - 继承为**结构化复制**(保留 `tool_calls` 与 `role:"tool"`),并同步写入 Slave 自己的 JSONL,使轨迹自包含
   - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session,触发新一轮 LLM 推理后回复用户
   - `result_mode: "wait"`:Slave 完成后静默,Master 需主动调用 `agent_wait(slave_id)` 获取结果;适合并行 fork 多个 Slave 后统一汇总
-- `agent_status` 工具:查询单个 Slave 进度,或列出所有 Slave
-- `agent_wait` 工具:等待指定 Slave(或当前会话所有 Slave)完成并返回结果,支持 `timeout_secs`
-- `agent_abort` 工具:软中断 Slave
+- `agent_status` 工具:查询单个 Slave 进度(当前阶段 / 已用工具与调用次数 / 实时输出尾部 / 轨迹目录),或列出所有 Slave
+- `agent_wait` 工具:等待指定 Slave(或当前会话所有 Slave)完成并返回**结果全文**,支持 `timeout_secs`。
+  超时**不改写 Slave 状态**,返回 `timedOut` 标志与仍在运行的 id 列表(超时是调用方的观察结果,不是被观察对象的状态)
+- `agent_trace` 工具:检索已归档的 Slave 轨迹(不传参列出最近归档;传 `slave_id` 取结果全文与轨迹路径)
+- `agent_abort` 工具:软中断 Slave(只记录中止意图,状态由真正收尾决定,避免状态领先于事实)
 - 最大嵌套深度 1:Slave 内不允许再 fork(`agent_fork` 返回错误提示)
+- **轨迹归档**:Slave 结束时其 JSONL 被**移动**到 `~/.tinyclaw/slaves/YYYY-MM/YYYY-MM-DD-<slaveId>/`
+  (`trajectory.jsonl` + `meta.json` + `result.md`),不再删除;进程重启后遗留的孤立 JSONL 由 `gc()` 归档而非丢弃
+- **统一 run 队列**:同一 session 上的一切 `runAgent` 经 `Session.runExclusive()` 严格串行
+  (用户消息 / Slave 结果注入 / `session_send` / loop tick / IPC 共用同一队列),避免 messages[] 交错与
+  `currentRunPromise` 被覆盖;`Session.waitIdle()` 用于「等待空闲」而非「排队执行」
 
 ### MCP 支持
 

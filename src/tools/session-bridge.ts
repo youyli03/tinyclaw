@@ -92,6 +92,11 @@ registerTool({
     }
 
     const fromAgentId = ctx.agentId ?? "default";
-    return ctx.sessionSendFn(targetSessionId, message, fromAgentId);
+    return ctx.sessionSendFn(
+      targetSessionId,
+      message,
+      fromAgentId,
+      ...(ctx.sessionId ? [ctx.sessionId] : [])
+    );
   },
 });

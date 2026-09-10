@@ -96,7 +96,9 @@ export interface ToolContext {
   sessionSendFn?: (
     targetSessionId: string,
     message: string,
-    fromAgentId: string
+    fromAgentId: string,
+    /** 发送方所在 session，用于拦截"发给自己"造成的自锁 */
+    fromSessionId?: string
   ) => Promise<string>;
   /**
    * 跨 session 通信：获取当前 Agent 可见的 session 列表（由 main.ts 注入）。

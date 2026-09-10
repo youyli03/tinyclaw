@@ -19,7 +19,7 @@ import { Session } from "../core/session.js";
 import { releaseLock, acquireLock } from "../core/project-router.js";
 
 function denyWhileRunning(session: Session): string | null {
-  if (!session.running && !session.currentRunPromise) return null;
+  if (!session.running) return null;
   return "⚠️ 当前有任务正在运行,不能在运行中切换模式或子模式,请等待完成后再试。";
 }
 

@@ -112,6 +112,82 @@ export class Session {
   llmAbortController: AbortController | null = null;
   /** 当前 runAgent() 的 Promise（用于等待其自然结束） */
   currentRunPromise: Promise<unknown> | null = null;
+
+  // ── Run 队列：同一 session 上的一切 runAgent 严格串行 ─────────────────────
+  /**
+   * 串行链。链尾代表「队列已排空」的时点，供 waitIdle() 使用。
+   * 每个入队者先把自己的「放行 promise」接到链上，再等待前一个 run 结束。
+   */
+  private runChain: Promise<void> = Promise.resolve();
+  /** 队列中尚未结束的 run 数量（包含正在执行的那个） */
+  private pendingRunCount = 0;
+
+  /**
+   * 排队取得本 session 的独占运行权并执行 `fn`。
+   *
+   * 解决的问题：原先各处直接 `runAgent(session, ...)` 并手工设置
+   * `running` / `currentRunPromise`，「检查是否空闲 → await → 置位」之间存在窗口，
+   * 多个入口（用户消息 / slave 结果注入 / session_send / loop tick）可能并发跑同一个
+   * session，导致 messages[] 交错、`currentRunPromise` 被覆盖。
+   *
+   * 语义：
+   * - 同一 session 上的多次调用**严格串行**，先到先得
+   * - `fn` 执行期间 `running === true`，`currentRunPromise` 指向 `fn` 的 Promise
+   * - `fn` 抛错时错误原样抛出，队列不被污染
+   *
+   * ⚠️ 禁止在 `fn` 内部对**同一个 session** 再调用 `runExclusive`（会自锁）。
+   */
+  runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.runChain;
+    let release!: () => void;
+    this.runChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.pendingRunCount++;
+
+    return (async (): Promise<T> => {
+      // 前一个 run 失败不应阻塞队列
+      await prev.catch(() => {});
+      this.running = true;
+      try {
+        const p = fn();
+        this.currentRunPromise = p;
+        return await p;
+      } finally {
+        this.pendingRunCount--;
+        if (this.pendingRunCount === 0) {
+          this.running = false;
+          this.currentRunPromise = null;
+        }
+        release();
+      }
+    })();
+  }
+
+  /**
+   * 等待本 session 的 run 队列排空（所有已排队与正在执行的 run 结束）。
+   * `timeoutMs` 省略或 <=0 时无限等待；超时返回 false（不抛错）。
+   */
+  async waitIdle(timeoutMs?: number): Promise<boolean> {
+    if (this.pendingRunCount === 0) return true;
+    const tail = this.runChain;
+    if (!timeoutMs || timeoutMs <= 0) {
+      await tail.catch(() => {});
+      return true;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    const settled = tail.then(
+      () => true,
+      () => true
+    );
+    const ok = await Promise.race([settled, timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+    return ok;
+  }
+
   /**
    * 最后触发 run 的 QQBot connector 的 botId。
    * 用于多 bot 场景：同 bot 的新消息可软中断当前 run（用户打断为预期行为），
@@ -680,12 +756,18 @@ export class Session {
   }
 
   /**
-   * 批量导入消息（深拷贝），用于 auto-fork continuation slave 克隆 Master 全量上下文。
+   * 批量导入消息（深拷贝），用于 slave 继承 Master 上下文。
    * 保留原始结构（含 tool_call / tool_result），不做任何内容提取或角色过滤。
+   *
+   * @param opts.persist 为 true 时同步追加到本 session 的 JSONL。
+   *   slave 的 JSONL 在结束后会被归档为轨迹（见 core/slave-trajectory.ts），
+   *   因此需要让它成为**自包含**的记录：既含继承来的上下文，也含 slave 自己产生的消息。
    */
-  importMessages(messages: ChatMessage[]): void {
+  importMessages(messages: ChatMessage[], opts: { persist?: boolean } = {}): void {
     for (const msg of messages) {
-      this.messages.push(structuredClone(msg));
+      const cloned = structuredClone(msg);
+      this.messages.push(cloned);
+      if (opts.persist) this._appendMsgToJsonl(cloned);
     }
   }
 

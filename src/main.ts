@@ -392,7 +392,7 @@ async function main(): Promise<void> {
         session.abortPendingAskUser();
       }
       // 等待当前 run 自然结束（工具会跑完，但不会进入下一轮 LLM）
-      await session.currentRunPromise?.catch(() => {});
+      await session.waitIdle();
     }
     session.lastRunBotId = connector.botId;
 
@@ -417,19 +417,18 @@ async function main(): Promise<void> {
         return;
       }
 
-      // 等待 Master 当前任务完成（避免并发写入 session）
-      if (targetSession.running && targetSession.currentRunPromise) {
-        await targetSession.currentRunPromise.catch(() => {});
-      }
+      // 串行化交由 Session.runExclusive 负责（见下方 runExclusive 调用）
 
       // 构建注入内容
       const statusIcon = notif.status === "done" ? "✅" : notif.status === "error" ? "❌" : "⛔";
+      const trace = slaveManager.status(notif.slaveId)?.tracePath;
       const content =
         `<slave-results>\n` +
         `[slave:${notif.slaveId}] ${statusIcon} 后台任务已完成\n` +
         `任务：${notif.task}\n` +
         `状态：${notif.status}\n` +
         `结果：\n${notif.result || "（无输出）"}\n` +
+        (trace ? `完整轨迹（含每次工具调用与结果）：${trace}\n` : "") +
         `</slave-results>`;
 
       // 重用当前连接的 MFA/Compress 回调（peerId/msgType 通过闭包捕获）
@@ -465,20 +464,18 @@ async function main(): Promise<void> {
         ...(_sessionGetFn ? { sessionGetFn: _sessionGetFn } : {}),
       };
 
-      // 将 slave 结果注入 Master session 并运行 agent → 通知用户
-      targetSession.running = true;
-      const slaveRunPromise = runAgent(targetSession, content, slaveOpts);
-      targetSession.currentRunPromise = slaveRunPromise;
+      // 将 slave 结果注入 Master session 并运行 agent → 通知用户。
+      // 走统一 run 队列（A4）：不再「检查 running → await → 手工置位」，
+      // 避免与用户新消息并发跑同一个 session（消息交错 / currentRunPromise 被覆盖）。
       try {
-        const runResult = await slaveRunPromise;
+        const runResult = await targetSession.runExclusive(() =>
+          runAgent(targetSession, content, slaveOpts)
+        );
         if (runResult.content) {
           await connector.send(msg.peerId, msg.type, runResult.content).catch(() => {});
         }
       } catch (err) {
         console.error(`[slave:${notif.slaveId}] master inject error:`, err);
-      } finally {
-        targetSession.running = false;
-        targetSession.currentRunPromise = null;
       }
     };
 
@@ -489,8 +486,9 @@ async function main(): Promise<void> {
       const elapsed = Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000);
       const toolsSummary =
         state.progress.toolsUsed.length > 0
-          ? `\n已用工具：${state.progress.toolsUsed.join(", ")}`
+          ? `\n已用工具（共 ${state.progress.toolCallCount ?? state.progress.toolsUsed.length} 次）：${state.progress.toolsUsed.join(", ")}`
           : "";
+      const phaseSummary = state.progress.phase ? `\n当前阶段：${state.progress.phase}` : "";
       const partialSummary = state.progress.partialOutput
         ? `\n最新输出：…${state.progress.partialOutput.slice(-200)}`
         : "";
@@ -500,6 +498,7 @@ async function main(): Promise<void> {
         `任务：${state.task.slice(0, 80)}${state.task.length > 80 ? "…" : ""}\n` +
         `状态：${state.status}（已运行 ${elapsed}s）` +
         toolsSummary +
+        phaseSummary +
         partialSummary;
 
       await connector.send(msg.peerId, msg.type, progressMsg).catch((err) => {
@@ -807,7 +806,7 @@ ${message}`;
     };
 
     // ── Fire-and-forget：启动新 run，结果通过 connector.send() 推送 ──
-    session.running = true;
+    // running / currentRunPromise 由下方的 session.runExclusive 维护
 
     // /retry 命令触发：复用上次失败的 X-Request-Id，跳过添加新用户消息（已在 session 历史中）
     const pendingRetry = session.pendingRetry;
@@ -836,13 +835,14 @@ ${message}`;
         }
       : opts;
 
-    const runPromise = runAgent(session, messageContent, finalOpts);
+    // 统一 run 队列（A4）：同一 session 上的 run 严格串行，
+    // running / currentRunPromise 由 Session.runExclusive 维护，调用方不再手工置位。
+    const runPromise = session.runExclusive(() => runAgent(session, messageContent, finalOpts));
     // 广播用户输入（包含语音转录后的 resolvedContent）
     broadcastActivity(session.sessionId, {
       kind: "user_input",
       message: resolvedContent.slice(0, 500),
     });
-    session.currentRunPromise = runPromise;
 
     void runPromise
       .then(async (result) => {
@@ -959,14 +959,8 @@ ${message}`;
         } catch {
           // 发送失败（如网络/证书错误），静默忽略，不能让进程崩溃
         }
-      })
-      .finally(() => {
-        // 只在本 run 仍是当前 run 时才清状态，防止新 run 启动后被旧 .finally() 覆盖
-        if (session.currentRunPromise === runPromise) {
-          session.running = false;
-          session.currentRunPromise = null;
-        }
       });
+    // running / currentRunPromise 的清理由 Session.runExclusive 的 finally 负责
 
     // 返回 "" — 实际回复通过 connector.send() 推送，connector 不会重复发送
     return "";
@@ -994,8 +988,14 @@ ${message}`;
   const sessionSendFn = async (
     targetSessionId: string,
     message: string,
-    fromAgentId: string
+    fromAgentId: string,
+    fromSessionId?: string
   ): Promise<string> => {
+    // 自锁拦截：向自己所在的 session 发消息会让自己排在队尾等自己，永远无法返回
+    if (fromSessionId && targetSessionId === fromSessionId) {
+      return "已拒绝：不能向自己所在的 session 发送消息（会导致该会话自锁）";
+    }
+
     // 获取目标 session（不存在时 lazy 创建）
     const targetSession = getSession(targetSessionId);
     const targetAgentId = targetSession.agentId;
@@ -1013,11 +1013,7 @@ ${message}`;
       return `权限拒绝：agent "${targetAgentId}" 未允许来自 agent "${fromAgentId}" 的消息（在 ${agentManager.accessConfigPath(targetAgentId)} 中添加 allow_from = ["${fromAgentId}"]）`;
     }
 
-    // 等待目标 session 空闲
-    if (targetSession.running && targetSession.currentRunPromise) {
-      await targetSession.currentRunPromise.catch(() => {});
-    }
-
+    // 串行化交由下方 Session.runExclusive 负责（自动等待目标 session 空闲）
     // 注入消息，走完整 runAgent 路径
     const nowStr = new Date().toLocaleString() + " UTC+8";
 
@@ -1040,14 +1036,12 @@ ${message}`;
       }
     }
 
-    const { content: finalContent } = await runAgent(
-      targetSession,
-      `[来自 ${fromAgentId} @ ${nowStr}] ${message}`,
-      {
+    const { content: finalContent } = await targetSession.runExclusive(() =>
+      runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
         sessionSendFn,
         sessionGetFn,
         ...(targetOnNotify ? { onNotify: targetOnNotify } : {}),
-      }
+      })
     );
 
     // 将 AI 最终回复推给目标用户
@@ -1100,11 +1094,14 @@ ${message}`;
     }
     // 通过 addLoopTaskMessage 注入 loop task，携带 taskFilePath 用于 getMessagesForLLM 折叠
     session.addLoopTaskMessage(taskFilePath, content);
-    await runAgent(session, content, {
-      sessionSendFn,
-      sessionGetFn,
-      skipAddUserMessage: true,
-    });
+    // 统一 run 队列：loop tick 不得与用户消息并发（A4）
+    await session.runExclusive(() =>
+      runAgent(session, content, {
+        sessionSendFn,
+        sessionGetFn,
+        skipAddUserMessage: true,
+      })
+    );
   };
   await loopRunner.start(loopTick);
 
@@ -1295,31 +1292,32 @@ ${message}`;
                 };
 
                 // skipAddUserMessage: true — 直接从已有的 tool_result 续接,不注入多余的用户消息
-                const resumePromise = runAgent(codeSession, "", {
-                  skipAddUserMessage: true,
-                  continueAsAgentRound: true,
-                  onAskUser: resumeOnAskUser,
-                  onNotify: resumeOnNotify,
-                  ...(marker.restartTaskId ? { agentTaskIdOverride: marker.restartTaskId } : {}),
-                  onChunk: (delta: string) => {
-                    broadcastActivity(codeSession.sessionId, { kind: "chunk", delta });
-                  },
-                  onToolCall: (name: string, args: Record<string, unknown>) => {
-                    broadcastActivity(codeSession.sessionId, {
-                      kind: "tool_call",
-                      name,
-                      argsSummary: JSON.stringify(args).slice(0, 200),
-                    });
-                  },
-                  onToolResult: (name: string, result: string) => {
-                    broadcastActivity(codeSession.sessionId, {
-                      kind: "tool_result",
-                      name,
-                      resultSummary: result.slice(0, 300),
-                    });
-                  },
-                });
-                codeSession.currentRunPromise = resumePromise;
+                const resumePromise = codeSession.runExclusive(() =>
+                  runAgent(codeSession, "", {
+                    skipAddUserMessage: true,
+                    continueAsAgentRound: true,
+                    onAskUser: resumeOnAskUser,
+                    onNotify: resumeOnNotify,
+                    ...(marker.restartTaskId ? { agentTaskIdOverride: marker.restartTaskId } : {}),
+                    onChunk: (delta: string) => {
+                      broadcastActivity(codeSession.sessionId, { kind: "chunk", delta });
+                    },
+                    onToolCall: (name: string, args: Record<string, unknown>) => {
+                      broadcastActivity(codeSession.sessionId, {
+                        kind: "tool_call",
+                        name,
+                        argsSummary: JSON.stringify(args).slice(0, 200),
+                      });
+                    },
+                    onToolResult: (name: string, result: string) => {
+                      broadcastActivity(codeSession.sessionId, {
+                        kind: "tool_result",
+                        name,
+                        resultSummary: result.slice(0, 300),
+                      });
+                    },
+                  })
+                );
                 resumePromise
                   .then((result) => {
                     broadcastActivity(codeSession.sessionId, { kind: "done" });
@@ -1335,11 +1333,8 @@ ${message}`;
                       message: String(err),
                     });
                     console.error("[restart_tool] resume runAgent error:", err);
-                  })
-                  .finally(() => {
-                    codeSession.running = false;
-                    codeSession.currentRunPromise = null;
                   });
+                // running / currentRunPromise 清理由 runExclusive 负责
               } else {
                 console.log(
                   `[restart_tool] codeSession "${marker.codeSessionId}" not found after restart, skip resume`
@@ -1363,43 +1358,43 @@ ${message}`;
                     )
                     .catch(() => {});
                 }
-                extraSession.running = true;
-                const extraPromise = runAgent(extraSession, "", {
-                  skipAddUserMessage: true,
-                  continueAsAgentRound: true,
-                  ...(extra.peerId
-                    ? {
-                        onNotify: async (msg: string) => {
-                          await connector!
-                            .send(
-                              extra.peerId,
-                              extra.msgType as import("./connectors/base.js").InboundMessage["type"],
-                              msg
-                            )
-                            .catch(() => {});
-                        },
-                      }
-                    : {}),
-                  ...(extra.taskId ? { agentTaskIdOverride: extra.taskId } : {}),
-                  onChunk: (delta: string) => {
-                    broadcastActivity(extraSession.sessionId, { kind: "chunk", delta });
-                  },
-                  onToolCall: (name: string, args: Record<string, unknown>) => {
-                    broadcastActivity(extraSession.sessionId, {
-                      kind: "tool_call",
-                      name,
-                      argsSummary: JSON.stringify(args).slice(0, 200),
-                    });
-                  },
-                  onToolResult: (name: string, result: string) => {
-                    broadcastActivity(extraSession.sessionId, {
-                      kind: "tool_result",
-                      name,
-                      resultSummary: result.slice(0, 300),
-                    });
-                  },
-                });
-                extraSession.currentRunPromise = extraPromise;
+                const extraPromise = extraSession.runExclusive(() =>
+                  runAgent(extraSession, "", {
+                    skipAddUserMessage: true,
+                    continueAsAgentRound: true,
+                    ...(extra.peerId
+                      ? {
+                          onNotify: async (msg: string) => {
+                            await connector!
+                              .send(
+                                extra.peerId,
+                                extra.msgType as import("./connectors/base.js").InboundMessage["type"],
+                                msg
+                              )
+                              .catch(() => {});
+                          },
+                        }
+                      : {}),
+                    ...(extra.taskId ? { agentTaskIdOverride: extra.taskId } : {}),
+                    onChunk: (delta: string) => {
+                      broadcastActivity(extraSession.sessionId, { kind: "chunk", delta });
+                    },
+                    onToolCall: (name: string, args: Record<string, unknown>) => {
+                      broadcastActivity(extraSession.sessionId, {
+                        kind: "tool_call",
+                        name,
+                        argsSummary: JSON.stringify(args).slice(0, 200),
+                      });
+                    },
+                    onToolResult: (name: string, result: string) => {
+                      broadcastActivity(extraSession.sessionId, {
+                        kind: "tool_result",
+                        name,
+                        resultSummary: result.slice(0, 300),
+                      });
+                    },
+                  })
+                );
                 extraPromise
                   .then((result) => {
                     broadcastActivity(extraSession.sessionId, { kind: "done" });
@@ -1419,11 +1414,8 @@ ${message}`;
                       message: String(err),
                     });
                     console.error("[restart_tool] extra session resume error:", err);
-                  })
-                  .finally(() => {
-                    extraSession.running = false;
-                    extraSession.currentRunPromise = null;
                   });
+                // running / currentRunPromise 清理由 runExclusive 负责
               }
             }, 1000);
           }
