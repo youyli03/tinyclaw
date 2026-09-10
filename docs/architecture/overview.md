@@ -422,10 +422,26 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 ### Agent Fork(Master-Slave)
 
 - `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
-  - `context_rounds`:继承 Master 最近多少**轮**对话(一轮 = 一条用户消息起算,含该轮内全部工具调用与结果);默认 10,最大 30。裁剪按轮向前对齐,不会切断「assistant 发 tool_call / 结果未回」的中间态
-  - 另有**字符预算** `MAX_CONTEXT_CHARS = 120000`:仅按轮数裁剪无法防住"轮数少但单轮极长"的情况;超预算时从**最旧的整轮**开始丢弃(绝不切断轮内结构),丢弃轮数记录在 `SlaveState.context.droppedRounds` 与归档的 `meta.json` 中,并出现在 `agent_status` 输出里
-  - 继承时**剥掉** Master 消息上的 `_loopTaskRef`:该字段的语义是"最后一条此类消息由 `getMessagesForLLM()` 展开为该路径的文件内容",而 Slave 继承到的 ref 指向 **Master 的** loop 任务文件;保留会让 Slave 侧用它顶掉真正的注入载荷
+  - `context_mode`:继承模式,默认取 `memory.slaveContextMode`
+    - `task-only`:不继承历史(system prompt 里的 MEM.md / SKILLS.md 仍然在)。**背景自足时最省**
+    - `minimal`:Master 压缩摘要 + 最近 ≤6 轮
+    - `standard`(默认):Master 压缩摘要 + 预算内尽可能多的近期轮次
+    - `full`:同上但不设轮数上限(仍受预算约束)
+  - `context_rounds`:轮数**上限**(与 mode 取更严格者),默认 10,最大 30
+  - **预算按窗口比例**:`budgetTokens = clamp(窗口 × memory.slaveContextRatio, 8000, 窗口 − 8000)`。
+    固定字符数在不同窗口下不自洽(同一个值在 128k 窗口占 27%、在 800k 窗口只占 4%),故改为比例制。
+    Slave 每次 fork 都是新 session,继承内容首次请求**缓存全部未命中、按全价计费**(Master 那边是热的),
+    因此**不要全拿**
+  - **只取最近**:从最新一轮向前累计直到用满预算即停(不是"取一批再从最旧砍"——那会先把远期拉进来、
+    再砍掉近因边缘,顺序是反的)。按轮对齐,起点必须落在 `role:"user"`
+  - **继承的职责是"近因"**:本 claw 的 chat 模式是长会话陪伴/管家型,最早那条消息可能来自几个月前。
+    远期由三处承担:system prompt 里的 `MEM.md`(长期偏好)、继承时注入的 Master 压缩检查点(本会话中段)、
+    以及启动时的**召回层**(见下)
+  - **召回层**(`memory.slaveRecall`,默认开):Slave 的自动记忆检索在 `agent.ts` 里被 `!isSlave` 关闭,
+    因此启动时补两件事:注入该 Agent 的 `ACTIVE.md`("近期活跃上下文 / 未完成事项 / 最新要求")、
+    用 Slave 的 `task` 做一次 QMD 语义检索并注入相关历史片段。把"远期记忆"从"塞进上下文"变成"按需召回"
   - 继承为**结构化复制**(保留 `tool_calls` 与 `role:"tool"`),并同步写入 Slave 自己的 JSONL,使轨迹自包含
+  - 继承时**剥掉** Master 消息上的 `_loopTaskRef`:该字段的语义是"最后一条此类消息由 `getMessagesForLLM()` 展开为该路径的文件内容",而 Slave 继承到的 ref 指向 **Master 的** loop 任务文件;保留会让 Slave 侧用它顶掉真正的注入载荷
   - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session,触发新一轮 LLM 推理后回复用户
   - `result_mode: "wait"`:Slave 完成后静默,Master 需主动调用 `agent_wait(slave_id)` 获取结果;适合并行 fork 多个 Slave 后统一汇总
 - `agent_status` 工具:查询单个 Slave 进度(当前阶段 / 已用工具与调用次数 / 实时输出尾部 / 轨迹目录),或列出所有 Slave
@@ -599,6 +615,11 @@ clientSecret = "your-client-secret"
 rkllmEmbed.enabled = true
 rkllmEmbed.port    = 11434
 tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
+
+# Subagent（agent_fork）上下文继承预算与模式，见「Agent Fork」节
+slaveContextRatio = 0.05        # 预算 = clamp(窗口 × 比例, 8000, 窗口 − 8000)
+slaveContextMode  = "standard"  # task-only | minimal | standard | full
+slaveRecall       = true        # Slave 启动时注入 ACTIVE.md + 用 task 做 QMD 语义检索
 ```
 
 ---

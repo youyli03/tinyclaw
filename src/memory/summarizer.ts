@@ -8,6 +8,7 @@ import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
 import { readExistingCards, parseCardJson, saveCards, sortCardsByScore } from "./cards.js";
 import type { MemoryCard } from "./cards.js";
+import { estimateMessagesTokens } from "./token-estimate.js";
 import {
   mkdirSync,
   appendFileSync,
@@ -633,22 +634,6 @@ export const CHAT_RETAIN_RATIO = 0.16;
 
 /** 调用方未传预算时的兜底值（约 20k token） */
 const DEFAULT_CHAT_RETAIN_TOKENS = 20_000;
-
-/** 估算一组消息的 token 数（与 shouldSummarize 同口径：字符 / 3.5，含 tool_calls） */
-function estimateMessagesTokens(messages: ChatMessage[]): number {
-  let chars = 0;
-  for (const m of messages) {
-    if (typeof m.content === "string") chars += m.content.length;
-    else if (Array.isArray(m.content)) {
-      for (const p of m.content as { text?: string }[]) {
-        chars += typeof p.text === "string" ? p.text.length : 200;
-      }
-    }
-    const calls = (m as { tool_calls?: unknown[] }).tool_calls;
-    if (calls) chars += JSON.stringify(calls).length;
-  }
-  return Math.ceil(chars / 3.5);
-}
 
 /**
  * 按 token 预算选出需要逐字保留的近期尾部（对齐 DSH 的 `retainTokens` 语义）。

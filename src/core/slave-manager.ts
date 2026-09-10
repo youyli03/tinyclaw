@@ -16,6 +16,11 @@ import { Session } from "./session.js";
 import type { ChatMessage } from "../llm/client.js";
 import { archiveSlaveTrajectory, type SlaveTrajectoryMeta } from "./slave-trajectory.js";
 import { createLogger } from "../utils/logger.js";
+import { loadConfig } from "../config/loader.js";
+import { llmRegistry } from "../llm/registry.js";
+import { agentManager } from "./agent-manager.js";
+import { approxMessageChars, tokensToChars } from "../memory/token-estimate.js";
+import { searchMemory } from "../memory/qmd.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -52,11 +57,18 @@ export interface SlaveState {
   tracePath?: string;
   /** 上下文继承统计（fork 时填入，供 agent_status / meta.json 展示） */
   context?: {
+    mode: SlaveContextMode;
+    /** 本次继承的 token 预算（上下文窗口 × 比例 − 预留） */
+    budgetTokens: number;
+    /** 实际占用（估算） */
+    usedTokens: number;
     inheritedRounds: number;
     inheritedMessages: number;
     droppedRounds: number;
     inheritedChars: number;
     summaryInjected: boolean;
+    /** 召回层结果（_run 启动时填入）：ACTIVE.md 是否注入 + 语义检索字符数 */
+    recall?: { activeMd: boolean; memoryChars: number };
   };
   agentId?: string;
   startedAt: string;
@@ -131,13 +143,11 @@ export interface SlaveWaitAllResult {
 
 const MAX_PARTIAL_LEN = 500;
 const MAX_PHASE_LEN = 120;
-/**
- * 继承上下文的字符预算上限。
- * `context_rounds` 只能限"轮数"，但单轮可能极长（一次大文件读取、一次长回复），
- * 30 轮实测可达 60 万字符（≈17 万 tokens），足以撑爆上下文窗口。
- * 超预算时从**最旧的整轮**开始丢弃，绝不切断轮内结构。
- */
-const MAX_CONTEXT_CHARS = 120_000;
+
+/** 召回层：ACTIVE.md 注入上限（字符） */
+const ACTIVE_INJECT_MAX_CHARS = 4_000;
+/** 召回层：QMD 检索结果注入上限（字符） */
+const RECALL_INJECT_MAX_CHARS = 1_500;
 
 const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份运行（后台异步执行）
 
@@ -160,26 +170,41 @@ const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份
 
 // ── 上下文继承（两条 fork 路径共用） ──────────────────────────────────────────
 
+/** Slave 继承模式（对应 config.memory.slaveContextMode，可被 agent_fork 的 context_mode 覆盖） */
+export type SlaveContextMode = "task-only" | "minimal" | "standard" | "full";
+
+/**
+ * 继承预算里必须给 Slave 自己留出的部分（token）：
+ * 它自己的 system prompt + task + 工具往返 + 最终输出。
+ * 作用是把预算**上界**压在 `窗口 − 预留`，而不是从比例里做减法
+ * （做减法会在小窗口下把预算减成负数）。
+ */
+const SLAVE_CONTEXT_RESERVE_TOKENS = 8_000;
+/**
+ * 继承预算的绝对下限（token）。
+ * `窗口 × ratio` 在小窗口下会小得没用（128k × 0.05 = 6400），
+ * 因此预算取 `clamp(窗口 × ratio, 下限, 窗口 − 预留)`。
+ */
+const SLAVE_CONTEXT_MIN_TOKENS = 8_000;
+
+/** `minimal` 模式的轮数上限 */
+const MINIMAL_ROUNDS = 6;
+
 /** buildSlaveContext 的返回：便于在日志与 meta 中记录继承了哪些内容 */
 export interface SlaveContextStats {
+  mode: SlaveContextMode;
+  /** 本次继承的 token 预算（由上下文窗口 × 比例得出） */
+  budgetTokens: number;
+  /** 实际占用（估算） */
+  usedTokens: number;
   inheritedMessages: number;
   inheritedRounds: number;
   /** 是否注入了 Master 压缩摘要 */
   summaryInjected: boolean;
-  /** 因超出字符预算而从最旧一侧丢弃的轮数 */
+  /** 因预算不足而未纳入的轮数 */
   droppedRounds: number;
   /** 实际继承的字符数（近似值，用于观测） */
   inheritedChars: number;
-}
-
-/** 估算一条消息的字符体量（content + tool_calls），用于上下文预算裁剪 */
-function approxMessageChars(m: ChatMessage): number {
-  const c = (m as { content?: unknown }).content;
-  const contentLen =
-    typeof c === "string" ? c.length : c === undefined ? 0 : JSON.stringify(c).length;
-  const tc = (m as { tool_calls?: unknown }).tool_calls;
-  const callsLen = Array.isArray(tc) ? JSON.stringify(tc).length : 0;
-  return contentLen + callsLen;
 }
 
 /**
@@ -189,40 +214,86 @@ function approxMessageChars(m: ChatMessage): number {
  * - 两条 fork 路径共用本函数，避免 `fork()` 与 `forkContinuation()` 的继承质量不一致
  * - 保留 `tool_calls` 与 `role:"tool"` 的原始结构（旧实现用 extractText 降级为纯文本，
  *   且没有 `role:"tool"` 分支，导致 Slave 完全看不到工具证据）
- * - 裁剪按**轮数**（轮 = 一条 user 消息到下一个 user 消息之前）向前对齐，
- *   避免切断「assistant 发 tool_call / 结果未回」的中间态
+ * - **只取最近**：从最新一轮向前累计直到用满预算即停（而不是"取一批再从最旧砍"——
+ *   那样会先把远期拉进来、再砍掉近因边缘，顺序是反的）
+ * - 按轮对齐：起点必须落在 `role:"user"`，绝不以孤立的 `role:"tool"` 开头
+ * - 预算按**模型上下文窗口 × 比例**得出，不是一个固定字符数（窗口在不同后端差异极大）
  * - 继承内容同步写入 Slave 的 JSONL，使其轨迹自包含（见 core/slave-trajectory.ts）
  * - 剥掉继承消息上的 `_loopTaskRef`，避免 Slave 侧被 Master 的 loop 任务文件顶掉载荷
- * - 受 MAX_CONTEXT_CHARS 字符预算约束，超预算时从最旧整轮开始丢弃
  *
- * @param rounds 继承最近多少轮；省略或 <=0 表示继承全量
+ * **场景前提（重要）**：本 claw 的 chat 模式是「智能管家」型的长会话。
+ * 继承的职责是提供**近因**（最近一段聊了什么），不是"起因"（最早那条消息可能来自几个月前）。
+ * 远期由三处承担：system prompt 里的 MEM.md（长期偏好）、本函数注入的 Master 压缩检查点
+ * （本会话中段）、以及 `_run` 里的召回层（ACTIVE.md + QMD 检索）。
+ *
+ * @param opts.mode   继承模式；`task-only` 不继承任何历史
+ * @param opts.rounds 调用方显式给的轮数上限（与 mode 取更严格者）
  */
 function buildSlaveContext(
   slaveSession: Session,
   masterSession: Session,
-  rounds?: number
+  opts: { mode: SlaveContextMode; rounds?: number }
 ): SlaveContextStats {
   const all = masterSession.getMessages();
 
-  // ── 按轮对齐：找到倒数第 rounds 条 user 消息的下标 ──────────────────────
+  // ── 预算：clamp(窗口 × 比例, 下限, 窗口 − 预留) ──────────────────────────
+  const cfg = loadConfig();
+  const ratio = cfg.memory.slaveContextRatio;
+  const ctxWindow = llmRegistry.getContextWindow("daily", masterSession.lastResponseAt);
+  const upper = Math.max(
+    SLAVE_CONTEXT_MIN_TOKENS,
+    ctxWindow - SLAVE_CONTEXT_RESERVE_TOKENS
+  );
+  const budgetTokens = Math.min(
+    upper,
+    Math.max(SLAVE_CONTEXT_MIN_TOKENS, Math.floor(ctxWindow * ratio))
+  );
+  const budgetChars = tokensToChars(budgetTokens);
+
+  // ── task-only：完全不继承（system prompt 里的 MEM.md / SKILLS.md 仍然在） ──
+  // 必须早返回：否则下面 `userIdx[len - 0]` 会越界取到 undefined，
+  // 而 `Array.slice(undefined)` 等于**全量切片**（曾经因此把 12 轮全继承进来）。
+  if (opts.mode === "task-only") {
+    return {
+      mode: opts.mode,
+      budgetTokens,
+      usedTokens: 0,
+      inheritedMessages: 0,
+      inheritedRounds: 0,
+      summaryInjected: false,
+      droppedRounds: all.filter((m) => m.role === "user").length,
+      inheritedChars: 0,
+    };
+  }
+
+  // 轮数上限：mode 与调用方给的值取更严格者
+  const modeRoundCap = opts.mode === "minimal" ? MINIMAL_ROUNDS : undefined;
+  const roundCap =
+    modeRoundCap === undefined
+      ? opts.rounds && opts.rounds > 0
+        ? opts.rounds
+        : undefined
+      : opts.rounds && opts.rounds > 0
+        ? Math.min(modeRoundCap, opts.rounds)
+        : modeRoundCap;
+
+  // ── 只取最近：定位"最后 roundCap 轮"的起点（若给了上限） ────────────────
   let startIdx = 0;
-  if (rounds !== undefined && rounds > 0) {
+  if (roundCap !== undefined) {
     const userIdx: number[] = [];
     for (let i = 0; i < all.length; i++) {
       if (all[i]!.role === "user") userIdx.push(i);
     }
-    if (userIdx.length > rounds) {
-      startIdx = userIdx[userIdx.length - rounds]!;
-    }
+    startIdx = userIdx.length > roundCap ? userIdx[userIdx.length - roundCap]! : 0;
   }
-  const slice = all.slice(startIdx);
 
-  // ── 字符预算：从最旧一侧按【整轮】丢弃，绝不切断轮内结构 ────────────────
-  let trimmed = slice;
+  // ── 从最新一轮向前累计，直到用满预算 ────────────────────────────────────
+  // startIdx 是"允许的最早起点"，我们从这个位置往后取；若超预算，则把起点往后推
+  // （即丢弃**更旧**的轮），直到落在预算内。等价于"只取最近、够预算就停"。
+  let trimmed = all.slice(startIdx);
   let droppedRounds = 0;
   let chars = trimmed.reduce((sum, m) => sum + approxMessageChars(m), 0);
-  while (chars > MAX_CONTEXT_CHARS && trimmed.length > 1) {
-    // 找到当前保留区里"下一轮"的起点（下一条 user 消息）
+  while (chars > budgetChars && trimmed.length > 1) {
     let nextUser = 1;
     while (nextUser < trimmed.length && trimmed[nextUser]!.role !== "user") nextUser++;
     if (nextUser >= trimmed.length) break; // 只剩最后一轮，再丢就没有上下文了
@@ -231,7 +302,7 @@ function buildSlaveContext(
     droppedRounds++;
   }
 
-  // ── 注入 Master 压缩摘要（仅当切片未覆盖到它时） ────────────────────────
+  // ── 注入 Master 压缩摘要（本会话"中段"的载体） ──────────────────────────
   let summaryInjected = false;
   if (masterSession.lastSummary) {
     const covered = trimmed.some(
@@ -239,7 +310,7 @@ function buildSlaveContext(
     );
     if (!covered) {
       slaveSession.addSystemMessage(
-        `## Master 对话历史摘要（背景信息）\n\n${masterSession.lastSummary}`
+        `## Master 对话历史摘要（本会话更早部分的压缩）\n\n${masterSession.lastSummary}`
       );
       summaryInjected = true;
     }
@@ -264,6 +335,9 @@ function buildSlaveContext(
   }
 
   return {
+    mode: opts.mode,
+    budgetTokens,
+    usedTokens: Math.ceil(chars / 3.5),
     inheritedMessages: cleaned.length,
     // 报告**实际**继承的轮数（裁剪后重新计数），避免与 droppedRounds 互相矛盾
     inheritedRounds: cleaned.filter((m) => m.role === "user").length,
@@ -285,7 +359,8 @@ class SlaveManager {
    *
    * @param task                Slave 的任务描述（注入为最后一条 user 消息）
    * @param masterSession       Master Session（用于复制上下文快照）
-   * @param contextRounds       继承 Master 最近多少**轮**对话（一轮 = 一条 user 消息起算）；<=0 表示全量
+   * @param contextRounds       轮数上限（与 mode 取更严格者）；<=0 表示不额外限制
+   * @param contextMode         继承模式，默认取 config.memory.slaveContextMode
    * @param runFn               runAgent 实现（由 ToolContext.slaveRunFn 注入，避免循环依赖）
    * @param onComplete          Slave 完成后的回调
    * @param reportIntervalSecs  定期进度推送间隔（秒），0 或不传则不启用
@@ -301,9 +376,11 @@ class SlaveManager {
     reportIntervalSecs?: number,
     onProgressNotify?: SlaveProgressNotifyFn,
     resultMode: "inject" | "wait" = "inject",
-    extraRunOpts?: SlaveRunExtraOpts
+    extraRunOpts?: SlaveRunExtraOpts,
+    contextMode?: SlaveContextMode
   ): string {
     const slaveId = crypto.randomUUID().slice(0, 8);
+    const mode = contextMode ?? loadConfig().memory.slaveContextMode;
 
     const state: SlaveState = {
       slaveId,
@@ -322,9 +399,15 @@ class SlaveManager {
     const slaveSession = new Session(slaveSessionId, { agentId: masterSession.agentId });
     this.sessions.set(slaveId, slaveSession);
 
-    // 结构化继承 Master 最近 contextRounds 轮对话（含工具调用与结果）
-    const stats = buildSlaveContext(slaveSession, masterSession, contextRounds);
+    // 结构化继承：按 mode 与预算取"最近的"若干轮（含工具调用与结果）
+    const stats = buildSlaveContext(slaveSession, masterSession, {
+      mode,
+      rounds: contextRounds,
+    });
     state.context = {
+      mode: stats.mode,
+      budgetTokens: stats.budgetTokens,
+      usedTokens: stats.usedTokens,
       inheritedRounds: stats.inheritedRounds,
       inheritedMessages: stats.inheritedMessages,
       droppedRounds: stats.droppedRounds,
@@ -333,11 +416,11 @@ class SlaveManager {
     };
 
     log.info(
-      `[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, ` +
+      `[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, mode=${stats.mode}, ` +
         `继承 ${stats.inheritedRounds} 轮 / ${stats.inheritedMessages} 条` +
         `${stats.summaryInjected ? " + 摘要" : ""}` +
-        `${stats.droppedRounds > 0 ? ` (预算裁剪丢 ${stats.droppedRounds} 轮)` : ""}, ` +
-        `约 ${stats.inheritedChars} 字符, task="${task.slice(0, 60)}"`
+        `${stats.droppedRounds > 0 ? ` (预算不足未纳入 ${stats.droppedRounds} 轮)` : ""}, ` +
+        `约 ${stats.usedTokens}/${stats.budgetTokens} tokens, task="${task.slice(0, 60)}"`
     );
 
     // 后台运行（fire-and-forget）
@@ -391,9 +474,14 @@ class SlaveManager {
     const slaveSession = new Session(slaveSessionId, { agentId: masterSession.agentId });
     this.sessions.set(slaveId, slaveSession);
 
-    // 结构化继承全量 Master 上下文（含 tool_call / tool_result），并落盘使轨迹自包含
-    const stats = buildSlaveContext(slaveSession, masterSession);
+    // 结构化继承全量 Master 上下文（含 tool_call / tool_result），并落盘使轨迹自包含。
+    // auto-fork 的语义是"接着刚才那轮继续"，因此用 standard 而不是 config 默认值，
+    // 但仍受预算约束（不设轮数上限）。
+    const stats = buildSlaveContext(slaveSession, masterSession, { mode: "standard" });
     state.context = {
+      mode: stats.mode,
+      budgetTokens: stats.budgetTokens,
+      usedTokens: stats.usedTokens,
       inheritedRounds: stats.inheritedRounds,
       inheritedMessages: stats.inheritedMessages,
       droppedRounds: stats.droppedRounds,
@@ -641,6 +729,73 @@ class SlaveManager {
     }
   }
 
+  /**
+   * 注入「召回层」：ACTIVE.md（近期活跃上下文）+ QMD 语义检索。
+   *
+   * 为什么放在这里而不是 buildSlaveContext：
+   * - 两者都是 **async**，而 `fork()` 必须同步返回 slaveId
+   * - 语义上也不同：继承给的是"最近聊了什么"（近因），召回给的是
+   *   "主人当前在忙什么"（ACTIVE.md）与"以前相关的片段"（向量检索）
+   *
+   * 全部 best-effort：任一步失败只记日志，不影响 Slave 启动。
+   */
+  private async injectRecallLayer(
+    session: Session,
+    task: string,
+    state: SlaveState
+  ): Promise<void> {
+    if (!loadConfig().memory.slaveRecall) return;
+
+    // 1. ACTIVE.md —— 管家场景下"主人当前在忙什么"的正牌载体
+    let activeInjected = false;
+    try {
+      const activePath = agentManager.activePath(session.agentId);
+      if (fs.existsSync(activePath)) {
+        const raw = fs.readFileSync(activePath, "utf-8").trim();
+        if (raw) {
+          const truncated =
+            raw.length > ACTIVE_INJECT_MAX_CHARS
+              ? `${raw.slice(0, ACTIVE_INJECT_MAX_CHARS)}\n…（ACTIVE.md 超长已截断）`
+              : raw;
+          session.addSystemMessage(
+            `## 主人近期活跃上下文（ACTIVE.md）\n\n${truncated}`
+          );
+          activeInjected = true;
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `[slave:${state.slaveId}] ACTIVE.md 注入失败: ${err instanceof Error ? err.message : err}`
+      );
+    }
+
+    // 2. QMD 语义检索 —— 用 task 作 query（Slave 的 task 语义清晰，天然适合检索）
+    let recallChars = 0;
+    try {
+      const hit = await searchMemory(task.slice(0, 200), session.agentId, 5);
+      if (hit && hit.trim()) {
+        const truncated =
+          hit.length > RECALL_INJECT_MAX_CHARS ? `${hit.slice(0, RECALL_INJECT_MAX_CHARS)}…` : hit;
+        session.addSystemMessage(`## 相关历史记忆（语义检索）\n\n${truncated}`);
+        recallChars = truncated.length;
+      }
+    } catch (err) {
+      log.warn(
+        `[slave:${state.slaveId}] 记忆检索失败: ${err instanceof Error ? err.message : err}`
+      );
+    }
+
+    if (state.context) {
+      state.context.recall = { activeMd: activeInjected, memoryChars: recallChars };
+    }
+    if (activeInjected || recallChars > 0) {
+      log.info(
+        `[slave:${state.slaveId}] 召回层: ACTIVE.md=${activeInjected ? "是" : "否"}, ` +
+          `语义检索=${recallChars} 字符`
+      );
+    }
+  }
+
   private async _run(
     slaveId: string,
     session: Session,
@@ -653,6 +808,13 @@ class SlaveManager {
     extraRunOpts?: SlaveRunExtraOpts
   ): Promise<void> {
     const state = this.states.get(slaveId)!;
+
+    // ── 召回层（管家场景的"远期/近因"补充）────────────────────────────────
+    // Slave 的自动记忆检索在 agent.ts 里被 `!isSlave` 关掉了，这里补两件事：
+    //   1. ACTIVE.md —— "近期活跃上下文 / 未完成事项 / 最新要求"（主人当前在忙什么）
+    //   2. QMD 语义检索 —— 用 task 做 query，召回跨会话的相关历史片段
+    // 两者都比"把远期原文塞进上下文"更省 token 也更准。
+    await this.injectRecallLayer(session, task, state);
 
     // ── 实时进度：把 Slave 自己的工具调用与输出流接进 SlaveProgress ──────────
     // 旧实现只在 _run 收尾时写一次 progress，导致「定期进度推送」全程汇报的是空值。

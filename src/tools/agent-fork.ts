@@ -39,7 +39,20 @@ registerTool({
           context_rounds: {
             type: "number",
             description:
-              "继承 Master 最近多少轮对话作为背景（一轮 = 一条用户消息起算，含该轮内全部工具调用与结果）；默认 10，最大 30",
+              "继承轮数**上限**（与 context_mode 取更严格者）。默认 10，最大 30。" +
+              "预算不足时会自动少给；不要指望靠调大它塞进全部历史",
+          },
+          context_mode: {
+            type: "string",
+            enum: ["task-only", "minimal", "standard", "full"],
+            description:
+              "继承模式（默认取 config 的 memory.slaveContextMode）：" +
+              "task-only=完全不继承（最省，system prompt 里的 MEM.md 仍在）；" +
+              "minimal=Master 摘要 + 最近 ≤6 轮；" +
+              "standard=摘要 + 预算内尽可能多的近期轮次；" +
+              "full=同上但不设轮数上限（仍受预算约束）。" +
+              "注意：继承提供的是「近因」（最近聊了什么），远期由 MEM.md / ACTIVE.md / 语义检索承担，" +
+              "背景要求请写进 task",
           },
           progress_interval_secs: {
             type: "number",
@@ -69,6 +82,11 @@ registerTool({
     }
 
     const contextRounds = Math.min(Math.max(1, Number(args["context_rounds"] ?? 10)), 30);
+    const rawMode = args["context_mode"] ? String(args["context_mode"]) : undefined;
+    const contextMode =
+      rawMode === "task-only" || rawMode === "minimal" || rawMode === "standard" || rawMode === "full"
+        ? rawMode
+        : undefined;
 
     // 定期进度汇报间隔：限制在 30s - 3600s 之间
     const rawInterval = args["progress_interval_secs"];
@@ -86,7 +104,9 @@ registerTool({
       ctx.onSlaveComplete,
       reportIntervalSecs,
       ctx.onProgressNotify,
-      resultMode
+      resultMode,
+      undefined,
+      contextMode
     );
 
     const progressNote =
@@ -104,7 +124,7 @@ registerTool({
     return (
       `✅ Slave \`${slaveId}\` 已在后台启动\n` +
       `任务：${task.slice(0, 100)}${task.length > 100 ? "…" : ""}\n` +
-      `继承上下文：Master 最近 ${contextRounds} 轮对话（含工具调用与结果）\n` +
+      `继承模式：${contextMode ?? "config 默认"}（轮数上限 ${contextRounds}，实际受 token 预算约束）\n` +
       `交付模式：${resultMode}` +
       progressNote +
       `\n\n` +
@@ -394,12 +414,19 @@ function formatSlaveState(state: SlaveState): string {
 
   if (state.finishedAt) lines.push(`完成：${state.finishedAt}`);
   if (state.context) {
+    const c = state.context;
     lines.push(
-      `继承上下文：${state.context.inheritedRounds} 轮 / ${state.context.inheritedMessages} 条` +
-        `（约 ${state.context.inheritedChars} 字符）` +
-        `${state.context.summaryInjected ? " + Master 摘要" : ""}` +
-        `${state.context.droppedRounds > 0 ? `；因预算上限丢弃了最旧 ${state.context.droppedRounds} 轮` : ""}`
+      `继承上下文：mode=${c.mode}，${c.inheritedRounds} 轮 / ${c.inheritedMessages} 条` +
+        `（约 ${c.usedTokens}/${c.budgetTokens} tokens）` +
+        `${c.summaryInjected ? " + Master 摘要" : ""}` +
+        `${c.droppedRounds > 0 ? `；未纳入 ${c.droppedRounds} 轮（mode 或预算所限）` : ""}`
     );
+    if (c.recall) {
+      lines.push(
+        `召回层：ACTIVE.md=${c.recall.activeMd ? "已注入" : "无"}，` +
+          `语义检索=${c.recall.memoryChars} 字符`
+      );
+    }
   }
   if (state.progress.phase) lines.push(`当前阶段：${state.progress.phase}`);
   if (state.progress.toolsUsed.length > 0) {

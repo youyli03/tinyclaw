@@ -137,7 +137,7 @@ tinyclaw completions install           # 安装 tab 补全
 
 | 工具 | 说明 |
 |------|------|
-| `agent_fork` | 后台 fork Slave agent 异步执行任务(`result_mode: inject\|wait`;`context_rounds` 按轮继承 Master 上下文) |
+| `agent_fork` | 后台 fork Slave agent 异步执行任务(`result_mode: inject\|wait`;`context_mode` 选继承模式,`context_rounds` 定轮数上限) |
 | `agent_status` | 查询 Slave 状态与进度(当前阶段 / 已用工具 / 实时输出) |
 | `agent_wait` | 等待指定 Slave(或所有 Slave)完成并返回结果全文;超时**不改写** Slave 状态 |
 | `agent_trace` | 检索已归档的 Slave 执行轨迹(列出最近归档,或取某个 Slave 的结果全文与轨迹路径) |

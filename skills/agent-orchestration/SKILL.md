@@ -45,15 +45,34 @@ requires:
 ## agent_fork 参数
 
 - `task`:Slave 任务描述,须清晰、可独立执行(不依赖对话中未提供的背景)
-- `context_rounds`:继承 Master 最近多少**轮**对话(默认 10,最大 30)。
-  一轮 = 一条用户消息起算,含该轮内**全部工具调用与结果**;裁剪按轮向前对齐,
-  不会切断「assistant 发 tool_call / 结果未回」的中间态。需要更多背景就调大它
-- **上下文有字符预算(120000)**:轮数少但单轮很长时(如一次大文件读取)可能触顶,
-  此时会从**最旧的整轮**开始丢弃。丢了哪几轮会写在 `agent_status` 的
-  「继承上下文」一行与归档 `meta.json` 的 `droppedRounds`;若关键背景被丢,
-  应把结论直接写进 `task` 而不是指望 Slave 从历史里翻
+- `context_mode`:继承模式(默认取配置的 `memory.slaveContextMode` = `standard`)
+  - `task-only`:不继承任何历史(记忆库 MEM.md / SKILLS.md 仍在 system prompt 里)。**task 写全时最省**
+  - `minimal`:Master 摘要 + 最近 ≤6 轮
+  - `standard`:Master 摘要 + 预算内尽可能多的近期轮次
+  - `full`:同上但不设轮数上限(仍受 token 预算约束)
+- `context_rounds`:轮数**上限**(与 mode 取更严格者),默认 10,最大 30
 - `progress_interval_secs`:进度汇报间隔(秒,30~3600);不设置则仅完成时通知。
   汇报内容含**当前阶段**(最近一轮助手输出开头)、已用工具与调用次数、实时输出尾部
+
+## 继承的语义(重要)
+
+**继承提供的是「近因」——最近聊了什么,而不是「起因」。**
+本 claw 的 chat 模式是长会话陪伴/管家型,最早那条消息可能来自几个月前,与本次子任务无关。
+远期由三处承担,不需要靠继承硬塞:
+
+| 远期来源 | 承载方式 |
+|---|---|
+| 长期偏好/人格 | system prompt 里的 `MEM.md`(自动注入) |
+| 本会话更早的部分 | Master 的压缩检查点(继承时自动带上) |
+| 主人近期在忙什么 | 启动时注入 `ACTIVE.md`(需 `memory.slaveRecall=true`) |
+| 跨会话相关片段 | 用 `task` 做 QMD 语义检索后注入(`memory.slaveRecall=true`) |
+
+**token 预算**:`clamp(窗口 × memory.slaveContextRatio, 8000, 窗口 − 8000)`。
+Slave 每次 fork 都是新 session,继承内容首次请求**缓存全部未命中、按全价计费**,所以量与成本线性相关;
+预算不足时会**少给**,并把 `droppedRounds` 写进 `agent_status` 与归档 `meta.json`。
+**不要指望靠调大 `context_rounds` 把全部历史塞进去。**
+
+**因此:写 `task` 时把 Slave 真正需要知道的背景直接写进去**——这比依赖继承更可靠也更省。
 
 ## agent_wait 用法
 

@@ -497,6 +497,35 @@ const MemorySchema = z.object({
    */
   memorySafetyCheck: z.boolean().default(true),
 
+  // ── Subagent（agent_fork）上下文继承 ──────────────────────────────────────
+  /**
+   * Slave 继承 Master 上下文的预算比例（相对**该模型的上下文窗口**）。
+   *
+   * 为什么是比例而不是固定值：窗口在不同后端差异极大（schema 默认 128k，而
+   * deepseek 等后端可配到 800k），固定字符数在一个窗口下过于保守、在另一个窗口下过于危险。
+   *
+   * 取值建议 0.05 ~ 0.10：Slave 每次 fork 都是**新 session**，继承来的内容在首次请求里
+   * 全部缓存未命中、按全价计费（Master 那边是热的），因此不宜取高。
+   */
+  slaveContextRatio: z.number().min(0).max(1).default(0.05),
+  /**
+   * Slave 继承模式（可被 agent_fork 的 context_mode 参数逐次覆盖）：
+   * - `task-only`：不继承（system prompt 里的 MEM.md 仍然在）
+   * - `minimal`  ：Master 压缩摘要 + 最近 ≤6 轮
+   * - `standard` ：Master 压缩摘要 + 预算内尽可能多的近期轮次（默认）
+   * - `full`     ：同上但不设轮数上限（仍受预算约束）
+   */
+  slaveContextMode: z.enum(["task-only", "minimal", "standard", "full"]).default("standard"),
+  /**
+   * 是否在 Slave 启动时补充「召回层」（默认 true）：
+   * 1. 注入该 Agent 的 ACTIVE.md（"近期活跃上下文 / 未完成事项 / 最新要求"）
+   * 2. 用 Slave 的 task 做一次 QMD 语义检索，注入相关历史片段
+   *
+   * 这两项把"远期记忆"从"塞进上下文"变成"按需召回"，是同时降 token 与提质量的一步。
+   * 注意：正常交互会话的记忆检索由 agent.ts 负责，本项只影响 Slave（Slave 的自动检索是关闭的）。
+   */
+  slaveRecall: z.boolean().default(true),
+
   // ── 内置每日记忆维护调度器 ────────────────────────────────────────────────
   /**
    * 是否启用内置每日记忆维护（默认 true）。
