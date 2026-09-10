@@ -101,15 +101,14 @@ cli:<uuid>               CLI tinyclaw chat
 │      await session.currentRunPromise（等待工具执行完毕后 run 自然退出）
 │
 └─ 启动新 run（fire-and-forget）
-     session.running = true
-     构建 opts（onMFARequest / onMFAPrompt 回调）
-     runPromise = runAgent(session, msg.content, opts)
-     session.currentRunPromise = runPromise
+     构建 opts（onMFARequest / onMFAPrompt / onPurpose 等回调）
+     runPromise = session.runExclusive(() => runAgent(session, msg.content, opts))
+     │   ↑ 同一 session 上的一切 run（用户消息 / Slave 结果注入 / session_send / loop tick / IPC）
+     │     都经这一个队列严格串行；running 与 currentRunPromise 由 runExclusive 维护，
+     │     调用方**不再手工置位**（旧的「检查 running → await → 赋值」存在并发窗口）
      │
      runPromise.then  → connector.send(result.content)（主动推送回复）
      runPromise.catch → connector.send("抱歉，处理消息时出现错误")
-     runPromise.finally → session.running = false, currentRunPromise = null
-     │
      handleMessage() 立即返回 ""（connector 不重复发送）
 ```
 
@@ -177,8 +176,12 @@ runAgent(session, userContent, opts)
 │           │
 │           ├─ 工具未找到 → [tool_result:name] 未知工具，continue
 │           │
-│           ├─ MFA 检查（见第五节）
-│           │    toolNeedsMFA(name, args, cfg) == true
+│           ├─ 剥离框架保留字段 __purpose（见本节末「__purpose 进度旁白」）
+│           │    { args: toolArgs, purpose } = stripReservedArgs(call.args)
+│           │    purpose 归一化（长度上限 / emoji 不计长 / 图形簇截断）
+│           │
+│           ├─ MFA 检查（见第五节）——判定与告警文案都用**剥离后**的 toolArgs
+│           │    toolNeedsMFA(name, toolArgs, cfg) == true
 │           │    && session.mfaApprovedForThisRun == false
 │           │    → 进行 MFA 验证（接口 A 或 B）
 │           │    ├─ 通过 → session.mfaApprovedForThisRun = true，继续执行
@@ -186,13 +189,32 @@ runAgent(session, userContent, opts)
 │           │    └─ 超时/异常 → [tool_result:name] 操作被取消：MFA 未通过，continue
 │           │
 │           └─ 执行工具
-│                result = await executeTool(name, args)
+│                purposeArbiter.onToolStart(name, purpose)   ← 记录候选，慢工具到点才展示
+│                result = await executeTool(name, toolArgs)   ← 工具看不到 __purpose
+│                purposeArbiter.onToolEnd(name, durationMs)   ← T2：长工具刚收尾时展示
 │                messages.push([tool_result:name]\n{result})
 │                [再次检测 abortRequested] → break（工具可能运行数秒）
 │         │
 │         [批次结束后检测 abortRequested] → break，退出轮次循环
 │         │
 │         [round == maxToolRounds-1] → 强制 LLM 生成总结回复，break
+│
+│    注：非串行工具在一个批次内**并行执行**（Promise.all），因此完成顺序可能与发起顺序相反；
+│        __purpose 的展示按"发送那一刻的真实进度"重新选取，不受这个顺序影响。
+│
+├─ 步骤 4.5：`__purpose` 进度旁白（取代了旧的定时心跳）
+│    注入：组装 tools 之后，给每个工具的参数 schema 追加可选字段 __purpose
+│          （内置工具 / MCP 工具 / customTools 一视同仁，全部模式一致）
+│    剥离：执行前从参数中移除，工具实现与 MCP server 永远看不到它
+│    进历史：它就在 assistant.tool_calls[].function.arguments 里，随 JSONL 自然持久化；
+│          **不额外插入独立消息**（插在 assistant(tool_calls) 与 tool(result) 之间会打断配对触发 400）
+│    展示仲裁（core/purpose-arbiter.ts）：
+│      T1 工具运行满 agent.purposeHoldMs(默认 4s) → 展示（"用户确实在等"）
+│      T2 长工具刚结束且当前无在跑工具 → 展示
+│      快工具静默；agent.purposeMinGapMs(默认 3s) 限制间隔；
+│      agent_fork / session_send 这类"秒返回但后台长跑"的工具跳过 hold 直接展示
+│      发送时按真实进度重新选取：有工具在跑→取"最后发起"者，否则取"最后完成"者；
+│      被超越的候选一律丢弃、不回放
 │
 ├─ 步骤 5a：JSONL 持久化（异步 fire-and-forget，不阻塞）
 │    finalContent != "" → session.appendLastTurnToJsonl()
@@ -474,6 +496,10 @@ IPC `memory_rebuild` 流程:
 | 参数 | 位置 | 默认值 | 说明 |
 |---|---|---|---|
 | `tools.maxChatToolRounds` | `config.toml` | 0（无限制） | Chat/Cron 模式单次 runAgent 最多工具调用轮数，0=无限制 |
+| `agent.toolPurpose` | `config.toml` | `true` | 是否启用工具调用的 `__purpose` 进度旁白（关掉则完全不注入、不展示） |
+| `agent.purposeMaxUnits` | `config.toml` | 10 | `__purpose` 长度上限：CJK 按字、连续拉丁串按词；emoji 不计；超出按图形簇截断 |
+| `agent.purposeHoldMs` | `config.toml` | 4000 | 工具运行超过该时长才算"用户在等"；0 = 一开始就展示 |
+| `agent.purposeMinGapMs` | `config.toml` | 3000 | 两次 `__purpose` 展示之间的最小间隔 |
 | `auth.mfa.tools` | `config.toml` | `["delete_file","write_file"]` | 整工具 MFA 黑名单 |
 | `auth.mfa.exec_shell_patterns.patterns` | `config.toml` | `["rm","sudo","chmod","chown","dd","mv"]` | exec_shell 命令级黑名单 |
 | `auth.mfa.timeoutSecs` | `config.toml` | 60 | MFA 等待超时（秒） |

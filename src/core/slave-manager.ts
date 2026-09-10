@@ -148,6 +148,15 @@ const MAX_PHASE_LEN = 120;
 const ACTIVE_INJECT_MAX_CHARS = 4_000;
 /** 召回层：QMD 检索结果注入上限（字符） */
 const RECALL_INJECT_MAX_CHARS = 1_500;
+/**
+ * 召回层的整体时间上限（ms）。
+ *
+ * 召回层位于 `runFn` 之前，它的耗时**直接叠加到 Slave 的启动延迟**上。
+ * 而 `searchMemory` 内部包含 embed 服务探活（超时 5s）、sqlite 加载失败回退等路径，
+ * 在服务异常或环境不完整时可能明显变慢。超时即放弃召回（只记日志），
+ * 绝不让"锦上添花"的记忆召回拖住 Slave 开工。
+ */
+const RECALL_TIMEOUT_MS = 3_000;
 
 const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份运行（后台异步执行）
 
@@ -205,6 +214,28 @@ export interface SlaveContextStats {
   droppedRounds: number;
   /** 实际继承的字符数（近似值，用于观测） */
   inheritedChars: number;
+}
+
+/**
+ * 给 Promise 加超时。超时抛错（由调用方决定是放弃还是降级），
+ * 不会取消底层操作（JS 无取消语义），但保证调用方不被无限期挂住。
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  if (ms <= 0) return p;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}超时（>${ms}ms）`)), ms);
+    timer.unref?.();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    );
+  });
 }
 
 /**
@@ -770,9 +801,14 @@ class SlaveManager {
     }
 
     // 2. QMD 语义检索 —— 用 task 作 query（Slave 的 task 语义清晰，天然适合检索）
+    //    带整体超时：召回失败/变慢都不能拖住 Slave 开工
     let recallChars = 0;
     try {
-      const hit = await searchMemory(task.slice(0, 200), session.agentId, 5);
+      const hit = await withTimeout(
+        searchMemory(task.slice(0, 200), session.agentId, 5),
+        RECALL_TIMEOUT_MS,
+        "记忆检索"
+      );
       if (hit && hit.trim()) {
         const truncated =
           hit.length > RECALL_INJECT_MAX_CHARS ? `${hit.slice(0, RECALL_INJECT_MAX_CHARS)}…` : hit;
@@ -781,7 +817,7 @@ class SlaveManager {
       }
     } catch (err) {
       log.warn(
-        `[slave:${state.slaveId}] 记忆检索失败: ${err instanceof Error ? err.message : err}`
+        `[slave:${state.slaveId}] 记忆检索跳过: ${err instanceof Error ? err.message : err}`
       );
     }
 

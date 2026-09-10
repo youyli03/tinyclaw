@@ -3,7 +3,7 @@
  *
  * 设计原则:
  * 1. 事件 = 循环内部单向可观测事实;回调 = 双向 I/O 通道(如 onMFARequest 需要 await 返回值)。
- *    二者不混:onChunk/onToolCall/onToolResult/onCompress/onHeartbeat/onMFAPrompt 等
+ *    二者不混:onChunk/onToolCall/onToolResult/onCompress/onMFAPrompt 等
  *    单向通知统一为 AgentEvent,供订阅方消费(onEvent)。
  * 2. 事件发射不阻塞循环:AgentEventBus.emit 内部 try/catch + fire-and-forget,
  *    异步 sink 不 await —— 事件消费失败绝不拖垮 ReAct 热路径。
@@ -117,7 +117,14 @@ export type AgentEvent =
   | { type: "mfa:denied" }
   | { type: "mfa:timeout" }
   | { type: "user:interrupt" }
-  | { type: "heartbeat"; elapsedSec: number }
+  | {
+      /**
+       * 工具调用的 `__purpose` 被仲裁器判定「展示给用户」。
+       * 它取代了旧的定时心跳：进度提示完全由模型自己写的旁白驱动。
+       */
+      type: "purpose:show";
+      purpose: string;
+    }
   // ── 收尾 ──────────────────────────────────────────────────
   | { type: "finalize:diary"; ok: boolean }
   | { type: "finalize:plan-log"; path?: string }

@@ -581,6 +581,10 @@ async function handleRequest(
           send({ type: "chunk", delta: `✅ 记忆整理完成\n\n${summary}\n` });
         }
       },
+      onPurpose: (purpose: string) => {
+        // 进度旁白（取代旧心跳）：作为一段 chunk 推给 CLI/Dashboard
+        send({ type: "chunk", delta: `\n${purpose}\n` });
+      },
       onToolCall: (name, args) => {
         broadcastActivity(session!.sessionId, {
           kind: "tool_call",

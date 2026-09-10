@@ -47,7 +47,8 @@ tinyclaw/
 │   ├── main-supervisor.ts    # 进程守护：crash 后退避重启 main.ts，最多 20 次
 │   ├── core/
 │   │   ├── agent.ts          # ReAct 主循环（think → tool_call → observe → respond）
-│   │   │                     # 支持 MFA 鉴权、心跳、auto-fork、textMode 文本工具调用
+│   │   │                     # 支持 MFA 鉴权、__purpose 进度旁白、auto-fork、textMode 文本工具调用
+│   │   ├── purpose-arbiter.ts # __purpose 展示仲裁（取代旧心跳：按工具真实耗时决定说不说）
 │   │   ├── session.ts        # messages[] + JSONL 持久化 + 并发控制 + 压缩（chat/code 两路）
 │   │   ├── router.ts         # 意图路由（扩展点，当前直通）
 │   │   ├── agent-manager.ts  # Agent 工作区管理（创建/查找/路径/repair）+ session loop 配置读写
@@ -419,6 +420,23 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 详见 [LOOP_SESSION.md](./LOOP_SESSION.md)。
 
+### 工具调用的 `__purpose`(进度旁白)
+
+取代了此前的**定时心跳**(`agent.heartbeatIntervalSecs`,默认每 120s 推一句写死的"仍在处理中")。
+现在进度提示完全由模型自己写的短旁白驱动。
+
+- **注入**:每个工具的参数 schema 会被加上可选字段 `__purpose`(内置工具、MCP 工具、`customTools` 一视同仁,收口在 `agent.ts` 组装 `tools` 之后)。实现**必须深拷贝**——`getAllToolSpecs()` 返回注册表里的同一对象引用,就地改会让 schema 每轮无限膨胀
+- **剥离**:执行前统一从参数中剥离,工具实现与 MCP server 永远看不到它;MFA 判定与告警文案也用剥离后的参数。文本模式(`<tool_call>` XML)走同一条路径
+- **进历史**:`__purpose` 就在 assistant 消息的 `tool_calls[].function.arguments` 里,随 JSONL 自然持久化。**不额外插入独立消息**——插在 `assistant(tool_calls)` 与 `tool(result)` 之间会打断配对触发 400
+- **展示仲裁**(`core/purpose-arbiter.ts`):每轮 `__purpose` 不设上限,但不是每条都给用户看
+  - **只有运行超过 `agent.purposeHoldMs`(默认 4s)的工具才算"用户确实在等"**;快工具静默
+  - 两个触发点:①工具运行满 hold ②长工具刚结束且当前无在跑的工具
+  - **新鲜度约束**:发送时按**当时的真实进度**重新选取——有工具在跑就取"最后发起"的那条,否则取"最后完成"的那条;已被后续进展超越的候选一律丢弃,**不回放**
+  - `agent.purposeMinGapMs`(默认 3s)限制两次展示的间隔;`agent_fork` / `session_send` 这类"秒返回但把活干在后台"的工具跳过 hold 直接展示
+- **长度**:`agent.purposeMaxUnits`(默认 10)。计长单位:CJK 按字、连续拉丁串按词,**emoji 不计**;超出按**图形簇边界**截断(`Intl.Segmenter`,不会切断 emoji 或代理对)
+- **不因超长拒绝工具调用**——只截断
+- 开关:`agent.toolPurpose`(默认 true)
+
 ### Agent Fork(Master-Slave)
 
 - `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
@@ -439,7 +457,9 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
     以及启动时的**召回层**(见下)
   - **召回层**(`memory.slaveRecall`,默认开):Slave 的自动记忆检索在 `agent.ts` 里被 `!isSlave` 关闭,
     因此启动时补两件事:注入该 Agent 的 `ACTIVE.md`("近期活跃上下文 / 未完成事项 / 最新要求")、
-    用 Slave 的 `task` 做一次 QMD 语义检索并注入相关历史片段。把"远期记忆"从"塞进上下文"变成"按需召回"
+    用 Slave 的 `task` 做一次 QMD 语义检索并注入相关历史片段。把"远期记忆"从"塞进上下文"变成"按需召回"。
+    整层带 **3s 超时**(`RECALL_TIMEOUT_MS`)——它位于 `runFn` 之前,耗时直接叠加到 Slave 启动延迟上,
+    而检索内部含 embed 服务探活(5s 超时)与 sqlite 回退路径;超时即放弃召回并记日志,绝不拖住 Slave 开工
   - 继承为**结构化复制**(保留 `tool_calls` 与 `role:"tool"`),并同步写入 Slave 自己的 JSONL,使轨迹自包含
   - 继承时**剥掉** Master 消息上的 `_loopTaskRef`:该字段的语义是"最后一条此类消息由 `getMessagesForLLM()` 展开为该路径的文件内容",而 Slave 继承到的 ref 指向 **Master 的** loop 任务文件;保留会让 Slave 侧用它顶掉真正的注入载荷
   - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session,触发新一轮 LLM 推理后回复用户
@@ -620,6 +640,13 @@ tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
 slaveContextRatio = 0.05        # 预算 = clamp(窗口 × 比例, 8000, 窗口 − 8000)
 slaveContextMode  = "standard"  # task-only | minimal | standard | full
 slaveRecall       = true        # Slave 启动时注入 ACTIVE.md + 用 task 做 QMD 语义检索
+
+# 工具调用的 __purpose 进度旁白（取代旧心跳），见「工具调用的 __purpose」节
+[agent]
+toolPurpose      = true    # 是否启用（关掉则完全不注入、不展示）
+purposeMaxUnits  = 10      # 长度上限：CJK 按字、拉丁串按词；emoji 不计
+purposeHoldMs    = 4000    # 工具跑超过该时长才算"用户在等"；0 = 一开始就展示
+purposeMinGapMs  = 3000    # 两次展示的最小间隔
 ```
 
 ---

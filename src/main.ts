@@ -765,9 +765,11 @@ ${message}`;
           .send(msg.peerId, msg.type, statusMsg)
           .catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
-      onHeartbeat: (msg2: string) => {
+      onPurpose: (purpose: string) => {
+        // 进度旁白：取代旧的定时心跳。内容来自模型自己写的 __purpose，
+        // 是否展示由 core/purpose-arbiter.ts 仲裁（只有"用户确实在等"的才发）。
         void connector
-          .send(msg.peerId, msg.type, msg2)
+          .send(msg.peerId, msg.type, purpose)
           .catch((e: unknown) => console.error("[qqbot] send error:", e));
       },
       onCompress: (phase, summary) => {

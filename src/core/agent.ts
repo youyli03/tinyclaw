@@ -11,6 +11,12 @@ import { searchMemory } from "../memory/qmd.js";
 import { appendTranscript } from "../memory/transcript.js";
 import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary } from "../memory/summarizer.js";
 import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
+import {
+  injectPurposeParam,
+  normalizePurpose,
+  stripReservedArgs,
+} from "../tools/reserved-args.js";
+import { createPurposeArbiter } from "./purpose-arbiter.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { PlanAbortError } from "../core/session.js";
 import { requireMFA } from "../auth/mfa.js";
@@ -159,6 +165,13 @@ const MAX_SLAVE_DEPTH = 1;
 const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
+/**
+ * 「秒返回但把活干在后台」的工具：`__purpose` 跳过 hold 直接尝试展示。
+ *
+ * 这类工具的执行耗时极短（派发即返回），按"跑得久才展示"的规则会被当成快工具而永远静默，
+ * 但它们的 purpose 恰恰最该说——"已派发后台任务，正在跑"。受 minGap 与去重约束。
+ */
+const INSTANT_ASYNC_TOOLS: ReadonlySet<string> = new Set(["agent_fork", "session_send"]);
 
 /**
  * 判断某个内置工具对指定 agent 是否可用（读 tools.toml）。
@@ -300,6 +313,34 @@ function buildBuiltinSystem(
 - 凡涉及实时或时效性数据（天气、股价、汇率、新闻、系统状态、磁盘空间等），必须先通过工具获取真实数据，再输出结果
 - 禁止用训练知识直接回答时效性问题——必须调用 exec_shell（curl/wget 等）或其他工具实际获取，哪怕数据可能与预期相同
 - 若工具调用失败或无法获取数据，明确输出"数据获取失败：<原因>"，不得用任何猜测、估算或历史数据替代
+
+## 工具调用的 __purpose（进度旁白）
+调用任何工具时都可以多带一个可选参数 __purpose：一句**面向用户**的短旁白，说明你此刻在做什么。
+他会**直接看到这句话**——这是他在你干活期间唯一的进度来源（系统不再发"仍在处理中"这类通用提示）。
+
+### 长度
+- 10 个中文字以内，或 10 个英文词以内；专业术语可中英混写（如「调 API 拉行情」）
+- **emoji 随意**：想用就自然地用，位置你定，也可以不用；emoji 不计入上面的长度
+- 超出会被截断，所以写短
+
+### 什么时候写（频率适中——不是每次调用都写）
+- 即将做一件**会让他等**的事：一次查询、一次抓取、一次构建、一次长耗时操作
+- 进入新阶段时（如「数据齐了，开始分析」）
+- **连续同类的小操作只写第一次**：读第二个文件、重复调同一接口，不必再写
+- 纯内部的小试探可以不写
+- 工具本身很快（跑完不到几秒）时写了也不会被展示，不必勉强
+
+### 怎么写
+- 口语、以「正在/我」开头、面向用户、**不写技术细节**
+- ✅ 「🔍 正在查你最近三个月的持仓」
+- ✅ 「📄 正在把报告转成 PDF」
+- ✅ 「正在调 API 拉行情 🌐」
+- ❌ 「调用 exec_shell 执行 tj.py monitor」（技术流水账）
+- ❌ 「正在思考」「稍等」（空话）
+- ❌ 不要在这里写结论，也不要复述用户的原话
+
+### 关键
+写完 __purpose 必须**继续调用工具**，不要把它当成回复而结束回合。
 
 ## 富媒体发送规范
 - 若需发送图片/音频/视频/文件给用户，在回复文本中嵌入对应标签，系统会自动识别并发送：
@@ -533,10 +574,12 @@ export interface AgentRunOptions {
    */
   onProgressNotify?: import("../tools/registry.js").ToolContext["onProgressNotify"];
   /**
-   * LLM 调用心跳回调（由 main.ts 注入）。
-   * 流式请求期间每隔 agent.heartbeatIntervalSecs 秒调用一次，向用户推送"仍在处理中"。
+   * 展示工具调用的 `__purpose` 进度旁白（由 main.ts 注入）。
+   *
+   * 代替了旧的定时心跳：进度提示不再由系统定时推送通用文案，而是由模型在关键节点
+   * 自己写的短旁白驱动（何时展示由 core/purpose-arbiter.ts 仲裁）。
    */
-  onHeartbeat?: (message: string) => void;
+  onPurpose?: (purpose: string) => void | Promise<void>;
   /**
    * 主动向用户推送消息（由 main.ts 注入）。
    * 供 notify_user 工具调用，不等 runAgent 结束即发送，不触发新一轮 LLM 推理。
@@ -544,8 +587,13 @@ export interface AgentRunOptions {
   onNotify?: (message: string) => Promise<void>;
   /**
    * 工具调用通知(synchro 订阅使用)。在 runOneTool 开始前调用。
+   * `meta.purpose` 为该工具调用携带的 `__purpose`（已剥离、已归一化，可能不存在）。
    */
-  onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  onToolCall?: (
+    name: string,
+    args: Record<string, unknown>,
+    meta?: { purpose?: string }
+  ) => void;
   /**
    * 工具结果通知(synchro 订阅使用)。在 runOneTool 完成后调用。
    */
@@ -632,7 +680,7 @@ export interface AgentRunOptions {
   /**
    * 事件流订阅(事件流化重构)。
    * 传入 AgentEventBus 或单个 sink;循环内部可观测事件(生命周期/preamble/turn/工具/压缩/MFA/收尾)
-   * 统一走此通道。旧回调(onChunk/onToolCall/onToolResult/onCompress/onHeartbeat/onMFAPrompt)
+   * 统一走此通道。旧回调(onChunk/onToolCall/onToolResult/onCompress/onPurpose/onMFAPrompt)
    * 仍保留并同步触发,迁移期两者并存。
    */
   onEvent?: AgentEventSink | AgentEventBus;
@@ -1242,6 +1290,36 @@ async function runAgentInner(
   const agentTaskId = opts.agentTaskIdOverride ?? crypto.randomUUID();
   session.currentAgentTaskId = agentTaskId;
   let promptExceededRetried = false; // guard: compress+retry at most once per run
+  // ── `__purpose` 仲裁器（每次 run 一个）──────────────────────────────────
+  // 进度提示的唯一来源（已取代旧的定时心跳）：模型在关键节点写短旁白，
+  // 这里决定哪一条真正展示给用户——只有"用户确实在等"的那些才会被说出来。
+  // 必须建在 round 循环之外：候选池与展示间隔要跨轮保持。
+  const agentPurposeCfg = loadConfig().agent;
+  const purposeArbiter =
+    agentPurposeCfg.toolPurpose && opts.onPurpose
+      ? createPurposeArbiter({
+          holdMs: agentPurposeCfg.purposeHoldMs,
+          minGapMs: agentPurposeCfg.purposeMinGapMs,
+          instantAsyncTools: INSTANT_ASYNC_TOOLS,
+          onShow: (purpose: string) => {
+            bus.emit({ type: "purpose:show", purpose });
+            try {
+              const r = opts.onPurpose?.(purpose);
+              if (r && typeof r.then === "function") {
+                r.then(undefined, (err: unknown) => {
+                  console.warn(
+                    `${logPrefix} onPurpose 回调失败: ${err instanceof Error ? err.message : err}`
+                  );
+                });
+              }
+            } catch (err) {
+              console.warn(
+                `${logPrefix} onPurpose 回调抛错: ${err instanceof Error ? err.message : err}`
+              );
+            }
+          },
+        })
+      : null;
   for (let round = 0; round < maxToolRounds; round++) {
     bus.emit({ type: "turn:start", round });
     // 每轮重新获取工具快照，保证 mcp_enable_server 后新工具在本轮就生效
@@ -1257,12 +1335,19 @@ async function runAgentInner(
     ];
     // DeepSeek 等模型要求工具名唯一,customTools 可能与 getAllToolSpecs 重复,去重保留最后出现的
     const seenToolNames = new Set<string>();
-    const tools = rawTools.filter((t) => {
+    const dedupedTools = rawTools.filter((t) => {
       const name = t.function.name;
       if (seenToolNames.has(name)) return false;
       seenToolNames.add(name);
       return true;
     });
+    // ── 注入 `__purpose`（所有模式、所有工具来源一视同仁）────────────────
+    // 内置工具 / MCP 工具 / customTools 都在这里收口。injectPurposeParam 会深拷贝，
+    // 因为 getAllToolSpecs() 返回的是注册表里的同一对象引用。
+    const agentCfg = loadConfig().agent;
+    const tools = agentCfg.toolPurpose
+      ? injectPurposeParam(dedupedTools)
+      : dedupedTools;
 
     // ── 轮间压缩（chat 模式）：tool result 可能使 session 在循环中间超限 → 提前压缩避免 408 ──
     // round 0 不需要检查（pre-flight 已处理），从 round 1 起才有 tool results 写入
@@ -1312,18 +1397,6 @@ async function runAgentInner(
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
     {
-      const heartbeatSecs = loadConfig().agent.heartbeatIntervalSecs;
-      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-      const roundStart = Date.now();
-
-      if (heartbeatSecs > 0 && opts.onHeartbeat) {
-        heartbeatTimer = setInterval(() => {
-          const elapsed = Math.round((Date.now() - roundStart) / 1000);
-          bus.emit({ type: "heartbeat", elapsedSec: elapsed });
-          opts.onHeartbeat!(`⏳ Agent 仍在处理中，请稍候…（已用时 ${elapsed}s）`);
-        }, heartbeatSecs * 1000);
-      }
-
       // ── 并发限流：等待空闲 LLM slot（FIFO 排队）────────────────────────
       // 工具执行期间不占用 slot，仅在真正发起 LLM 请求时持有。
       // slotHeld 追踪当前是否持有 slot，防止 onRetryWait 和 finally 双重 release。
@@ -1333,7 +1406,6 @@ async function runAgentInner(
         slotHeld = true;
       } catch (err) {
         // acquire 被 AbortSignal 中断（软中断打断等待）
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
         break;
       }
 
@@ -1419,6 +1491,8 @@ async function runAgentInner(
         }
         session.trimToLength(preRunLength);
         toolThrottler?.stop();
+        // 异常退出路径也要清掉仲裁器的待触发计时器，否则可能在 run 结束后补发一条旁白
+        purposeArbiter?.dispose();
         throw err;
       } finally {
         // LLM 请求已结束（无论成功/失败），释放 slot（若尚未被 onRetryWait 释放）
@@ -1426,7 +1500,6 @@ async function runAgentInner(
           releaseLLMSlot();
           slotHeld = false;
         }
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
     }
 
@@ -1658,26 +1731,38 @@ async function runAgentInner(
         return "未知工具";
       }
 
-      const callSummary = toolCallSummary(call.name, call.args);
+      // ── 剥离框架保留字段 `__purpose` ────────────────────────────────────
+      // 工具实现与 MCP server 永远看不到它；文本模式（<tool_call>）走的是同一条路径。
+      const { args: toolArgs, purpose: rawPurpose } = stripReservedArgs(
+        call.args as Record<string, unknown>
+      );
+      const purpose = agentPurposeCfg.toolPurpose
+        ? normalizePurpose(rawPurpose, agentPurposeCfg.purposeMaxUnits)
+        : undefined;
+
+      const callSummary = toolCallSummary(call.name, toolArgs);
       toolCallSummaries.push(callSummary);
-      console.log(`${logPrefix} tool: ${callSummary}`);
+      console.log(`${logPrefix} tool: ${callSummary}${purpose ? ` 「${purpose}」` : ""}`);
       bus.emit({
         type: "tool:call",
         name: call.name,
-        args: call.args as Record<string, unknown>,
+        args: toolArgs,
         summary: callSummary,
         round,
+        ...(purpose ? { purpose } : {}),
       });
       const toolStartMs = Date.now();
       if (call.name !== "notify_user") {
         toolThrottler?.add(call.name);
       }
-      opts.onToolCall?.(call.name, call.args as Record<string, unknown>);
+      opts.onToolCall?.(call.name, toolArgs, purpose ? { purpose } : undefined);
+      // 交给仲裁器：快工具不会被展示，慢工具到点才展示
+      purposeArbiter?.onToolStart(call.name, purpose);
 
       let result: string;
       const currentDepth = opts.slaveDepth ?? 0;
       try {
-        result = await executeTool(call.name, call.args, {
+        result = await executeTool(call.name, toolArgs, {
           cwd:
             isCodeMode && session.codeWorkdir
               ? session.codeWorkdir
@@ -1734,13 +1819,16 @@ async function runAgentInner(
           `\n\n[...内容过长，已省略中间 ${omitted} 字符（原始 ${origLen} 字符）。保留头 ${headLen} + 尾 ${tailLen} 字符。如需完整内容请缩小范围重新调用...]\n\n` +
           result.slice(origLen - tailLen);
       }
+      const toolDurationMs = Date.now() - toolStartMs;
       opts.onToolResult?.(call.name, result);
       bus.emit({
         type: "tool:result",
         name: call.name,
-        durationMs: Date.now() - toolStartMs,
+        durationMs: toolDurationMs,
         truncated: result.includes("[...内容过长"),
       });
+      // 工具结束 → 仲裁器的 T2 触发点（长工具刚收尾且无在跑工具时展示它的 purpose）
+      purposeArbiter?.onToolEnd(call.name, toolDurationMs);
 
       // ── Prompt Injection 检测 ────────────────────────────────────────────
       const injAlert = detectPromptInjection(call.name, result, loadConfig());
@@ -1920,13 +2008,15 @@ async function runAgentInner(
 
       // ── MFA 检查(需要用户交互,先 flush 并发批次再串行)────────────
       const mfaCfg = loadConfig().auth.mfa;
+      // MFA 判定与提示文案都用"剥离保留字段后"的参数，避免 __purpose 混进警告文本
+      const mfaArgs = stripReservedArgs(call.args as Record<string, unknown>).args;
       if (
-        (toolNeedsMFA(call.name, call.args, mfaCfg) || getTool(call.name)?.requiresMFA) &&
+        (toolNeedsMFA(call.name, mfaArgs, mfaCfg) || getTool(call.name)?.requiresMFA) &&
         !session.mfaApprovedForThisRun &&
         !session.mfaPreApproved
       ) {
         await flushConcurrentBatch();
-        bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, call.args) });
+        bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, mfaArgs) });
         let mfaPassed = false;
         try {
           if (mfaCfg?.interface === "msal") {
@@ -1935,7 +2025,7 @@ async function runAgentInner(
             mfaPassed = true;
           } else if (mfaCfg?.interface === "totp") {
             if (opts.onMFARequest) {
-              const desc = describeToolCall(call.name, call.args);
+              const desc = describeToolCall(call.name, mfaArgs);
               const secretPath = mfaCfg.totpSecretPath;
               mfaPassed = await opts.onMFARequest(
                 `⚠️ 即将执行：${desc}\n请打开 Authenticator App，将当前 6 位验证码回复给我（30 秒内有效）`,
@@ -1946,7 +2036,7 @@ async function runAgentInner(
               mfaPassed = true;
             }
           } else if (opts.onMFARequest) {
-            const desc = describeToolCall(call.name, call.args);
+            const desc = describeToolCall(call.name, mfaArgs);
             mfaPassed = await opts.onMFARequest(`⚠️ 即将执行：${desc}\n请回复 确认 / 取消`);
             if (!mfaPassed) opts.onMFAPrompt?.("✗ MFA 被拒绝，操作已取消");
           } else {
@@ -2216,6 +2306,8 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
 
   // flush 剩余工具调用通知，清理定时器
   toolThrottler?.stop();
+  // 仲裁器收尾：清掉所有待触发的 purpose 计时器，避免运行结束后还补发旁白
+  purposeArbiter?.dispose();
 
   // ── Chat 模式轻量 diary 更新（每 3 轮触发一次，fire-and-forget） ──────────
   // 仿 CC postSamplingHook：对话进行中持续维护 diary，无需等 context 满才压缩

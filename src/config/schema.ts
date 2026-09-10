@@ -743,11 +743,33 @@ export type ConcurrencyConfig = z.infer<typeof ConcurrencySchema>;
 const AgentSchema = z
   .object({
     /**
-     * LLM 流式调用期间的心跳推送间隔（秒）。
-     * 模型思考时间较长时，每隔该时间向用户推送"仍在处理中"提示，避免用户误以为卡死。
-     * 0 = 关闭心跳。默认 120（2 分钟）。
+     * 是否启用工具调用的 `__purpose` 机制（默认 true）。
+     *
+     * 开启后：
+     * - 向每个工具的参数 schema 注入可选字段 `__purpose`（含 MCP 工具），LLM 可在关键节点
+     *   填一句面向用户的短旁白（"正在查你最近三个月的持仓"）
+     * - 执行工具前剥离该字段（工具与 MCP server 永远看不到它）
+     * - 按仲裁规则把它作为**唯一的进度提示**推送给用户（已取代旧的定时心跳）
+     *
+     * 关闭后：不注入、不剥离、不展示（工具调用仍正常）。
      */
-    heartbeatIntervalSecs: z.number().int().min(0).default(120),
+    toolPurpose: z.boolean().default(true),
+    /**
+     * `__purpose` 的长度上限（计长单位：CJK 按字、连续拉丁串按词；emoji 不计）。
+     * 超出会在图形簇边界截断。默认 10。
+     */
+    purposeMaxUnits: z.number().int().min(1).default(10),
+    /**
+     * 「用户是否真的在等」的判定阈值（毫秒，默认 4000）。
+     *
+     * 只有**运行超过该时长**的工具，其 `__purpose` 才会被展示给用户；
+     * 快工具（读文件、算个数）静默。0 = 工具一开始就展示，不再等待。
+     */
+    purposeHoldMs: z.number().int().min(0).default(4000),
+    /**
+     * 两次 `__purpose` 展示之间的最小间隔（毫秒，默认 3000）。
+     */
+    purposeMinGapMs: z.number().int().min(0).default(3000),
     /**
      * 按 LLM provider 配置的 response hook 文本。
      * 键为 provider 名称(如 "copilot"、"openai"、"openrouter"),值为追加到 system prompt 末尾的指令。
