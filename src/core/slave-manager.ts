@@ -50,6 +50,14 @@ export interface SlaveState {
   result?: string;
   /** 轨迹归档目录（完成后填入，见 core/slave-trajectory.ts） */
   tracePath?: string;
+  /** 上下文继承统计（fork 时填入，供 agent_status / meta.json 展示） */
+  context?: {
+    inheritedRounds: number;
+    inheritedMessages: number;
+    droppedRounds: number;
+    inheritedChars: number;
+    summaryInjected: boolean;
+  };
   agentId?: string;
   startedAt: string;
   finishedAt?: string;
@@ -123,6 +131,13 @@ export interface SlaveWaitAllResult {
 
 const MAX_PARTIAL_LEN = 500;
 const MAX_PHASE_LEN = 120;
+/**
+ * 继承上下文的字符预算上限。
+ * `context_rounds` 只能限"轮数"，但单轮可能极长（一次大文件读取、一次长回复），
+ * 30 轮实测可达 60 万字符（≈17 万 tokens），足以撑爆上下文窗口。
+ * 超预算时从**最旧的整轮**开始丢弃，绝不切断轮内结构。
+ */
+const MAX_CONTEXT_CHARS = 120_000;
 
 const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份运行（后台异步执行）
 
@@ -151,6 +166,20 @@ export interface SlaveContextStats {
   inheritedRounds: number;
   /** 是否注入了 Master 压缩摘要 */
   summaryInjected: boolean;
+  /** 因超出字符预算而从最旧一侧丢弃的轮数 */
+  droppedRounds: number;
+  /** 实际继承的字符数（近似值，用于观测） */
+  inheritedChars: number;
+}
+
+/** 估算一条消息的字符体量（content + tool_calls），用于上下文预算裁剪 */
+function approxMessageChars(m: ChatMessage): number {
+  const c = (m as { content?: unknown }).content;
+  const contentLen =
+    typeof c === "string" ? c.length : c === undefined ? 0 : JSON.stringify(c).length;
+  const tc = (m as { tool_calls?: unknown }).tool_calls;
+  const callsLen = Array.isArray(tc) ? JSON.stringify(tc).length : 0;
+  return contentLen + callsLen;
 }
 
 /**
@@ -163,6 +192,8 @@ export interface SlaveContextStats {
  * - 裁剪按**轮数**（轮 = 一条 user 消息到下一个 user 消息之前）向前对齐，
  *   避免切断「assistant 发 tool_call / 结果未回」的中间态
  * - 继承内容同步写入 Slave 的 JSONL，使其轨迹自包含（见 core/slave-trajectory.ts）
+ * - 剥掉继承消息上的 `_loopTaskRef`，避免 Slave 侧被 Master 的 loop 任务文件顶掉载荷
+ * - 受 MAX_CONTEXT_CHARS 字符预算约束，超预算时从最旧整轮开始丢弃
  *
  * @param rounds 继承最近多少轮；省略或 <=0 表示继承全量
  */
@@ -175,25 +206,35 @@ function buildSlaveContext(
 
   // ── 按轮对齐：找到倒数第 rounds 条 user 消息的下标 ──────────────────────
   let startIdx = 0;
-  let inheritedRounds = 0;
   if (rounds !== undefined && rounds > 0) {
     const userIdx: number[] = [];
     for (let i = 0; i < all.length; i++) {
       if (all[i]!.role === "user") userIdx.push(i);
     }
-    inheritedRounds = Math.min(rounds, userIdx.length);
     if (userIdx.length > rounds) {
       startIdx = userIdx[userIdx.length - rounds]!;
     }
-  } else {
-    inheritedRounds = all.filter((m) => m.role === "user").length;
   }
   const slice = all.slice(startIdx);
+
+  // ── 字符预算：从最旧一侧按【整轮】丢弃，绝不切断轮内结构 ────────────────
+  let trimmed = slice;
+  let droppedRounds = 0;
+  let chars = trimmed.reduce((sum, m) => sum + approxMessageChars(m), 0);
+  while (chars > MAX_CONTEXT_CHARS && trimmed.length > 1) {
+    // 找到当前保留区里"下一轮"的起点（下一条 user 消息）
+    let nextUser = 1;
+    while (nextUser < trimmed.length && trimmed[nextUser]!.role !== "user") nextUser++;
+    if (nextUser >= trimmed.length) break; // 只剩最后一轮，再丢就没有上下文了
+    for (let i = 0; i < nextUser; i++) chars -= approxMessageChars(trimmed[i]!);
+    trimmed = trimmed.slice(nextUser);
+    droppedRounds++;
+  }
 
   // ── 注入 Master 压缩摘要（仅当切片未覆盖到它时） ────────────────────────
   let summaryInjected = false;
   if (masterSession.lastSummary) {
-    const covered = slice.some(
+    const covered = trimmed.some(
       (m) => typeof m.content === "string" && m.content.includes("[对话历史摘要]")
     );
     if (!covered) {
@@ -205,11 +246,31 @@ function buildSlaveContext(
   }
 
   // ── 结构化导入（保留 tool_call / tool_result 结构，并落盘） ──────────────
-  if (slice.length > 0) {
-    slaveSession.importMessages(slice as ChatMessage[], { persist: true });
+  // 注意：必须先剥掉 `_loopTaskRef`。该字段的语义是"最后一条此类消息由
+  // getMessagesForLLM() 展开成该路径的文件内容"，而 Slave 继承到的 ref 指向
+  // **Master 的** loop 任务文件（如 loops/<id>.json）。若保留，Slave 侧会用它
+  // 顶掉真正的注入载荷（本轮行情/步骤输出），使其只看到 loop 配置文件。
+  // Slave 有自己的任务（最后一条 user 消息），Master 的 loop 任务对它是只读背景，
+  // 用快照 content 即可，不需要跟随文件变化。
+  const cleaned = trimmed.map((m) => {
+    const withRef = m as ChatMessage & { _loopTaskRef?: string };
+    if (!withRef._loopTaskRef) return m;
+    const { _loopTaskRef: _dropped, ...rest } = withRef;
+    return rest as ChatMessage;
+  });
+
+  if (cleaned.length > 0) {
+    slaveSession.importMessages(cleaned, { persist: true });
   }
 
-  return { inheritedMessages: slice.length, inheritedRounds, summaryInjected };
+  return {
+    inheritedMessages: cleaned.length,
+    // 报告**实际**继承的轮数（裁剪后重新计数），避免与 droppedRounds 互相矛盾
+    inheritedRounds: cleaned.filter((m) => m.role === "user").length,
+    summaryInjected,
+    droppedRounds,
+    inheritedChars: chars,
+  };
 }
 
 
@@ -263,11 +324,20 @@ class SlaveManager {
 
     // 结构化继承 Master 最近 contextRounds 轮对话（含工具调用与结果）
     const stats = buildSlaveContext(slaveSession, masterSession, contextRounds);
+    state.context = {
+      inheritedRounds: stats.inheritedRounds,
+      inheritedMessages: stats.inheritedMessages,
+      droppedRounds: stats.droppedRounds,
+      inheritedChars: stats.inheritedChars,
+      summaryInjected: stats.summaryInjected,
+    };
 
     log.info(
       `[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, ` +
         `继承 ${stats.inheritedRounds} 轮 / ${stats.inheritedMessages} 条` +
-        `${stats.summaryInjected ? " + 摘要" : ""}, task="${task.slice(0, 60)}"`
+        `${stats.summaryInjected ? " + 摘要" : ""}` +
+        `${stats.droppedRounds > 0 ? ` (预算裁剪丢 ${stats.droppedRounds} 轮)` : ""}, ` +
+        `约 ${stats.inheritedChars} 字符, task="${task.slice(0, 60)}"`
     );
 
     // 后台运行（fire-and-forget）
@@ -323,6 +393,13 @@ class SlaveManager {
 
     // 结构化继承全量 Master 上下文（含 tool_call / tool_result），并落盘使轨迹自包含
     const stats = buildSlaveContext(slaveSession, masterSession);
+    state.context = {
+      inheritedRounds: stats.inheritedRounds,
+      inheritedMessages: stats.inheritedMessages,
+      droppedRounds: stats.droppedRounds,
+      inheritedChars: stats.inheritedChars,
+      summaryInjected: stats.summaryInjected,
+    };
 
     // Append a brief continuation hint so the Slave knows it's running headless
     slaveSession.addSystemMessage(
@@ -335,7 +412,9 @@ class SlaveManager {
 
     log.info(
       `[slave:${slaveId}] auto-fork continuation from ${masterSession.sessionId.slice(-12)}, ` +
-        `继承 ${stats.inheritedMessages} 条`
+        `继承 ${stats.inheritedMessages} 条` +
+        `${stats.droppedRounds > 0 ? ` (预算裁剪丢 ${stats.droppedRounds} 轮)` : ""}, ` +
+        `约 ${stats.inheritedChars} 字符`
     );
 
     void this._run(
@@ -659,6 +738,14 @@ class SlaveManager {
         result: state.result ?? "",
         sessionJsonlPath: Session.getJsonlPath(session.sessionId),
         reason: "completed",
+        ...(state.context
+          ? {
+              inheritedRounds: state.context.inheritedRounds,
+              inheritedMessages: state.context.inheritedMessages,
+              droppedRounds: state.context.droppedRounds,
+              inheritedChars: state.context.inheritedChars,
+            }
+          : {}),
       });
       state.tracePath = res.dir;
     } catch (err) {

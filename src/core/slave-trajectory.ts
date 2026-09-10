@@ -52,6 +52,14 @@ export interface SlaveTrajectoryMeta {
   messageCount?: number;
   /** 归档原因：正常完成 / 进程重启后清理遗留 */
   reason?: "completed" | "orphan";
+  /** 从 Master 继承的轮数 */
+  inheritedRounds?: number;
+  /** 从 Master 继承的消息条数 */
+  inheritedMessages?: number;
+  /** 因超出字符预算从最旧一侧丢弃的轮数 */
+  droppedRounds?: number;
+  /** 继承上下文的近似字符数 */
+  inheritedChars?: number;
 }
 
 export interface ArchiveSlaveResult {
@@ -269,6 +277,11 @@ export function archiveSlaveTrajectory(opts: {
   result: string;
   sessionJsonlPath: string;
   reason?: "completed" | "orphan";
+  /** 继承统计（可选，来自 SlaveManager.buildSlaveContext） */
+  inheritedRounds?: number;
+  inheritedMessages?: number;
+  droppedRounds?: number;
+  inheritedChars?: number;
 }): ArchiveSlaveResult {
   const { month, date } = localDateParts(new Date());
   const monthDir = path.join(slaveTrajectoryRoot(), month);
@@ -315,6 +328,10 @@ export function archiveSlaveTrajectory(opts: {
     ...(trajectoryBytes !== undefined ? { trajectoryBytes } : {}),
     ...(messageCount !== undefined ? { messageCount } : {}),
     ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+    ...(opts.inheritedRounds !== undefined ? { inheritedRounds: opts.inheritedRounds } : {}),
+    ...(opts.inheritedMessages !== undefined ? { inheritedMessages: opts.inheritedMessages } : {}),
+    ...(opts.droppedRounds !== undefined ? { droppedRounds: opts.droppedRounds } : {}),
+    ...(opts.inheritedChars !== undefined ? { inheritedChars: opts.inheritedChars } : {}),
   };
 
   try {

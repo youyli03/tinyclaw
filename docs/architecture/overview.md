@@ -423,6 +423,8 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 - `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
   - `context_rounds`:继承 Master 最近多少**轮**对话(一轮 = 一条用户消息起算,含该轮内全部工具调用与结果);默认 10,最大 30。裁剪按轮向前对齐,不会切断「assistant 发 tool_call / 结果未回」的中间态
+  - 另有**字符预算** `MAX_CONTEXT_CHARS = 120000`:仅按轮数裁剪无法防住"轮数少但单轮极长"的情况;超预算时从**最旧的整轮**开始丢弃(绝不切断轮内结构),丢弃轮数记录在 `SlaveState.context.droppedRounds` 与归档的 `meta.json` 中,并出现在 `agent_status` 输出里
+  - 继承时**剥掉** Master 消息上的 `_loopTaskRef`:该字段的语义是"最后一条此类消息由 `getMessagesForLLM()` 展开为该路径的文件内容",而 Slave 继承到的 ref 指向 **Master 的** loop 任务文件;保留会让 Slave 侧用它顶掉真正的注入载荷
   - 继承为**结构化复制**(保留 `tool_calls` 与 `role:"tool"`),并同步写入 Slave 自己的 JSONL,使轨迹自包含
   - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session,触发新一轮 LLM 推理后回复用户
   - `result_mode: "wait"`:Slave 完成后静默,Master 需主动调用 `agent_wait(slave_id)` 获取结果;适合并行 fork 多个 Slave 后统一汇总

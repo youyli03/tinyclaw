@@ -393,6 +393,14 @@ function formatSlaveState(state: SlaveState): string {
   ];
 
   if (state.finishedAt) lines.push(`完成：${state.finishedAt}`);
+  if (state.context) {
+    lines.push(
+      `继承上下文：${state.context.inheritedRounds} 轮 / ${state.context.inheritedMessages} 条` +
+        `（约 ${state.context.inheritedChars} 字符）` +
+        `${state.context.summaryInjected ? " + Master 摘要" : ""}` +
+        `${state.context.droppedRounds > 0 ? `；因预算上限丢弃了最旧 ${state.context.droppedRounds} 轮` : ""}`
+    );
+  }
   if (state.progress.phase) lines.push(`当前阶段：${state.progress.phase}`);
   if (state.progress.toolsUsed.length > 0) {
     const n = state.progress.toolCallCount ?? state.progress.toolsUsed.length;
