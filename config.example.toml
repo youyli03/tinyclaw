@@ -290,3 +290,12 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # mode        = "allowlist"        # cron/loop 只允许 allowedTools;"all" = 旧行为;"deny" = 更严
 # mfaFallback = "deny"             # 无人值守且 MFA 无法送达时:deny 拒绝(默认,推荐)/ allow 放行
 # allowedTools = [ "read_file", "exec_shell", ... ]   # 默认见 src/config/schema.ts
+
+# 提权通道:沙箱是默认,提权是例外。agent 用 exec_shell({ elevate: true }) 请求在沙箱外执行一次。
+[sandbox.elevation]
+# enabled            = false     # 总开关(默认 false = 只能跑沙箱内)
+# allowedAgents      = []        # 允许提权的 agentId 白名单;"*" = 全部
+# e1AutoApprove      = true      # 只读类提权(如 ssh -T、systemctl status)免确认
+# tokenTtlSecs       = 120       # 一次性令牌有效期(绑定命令哈希;换命令即失效)
+# maxRequestsPer5min = 1         # 同一条命令的提权请求节流(防模型被拒后刷屏)
+# allowInCron        = false     # cron/loop 等无人值守场景一律不许提权

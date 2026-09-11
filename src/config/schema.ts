@@ -378,8 +378,7 @@ const SandboxSchema = z
 
     /** 无人值守路径（cron / loop）的策略 */
     unattended: z
-      .object({
-        /**
+      .object({        /**
          * `allowlist` = 只允许 allowedTools 里的工具（默认）；
          * `all` = 放行全部（等于旧行为）；`deny` = 除明确安全工具外全部拒绝
          */
@@ -395,6 +394,10 @@ const SandboxSchema = z
             "self_runtime_scan",
             "self_runtime_read",
             "search_store",
+            // 只读自省（不含 cron_add/remove/enable/disable 这类改动调度状态的）
+            "cron_list",
+            "mcp_list_servers",
+            "session_get",
             "memory_read_mem",
             "memory_write_mem",
             "memory_read_active",
@@ -427,6 +430,33 @@ const SandboxSchema = z
          * `deny` = 拒绝该工具调用（默认，符合"无人值守最严"）；`allow` = 放行（旧行为）
          */
         mfaFallback: z.enum(["deny", "allow"]).default("deny"),
+      })
+      .default({}),
+
+    /**
+     * 提权通道：沙箱是默认，提权是**例外**。
+     *
+     * 模型用 `exec_shell({ command, elevate: true })` 请求在宿主机（沙箱外）执行一次；
+     * 默认需要用户当场确认，批准后签发一次性令牌（绑定命令哈希 + TTL），换命令即失效。
+     * 无人值守路径（cron / loop）**不允许提权**（没人能审批）。
+     */
+    elevation: z
+      .object({
+        /** 总开关：false 时 `elevate: true` 一律被拒（默认 false = 只能跑沙箱内） */
+        enabled: z.boolean().default(false),
+        /** 允许提权的 agentId 白名单；空 = 无人可提权 */
+        allowedAgents: z.array(z.string()).default([]),
+        /**
+         * 只读类提权（E1，如 `ssh -T git@github.com`、`systemctl --user status`）是否免确认。
+         * false = 每次都要确认（更严）。
+         */
+        e1AutoApprove: z.boolean().default(true),
+        /** 一次性令牌有效期（秒），期间同一条命令不再重复询问 */
+        tokenTtlSecs: z.number().int().min(10).default(120),
+        /** 同一条命令在 5 分钟内最多请求几次提权（防刷屏） */
+        maxRequestsPer5min: z.number().int().min(1).default(1),
+        /** 是否允许 cron / loop（无人值守）提权——默认否 */
+        allowInCron: z.boolean().default(false),
       })
       .default({}),
   })

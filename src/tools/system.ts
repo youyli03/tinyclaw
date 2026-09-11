@@ -6,7 +6,9 @@ import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
 import { buildSandboxPlan, describeSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
+import { announceElevation, requestElevation } from "../sandbox/elevation.js";
 import { auditToolCall } from "../auth/tool-policy.js";
+import type { RunOrigin } from "../security/audit.js";
 import { locateAndReplace } from "./edit-file-core.js";
 import { loadConfig } from "../config/loader.js";
 
@@ -77,11 +79,61 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   // ── 沙箱（边界层）────────────────────────────────────────────────────────
   // `[sandbox].enabled && execShell="sandbox"` 时把命令关进 bwrap：
   // 密钥文件在沙箱内不存在、未绑定目录只读、可选断网。
+  // `elevate: true` 则请求**在宿主机执行一次**（需审批 + 一次性令牌，见 sandbox/elevation.ts）。
   const sandboxCfg = loadConfig().sandbox;
-  const wantSandbox = sandboxCfg.enabled && sandboxCfg.execShell === "sandbox";
+  const wantElevate = args["elevate"] === true;
+  const wantSandbox = sandboxCfg.enabled && sandboxCfg.execShell === "sandbox" && !wantElevate;
   let spawnCmd = "bash";
   let spawnArgs = ["-c", command];
   let spawnEnv: NodeJS.ProcessEnv | undefined;
+
+  const toolOrigin: RunOrigin | undefined = ctx?.sessionId?.startsWith("cron_")
+    ? "cron"
+    : ctx?.sessionId?.startsWith("slave:")
+      ? "slave"
+      : ctx?.sessionId?.startsWith("probe:")
+        ? "cli"
+        : ctx?.masterSession
+          ? "chat"
+          : undefined;
+
+  if (wantElevate && sandboxCfg.enabled) {
+    const decision = await requestElevation({
+      command,
+      origin: toolOrigin,
+      agentId: ctx?.agentId ?? "default",
+      ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+      ...(ctx?.onMFARequest ? { onMFARequest: ctx.onMFARequest } : {}),
+      ...(ctx?.onAskUser ? { onAskUser: ctx.onAskUser } : {}),
+      cfg: sandboxCfg,
+    });
+    if (!decision.allowed) {
+      auditToolCall({
+        event: "policy",
+        origin: toolOrigin,
+        agentId: ctx?.agentId ?? "default",
+        ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+        tool: "exec_shell",
+        decision: "deny",
+        reason: `提权被拒（${decision.level ?? "?"}）`,
+        args: { command },
+        cfg: sandboxCfg,
+      });
+      return decision.reason ?? "已拒绝：提权未获批准";
+    }
+    await announceElevation({
+      command,
+      origin: toolOrigin,
+      agentId: ctx?.agentId ?? "default",
+      ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+      ...(decision.level ? { level: decision.level } : {}),
+      ...(decision.reusedToken ? { reusedToken: decision.reusedToken } : {}),
+      ...(ctx?.onNotify ? { onNotify: ctx.onNotify } : {}),
+      cfg: sandboxCfg,
+    });
+    console.log(`[sandbox] 提权执行（${decision.level}）：${command.slice(0, 80)}`);
+  }
+
   if (wantSandbox) {
     const availability = sandboxAvailable();
     if (!availability.available) {
@@ -104,11 +156,7 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
       console.log(`[sandbox] ${describeSandboxPlan(plan)}: ${command.slice(0, 80)}`);
       auditToolCall({
         event: "sandbox",
-        origin: ctx?.sessionId?.startsWith("cron_")
-          ? "cron"
-          : ctx?.sessionId?.startsWith("slave:")
-            ? "slave"
-            : "chat",
+        origin: toolOrigin,
         agentId: ctx?.agentId ?? "default",
         ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
         tool: "exec_shell",
@@ -206,11 +254,19 @@ registerTool({
         `在本机执行 shell 命令。默认超时 ${DEFAULT_EXEC_TIMEOUT_SEC} 秒；` +
         "对于 build/test/install/长网络请求等长任务，必须显式传入更大的 timeout_sec。" +
         "执行环境由 [sandbox] 配置决定：开启沙箱时命令跑在 bubblewrap 内（密钥文件不可见、未绑定目录只读），" +
-        "此时 ssh / git push 之类需要 ~/.ssh 的操作会失败。",
+        "此时 ssh / git push 之类需要 ~/.ssh 的操作会失败 —— 若确实必要，可传 elevate: true 请求在沙箱外执行一次" +
+        "（需用户批准；cron / loop 等无人值守场景一律不允许）。",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "要执行的 bash 命令" },
+          elevate: {
+            type: "boolean",
+            description:
+              "是否请求在**沙箱外**（宿主机）执行（默认 false）。只在沙箱挡住你必须做的事时使用，例如需要 ~/.ssh 的 " +
+              "ssh / git push、需要写沙箱外目录、需要 systemctl。会先向用户请求批准并获得一次性令牌（仅对这条命令、" +
+              "默认 120 秒有效）；用户拒绝或无人值守（cron/loop）时会被直接拒绝，此时应改用沙箱内的替代方案。",
+          },
           timeout_sec: {
             type: "integer",
             description:

@@ -530,6 +530,9 @@ export function buildSystemPrompt(
   // 自指运行权限：只有被 [selfAccess].grantedAgents 授权的 agent 才被告知该能力
   // （未授权时提它只会让模型反复尝试并被拒）
   if (isSelfAccessGranted(agentId)) parts.push(buildSelfAccessPrompt(agentId));
+  // 沙箱：开启时告诉模型边界在哪、以及（若允许）怎么请求提权
+  const sandboxPrompt = buildSandboxPrompt();
+  if (sandboxPrompt) parts.push(sandboxPrompt);
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
@@ -570,6 +573,51 @@ function buildSelfAccessPrompt(agentId: string): string {
     "  不可读、不可写、不可删；运行时根目录、根下 `.git`、`agents` 整体也不可删",
     "- 删除 [caution] 级候选（下载素材 / 产出文件 / 记忆归档）之前，先向用户说明要删什么、能省多少空间",
   ].join("\n");
+}
+
+/**
+ * 沙箱说明段（仅在 `[sandbox].enabled` 时注入）。
+ *
+ * 目的：让模型**知道边界**，不要反复尝试注定失败的路径（例如沙箱里 ssh 必然失败），
+ * 并在确实需要时用 `exec_shell({ elevate: true })` 显式请求提权，而不是绕路或放弃。
+ */
+function buildSandboxPrompt(): string | null {
+  let cfg;
+  try {
+    cfg = loadConfig().sandbox;
+  } catch {
+    return null;
+  }
+  if (!cfg.enabled || cfg.execShell !== "sandbox") return null;
+
+  const lines = [
+    "## 执行沙箱（你正在其中运行）",
+    "",
+    "你的 `exec_shell` 命令跑在隔离沙箱（bubblewrap）里，**不是**直接在宿主机上。规则：",
+    "",
+    "- 可写：你自己的 agent 目录（含 workspace / memory）、`~/.tinyclaw/{tmp,cache,reports,scripts}`",
+    `  ${cfg.extraRwPaths.length > 0 ? `以及 ${cfg.extraRwPaths.join("、")}` : ""}`.trim(),
+    "- 只读：系统目录、`~/.nvm`、`~/.cache`、仓库等（读得到，改不了）",
+    "- **不可见（不是「没权限」，而是文件不存在）**：`~/.tinyclaw/{config,secrets,mcp}.toml`、`~/.tinyclaw/auth/`、",
+    "  `*.key`、`~/.ssh`、`~/.aws`、`~/.netrc` 等。所以 `ssh`、`git push`（走 SSH remote）、`scp` 之类**会直接失败**。",
+    `- 网络：${cfg.network === "allow" ? "允许出网" : "**禁止出网**（当前任务被判定为处理不可信内容）"}`,
+  ];
+
+  if (cfg.elevation.enabled) {
+    lines.push(
+      "",
+      `- **需要宿主机权限时**：用 \`exec_shell({ command, elevate: true })\` 请求在沙箱外执行一次。`,
+      "  会先请用户批准（只对**这一条命令**生效、默认 120 秒有效），用户拒绝就用沙箱内的替代方案，",
+      "  **不要重复请求同一条命令**（会被节流拒绝）。无人值守（cron / loop）场景一律不允许提权。"
+    );
+  } else {
+    lines.push(
+      "",
+      "- 当前**不允许提权**：路径被沙箱挡住时，改用沙箱内可完成的做法（例如用 HTTPS + token 替代 SSH 推送），",
+      "  或直接告诉用户你需要他在沙箱外执行什么命令。"
+    );
+  }
+  return lines.filter((l) => l !== undefined).join("\n");
 }
 
 /** 格式化工具调用描述（用于 MFA 警告消息） */function describeToolCall(name: string, args: Record<string, unknown>): string {

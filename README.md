@@ -13,7 +13,8 @@
 - **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server
 - **MFA 鉴权**:高危工具支持 Azure AD number-matching 推送、TOTP 验证码、文字确认三种方式
 - **沙箱与审计**:`exec_shell` 可跑进 bubblewrap —— 密钥文件在沙箱内被掩码成空文件(内核强制,不是"检查后拒绝"),
-  未绑定目录只读、可断网;所有工具调用落入 `~/.tinyclaw/audit/` 审计流(参数已脱敏);
+  未绑定目录只读、可断网;需要宿主机能力时可用 `exec_shell({elevate:true})` **提权**(按风险分级 E1/E2、
+  一次性令牌绑定命令、无人值守一律不许);所有工具调用落入 `~/.tinyclaw/audit/` 审计流(参数已脱敏);
   cron/loop 等无人值守路径按工具白名单放行,且 MFA 无法送达时默认**拒绝**而非放行
 - **向量记忆**:对话摘要自动向量化,token 超阈值时自动压缩;`/compact` 手动压缩;多 Agent 独立命名空间
 - **Dashboard**:内置 Web UI(`tinyclaw web`),展示指标趋势图、日报存档、Cron 任务状态

@@ -356,6 +356,22 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 
 ⚠️ **副作用**：沙箱内 `~/.ssh` 被掩码 → `git push` / `ssh` 在 agent 的 shell 里会失败（改用 HTTPS + token）；
 未绑定目录一律只读，需要写入的新目录要加进 `extraRwPaths`。
+
+#### 提权（`[sandbox.elevation]`）—— 沙箱默认，提权例外
+
+模型看不到沙箱本身，只能表达意图：`exec_shell({ command, elevate: true })`。框架把它变成一次可见、可拒、可追溯的审批：
+
+| 级别 | 判定（`classifyElevation`） | 默认行为 |
+|---|---|---|
+| E1 只读类 | 未命中 E2 特征（`ssh -T`、`systemctl --user status`、`git status`） | `e1AutoApprove = true` 时免批执行 |
+| E2 有副作用 | 重定向写、`rm/mv/cp/chmod`、`pip/npm install`、`git push`、`systemctl start/stop/restart`、`sudo`… | **每次确认**（`onAskUser` 按钮优先，否则 MFA 文本确认） |
+
+- **一次性令牌**：批准后签发 `{命令哈希, TTL}`（默认 120s），同一条命令不再重复询问；**换命令即失效**。
+- **节流**：同一条命令 5 分钟内最多请求 `maxRequestsPer5min` 次（默认 1），防止被拒后刷屏重试。
+- **无人值守禁止提权**（`allowInCron = false`）：cron / loop 里没人能审批。
+- **fail-closed**：没有可用交互通道时一律拒绝（"没人能批准" ≠ "自动批准"）。
+- **可见 + 可审计**：提权执行前发一条 `⚠️ 本次在沙箱外执行：<命令>`，并写审计（含等级、是否复用令牌）。
+- 白名单：只有 `allowedAgents` 里的 agent 能提权；总开关默认 **false**。
 **code_assist 工具**：Master Agent 将代码任务委派给两个后台子 Agent 协作完成，不污染主对话历史。
 
 #### 架构图

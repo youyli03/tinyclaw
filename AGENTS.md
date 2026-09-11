@@ -204,6 +204,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   `loop-trigger.ts`（Loop steps）直接 `executeTool()`，**不经过 MFA** —— 但它们现在**必过无人值守白名单**
   （`auth/tool-policy.ts` 的 `enforceUnattendedTool`，白名单在 `[sandbox.unattended].allowedTools`）。
   新增"绕过 ReAct 循环直接调工具"的入口时，**必须**同样调用 `enforceUnattendedTool` + `auditToolCall`。
+  ⚠️ 默认白名单是"只读 + 计算 + 写 workspace + exec_shell"，**不含**破坏性/特权/出网类；
+  生产里如果某个无人值守任务被拒（审计里能看到 `policy` deny），优先把它需要的工具加进 `allowedTools`，
+  而不是把 `mode` 改成 `all`。
 - **MFA 兜底已改为 fail-closed**：无人值守（cron/loop）且无交互回调时按 `[sandbox.unattended].mfaFallback`
   处理，默认 `deny`（历史行为是 `mfaPassed = true` 静默放行）。交互式运行（chat/cli）无回调时仍按旧行为放行，
   并会留审计记录。`cron_add` 的 `mfaExempt` 默认值已从写死 `true` 改为 `false`。
@@ -211,7 +214,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   密钥文件被空文件掩码（沙箱内**不存在**）、未绑定目录只读、可断网、`onUnavailable = "deny"` 时 bwrap 缺失即拒绝。
   ⚠️ **掩码不覆盖环境变量**：`~/.tinyclaw/env` 会注入 `process.env`（`main.ts` 的 `loadEnvFile`），
   `inheritEnv = true` 时沙箱内照样能读到；`network = "deny"` 会强制收敛环境。
-  ⚠️ 掩码使 `~/.ssh` 在沙箱内为空 → agent 的 shell 里 `ssh` / `git push` 会失败（需 HTTPS + token 或提权，提权尚未实现）。
+  ⚠️ 掩码使 `~/.ssh` 在沙箱内为空 → agent 的 shell 里 `ssh` / `git push` 会失败；
+  需要时用 `exec_shell({ elevate: true })` 走**提权通道**（`src/sandbox/elevation.ts`）：
+  按风险分级（E1 只读可免批 / E2 有副作用每次确认）、批准后签发**绑定命令哈希的一次性令牌**（默认 120s，换命令即失效）、
+  同命令 5 分钟内请求节流、**cron/loop 一律不许提权**、无交互通道即 fail-closed，且提权必须发一条用户可见提示 + 写审计。
 - **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts`）与 `read_image` 经 `checkReadPath()`
   拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，
   但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
