@@ -6,7 +6,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import type { Connector, InboundMessage } from "../base.js";
+import type { Connector, InboundMessage, SendOutcome } from "../base.js";
 import { startGateway } from "./gateway.js";
 import { sendMessage, C2CStreamSession, canReplyPassively } from "./outbound.js";
 import { initMarkdownSupport } from "./api.js";
@@ -365,9 +365,9 @@ export class QQBotConnector implements Connector {
     type: InboundMessage["type"],
     text: string,
     replyToId?: string
-  ): Promise<void> {
+  ): Promise<SendOutcome> {
     const resolvedSecret = resolveSecret(this.botCfg.clientSecret);
-    await sendMessage({
+    return await sendMessage({
       appId: this.botCfg.appId,
       clientSecret: resolvedSecret,
       peerId,

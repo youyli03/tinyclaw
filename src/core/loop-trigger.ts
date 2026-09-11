@@ -134,7 +134,7 @@ export class LoopTriggerManager {
   private runAgent: typeof RunAgentFn | null = null;
   private connectors: Map<
     string,
-    { send(peerId: string, type: string, content: string): Promise<void> }
+    { send(peerId: string, type: string, content: string): Promise<unknown> }
   > = new Map();
   private loopsDir: string = path.join(os.homedir(), ".tinyclaw", "loops");
 
@@ -143,7 +143,10 @@ export class LoopTriggerManager {
     loopsDir?: string;
     getSession: (sessionId: string) => Session;
     runAgent: typeof RunAgentFn;
-    connectors: Map<string, { send(peerId: string, type: string, content: string): Promise<void> }>;
+    connectors: Map<
+      string,
+      { send(peerId: string, type: string, content: string): Promise<unknown> }
+    >;
   }): void {
     this.getSession = opts.getSession;
     this.runAgent = opts.runAgent;

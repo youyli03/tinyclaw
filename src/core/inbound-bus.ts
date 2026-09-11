@@ -26,8 +26,8 @@ export interface WaiterRemind {
   intervalSecs: number;
   /** 最多提醒次数,0 = 不限 */
   maxReminds: number;
-  /** 发送提醒消息(由注册方提供,通常用 connector.send) */
-  send: () => Promise<void> | void;
+  /** 发送提醒消息(由注册方提供,通常用 connector.send);返回值被忽略 */
+  send: () => Promise<unknown> | void;
 }
 
 export interface Waiter {

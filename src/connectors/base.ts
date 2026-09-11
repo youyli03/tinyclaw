@@ -23,6 +23,22 @@ export interface InboundMessage {
   guildId?: string;
 }
 
+/**
+ * 一次发送的结果。
+ *
+ * 存在的理由：文本 + 富媒体标签可能**部分成功**——正文发出去了，但某个 `<audio>` /
+ * `<file>` 标签因为类型不匹配或体积超限失败，被静默降级成纯文本。
+ * 调用方（`main.ts` 的流式路径）据此打**真实**日志，而不是无脑宣称送达。
+ */
+export interface SendOutcome {
+  /** 原始内容里是否含媒体标签 */
+  hadMedia: boolean;
+  /** 是否有媒体标签发送失败（已降级为文本） */
+  mediaFailed: boolean;
+  /** 首个失败原因摘要，仅在 mediaFailed 时有值 */
+  mediaError?: string;
+}
+
 export interface Connector {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -32,7 +48,7 @@ export interface Connector {
     type: InboundMessage["type"],
     text: string,
     replyToId?: string
-  ): Promise<void>;
+  ): Promise<SendOutcome>;
 }
 
 // ── QQ 官方 API 原始类型 ──────────────────────────────────────────────────────

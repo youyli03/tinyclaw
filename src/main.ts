@@ -956,8 +956,20 @@ ${message}`;
           if (streamed) {
             if (mediaText) {
               try {
-                await connector.send(msg.peerId, msg.type, mediaText, msg.messageId);
-                console.log("[qqbot] 媒体标签已通过普通发送路径送达（流式仅承载正文）");
+                const outcome = await connector.send(
+                  msg.peerId,
+                  msg.type,
+                  mediaText,
+                  msg.messageId
+                );
+                // 媒体失败会**静默降级为纯文本**（用户只收到正文），所以不能无脑报"已送达"
+                if (outcome.mediaFailed) {
+                  console.error(
+                    `[qqbot] 媒体标签发送失败，已降级为纯文本: ${outcome.mediaError ?? "原因未知"}`
+                  );
+                } else {
+                  console.log("[qqbot] 媒体标签已通过普通发送路径送达（流式仅承载正文）");
+                }
               } catch (mediaErr) {
                 console.error("[qqbot] 流式回复中的媒体发送失败:", mediaErr);
               }

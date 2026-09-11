@@ -24,7 +24,7 @@ import {
   StreamApiError,
   type C2CStreamChunk,
 } from "./api.js";
-import type { InboundMessage } from "../base.js";
+import type { InboundMessage, SendOutcome } from "../base.js";
 import { parseMediaTags } from "../utils/media-parser.js";
 import { mdToImage } from "../utils/md-to-image.js";
 
@@ -99,8 +99,31 @@ export interface SendOptions {
   replyToId?: string;
 }
 
-/** 本地文件 base64 上传的大小上限（10 MB） */
-const MAX_BASE64_FILE_SIZE = 10 * 1024 * 1024;
+/**
+ * 单次请求 **base64 编码后字符数** 的上限（10 MB）。
+ *
+ * 官方富媒体上传有两种传法：
+ *  - `file_url`：整文件上传；大文件应走**分片上传**（`upload_prepare` → PUT → `upload_part_finish`）
+ *  - `file_data`：base64 内联进单次请求 ← **本项目用的就是这条**
+ *
+ * 实测：内联请求体编码后约 10 MB 即触顶，超出时网关返回
+ * `500 {"message":"call inner proxy error","code":850012}` —— 不带任何体积线索。
+ *
+ * ⚠️ 比较的是**编码后长度**（≈ 原始字节 × 4/3），不是原始字节数。
+ * 历史 bug：拿原始字节和 10 MB 比，于是 8.2 MB 的文件顺利通过预检、却在网关侧炸掉，
+ * 用户只看到一句"附件已发"（媒体失败被静默降级成文本）。
+ */
+const MAX_BASE64_CHARS = 10 * 1024 * 1024;
+
+/** 原始字节数 → base64 编码后字符数（含 padding） */
+function base64Length(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
+/** 人类可读体积（日志与用户提示共用） */
+function formatMiB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 export interface MediaError {
   src: string;
@@ -120,7 +143,7 @@ export function extractTextContent(text: string): string {
 }
 
 /**
- * 发送前预检：检查本地媒体文件是否存在且不超大。
+ * 发送前预检：检查本地媒体文件是否存在、base64 内联后是否超网关上限。
  * 仅检查本地路径，URL 跳过。返回错误列表，空数组表示通过。
  */
 export function validateMediaContent(text: string): MediaError[] {
@@ -132,11 +155,18 @@ export function validateMediaContent(text: string): MediaError[] {
     if (src.startsWith("http://") || src.startsWith("https://")) continue;
     if (!fs.existsSync(src)) {
       errors.push({ src, error: `文件不存在: ${src}` });
-    } else {
-      const stat = fs.statSync(src);
-      if (stat.size > MAX_BASE64_FILE_SIZE) {
-        errors.push({ src, error: `文件过大 (${stat.size} bytes)` });
-      }
+      continue;
+    }
+    const stat = fs.statSync(src);
+    const encoded = base64Length(stat.size);
+    if (encoded > MAX_BASE64_CHARS) {
+      errors.push({
+        src,
+        error:
+          `文件过大：原始 ${formatMiB(stat.size)}，base64 内联后 ${formatMiB(encoded)}，` +
+          `超过单次上传上限 ${formatMiB(MAX_BASE64_CHARS)}（约合原始文件 7.5 MB）；` +
+          `大文件需要分片上传，当前未实现`,
+      });
     }
   }
   return errors;
@@ -180,17 +210,39 @@ function isTLSError(err: unknown): boolean {
   );
 }
 
+/**
+ * 是否是「富媒体类型不被接受」类错误 —— 换 `file_type=4` 重发大概率能救。
+ *
+ * 官方各类型只吃固定格式：`1`=png/jpg、`2`=mp4、`3`=silk、`4`=任意。
+ * 类型对不上时返回 `400 {"message":"富媒体文件格式不支持","code":850019,"err_code":40034002}`。
+ */
+function isMediaFormatRejection(err: unknown): boolean {
+  const msg = String(err);
+  return (
+    msg.includes("850019") ||
+    msg.includes("40034002") ||
+    msg.includes("富媒体文件格式不支持") ||
+    /failed 400\b/.test(msg)
+  );
+}
+
 /** 指数退避：delay ms 后 resolve，不设上限 */
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function sendMessage(opts: SendOptions): Promise<void> {
+export async function sendMessage(opts: SendOptions): Promise<SendOutcome> {
   const { appId, clientSecret, peerId, type, text, replyToId } = opts;
 
   let token = await getAccessToken(appId, clientSecret);
 
   const segments = parseMediaTags(text);
+
+  // 媒体标签是否出现过 / 是否有失败（失败时已降级为纯文本）
+  const hadMedia = segments.some((seg) => seg.type !== "text");
+  let firstMediaError: string | undefined;
+  /** 本轮是否已把正文文本发出去了（决定媒体失败时要不要再补发一次正文） */
+  let sentTextSegment = false;
 
   for (const segment of segments) {
     if (segment.type === "text") {
@@ -202,6 +254,7 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
             replyToId && checkLimit(replyToId).allowed ? replyToId : undefined;
           await doSendMedia(token, type, peerId, "img", imgPath, mediaReplyToId2);
           if (replyToId) recordReply(replyToId);
+          sentTextSegment = true; // 正文已以图片形式送达
           continue;
         } catch (err) {
           console.warn("[qqbot] 长文本渲染图片失败，降级为文字:", err);
@@ -244,10 +297,12 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
         }
         if (textReplyToId) recordReply(textReplyToId);
       }
+      sentTextSegment = true;
     } else {
       // ── 富媒体发送 ────────────────────────────────────────────────────
       if (type === "guild") {
         console.warn("[qqbot] 频道消息暂不支持富媒体，已跳过");
+        firstMediaError ??= "频道消息不支持富媒体";
         continue;
       }
       // 频道次数限制：已超限则改为主动消息（不带 msg_id）
@@ -289,15 +344,21 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
             await sleep(backoffMs);
             backoffMs *= 2;
           } else {
+            const reason = err instanceof Error ? err.message : String(err);
             console.error("[qqbot] 媒体发送失败:", err);
-            // 降级：提取纯文本内容发送给用户，确保用户至少能收到信息
-            const fallbackText = extractTextContent(text);
-            if (fallbackText) {
-              try {
-                await doSend(token, appId, type, peerId, fallbackText, replyToId);
-              } catch (fallbackErr) {
-                console.error("[qqbot] 媒体降级发文本也失败:", fallbackErr);
-              }
+            // 只在首个失败上做降级说明，避免多个媒体段各自刷一条 notice
+            if (firstMediaError === undefined) {
+              firstMediaError = reason.slice(0, 200);
+              await notifyMediaFailure({
+                token,
+                appId,
+                type,
+                peerId,
+                text,
+                sentTextSegment,
+                reason,
+                ...(replyToId !== undefined ? { replyToId } : {}),
+              });
             }
             break;
           }
@@ -306,6 +367,12 @@ export async function sendMessage(opts: SendOptions): Promise<void> {
       if (replyToId) recordReply(replyToId);
     }
   }
+
+  return {
+    hadMedia,
+    mediaFailed: firstMediaError !== undefined,
+    ...(firstMediaError !== undefined ? { mediaError: firstMediaError } : {}),
+  };
 }
 
 /**
@@ -385,8 +452,12 @@ async function doSendMedia(
 
     try {
       const stat = fs.statSync(uploadPath);
-      if (stat.size > MAX_BASE64_FILE_SIZE) {
-        throw new Error(`文件过大 (${stat.size} bytes): ${uploadPath}`);
+      const encoded = base64Length(stat.size);
+      if (encoded > MAX_BASE64_CHARS) {
+        throw new Error(
+          `文件过大，无法内联上传：原始 ${formatMiB(stat.size)}，base64 后 ${formatMiB(encoded)}，` +
+            `上限 ${formatMiB(MAX_BASE64_CHARS)}（约合原始 7.5 MB）: ${uploadPath}`
+        );
       }
       const data = fs.readFileSync(uploadPath);
       source = {
@@ -405,10 +476,52 @@ async function doSendMedia(
     }
   }
 
-  if (type === "c2c" || type === "dm") {
-    await sendC2CMedia(token, peerId, mediaType, source, msgId);
-  } else {
-    await sendGroupMedia(token, peerId, mediaType, source, msgId);
+  const send =
+    type === "c2c" || type === "dm"
+      ? (mt: typeof mediaType) => sendC2CMedia(token, peerId, mt, source, msgId)
+      : (mt: typeof mediaType) => sendGroupMedia(token, peerId, mt, source, msgId);
+
+  try {
+    await send(mediaType);
+  } catch (err) {
+    // 类型不匹配时回退为「文件」重发：官方 file_type=4 接受任意格式，
+    // 而非 img/video/audio 各自只吃 png|jpg / mp4 / silk（否则 400 850019）。
+    if (mediaType === "file" || !isMediaFormatRejection(err)) throw err;
+    console.warn(
+      `[qqbot] 富媒体以 ${mediaType} 发送被拒（${err instanceof Error ? err.message : String(err)}），` +
+        `回退为文件类型重试`
+    );
+    await send("file");
+  }
+}
+
+/**
+ * 媒体发送失败时给用户一个**可见**的交代。
+ *
+ * 历史行为：吞掉错误、只重发一次正文 —— 用户在聊天里看不到任何异常，
+ * 而模型往往已经说了「附件已发」，于是表现为"文件凭空消失"。
+ * 现在：正文若已发出就不再重发（避免重复），只补一条简短的失败说明。
+ */
+async function notifyMediaFailure(args: {
+  token: string;
+  appId: string;
+  type: InboundMessage["type"];
+  peerId: string;
+  text: string;
+  /** 本轮正文是否已经发出（文本段已发 / 已转图片发） */
+  sentTextSegment: boolean;
+  reason: string;
+  replyToId?: string;
+}): Promise<void> {
+  const { token, appId, type, peerId, text, sentTextSegment, reason, replyToId } = args;
+  const hint = reason.length > 160 ? `${reason.slice(0, 157)}...` : reason;
+  const notice = `⚠️ 附件发送失败：${hint}`;
+  const bodyText = sentTextSegment ? "" : extractTextContent(text);
+  const payload = bodyText ? `${bodyText}\n\n${notice}` : notice;
+  try {
+    await doSend(token, appId, type, peerId, payload, replyToId);
+  } catch (fallbackErr) {
+    console.error("[qqbot] 媒体失败说明也发送失败:", fallbackErr);
   }
 }
 
