@@ -88,6 +88,7 @@ tinyclaw/
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
 │   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务/运行时占用)
 │   │   ├── self-runtime.ts   # self_runtime_scan/read/delete(自指：读写删自己的运行时目录，密钥除外)
+│   │   ├── fs-grant-tool.ts  # fs_grant(路径级无感授权：$HOME 内非密钥路径，带 TTL + 审计)
 │   │   ├── skill-creator.ts  # create_skill(创建 Skill 文档并注册到 SKILLS.md)
 │   │   ├── skill-run.ts      # 技能执行辅助
 │   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_wait / agent_trace / agent_abort
@@ -334,10 +335,15 @@ onUnavailable = "deny"        # bwrap 不可用时拒绝执行，而不是偷偷
 maskSecrets   = true
 network       = "allow"       # "deny" 用于不可信内容任务（同时强制收敛环境变量）
 inheritEnv    = true
-extraRwPaths  = ["/home/lyy/FinanceSkill"]
+extraRwPaths  = []
 
 [sandbox.audit]
 enabled = true
+
+[sandbox.grant]
+enabled          = true       # 路径级无感提权（fs_grant）
+ttlSecs          = 3600
+allowOutsideHome = false
 
 [sandbox.unattended]
 mode        = "allowlist"     # cron/loop 只允许 allowedTools
@@ -348,6 +354,40 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 `~/.tinyclaw/{config,secrets,mcp}.toml`、`env`、`.github_token`、`yingli_token.json`、`auth/`、
 运行时目录下的 `*.key` / `*.pem` / `*.p12`、`~/.ssh`、`~/.aws`、`~/.netrc`、`~/.gnupg`、
 `~/.config/gh`、`~/.docker/config.json`。
+掩码例外：`[sandbox].readableSecretPaths` 里显式列出的路径保持可读（默认空），
+用于"脚本直接读 `secrets.toml` 取 key"这类现实需求 —— 密钥取用方式的重新设计见 `tmp/job-credentials-design-20260911.md`。
+
+**沙箱可写范围**（默认最小）：
+
+| 场景 | 可写 |
+|---|---|
+| 任何来源 | 自己的 agent 目录（`agents/<id>`，含 `workspace/`）、`/tmp` |
+| code 模式 | 另加**当前项目目录**（`codedir`，即 `ctx.cwd`） |
+| cron job | 另加该 job 配置里 `writablePaths` 显式声明的路径（如 `~/.tinyclaw/data`、`dashboard.db`、`~/FinanceSkill`） |
+| loop trigger | 同上，`loops/<id>.json` 的 `writablePaths` |
+| 其他（`cache/` `scripts/` `reports/` 等） | ❌ 只读，需要就显式声明 |
+
+声明**文件**时会自动放开它的 SQLite 边车（`-wal` / `-shm` / `-journal`）——否则 WAL 模式下会报
+`attempt to write a readonly database`。
+
+**无人值守白名单**（`[sandbox.unattended]`）：cron / loop 的工具调用按 `allowedTools` 放行，默认包含
+只读（`read_file`/`search_store`/`self_*`/`cron_list`/`mcp_list_servers`/`session_get`）、记忆写入、
+报告类工具、`exec_shell`（沙箱内）与子 agent 系列（`agent_fork`/`agent_wait`/`agent_status`/`agent_trace`/`agent_abort`）。
+**不含**破坏性（`delete_file`/`self_runtime_delete`）、特权（`restart_tool`/`cron_add`/`cron_remove`/`mcp_enable_server`…）
+与出网（`read_url`/`web_search`/`http_request`）。
+
+#### 两个通道：声明式 `steps` vs 模型驱动 `react`
+
+无人值守下同一个工具可能由两种途径触发，信任级不同（`auth/tool-policy.ts` 的 `ToolChannel`）：
+
+| 通道 | 来源 | 白名单外的处理 | `agent_fork` |
+|---|---|---|---|
+| `steps` | job / loop 配置里**声明式写死**的 tool 步骤（用户显式设计，可审计） | 拒绝 | **允许**（如股市日报按市场 fan-out） |
+| `react` | ReAct 循环里**模型临场挑选**的工具 | 拒绝 | **硬禁止**（`HARD_DENY_REACT_UNATTENDED`，不受 `allowedTools` / `mode=all` 影响） |
+
+理由：配置里的步骤是"用户写死的意图"，模型临场决定则是"没人看着时的即兴发挥"——
+后者 fork 等于再开一个不受监督的 agent。ReAct 侧被拒时，拒绝文案会告诉模型改用声明式步骤表达 fan-out。
+`channel=steps` 的放行也会写入审计，便于事后核对某个 job 到底跑了什么。
 
 ⚠️ **环境变量是掩码盖不住的一条通道**：`~/.tinyclaw/env` 在服务启动时被注入 `process.env`
 （`main.ts` 的 `loadEnvFile`），所以 `inheritEnv = true` 时沙箱内的命令仍能看到那些变量。
@@ -372,6 +412,35 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 - **fail-closed**：没有可用交互通道时一律拒绝（"没人能批准" ≠ "自动批准"）。
 - **可见 + 可审计**：提权执行前发一条 `⚠️ 本次在沙箱外执行：<命令>`，并写审计（含等级、是否复用令牌）。
 - 白名单：只有 `allowedAgents` 里的 agent 能提权；总开关默认 **false**。
+
+#### 两条提权路径：`fs_grant`（路径级）与 `elevate`（命令级）
+
+两者解决不同问题，**不要混用**：
+
+| | `fs_grant`（`auth/fs-grant.ts` + `tools/fs-grant-tool.ts`） | `elevate`（`sandbox/elevation.ts`） |
+|---|---|---|
+| 作用对象 | **一个路径/目录** | **单条 shell 命令** |
+| 语义 | 把该路径加进可写集合：工具层放行 + 沙箱 bind 成可写（**人仍在沙箱内**） | 这条命令**脱离沙箱**在宿主机跑 |
+| 复用 | 同路径 + TTL（默认 3600s），`write_file`/`edit_file`/`exec_shell` 都受益 | 同命令哈希 + TTL（默认 120s），换命令即失效 |
+| 审批 | **不打扰用户**（agent 显式调用即可），写审计 | E1 免批 / E2 每次确认 |
+| 典型用途 | chat 想写 `~/Documents`、某个项目目录 | `ssh` / `git push`（需要 `~/.ssh`） |
+
+`fs_grant` 的硬边界：只接受 `$HOME` 内、已存在、非密钥、非 `~/.tinyclaw`、非受保护目录（`.ssh` 等）的路径；
+**cron / loop 一律拒绝**（无人值守的可写范围只能由任务配置的 `writablePaths` 声明）。
+授权集合存在 `Session.grantedWritePaths`（带 TTL，`argsAreSelfRuntimeOnly()` 也会认它 → 免 MFA）。
+
+#### 无人值守的密钥：按任务声明（方案 B）
+
+沙箱默认把 `secrets.toml` 掩码成空文件。job / loop 在配置里声明所需密钥后，
+运行时生成**只含这些 key** 的临时文件并 bind 回**原路径** → 脚本零改动，但每个任务只看得见自己声明的密钥：
+
+```json
+{ "id": "lj50xco3", "secrets": ["DEEPSEEK_API_KEY"], "writablePaths": ["~/.tinyclaw/dashboard.db"] }
+```
+
+未声明 = 脚本读到空文件（安全默认）；物化与清理都写审计（`secrets_filter` 事件）。
+实现见 `src/sandbox/secrets-filter.ts`；方案对比见 `tmp/job-credentials-design-20260911.md`。
+全局例外 `[sandbox].readableSecretPaths` 仍然保留，但**优先用按任务声明**。
 **code_assist 工具**：Master Agent 将代码任务委派给两个后台子 Agent 协作完成，不污染主对话历史。
 
 #### 架构图

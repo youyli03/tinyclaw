@@ -21,7 +21,7 @@ import { MFAError, toolNeedsMFA } from "../auth/guard.js";
 import { auditToolCall, enforceUnattendedTool, unattendedMfaFallback } from "../auth/tool-policy.js";
 import type { RunOrigin } from "../security/audit.js";
 import {
-  argsAreSelfRuntimeOnly,
+  argsAreWithinOwnScope,
   isSelfAccessGranted,
   runtimeRoot,
 } from "../tools/path-guard.js";
@@ -66,6 +66,7 @@ import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
 import "../tools/self-status.js";
 import "../tools/self-runtime.js";
+import "../tools/fs-grant-tool.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
 import "../tools/web-search.js";
@@ -636,6 +637,13 @@ export interface AgentRunOptions {
    * 省略时按 `unknown` 处理（不套用无人值守白名单）。
    */
   origin?: RunOrigin;
+  /**
+   * 本次运行额外允许写入的目录（沙箱 bind 成可写）。
+   * cron job / loop 配置的 `writablePaths` 经此传入，作用于该任务的所有 exec_shell。
+   */
+  sandboxExtraRwPaths?: string[];
+  /** 本次运行声明要读的密钥名（cron/loop 的 `secrets`），传给 exec_shell 做按任务过滤 */
+  sandboxSecretNames?: string[];
   /** 替换 Agent SYSTEM.md 的自定义 prompt（优先级高于文件） */
   systemPrompt?: string;
   /** 追加到 Agent SYSTEM.md 之后的额外 prompt（不替换，适合 slave 注入规则） */
@@ -1891,6 +1899,9 @@ async function runAgentInner(
           ...(opts.sessionSendFn ? { sessionSendFn: opts.sessionSendFn } : {}),
           ...(opts.sessionGetFn ? { sessionGetFn: opts.sessionGetFn } : {}),
           ...(opts.onLoopExit ? { onLoopExit: opts.onLoopExit } : {}),
+          ...(opts.sandboxExtraRwPaths ? { sandboxExtraRwPaths: opts.sandboxExtraRwPaths } : {}),
+          ...(opts.sandboxSecretNames ? { sandboxSecretNames: opts.sandboxSecretNames } : {}),
+          ...(opts.origin ? { origin: opts.origin } : {}),
         });
       } catch (err) {
         err0 = err;
@@ -2127,6 +2138,8 @@ async function runAgentInner(
       const policyDecision = enforceUnattendedTool({
         toolName: call.name,
         origin: opts.origin,
+        // ReAct 通道：模型临场挑选的工具调用（与 job 配置里声明式的 steps 区别对待）
+        channel: "react",
         agentId: session.agentId,
         sessionId: session.sessionId,
         cfg: sandboxCfg,
@@ -2154,12 +2167,11 @@ async function runAgentInner(
       const mfaCfg = loadConfig().auth.mfa;
       // MFA 判定与提示文案都用"剥离保留字段后"的参数，避免 __purpose 混进警告文本
       const mfaArgs = policyArgs;
-      // 自指权限豁免：被授权 agent 只动 ~/.tinyclaw 内且不含密钥时，不再逐次要求 MFA
+      // 自指权限 / fs_grant 授权豁免：只动"自己范围"的写操作不再逐次要求 MFA
       const selfAccessCfg = loadConfig().selfAccess;
       const selfAccessExempt =
         selfAccessCfg.exemptMfa &&
-        isSelfAccessGranted(session.agentId) &&
-        argsAreSelfRuntimeOnly(mfaArgs);
+        argsAreWithinOwnScope(mfaArgs, { agentId: session.agentId, masterSession: session });
       if (
         (toolNeedsMFA(call.name, mfaArgs, mfaCfg) || getTool(call.name)?.requiresMFA) &&
         !selfAccessExempt &&

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
 import { buildSandboxPlan, describeSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
+import { materializeFilteredSecrets, cleanupFilteredSecrets } from "../sandbox/secrets-filter.js";
 import { announceElevation, requestElevation } from "../sandbox/elevation.js";
 import { auditToolCall } from "../auth/tool-policy.js";
 import type { RunOrigin } from "../security/audit.js";
@@ -86,16 +87,20 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   let spawnCmd = "bash";
   let spawnArgs = ["-c", command];
   let spawnEnv: NodeJS.ProcessEnv | undefined;
+  /** 按任务物化的密钥过滤文件（子进程退出后清理） */
+  let filteredSecrets: string | null = null;
 
-  const toolOrigin: RunOrigin | undefined = ctx?.sessionId?.startsWith("cron_")
-    ? "cron"
-    : ctx?.sessionId?.startsWith("slave:")
-      ? "slave"
-      : ctx?.sessionId?.startsWith("probe:")
-        ? "cli"
-        : ctx?.masterSession
-          ? "chat"
-          : undefined;
+  const toolOrigin: RunOrigin | undefined =
+    ctx?.origin ??
+    (ctx?.sessionId?.startsWith("cron_")
+      ? "cron"
+      : ctx?.sessionId?.startsWith("slave:")
+        ? "slave"
+        : ctx?.sessionId?.startsWith("probe:")
+          ? "cli"
+          : ctx?.masterSession
+            ? "chat"
+            : undefined);
 
   if (wantElevate && sandboxCfg.enabled) {
     const decision = await requestElevation({
@@ -143,10 +148,27 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
       }
       console.warn(`[sandbox] ${reason}，按配置退回本机执行`);
     } else {
+      // 可写豁免 = 任务声明的（cron/loop writablePaths）+ 会话内 fs_grant 授权的路径
+      const extraRw = [
+        ...(ctx?.sandboxExtraRwPaths ?? []),
+        ...(ctx?.masterSession?.listWriteGrants?.() ?? []),
+      ];
+      // 按任务声明的密钥过滤（方案 B）：脚本零改动，但只看得见自己声明的 key
+      filteredSecrets = ctx?.sandboxSecretNames?.length
+        ? materializeFilteredSecrets({
+            names: ctx.sandboxSecretNames,
+            label: ctx.sessionId ?? "adhoc",
+            origin: toolOrigin,
+            agentId: ctx?.agentId ?? "default",
+            ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+          })
+        : null;
       const plan = buildSandboxPlan({
         command,
         agentId: ctx?.agentId ?? "default",
         ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
+        ...(extraRw.length > 0 ? { extraRwPaths: extraRw } : {}),
+        ...(filteredSecrets ? { filteredSecretsFile: filteredSecrets } : {}),
         cfg: sandboxCfg,
       });
       const [head, ...tail] = plan.argv;
@@ -180,6 +202,8 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
       settled = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killHandle) clearTimeout(killHandle);
+      // 清理按任务物化的密钥过滤文件（子进程已退出）
+      cleanupFilteredSecrets(filteredSecrets);
       resolve(message);
     };
 

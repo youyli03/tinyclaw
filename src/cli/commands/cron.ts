@@ -175,6 +175,9 @@ async function cmdAdd(): Promise<void> {
     output: { sessionId, peerId, msgType, notify },
     stateful,
     mfaExempt,
+    // CLI 建的任务默认无沙箱可写豁免 / 无密钥声明（需要时在 job JSON 里加 writablePaths / secrets）
+    writablePaths: [],
+    secrets: [],
   });
 
   cronScheduler.reschedule(job.id);

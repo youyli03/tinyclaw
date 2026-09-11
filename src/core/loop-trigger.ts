@@ -35,8 +35,15 @@ const TriggerConfigSchema = z.object({
   enabled: z.boolean().default(true),
   /** 绑定的 session id，如 "qqbot:c2c:xxx" 或 "cli:yyy" */
   bindTo: z.string().min(1),
-  /** 使用的 agent id（记忆/系统提示来源） */
+  /** used agent id（记忆/系统提示来源） */
   agentId: z.string().default("default"),
+  /**
+   * 沙箱可写豁免：本 trigger 的 `exec_shell` 额外允许写入的目录（默认空）。
+   * 无人值守任务在沙箱里默认只能写自己的 agent 目录；脚本需要写别处时显式列出。支持 `~` 前缀。
+   */
+  writablePaths: z.array(z.string()).default([]),
+  /** 该 trigger 声明要读取的密钥名（同 cron job 的 `secrets`，见 src/cron/schema.ts 注释） */
+  secrets: z.array(z.string()).default([]),
   /** 每次 tick 间隔秒数（上次结束后等待） */
   tickSeconds: z.number().int().min(1).default(60),
   /** 时间段过滤:支持多段，任一命中即触发；兼容单对象写法。段外静默跳过。 */
@@ -376,6 +383,8 @@ export class LoopTriggerManager {
           const stepPolicy = enforceUnattendedTool({
             toolName: step.name,
             origin: "loop",
+            // 声明式步骤通道：loop 配置里写死的 tool 步骤（非模型临场决定）
+            channel: "steps",
             agentId: cfg.agentId,
             sessionId: session.sessionId,
           });
@@ -459,6 +468,9 @@ export class LoopTriggerManager {
         const { content: out } = await this.runAgent!(session, content, {
           origin: "loop",
           skipAddUserMessage: true,
+          // LLM 部分同样继承该 trigger 的可写豁免与密钥声明
+          ...(cfg.writablePaths.length > 0 ? { sandboxExtraRwPaths: cfg.writablePaths } : {}),
+          ...(cfg.secrets.length > 0 ? { sandboxSecretNames: cfg.secrets } : {}),
           skipMemorySearch: true,
           ...(notifyHint ? { systemPromptSuffix: notifyHint } : {}),
           ...(notifyFn ? { onNotify: notifyFn } : {}),
@@ -528,6 +540,10 @@ ${msg}`;
       agentId: cfg.agentId,
       cwd: os.homedir(),
       masterSession: session,
+      // 本 trigger 显式声明的沙箱可写豁免
+      ...(cfg.writablePaths.length > 0 ? { sandboxExtraRwPaths: cfg.writablePaths } : {}),
+      // 本 trigger 声明要读的密钥
+      ...(cfg.secrets.length > 0 ? { sandboxSecretNames: cfg.secrets } : {}),
       slaveRunFn: (s, c, o) =>
         this.runAgent!(s, c, {
           ...(o as Parameters<typeof RunAgentFn>[2]),

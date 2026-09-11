@@ -313,6 +313,15 @@ const SelfAccessSchema = z
   .object({
     /** 被授予自指运行权限的 agentId 列表；空 = 无人拥有该能力（默认） */
     grantedAgents: z.array(z.string()).default([]),
+    /**
+     * 是否把 `~/.tinyclaw` **整棵树**都作为可写范围（默认 **false**）。
+     *
+     * false（推荐）：generic 写入（`write_file` / `edit_file` / `exec_shell`）默认只能动**自己的 agent 目录**；
+     *   想写运行时目录里的其他位置（cache / data / scripts / reports …）要先走 `fs_grant` 显式申请（路径级、带 TTL、写审计）；
+     *   `self_runtime_*` 三个自指工具**不受影响**，仍可用于查看与清理运行时目录。
+     * true：整树可写（历史行为，等于把上面那层摩擦去掉）。
+     */
+    wideWriteAccess: z.boolean().default(false),
     /** 是否允许 `self_runtime_delete` 真正删除（false 时该工具只做 dry-run 报告） */
     allowDelete: z.boolean().default(true),
     /**
@@ -352,6 +361,14 @@ const SandboxSchema = z
     /** 额外可写目录（沙箱内除 workspace 外唯一可写的地方），支持 `~` 前缀 */
     extraRwPaths: z.array(z.string()).default([]),
     /**
+     * 掩码的例外：这些路径在沙箱内**保持可读**（其余密钥仍被空文件盖住）。
+     *
+     * 存在的理由：无人值守脚本常直接读 `~/.tinyclaw/secrets.toml` 取 key
+     * （如 `deepseek_balance_monitor.py`）。掩码会让它们静默失败，于是提供一个**显式的、最小范围**的例外，
+     * 而不是把整类文件放开。默认空 = 全部掩码。
+     */
+    readableSecretPaths: z.array(z.string()).default([]),
+    /**
      * 沙箱内是否继承服务进程的环境变量。
      *
      * ⚠️ **文件掩码不覆盖环境变量**：`~/.tinyclaw/env` 会在启动时被注入 `process.env`
@@ -376,6 +393,24 @@ const SandboxSchema = z
       })
       .default({}),
 
+    /**
+     * 路径级"无感提权"（`fs_grant`）。
+     *
+     * chat / cli 里 agent 可显式申请 `$HOME` 内（非密钥、非 `~/.tinyclaw`）的路径写权限：
+     * 不打扰用户、写审计、带 TTL；授权后 `write_file` / `edit_file` / `exec_shell` 都可写该路径。
+     * cron / loop（无人值守）**一律拒绝** —— 它们的可写范围只能由任务配置的 `writablePaths` 声明。
+     */
+    grant: z
+      .object({
+        /** 总开关 */
+        enabled: z.boolean().default(true),
+        /** 授权有效期（秒），过期后需重新申请 */
+        ttlSecs: z.number().int().min(60).default(3600),
+        /** 是否允许家目录之外的路径（默认否；开了也别指望它绕过密钥边界） */
+        allowOutsideHome: z.boolean().default(false),
+      })
+      .default({}),
+
     /** 无人值守路径（cron / loop）的策略 */
     unattended: z
       .object({        /**
@@ -383,7 +418,11 @@ const SandboxSchema = z
          * `all` = 放行全部（等于旧行为）；`deny` = 除明确安全工具外全部拒绝
          */
         mode: z.enum(["allowlist", "all", "deny"]).default("allowlist"),
-        /** allowlist 模式下允许的工具名 */
+        /**
+         * `allowlist` 模式下允许的工具名。
+         * 注意：`agent_fork` 在**声明式步骤**（cron/loop 的 `steps`）里可用，但在无人值守的
+         * **ReAct 循环**里被硬禁止（`HARD_DENY_REACT_UNATTENDED`），写进白名单也不会在 ReAct 通道生效。
+         */
         allowedTools: z
           .array(z.string())
           .default([
@@ -418,6 +457,8 @@ const SandboxSchema = z
             "exec_shell",
             "skill_run",
             "create_skill",
+            // agent_fork：**声明式 steps 通道允许**（job 配置里写死的 fan-out），
+            // 但无人值守的 **ReAct 通道硬禁止**（见 auth/tool-policy.ts 的 HARD_DENY_REACT_UNATTENDED）
             "agent_fork",
             "agent_wait",
             "agent_status",

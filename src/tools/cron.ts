@@ -127,6 +127,22 @@ registerTool({
               "仍会走一次用户确认（若任务绑定了可交互的输出目标）；无人值守且无法送达时会按 [sandbox.unattended].mfaFallback 处理。" +
               "只有在你确认该任务无需人工复核时才传 true。",
           },
+          writablePaths: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "沙箱可写豁免（默认空）。无人值守任务在沙箱里默认只能写自己的 agent 目录；脚本需要写别处时**显式列出**，" +
+              '例如 ["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]。只对当前 job 生效，' +
+              "且不放宽密钥掩码。",
+          },
+          secrets: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "该任务声明要读取的密钥名（secrets.toml 里的条目名，如 DEEPSEEK_API_KEY；默认空）。" +
+              "沙箱默认把 secrets.toml 掩码成空文件；声明后运行时只把**这几把 key** 暴露给该任务的脚本" +
+              "（bind 回原路径，脚本无需改动）。未声明 = 脚本读到空文件。",
+          },
           peerId: { type: "string", description: "推送目标的 QQ peerId(不填则仅写 log)" },
           msgType: {
             type: "string",
@@ -216,6 +232,12 @@ registerTool({
       // 仍需要一次确认（能送达就送达）。只有显式传 mfaExempt=true 才豁免。
       // 历史实现写死 true，等于"创建即豁免"，与"无人值守最严"相反。
       mfaExempt: args["mfaExempt"] === true,
+      // 沙箱可写豁免：无人值守默认只能写自己的 agent 目录，脚本需要写别处时显式列出
+      writablePaths: Array.isArray(args["writablePaths"])
+        ? (args["writablePaths"] as string[]).map((p) => String(p))
+        : [],
+      // 该任务声明要读的密钥（方案 B：沙箱内只暴露这几把 key）
+      secrets: Array.isArray(args["secrets"]) ? (args["secrets"] as string[]).map((s) => String(s)) : [],
       ...(args["model"] ? { model: String(args["model"]) } : {}),
       ...(Array.isArray(args["steps"]) && args["steps"].length > 0
         ? { steps: args["steps"] as import("../cron/schema.js").PipelineStep[] }

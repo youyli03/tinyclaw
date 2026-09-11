@@ -75,12 +75,24 @@ Job 文件存放在 `~/.tinyclaw/cron/jobs/<id>.json`，直接编辑 JSON 即可
     "notify": "always"
   },
   "stateful": false,
-  "mfaExempt": true,
+  "mfaExempt": false,
+  "writablePaths": [],
+  "secrets": [],
   "createdAt": "2026-01-01T00:00:00.000Z"
 }
 ```
 
 > **注意**：Pipeline 模式内部强制使用 stateful session（`cron:<id>`）。`stateful: false` 时（默认），每次 run 开始前会自动清空 session JSONL，确保每次运行使用干净的上下文。如需保留跨 run 历史记忆，设置 `clearSessionOnRun: false` 或 `stateful: true`。
+>
+> **沙箱可写范围**：无人值守任务在沙箱里默认只能写**自己的 agent 目录**（`~/.tinyclaw/agents/<id>`）与 `/tmp`。
+> 脚本需要写别处时用 `writablePaths` **显式声明**（支持 `~` 前缀），例如
+> `["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]`；声明**文件**时会自动放开其
+> SQLite 边车（`-wal`/`-shm`/`-journal`）。`mfaExempt` 默认 **false**（高危工具仍会尝试向用户确认，
+> 无人值守且无法送达时按 `[sandbox.unattended].mfaFallback` 处理，默认拒绝）。
+>
+> **密钥**：沙箱默认把 `secrets.toml` 掩码成空文件。任务若需读密钥，用 `secrets` 声明条目名，例如
+> `"secrets": ["DEEPSEEK_API_KEY"]` —— 运行时会生成**只含这些 key** 的临时文件并 bind 回原路径，
+> **脚本无需改动**，但每个任务只看得见自己声明的密钥；未声明 = 脚本读到空文件。物化与清理均写审计。
 
 ---
 
@@ -254,8 +266,13 @@ Agent 会自动构建 steps 数组并调用 `cron_add`。
 1. **`message` 字段仍为必填**（schema 约束），Pipeline 模式下它仅作为任务描述，不触发 LLM
 2. **步骤失败即终止**：任意 step 抛出异常，整个 pipeline 标记为 `error`，后续步骤不执行
 3. **工具名称**：`tool` step 的 `name` 必须是已注册的工具（如 `exec_shell`、`write_file`、`send_report`、`notify_user` 等），错误的工具名会返回错误字符串并注入 session（不会抛出异常），后续 LLM step 可感知此错误
-4. **MFA 工具**：`exec_shell`、`write_file` 等需要 MFA 的工具在 pipeline `tool` step 中默认豁免（继承 `mfaExempt: true`）
-5. **session 清理**：Pipeline 模式（`stateful: false`）默认在每次 run 开始前自动清空 `~/.tinyclaw/sessions/cron_<id>.jsonl`，防止历史消息（含旧数据）跨 run 污染当次上下文。设置 `clearSessionOnRun: false` 可禁用此行为以保留历史记忆。`stateful: true` 的 job 不受影响
+4. **工具准入**：`tool` step 走**声明式步骤通道**（`channel: "steps"`）——按 `[sandbox.unattended].allowedTools`
+   白名单放行（该通道**允许** `agent_fork`，见 `auth/tool-policy.ts`），白名单外的工具（`delete_file`、`restart_tool`、
+   出网类等）会被拒绝并把拒绝原因注入 session。MFA 不再默认豁免：`mfaExempt: false`（默认）时高危工具会尝试向用户确认，
+   无人值守且无法送达时按 `[sandbox.unattended].mfaFallback` 处理（默认拒绝）。
+5. **沙箱**：`tool` step 的 `exec_shell` 在 `[sandbox].enabled` 时跑在 bwrap 内，默认可写只有 agent 目录 + `/tmp`，
+   需要写别处用该 job 的 `writablePaths` 声明。
+6. **session 清理**：Pipeline 模式（`stateful: false`）默认在每次 run 开始前自动清空 `~/.tinyclaw/sessions/cron_<id>.jsonl`，防止历史消息（含旧数据）跨 run 污染当次上下文。设置 `clearSessionOnRun: false` 可禁用此行为以保留历史记忆。`stateful: true` 的 job 不受影响
 
 ---
 

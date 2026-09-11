@@ -118,6 +118,27 @@ export const CronJobSchema = z
   mfaExempt: z.boolean().default(false),
 
   /**
+   * **沙箱可写豁免**：此 job 的 `exec_shell`（及其 LLM 步骤里的 shell）额外允许写入的目录。
+   *
+   * 无人值守任务在沙箱里默认只能写**自己的 agent 目录**（`~/.tinyclaw/agents/<id>`）。
+   * 脚本需要写别处时**显式列在这里** —— 例如交易类任务要写
+   * `~/.tinyclaw/data`（`options_monitor.db`）、`~/.tinyclaw/dashboard.db`、`~/FinanceSkill`。
+   *
+   * 支持 `~` 前缀；只对**这个 job** 生效，不影响其他任务与 chat 模式。
+   * 注意：这里只放宽"可写"，不放宽密钥掩码（密钥例外见 `[sandbox].readableSecretPaths`）。
+   */
+  writablePaths: z.array(z.string()).default([]),
+
+  /**
+   * **该任务声明要读取的密钥名**（`secrets.toml` 里的条目名，如 `DEEPSEEK_API_KEY`）。
+   *
+   * 沙箱默认把 `~/.tinyclaw/secrets.toml` 掩码成空文件；声明后，运行时会生成一个
+   * **只含这些 key** 的临时文件并 bind 到原路径 —— 脚本无需改动，但每个任务只看得见自己声明的密钥
+   * （未声明 = 空文件）。物化与清理都会写审计。
+   */
+  secrets: z.array(z.string()).default([]),
+
+  /**
    * 运行此 job 使用的模型(格式同 config.toml,如 "copilot/claude-sonnet-4.6")。
    * 不填则使用 daily 后端模型。
    */

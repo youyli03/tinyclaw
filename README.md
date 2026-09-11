@@ -166,6 +166,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `self_runtime_scan` | 扫描**自己的运行时目录** `~/.tinyclaw` 的磁盘占用,并给出可清理候选(safe / caution);需 `[selfAccess]` 授权 |
 | `self_runtime_read` | 读取/列举运行时目录下的文件(记忆、会话、cron、loop、日志);密钥文件不可读 |
 | `self_runtime_delete` | 删除运行时目录下的文件或目录以清理磁盘(`confirm: true` 才执行,可先 `dry_run`) |
+| `fs_grant` | 申请**一个路径/目录**的写权限(路径级无感授权:不打扰用户、带 TTL、写审计);只接受 `$HOME` 内非密钥路径,`~/.tinyclaw` 与 cron/loop 不可用 |
 
 > **自指运行权限**:`config.toml` 的 `[selfAccess].grantedAgents` 列出被授权的 agentId 后,
 > 该 agent 对 `~/.tinyclaw` 全树拥有完整访问权,但**密钥类文件始终除外**——

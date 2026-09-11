@@ -208,6 +208,47 @@ export class Session {
    */
   approvedOutOfBoundPaths: Set<string> = new Set();
 
+  /**
+   * `fs_grant` 无感提权：agent 显式申请过、且仍在有效期内的可写路径（路径 → 过期时间戳）。
+   *
+   * 与 `approvedOutOfBoundPaths` 的区别：那个是**用户当轮点了"允许"**（要打扰用户），
+   * 这个是 agent **自己声明**、不打扰用户的路径级授权（TTL 默认 1 小时），
+   * 只对 `$HOME` 内且非密钥的路径生效，且全程写审计。
+   */
+  grantedWritePaths: Map<string, number> = new Map();
+
+  /** 申请一个可写路径（刷新 TTL）；返回是否为新增 */
+  grantWritePath(absPath: string, ttlMs: number): boolean {
+    const now = Date.now();
+    this.pruneWriteGrants(now);
+    const existing = this.grantedWritePaths.get(absPath);
+    this.grantedWritePaths.set(absPath, now + ttlMs);
+    return existing === undefined || existing <= now;
+  }
+
+  /** 路径是否已获授权（含前缀匹配：授权目录即授权其下所有内容） */
+  isWritePathGranted(absPath: string): boolean {
+    const now = Date.now();
+    this.pruneWriteGrants(now);
+    for (const [granted, exp] of this.grantedWritePaths) {
+      if (exp <= now) continue;
+      if (absPath === granted || absPath.startsWith(granted + path.sep)) return true;
+    }
+    return false;
+  }
+
+  /** 当前有效的授权路径列表（供 self_status / 调试展示） */
+  listWriteGrants(): string[] {
+    this.pruneWriteGrants(Date.now());
+    return [...this.grantedWritePaths.keys()];
+  }
+
+  private pruneWriteGrants(now: number): void {
+    for (const [p, exp] of this.grantedWritePaths) {
+      if (exp <= now) this.grantedWritePaths.delete(p);
+    }
+  }
+
   // ── 会话摘要 ──────────────────────────────────────────────────────────────
   /** 最近一次 compress() 生成的摘要文本（由 fork() 注入给 slave 作为历史背景） */
   lastSummary?: string;

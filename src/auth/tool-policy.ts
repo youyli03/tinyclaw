@@ -68,6 +68,35 @@ export function isUnattended(origin: RunOrigin | undefined): boolean {
   return origin === "cron" || origin === "loop";
 }
 
+/**
+ * 工具调用的**通道**：
+ * - `react`：ReAct 循环里模型自己挑的工具调用（default）
+ * - `steps`：job / loop 配置里**声明式写死**的 tool 步骤（pipeline steps / loop steps）
+ *
+ * 两者的信任级不同：`steps` 是用户（或建任务时的 agent）在配置里显式写下的意图，事后可审计、可复核；
+ * `react` 是模型在无人监督时**临场决定**要做什么。所以某些能力只对 `steps` 开放。
+ */
+export type ToolChannel = "react" | "steps";
+
+/**
+ * 即使在 `allowedTools` 里也不允许**ReAct 通道**调用的工具（硬规则，不可由配置放开）。
+ *
+ * `agent_fork`：在无人值守的 ReAct 循环里 fork，等于让模型在没人看着时**再开一个不受监督的 agent**
+ * （新 session、新上下文、自己的 LLM 预算与工具循环），既是能力放大也是策略绕过面。
+ * 而写在 job 配置里的 `steps: [{type:"tool", name:"agent_fork"}]` 是**声明式**步骤
+ * （如"股市日报"按市场 fan-out 多个 slave），属用户显式设计，允许。
+ */
+const HARD_DENY_REACT_UNATTENDED = new Set(["agent_fork"]);
+
+/** 硬禁止工具的解释（拒绝文案用） */
+const HARD_DENY_REASON: Record<string, string> = {
+  agent_fork:
+    "无人值守的 ReAct 循环禁止 fork 子 agent：那等于让模型在没人看着时再开一个不受监督的 agent" +
+    "（独立 session / 上下文 / 预算）。如果确实需要 fork 做 fan-out，请把它写成 job 配置里的" +
+    "声明式步骤（steps: [{type:\"tool\", name:\"agent_fork\", args:{...}}]）—— 那样是用户写死的意图，" +
+    "允许执行。",
+};
+
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {
   return {
     enabled: cfg.audit.enabled,
@@ -80,9 +109,23 @@ function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {
  *
  * @param toolName 工具名
  * @param cfg      已加载的 `[sandbox]` 配置（调用方传入，便于测试）
+ * @param channel  `react`（模型临场挑选，默认）或 `steps`（配置里声明式的 tool 步骤）
  * @returns allow=false 时给出可操作的拒绝文案
  */
-export function checkUnattendedTool(toolName: string, cfg: SandboxConfig): PolicyDecision {
+export function checkUnattendedTool(
+  toolName: string,
+  cfg: SandboxConfig,
+  channel: ToolChannel = "react"
+): PolicyDecision {
+  // 硬规则优先于一切配置：这几个工具在无人值守的 **ReAct 通道**永远不放行
+  // （声明式 steps 通道不受此限，见 ToolChannel 注释）
+  if (channel === "react" && HARD_DENY_REACT_UNATTENDED.has(toolName)) {
+    return {
+      allow: false,
+      reason: `已拒绝：${HARD_DENY_REASON[toolName] ?? `${toolName} 在无人值守的 ReAct 循环中被禁止`}`,
+    };
+  }
+
   const mode = cfg.unattended.mode;
   if (mode === "all") return { allow: true };
 
@@ -106,12 +149,15 @@ export function enforceUnattendedTool(args: {
   origin: RunOrigin | undefined;
   agentId: string;
   sessionId?: string;
+  /** `react`（ReAct 循环，默认）或 `steps`（job/loop 配置里声明式的 tool 步骤） */
+  channel?: ToolChannel;
   cfg?: SandboxConfig;
 }): PolicyDecision {
   const cfg = args.cfg ?? loadConfig().sandbox;
   if (!isUnattended(args.origin)) return { allow: true };
 
-  const decision = checkUnattendedTool(args.toolName, cfg);
+  const channel = args.channel ?? "react";
+  const decision = checkUnattendedTool(args.toolName, cfg, channel);
   if (!decision.allow) {
     writeAudit(
       {
@@ -121,7 +167,21 @@ export function enforceUnattendedTool(args: {
         ...(args.sessionId ? { sessionId: args.sessionId } : {}),
         tool: args.toolName,
         decision: "deny",
-        reason: "无人值守白名单外",
+        reason: `无人值守白名单外（channel=${channel}）`,
+      },
+      auditOpts(cfg)
+    );
+  } else if (channel === "steps") {
+    // 声明式步骤放行也留痕：便于事后核对"这个 job 到底跑过什么"
+    writeAudit(
+      {
+        event: "policy",
+        origin: args.origin ?? "unknown",
+        agentId: args.agentId,
+        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+        tool: args.toolName,
+        decision: "allow",
+        reason: "声明式步骤（channel=steps）",
       },
       auditOpts(cfg)
     );
@@ -130,8 +190,7 @@ export function enforceUnattendedTool(args: {
 }
 
 /**
- * 无人值守 + MFA 无法送达时的兜底决定。
- *
+ * 无人值守 + MFA 无法送达时的兜底决定。 *
  * `[sandbox.unattended].mfaFallback`：
  * - `deny`（默认）：拒绝该调用（"没人能审批" ≠ "自动批准"）
  * - `allow`：历史行为（静默放行）

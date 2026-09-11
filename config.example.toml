@@ -278,6 +278,8 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # execShell      = "host"           # "sandbox" = 进 bwrap; "host" = 直接本机执行
 # onUnavailable  = "deny"           # bwrap 不可用时:deny 拒绝执行 / host 退回本机
 # maskSecrets    = true             # 掩码 config/secrets/mcp.toml、auth/、~/.ssh、*.key …
+# readableSecretPaths = []          # 掩码例外：这些路径在沙箱内保持可读（默认空 = 全掩）
+#                                   # 例：["~/.tinyclaw/secrets.toml"] —— 供直接读该文件的脚本使用
 # network        = "allow"          # "deny" 用于处理不可信内容的任务(同时强制收敛环境变量)
 # inheritEnv     = true             # ⚠️ 文件掩码不覆盖环境变量(见 schema 注释)
 # extraRwPaths   = []               # 额外可写目录(如技能目录),支持 ~ 前缀
@@ -286,12 +288,26 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # enabled     = true               # 审计流:~/.tinyclaw/audit/YYYY-MM.jsonl(0600,追加写)
 # maxArgChars = 500                # 单条参数摘要上限
 
+# 路径级"无感提权"(fs_grant):agent 可申请 $HOME 内非密钥路径的写权限,
+# 不打扰用户、带 TTL、写审计;cron/loop 一律拒绝。适合"chat 里想写某个外部目录"。
+[sandbox.grant]
+# enabled          = true          # 总开关(默认 true)
+# ttlSecs          = 3600          # 授权有效期(秒,默认 1 小时)
+# allowOutsideHome = false         # 是否允许家目录之外的路径(默认否)
+
+# 无人值守任务的密钥声明(cron/loop 的 job 配置字段):
+#   "secrets": ["DEEPSEEK_API_KEY"]  → 沙箱内只暴露这把 key(脚本零改动,未声明=空文件)
+#   "writablePaths": ["~/.tinyclaw/data"] → 该任务额外可写的目录
+
 [sandbox.unattended]
 # mode        = "allowlist"        # cron/loop 只允许 allowedTools;"all" = 旧行为;"deny" = 更严
 # mfaFallback = "deny"             # 无人值守且 MFA 无法送达时:deny 拒绝(默认,推荐)/ allow 放行
 # allowedTools = [ "read_file", "exec_shell", ... ]   # 默认见 src/config/schema.ts
+#   ⚠️ 两个通道规则不同：声明式步骤（cron/loop 的 steps）里 agent_fork 可用；
+#      无人值守的 ReAct 循环里 agent_fork 硬禁止（不受本白名单与 mode=all 影响）。
 
 # 提权通道:沙箱是默认,提权是例外。agent 用 exec_shell({ elevate: true }) 请求在沙箱外执行一次。
+# 注意与 [sandbox.grant] 的区别:elevate 作用于"一条命令"(脱离沙箱),fs_grant 作用于"一个路径"(仍在沙箱内)。
 [sandbox.elevation]
 # enabled            = false     # 总开关(默认 false = 只能跑沙箱内)
 # allowedAgents      = []        # 允许提权的 agentId 白名单;"*" = 全部

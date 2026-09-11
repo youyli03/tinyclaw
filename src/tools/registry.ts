@@ -113,6 +113,20 @@ export interface ToolContext {
   currentCallId?: string;
   /** 当前 agent run 的 taskId（X-Agent-Task-Id），供 restart_tool 写入 marker 续接计费 */
   agentTaskId?: string | undefined;
+  /**
+   * 本次运行额外允许写入的目录（沙箱会 bind 成可写）。
+   *
+   * 来源：cron job / loop 配置里的 `writablePaths`（用户对无人值守任务的显式豁免）。
+   * 之所以走 ctx 而不是读配置：豁免是**按任务**声明的，全局读不到。
+   */
+  sandboxExtraRwPaths?: string[];
+  /** 本次运行的来源（chat / cron / loop / cli / slave），供策略与工具（如 fs_grant）判定 */
+  origin?: import("../security/audit.js").RunOrigin;
+  /**
+   * 本次运行**声明**需要读取的密钥名（cron job / loop 配置的 `secrets`）。
+   * exec_shell 会据此生成只含这些 key 的过滤文件并 bind 到沙箱内的 `secrets.toml`。
+   */
+  sandboxSecretNames?: string[];
 }
 
 export interface ToolDef {

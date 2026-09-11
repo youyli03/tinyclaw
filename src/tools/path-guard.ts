@@ -213,6 +213,22 @@ export function isSelfAccessGranted(agentId: string): boolean {
   }
 }
 
+/**
+ * 该 agent 是否把**整棵 `~/.tinyclaw`** 视为可写（`[selfAccess].wideWriteAccess`）。
+ *
+ * 与 `isSelfAccessGranted()`（决定 `self_runtime_*` 工具可用性）分开：磁盘清理需要自指工具，
+ * 但不等于要把整个运行时目录开放给 generic 写入。
+ */
+export function hasWideRuntimeWrite(agentId: string): boolean {
+  try {
+    const cfg = loadConfig().selfAccess;
+    if (!cfg.wideWriteAccess) return false;
+    return cfg.grantedAgents.includes(agentId) || cfg.grantedAgents.includes("*");
+  } catch {
+    return false;
+  }
+}
+
 function expandTilde(p: string): string {
   return p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
@@ -237,17 +253,39 @@ function collectAbsolutePaths(value: unknown, out: string[], depth = 0): void {
 }
 
 /**
- * 一次工具调用是否"只动运行时目录、且不含密钥"——用于给已授权 agent 免除 MFA。
+ * 一次工具调用是否"只动自己的范围"——用于免除 MFA。
+ *
+ * 覆盖范围（任一命中即可）：
+ * - 自己的 agent 目录 / workspace（`agents/<id>`，含 `workspace/`）
+ * - 系统临时目录（`/tmp` 等）
+ * - 运行时目录内**且**开了 `[selfAccess].wideWriteAccess`
+ * - 会话内 `fs_grant` 已授权的路径
  *
  * 必须**至少有一个绝对路径**参数，否则不豁免（防止 `restart_tool` 这类无路径工具被误放行）；
- * 一旦出现运行时目录之外的路径，同样不豁免。
+ * 一旦出现范围外的路径，同样不豁免。
  */
-export function argsAreSelfRuntimeOnly(args: Record<string, unknown>): boolean {
+export function argsAreWithinOwnScope(args: Record<string, unknown>, ctx?: ToolContext): boolean {
   const paths: string[] = [];
   collectAbsolutePaths(args, paths);
   if (paths.length === 0) return false;
-  return paths.every((p) => isInsideRuntime(p) && !isRuntimeSecretPath(p));
+  const agentId = ctx?.agentId ?? "default";
+  const own = [agentManager.agentDir(agentId), os.tmpdir(), "/tmp"];
+  const session = ctx?.masterSession;
+  const wideRuntime = hasWideRuntimeWrite(agentId);
+
+  return paths.every((p) => {
+    if (isRuntimeSecretPath(p)) return false;
+    if (own.some((base) => p === base || p.startsWith(path.resolve(base) + path.sep))) return true;
+    if (wideRuntime && isInsideRuntime(p)) return true;
+    return session?.isWritePathGranted?.(p) === true;
+  });
 }
+
+/**
+ * 兼容旧名（等价于 `argsAreWithinOwnScope`）。
+ * @deprecated 用 `argsAreWithinOwnScope` —— 语义已从"只动运行时目录"扩展到"只动自己的范围"。
+ */
+export const argsAreSelfRuntimeOnly = argsAreWithinOwnScope;
 
 // ── 路径写入检查 ──────────────────────────────────────────────────────────────
 
@@ -315,9 +353,14 @@ export function checkWritePath(
     return { allow: true };
   }
 
-  // ── 自指权限：已授权 agent 对自己运行时目录内的路径直接放行 ─────────────────
-  // （密钥已在上方拦掉，所以这里的"完全访问权"不含密钥）
-  if (ctx && isInsideRuntime(resolvedPath) && isSelfAccessGranted(ctx.agentId ?? "default")) {
+  // ── 路径级无感授权（fs_grant）：会话内有 TTL 的授权集合 ────────────────────
+  if (ctx?.masterSession?.isWritePathGranted?.(resolvedPath)) {
+    return { allow: true };
+  }
+
+  // ── 自指权限：是否把 ~/.tinyclaw 整棵树都当可写 ────────────────────────────
+  // （默认 false：generic 写入只允许自己的 agent 目录，其他位置要 fs_grant 显式申请）
+  if (ctx && isInsideRuntime(resolvedPath) && hasWideRuntimeWrite(ctx.agentId ?? "default")) {
     return { allow: true };
   }
 

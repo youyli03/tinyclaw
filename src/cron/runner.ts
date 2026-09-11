@@ -193,6 +193,9 @@ async function runPipelineJob(
     slaveRunFn: (s, c, o) =>
       runAgent(s, c, {
         ...(o as Parameters<typeof runAgent>[2]),
+        // 子 agent 继承"无人值守"身份：否则 fork 出来的 slave 会被当成交互式，
+        // 绕过无人值守白名单与提权禁令（2026-09-11 修复）
+        origin: "cron",
         slaveDepth: 1,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
       }),
@@ -202,6 +205,10 @@ async function runPipelineJob(
     },
     // 透传推送回调，SubAgent 内部调用 notify_user 时可正常推送
     ...(notifyFn ? { onNotify: notifyFn } : {}),
+    // 该 job 显式声明的沙箱可写豁免（默认空 = 只能写自己的 agent 目录）
+    ...(job.writablePaths.length > 0 ? { sandboxExtraRwPaths: job.writablePaths } : {}),
+    // 该 job 声明要读的密钥（方案 B：沙箱内只暴露这几把 key）
+    ...(job.secrets.length > 0 ? { sandboxSecretNames: job.secrets } : {}),
   };
 
   for (let i = 0; i < steps.length; i++) {
@@ -215,6 +222,9 @@ async function runPipelineJob(
       const stepPolicy = enforceUnattendedTool({
         toolName: step.name,
         origin: "cron",
+        // 声明式步骤通道：这是 job 配置里写死的 tool 步骤（不是模型临场决定），
+        // 因此允许 agent_fork 这类"ReAct 通道禁止"的能力
+        channel: "steps",
         agentId: job.agentId,
         sessionId: session.sessionId,
       });
@@ -226,7 +236,7 @@ async function runPipelineJob(
           sessionId: session.sessionId,
           tool: step.name,
           decision: "deny",
-          reason: "无人值守白名单外（cron tool 步骤）",
+          reason: "无人值守白名单外（cron 声明式 tool 步骤）",
           args: step.args as Record<string, unknown>,
         });
         console.warn(`[cron] job=${job.id} ${stepLabel} 被策略拒绝: ${step.name}`);
@@ -277,6 +287,8 @@ async function runPipelineJob(
         origin: "cron",
         onMFARequest,
         systemPrompt: systemPrompt,
+        // LLM 步骤里的 exec_shell 也继承该 job 的可写豁免
+        ...(job.writablePaths.length > 0 ? { sandboxExtraRwPaths: job.writablePaths } : {}),
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onAskUserFn ? { onAskUser: onAskUserFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
@@ -456,6 +468,7 @@ ${message}`;
         origin: "cron",
         onMFARequest,
         systemPrompt: systemPrompt,
+        ...(job.writablePaths.length > 0 ? { sandboxExtraRwPaths: job.writablePaths } : {}),
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onAskUserFn ? { onAskUser: onAskUserFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),

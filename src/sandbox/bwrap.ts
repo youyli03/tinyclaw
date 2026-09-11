@@ -74,6 +74,8 @@ export interface SandboxPlan {
   rwPaths: string[];
   /** 沙箱内是否联网 */
   network: boolean;
+  /** 是否用"按任务过滤"的密钥文件替换了 secrets.toml */
+  filteredSecrets?: boolean;
   /** 传给子进程的环境变量（undefined = 继承服务进程环境） */
   env?: NodeJS.ProcessEnv;
 }
@@ -98,6 +100,8 @@ export function maskTargets(cfg: SandboxConfig): { masked: string[]; skipped: st
   const skipped: string[] = [];
   if (!cfg.maskSecrets) return { masked, skipped };
 
+  /** `[sandbox].readableSecretPaths` 里显式豁免的路径（保持可读） */
+  const exempt = new Set(cfg.readableSecretPaths.map((p) => path.resolve(expandHome(p))));
   const root = path.join(os.homedir(), ".tinyclaw");
   const candidates: string[] = [
     ...MASK_FILES.map((f) => path.join(root, f)),
@@ -117,8 +121,13 @@ export function maskTargets(cfg: SandboxConfig): { masked: string[]; skipped: st
   }
 
   for (const p of candidates) {
-    if (fs.existsSync(p)) masked.push(p);
-    else skipped.push(p);
+    const abs = path.resolve(p);
+    if (exempt.has(abs)) {
+      skipped.push(abs); // 显式豁免：不掩码（仍受根只读保护）
+      continue;
+    }
+    if (fs.existsSync(abs)) masked.push(abs);
+    else skipped.push(abs);
   }
   return { masked, skipped };
 }
@@ -130,6 +139,34 @@ export function maskTargets(cfg: SandboxConfig): { masked: string[]; skipped: st
  * @param opts.cwd      工作目录（沙箱内的路径，须在可写目录内）
  * @param opts.agentId  当前 agent（决定可写的 agent 目录）
  */
+/**
+ * 展开可写路径：显式声明的**文件**要连同它的 SQLite 边车文件一起放开。
+ *
+ * 为什么：声明 `~/.tinyclaw/dashboard.db` 时，SQLite 在 WAL 模式下还要写同目录的
+ * `dashboard.db-wal` / `-shm`（回滚日志模式还要 `-journal`）；只 bind 主文件会得到
+ * `attempt to write a readonly database`。父目录仍保持只读，因此只放开这几个具体文件。
+ */
+function expandWritablePaths(paths: string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const abs = path.resolve(expandHome(p));
+    out.push(abs);
+    try {
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      for (const suffix of ["-wal", "-shm", "-journal"]) {
+        const sidecar = abs + suffix;
+        if (fs.existsSync(sidecar)) out.push(sidecar);
+      }
+    } catch {
+      /* 忽略 stat 失败 */
+    }
+  }
+  return out;
+}
+
+/** 沙箱内 secrets.toml 的绝对路径（掩码与"按任务过滤"都要用它做比对） */
+const secretsTomlAbsPath = path.join(os.homedir(), ".tinyclaw", "secrets.toml");
+
 export function buildSandboxPlan(opts: {
   command: string;
   cwd?: string;
@@ -137,6 +174,17 @@ export function buildSandboxPlan(opts: {
   cfg: SandboxConfig;
   /** 追加掩码（如处理不可信内容时额外隐藏某些目录） */
   extraMasks?: string[];
+  /**
+   * 追加可写目录。用途：
+   * - **code 模式**：`ctx.cwd` 是项目目录（`codedir`），不 bind 的话 shell 改不了项目
+   * - **cron / loop**：job 配置里显式声明的 `writablePaths`
+   */
+  extraRwPaths?: string[];
+  /**
+   * 按任务声明过滤后的密钥文件（方案 B）：bind 到沙箱内的 `~/.tinyclaw/secrets.toml`，
+   * 让脚本"零改动"读到**只含该任务声明的 key** 的内容。
+   */
+  filteredSecretsFile?: string;
 }): SandboxPlan {
   const { command, cwd, agentId, cfg } = opts;
   const home = os.homedir();
@@ -157,8 +205,13 @@ export function buildSandboxPlan(opts: {
     path.join(root, "reports"),
     path.join(root, "scripts"),
     path.join(os.tmpdir()),
-    ...cfg.extraRwPaths.map(expandHome),
-  ].filter((p) => {
+    ...expandWritablePaths(cfg.extraRwPaths),
+    // code 模式的 cwd（项目目录）：不 bind 就没法改项目（2026-09-11 修复）
+    ...(cwd ? [path.resolve(expandHome(cwd))] : []),
+    ...expandWritablePaths(opts.extraRwPaths ?? []),
+  ].filter((p, i, arr) => {
+    // 去重 + 只保留存在的目录
+    if (arr.indexOf(p) !== i) return false;
     try {
       return fs.existsSync(p);
     } catch {
@@ -188,6 +241,11 @@ export function buildSandboxPlan(opts: {
   for (const p of rwPaths) argv.push("--bind", p, p);
   // 掩码：目录用空目录盖，文件用空文件盖
   for (const p of masked) {
+    // 密钥文件若有"按任务过滤"的版本，用它覆盖（脚本零改动，但只看得见声明的 key）
+    if (opts.filteredSecretsFile && p === secretsTomlAbsPath) {
+      argv.push("--ro-bind", opts.filteredSecretsFile, p);
+      continue;
+    }
     let isDir = false;
     try {
       isDir = fs.statSync(p).isDirectory();
@@ -216,6 +274,7 @@ export function buildSandboxPlan(opts: {
     skipped,
     rwPaths,
     network,
+    ...(opts.filteredSecretsFile ? { filteredSecrets: true } : {}),
     ...(env ? { env } : {}),
   };
 }
@@ -224,6 +283,7 @@ export function buildSandboxPlan(opts: {
 export function describeSandboxPlan(plan: SandboxPlan): string {
   return (
     `sandbox: masked=${plan.masked.length} rw=${plan.rwPaths.length} ` +
-    `net=${plan.network ? "allow" : "deny"} env=${plan.env ? "scrubbed" : "inherit"}`
+    `net=${plan.network ? "allow" : "deny"} env=${plan.env ? "scrubbed" : "inherit"}` +
+    (plan.filteredSecrets ? " secrets=filtered" : "")
   );
 }

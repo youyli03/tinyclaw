@@ -204,9 +204,15 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   `loop-trigger.ts`（Loop steps）直接 `executeTool()`，**不经过 MFA** —— 但它们现在**必过无人值守白名单**
   （`auth/tool-policy.ts` 的 `enforceUnattendedTool`，白名单在 `[sandbox.unattended].allowedTools`）。
   新增"绕过 ReAct 循环直接调工具"的入口时，**必须**同样调用 `enforceUnattendedTool` + `auditToolCall`。
-  ⚠️ 默认白名单是"只读 + 计算 + 写 workspace + exec_shell"，**不含**破坏性/特权/出网类；
+  ⚠️ 默认白名单是"只读 + 计算 + 写 workspace + exec_shell + 声明式步骤用的 agent_fork"，**不含**破坏性/特权/出网类；
   生产里如果某个无人值守任务被拒（审计里能看到 `policy` deny），优先把它需要的工具加进 `allowedTools`，
   而不是把 `mode` 改成 `all`。
+  ⚠️ **无人值守分两个通道，规则不同**（`auth/tool-policy.ts` 的 `ToolChannel`）：
+  - `channel: "steps"` = job / loop 配置里**声明式写死**的 tool 步骤（用户显式设计，可审计）→ 按白名单放行，**`agent_fork` 允许**
+    （`~/.tinyclaw/cron/jobs/` 里 `2quff5jh`、`hs5xjebl` 两个股市日报就是这样按市场 fan-out 的）
+  - `channel: "react"` = ReAct 循环里**模型临场挑选**的工具 → 命中 `HARD_DENY_REACT_UNATTENDED` 的一律拒绝
+    （目前只有 `agent_fork`），且**不受 `allowedTools` / `mode=all` 影响**
+  新增"无人值守能调工具"的入口时，必须显式选择通道：声明式步骤传 `channel: "steps"`，模型驱动传 `"react"`（默认）。
 - **MFA 兜底已改为 fail-closed**：无人值守（cron/loop）且无交互回调时按 `[sandbox.unattended].mfaFallback`
   处理，默认 `deny`（历史行为是 `mfaPassed = true` 静默放行）。交互式运行（chat/cli）无回调时仍按旧行为放行，
   并会留审计记录。`cron_add` 的 `mfaExempt` 默认值已从写死 `true` 改为 `false`。
@@ -218,6 +224,21 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   需要时用 `exec_shell({ elevate: true })` 走**提权通道**（`src/sandbox/elevation.ts`）：
   按风险分级（E1 只读可免批 / E2 有副作用每次确认）、批准后签发**绑定命令哈希的一次性令牌**（默认 120s，换命令即失效）、
   同命令 5 分钟内请求节流、**cron/loop 一律不许提权**、无交互通道即 fail-closed，且提权必须发一条用户可见提示 + 写审计。
+- **沙箱可写范围默认最小，靠"显式声明"扩展**：基础集 = 自己的 agent 目录 + `/tmp`（code 模式另加项目目录 `ctx.cwd`）；
+  cron job / loop trigger 用**各自的** `writablePaths` 显式声明（如 `~/.tinyclaw/data`、`~/.tinyclaw/dashboard.db`、`~/FinanceSkill`），
+  经 `ToolContext.sandboxExtraRwPaths` / `AgentRunOptions.sandboxExtraRwPaths` 传到 `buildSandboxPlan`。
+  `~/.tinyclaw/{cache,scripts,reports}` 等**不再默认可写**。声明**文件**时会自动放开其 SQLite 边车
+  （`-wal`/`-shm`/`-journal`），否则 WAL 模式会 `attempt to write a readonly database`。
+  密钥掩码的例外走 `[sandbox].readableSecretPaths`（默认空）；取 key 方式的重新设计见 `tmp/job-credentials-design-20260911.md`。
+- **两条提权路径，别混**（`AGENTS.md` 之外见 `docs/architecture/overview.md` 沙箱节）：
+  - `fs_grant`（`auth/fs-grant.ts` + `tools/fs-grant-tool.ts`）：**路径级**、不打扰用户、带 TTL（默认 3600s）、写审计；
+    授权后工具层（`checkWritePath` 认 `Session.grantedWritePaths`）与沙箱层（bind 成可写）**口径一致**；
+    只接受 `$HOME` 内、已存在、非密钥、非 `~/.tinyclaw`、非 `.ssh` 等受保护目录；**cron/loop 一律拒绝**。
+    免 MFA 判据 `argsAreSelfRuntimeOnly(args, ctx)` 同时认"运行时目录"与"已授权路径"。
+  - `elevate`（`sandbox/elevation.ts`）：**命令级**、这条命令脱离沙箱在宿主机跑，E1 免批 / E2 每次确认。
+- **无人值守的密钥按任务声明**（方案 B，`sandbox/secrets-filter.ts`）：job / loop 配置 `secrets: ["NAME"]` →
+  运行时物化一个只含这些 key 的临时文件并 bind 回 `~/.tinyclaw/secrets.toml`（脚本零改动），用后即删、物化写审计；
+  未声明 = 脚本读到空文件。全局例外 `[sandbox].readableSecretPaths` 仍在，但优先用按任务声明。
 - **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts`）与 `read_image` 经 `checkReadPath()`
   拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，
   但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
@@ -263,7 +284,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `agent-loop.md:219-221` `persistSummary` 异步不阻塞 | 被 `await`（`summarizer.ts:1462`） |
 | `retry.md:235` copilot 指数退避+jitter | 固定延迟（`copilot.ts:236,603`） |
 | `code-mode.md:33,250` `/auto` 为默认子模式 | 已废弃 |
-| `cron-pipeline.md:257` pipeline tool step「继承 mfaExempt 豁免」 | 实为无条件绕过 MFA |
+| `cron-pipeline.md:257` pipeline tool step「继承 mfaExempt 豁免」 | 实为无条件绕过 MFA；**已在文档中改正**（现描述为走无人值守声明式通道 + `mfaFallback`），该行保留仅作历史索引，可删 |
 | `loop-session.md:189-202` 整节讲 `preCheckScript` | **`LoopSessionConfig` 里没有这个字段**（只有 `enabled` / `agentId` / `tickSeconds` / `taskFile` / `stateful`），`loop-runner.ts` 也没有任何预检逻辑——该能力在 loop-session 上**不存在** |
 
 ### 7.4 其他坑
