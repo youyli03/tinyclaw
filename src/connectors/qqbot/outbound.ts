@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   getAccessToken,
@@ -19,10 +20,16 @@ import {
   sendProactiveGroupMessage,
   sendC2CMedia,
   sendGroupMedia,
+  uploadPrepare,
+  putUploadPart,
+  uploadPartFinish,
+  mergeChunkedUpload,
+  sendMediaByFileInfo,
   streamC2CMessage,
   reserveMsgSeq,
   StreamApiError,
   type C2CStreamChunk,
+  type MediaTarget,
 } from "./api.js";
 import type { InboundMessage, SendOutcome } from "../base.js";
 import { parseMediaTags } from "../utils/media-parser.js";
@@ -112,6 +119,8 @@ export interface SendOptions {
  * ⚠️ 比较的是**编码后长度**（≈ 原始字节 × 4/3），不是原始字节数。
  * 历史 bug：拿原始字节和 10 MB 比，于是 8.2 MB 的文件顺利通过预检、却在网关侧炸掉，
  * 用户只看到一句"附件已发"（媒体失败被静默降级成文本）。
+ *
+ * 超过这个上限的文件不再报错，改走官方**分片上传**（`sendViaChunkedUpload`）。
  */
 const MAX_BASE64_CHARS = 10 * 1024 * 1024;
 
@@ -120,9 +129,44 @@ function base64Length(rawBytes: number): number {
   return Math.ceil(rawBytes / 3) * 4;
 }
 
+/** 官方硬限制：任意 file_type 都是 200 MB（超过直接报错，不再降级） */
+const HARD_LIMIT_BYTES = 200 * 1024 * 1024;
+
+/** `md5_10m` 取的是文件**前 10,002,432 字节**（约 9.54 MB）的 MD5，不是整个文件的 MD5 */
+const MD5_10M_BYTES = 10_002_432;
+
+/** 大文件分片上传时，单次读取的缓冲块（与官方 block_size 无关，仅控制内存峰值） */
+const HASH_READ_CHUNK = 1024 * 1024;
+
 /** 人类可读体积（日志与用户提示共用） */
 function formatMiB(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 由**文件格式**决定实际下发的 `file_type`，标签只表达意图。
+ *
+ * 为什么不能直接照搬标签：官方各类型的可用格式是固定的（1=png/jpg、2=mp4、3=silk），
+ * 把 `.mp3` 标成 `<audio>` 会走 `file_type=3`（语音），QQ 会把它当**语音气泡**播放——
+ * 用户要的是一份 mp3 **附件**。所以除 silk 之外的音频一律按文件发送，
+ * 非 mp4 的视频、非 png/jpg 的图片同理。
+ */
+function wireMediaType(
+  mediaType: "img" | "audio" | "video" | "file",
+  filename: string
+): "img" | "audio" | "video" | "file" {
+  const ext = path.extname(filename).toLowerCase();
+  switch (mediaType) {
+    case "img":
+      return /\.(png|jpe?g)$/.test(ext) ? "img" : "file";
+    case "video":
+      return ext === ".mp4" ? "video" : "file";
+    case "audio":
+      // 只有 silk 才是官方意义上的"语音"；mp3/m4a/wav/flac 等保持为文件附件
+      return ext === ".silk" ? "audio" : "file";
+    default:
+      return "file";
+  }
 }
 
 export interface MediaError {
@@ -158,14 +202,12 @@ export function validateMediaContent(text: string): MediaError[] {
       continue;
     }
     const stat = fs.statSync(src);
-    const encoded = base64Length(stat.size);
-    if (encoded > MAX_BASE64_CHARS) {
+    if (stat.size > HARD_LIMIT_BYTES) {
       errors.push({
         src,
         error:
-          `文件过大：原始 ${formatMiB(stat.size)}，base64 内联后 ${formatMiB(encoded)}，` +
-          `超过单次上传上限 ${formatMiB(MAX_BASE64_CHARS)}（约合原始文件 7.5 MB）；` +
-          `大文件需要分片上传，当前未实现`,
+          `文件超过官方硬限制：${formatMiB(stat.size)} > ${formatMiB(HARD_LIMIT_BYTES)}；` +
+          `${formatMiB(MAX_BASE64_CHARS)} 以内走内联上传，更大走分片上传，但都不可超过硬限制`,
       });
     }
   }
@@ -414,6 +456,111 @@ img.save(sys.argv[2], "JPEG", quality=int(sys.argv[3]), optimize=True)
   });
 }
 
+/**
+ * 分片上传一个大文件并把它作为富媒体消息发出（内联 base64 放不下时的出路）。
+ *
+ * 内存策略：文件**不整体读入内存**——先用一次顺序读取同时算出
+ * `md5` / `sha1` / `md5_10m`（三者共用同一遍 IO），再按官方下发的分片大小
+ * 逐片 `fs.readSync` 读取、上传、`part_finish`。峰值内存 ≈ 一个分片。
+ */
+async function sendViaChunkedUpload(args: {
+  token: string;
+  target: MediaTarget;
+  mediaType: "img" | "audio" | "video" | "file";
+  uploadPath: string;
+  filename: string;
+  msgId?: string;
+}): Promise<void> {
+  const { token, target, mediaType, uploadPath, filename, msgId } = args;
+
+  const fd = fs.openSync(uploadPath, "r");
+  try {
+    const size = fs.fstatSync(fd).size;
+
+    // ── 一遍 IO 同时算三个校验值 ──────────────────────────────────────────
+    const md5All = createHash("md5");
+    const sha1All = createHash("sha1");
+    const md5Head = createHash("md5");
+    const buf = Buffer.allocUnsafe(Math.min(HASH_READ_CHUNK, Math.max(size, 1)));
+    let pos = 0;
+    let hashed = 0;
+    while (pos < size) {
+      const want = Math.min(buf.length, size - pos);
+      const read = fs.readSync(fd, buf, 0, want, pos);
+      if (read <= 0) break;
+      const slice = buf.subarray(0, read);
+      md5All.update(slice);
+      sha1All.update(slice);
+      if (hashed < MD5_10M_BYTES) {
+        md5Head.update(
+          hashed + read <= MD5_10M_BYTES ? slice : slice.subarray(0, MD5_10M_BYTES - hashed)
+        );
+      }
+      hashed += read;
+      pos += read;
+    }
+
+    const prepOpts = {
+      fileSize: size,
+      fileName: filename,
+      md5: md5All.digest("hex"),
+      sha1: sha1All.digest("hex"),
+      md5_10m: md5Head.digest("hex"),
+    };
+
+    // 预上传阶段服务端就会校验 file_type（850019），此时**一个字节都还没传**，
+    // 所以在这里回退成「文件」类型的代价为零——比传完再被拒划算得多。
+    let effectiveType = mediaType;
+    const prep = await uploadPrepare(token, target, { mediaType: effectiveType, ...prepOpts }).catch(
+      async (err: unknown) => {
+        if (effectiveType === "file" || !isMediaFormatRejection(err)) throw err;
+        console.warn(
+          `[qqbot] 分片上传以 ${effectiveType} 预上传被拒（${err instanceof Error ? err.message : String(err)}），` +
+            `改用文件类型`
+        );
+        effectiveType = "file";
+        return await uploadPrepare(token, target, { mediaType: effectiveType, ...prepOpts });
+      }
+    );
+
+    console.log(
+      `[qqbot] 分片上传 ${filename}（${formatMiB(size)}，${prep.parts.length} 片，每片 ${formatMiB(prep.blockSize)}，file_type=${effectiveType}）`
+    );
+
+    // ── 逐片上传（官方默认并发 1，顺序执行即可）──────────────────────────
+    let offset = 0;
+    for (const part of prep.parts) {
+      const length = part.blockSize > 0 ? part.blockSize : size - offset;
+      const chunk = Buffer.allocUnsafe(length);
+      const read = fs.readSync(fd, chunk, 0, length, offset);
+      if (read <= 0) throw new Error(`读取分片失败（offset=${offset}）`);
+      const data = read === length ? chunk : chunk.subarray(0, read);
+      await putUploadPart(part.presignedUrl, data);
+      await uploadPartFinish(token, target, {
+        uploadId: prep.uploadId,
+        partIndex: part.index,
+        blockSize: data.length,
+        md5: createHash("md5").update(data).digest("hex"),
+      });
+      offset += data.length;
+    }
+    if (offset !== size) {
+      throw new Error(`分片上传不完整：已传 ${offset} / 共 ${size} 字节`);
+    }
+
+    // ── 合并 → file_info → 发消息 ─────────────────────────────────────────
+    const { fileInfo } = await mergeChunkedUpload(token, target, {
+      mediaType: effectiveType,
+      fileName: filename,
+      uploadId: prep.uploadId,
+    });
+    await sendMediaByFileInfo(token, target, fileInfo, msgId ? { msgId } : undefined);
+    console.log(`[qqbot] 分片上传完成并已发送: ${filename}`);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 async function doSendMedia(
   token: string,
   type: "c2c" | "dm" | "group",
@@ -429,6 +576,8 @@ async function doSendMedia(
     (!pathOrUrl.startsWith("http://") && !pathOrUrl.startsWith("https://")
       ? path.basename(pathOrUrl)
       : undefined);
+  // 实际下发的类型由文件格式决定（见 wireMediaType）：mp3 等按文件发，不当语音气泡
+  const wireType = wireMediaType(mediaType, resolvedFilename ?? pathOrUrl);
   let source: { url?: string; fileData?: string; filename?: string };
 
   if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
@@ -441,7 +590,7 @@ async function doSendMedia(
     // PNG 图片自动转 JPEG，大幅减小体积，避免 QQ 上传超限（code=850031）
     let uploadPath = pathOrUrl;
     let tempJpg: string | null = null;
-    if (mediaType === "img" && pathOrUrl.toLowerCase().endsWith(".png")) {
+    if (wireType === "img" && pathOrUrl.toLowerCase().endsWith(".png")) {
       try {
         tempJpg = await convertPngToJpeg(pathOrUrl);
         uploadPath = tempJpg;
@@ -452,12 +601,22 @@ async function doSendMedia(
 
     try {
       const stat = fs.statSync(uploadPath);
-      const encoded = base64Length(stat.size);
-      if (encoded > MAX_BASE64_CHARS) {
+      if (stat.size > HARD_LIMIT_BYTES) {
         throw new Error(
-          `文件过大，无法内联上传：原始 ${formatMiB(stat.size)}，base64 后 ${formatMiB(encoded)}，` +
-            `上限 ${formatMiB(MAX_BASE64_CHARS)}（约合原始 7.5 MB）: ${uploadPath}`
+          `文件超过官方硬限制：${formatMiB(stat.size)} > ${formatMiB(HARD_LIMIT_BYTES)}: ${uploadPath}`
         );
+      }
+      // 内联 base64 塞不下 → 走官方分片上传（可到硬限制 200 MB）
+      if (base64Length(stat.size) > MAX_BASE64_CHARS) {
+        await sendViaChunkedUpload({
+          token,
+          target: type === "group" ? { kind: "group", id: peerId } : { kind: "user", id: peerId },
+          mediaType: wireType,
+          uploadPath,
+          filename: resolvedFilename ?? path.basename(uploadPath),
+          ...(msgId ? { msgId } : {}),
+        });
+        return;
       }
       const data = fs.readFileSync(uploadPath);
       source = {
@@ -482,13 +641,12 @@ async function doSendMedia(
       : (mt: typeof mediaType) => sendGroupMedia(token, peerId, mt, source, msgId);
 
   try {
-    await send(mediaType);
+    await send(wireType);
   } catch (err) {
-    // 类型不匹配时回退为「文件」重发：官方 file_type=4 接受任意格式，
-    // 而非 img/video/audio 各自只吃 png|jpg / mp4 / silk（否则 400 850019）。
-    if (mediaType === "file" || !isMediaFormatRejection(err)) throw err;
+    // 兜底：仍被服务端以"格式不支持"(850019) 拒收时改用「文件」类型重发
+    if (wireType === "file" || !isMediaFormatRejection(err)) throw err;
     console.warn(
-      `[qqbot] 富媒体以 ${mediaType} 发送被拒（${err instanceof Error ? err.message : String(err)}），` +
+      `[qqbot] 富媒体以 ${wireType} 发送被拒（${err instanceof Error ? err.message : String(err)}），` +
         `回退为文件类型重试`
     );
     await send("file");

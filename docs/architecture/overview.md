@@ -349,7 +349,7 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 | 重连 | `gateway.ts` | 递增延迟重连（1s→60s），三档 Intent 权限自动降级 |
 | 发送 | `outbound.ts` | 被动回复限流（1h/4次），超限自动降级主动消息，长文本分块；`C2CStreamSession` 用官方 `/stream_messages` 流式输出**单聊最终回复**（整段只占 1 次额度；失败/前缀不匹配自动回退普通发送） |
 | 富媒体 | `utils/media-parser.ts` | `<img>/<audio>/<video>/<file>` 标签解析（含 `qqimg` 等别名与代码块屏蔽）。流式路径额外用 `splitMediaText()` 把正文与媒体标签分开：**正文走流式、媒体单独走普通发送**——`sendMessage()` 才会解析标签并上传文件，若把标签直接流式推给用户，用户只会看到 `<file src=.../>` 裸文本且文件永远发不出去；推送前用 `stripMediaForStream()` 剥离标签并扣住未闭合的标签起始 |
-| 富媒体上传 | `api.ts` | `file_type`：**1=图片(png/jpg)、2=视频(mp4)、3=语音(silk)、4=文件(任意)**（顺序不是"音频在视频前"，改这里前先对官方文档）。上传走 `file_data`（base64 内联单次请求，**编码后约 10 MB 为网关上限**）；超出需分片上传（`upload_prepare`→PUT→`upload_part_finish`）**尚未实现**，故本地在发送前按 base64 长度拦截。`img` 的本地球体若服务端拒收该类型，自动回退 `file_type=4` 重发 |
+| 富媒体上传 | `api.ts` | `file_type`：**1=图片(png/jpg)、2=视频(mp4)、3=语音(silk)、4=文件(任意)**（顺序不是"音频在视频前"，改这里前先对官方文档）。**下发用哪个类型由文件格式决定，标签只表达意图**（`outbound.ts` 的 `wireMediaType()`）：`.silk`→3、`.mp4`→2、`.png/.jpg`→1，其余一律 4 —— 所以 `mp3` 标成 `<audio>` 也是**文件附件**，不会被 QQ 塞进语音气泡。**小文件**走 `file_data`（base64 内联单次请求，**编码后约 10 MB 为网关上限 ≈ 原始 7.5 MB**）；**大文件**走官方**分片上传**（`upload_prepare` → 逐片 PUT 预签名 URL → `upload_part_finish` → 携带 `upload_id` 调 `/files` 合并拿 `file_info` → 发 `msg_type:7` 消息），上限 200 MB。被服务端以"格式不支持"(850019) 拒收时改用 `file_type=4` 重发（分片路径在**预上传**阶段就发现，零字节代价） |
 | 接口 | `index.ts` | 实现 `Connector` 接口，胶水层。`send()` 返回 `SendOutcome`（`hadMedia` / `mediaFailed` / `mediaError`）：媒体失败时会静默降级为纯文本，调用方据此判断"是否真的送到了" |
 
 **事件类型映射：**

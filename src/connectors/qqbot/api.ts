@@ -350,3 +350,165 @@ export async function sendGroupMedia(
   if (eventId) body["event_id"] = eventId;
   await post(`/v2/groups/${groupOpenid}/files`, token, body);
 }
+
+// ── 分片上传（大文件；内联 base64 上限 ~10 MB 时的唯一出路）────────────────────
+//
+// 官方流程（单聊/群聊端点一致，仅路径前缀不同，见 rich-media 文档）：
+//   1. POST /{base}/upload_prepare       → upload_id + block_size + 各片预签名 URL
+//   2. PUT  {presigned_url}              逐片上传分片数据
+//   3. POST /{base}/upload_part_finish   通知服务端某片完成（带上该片 md5）
+//   4. POST /{base}/files  携带 upload_id 合并 → 返回 file_info
+//   5. POST /{base}/messages  msg_type=7 + media.file_info 真正发出
+//
+// 注意 `file_size` / `block_size` 在协议里都是**字符串**，md5_10m 是**前 10,002,432 字节**
+// （约 9.54 MB）的 MD5，不是整个文件的 MD5。
+
+/** 单聊 = user（openid），群聊 = group（group_openid） */
+export type MediaTarget = { kind: "user" | "group"; id: string };
+
+function mediaBase(target: MediaTarget): string {
+  return target.kind === "user" ? `/v2/users/${target.id}` : `/v2/groups/${target.id}`;
+}
+
+export interface UploadPrepareOptions {
+  mediaType: "img" | "audio" | "video" | "file";
+  fileSize: number;
+  fileName: string;
+  md5: string;
+  sha1: string;
+  md5_10m: string;
+}
+
+export interface UploadPartRef {
+  index: number;
+  presignedUrl: string;
+  blockSize: number;
+}
+
+export interface UploadPrepareResult {
+  uploadId: string;
+  blockSize: number;
+  parts: UploadPartRef[];
+  concurrency: number;
+}
+
+/** 第一步：预上传，拿 upload_id 与分片预签名 URL */
+export async function uploadPrepare(
+  token: string,
+  target: MediaTarget,
+  opts: UploadPrepareOptions
+): Promise<UploadPrepareResult> {
+  const raw = (await post(`${mediaBase(target)}/upload_prepare`, token, {
+    file_type: FILE_TYPE[opts.mediaType],
+    file_size: String(opts.fileSize),
+    file_name: opts.fileName,
+    md5: opts.md5,
+    sha1: opts.sha1,
+    md5_10m: opts.md5_10m,
+  })) as {
+    upload_id?: string;
+    block_size?: string;
+    parts?: Array<{ index?: number; presigned_url?: string; block_size?: string }>;
+    upload_config?: { concurrency?: number };
+  };
+
+  const uploadId = raw.upload_id;
+  if (!uploadId) throw new Error("upload_prepare 未返回 upload_id");
+
+  const parts: UploadPartRef[] = (raw.parts ?? [])
+    .filter((p) => p.presigned_url)
+    .map((p) => ({
+      index: p.index ?? 0,
+      presignedUrl: p.presigned_url!,
+      blockSize: Number(p.block_size ?? raw.block_size ?? 0),
+    }));
+  if (parts.length === 0) throw new Error("upload_prepare 未返回任何分片预签名 URL");
+  parts.sort((a, b) => a.index - b.index);
+
+  const fallbackBlock = Number(raw.block_size ?? 0);
+  for (const p of parts) {
+    if (!Number.isFinite(p.blockSize) || p.blockSize <= 0) p.blockSize = fallbackBlock;
+  }
+
+  return {
+    uploadId,
+    blockSize: fallbackBlock,
+    parts,
+    concurrency: raw.upload_config?.concurrency ?? 1,
+  };
+}
+
+/**
+ * 第二步：把一片数据 PUT 到预签名 URL。
+ * 预签名 URL 自带鉴权（COS），**不要**带 Authorization 头。
+ */
+export async function putUploadPart(
+  presignedUrl: string,
+  data: Buffer,
+  timeoutMs = 120_000
+): Promise<void> {
+  const resp = await fetch(presignedUrl, {
+    method: "PUT",
+    body: new Uint8Array(data),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => "");
+    throw new Error(`分片 PUT 失败 ${resp.status}: ${detail.slice(0, 200)}`);
+  }
+}
+
+/** 第三步：通知服务端该分片完成 */
+export async function uploadPartFinish(
+  token: string,
+  target: MediaTarget,
+  opts: { uploadId: string; partIndex: number; blockSize: number; md5: string }
+): Promise<void> {
+  await post(`${mediaBase(target)}/upload_part_finish`, token, {
+    upload_id: opts.uploadId,
+    part_index: opts.partIndex,
+    block_size: String(opts.blockSize),
+    md5: opts.md5,
+  });
+}
+
+/** 第四步：携带 upload_id 合并，返回可用于发消息的 file_info */
+export async function mergeChunkedUpload(
+  token: string,
+  target: MediaTarget,
+  opts: { mediaType: "img" | "audio" | "video" | "file"; fileName?: string; uploadId: string }
+): Promise<{ fileInfo: string; ttl: number }> {
+  const raw = (await post(`${mediaBase(target)}/files`, token, {
+    file_type: FILE_TYPE[opts.mediaType],
+    srv_send_msg: false, // false → 只返回 file_info，由我们单独发消息
+    ...(opts.fileName ? { file_name: opts.fileName } : {}),
+    upload_id: opts.uploadId,
+  })) as { file_info?: string; ttl?: number };
+
+  if (!raw.file_info) throw new Error("分片上传合并未返回 file_info");
+  return { fileInfo: raw.file_info, ttl: raw.ttl ?? 0 };
+}
+
+/**
+ * 第五步：用 file_info 发送富媒体消息（`msg_type=7`）。
+ *
+ * `msg_id` + `msg_seq` 同时给出时走**被动回复**（不占主动消息频次），
+ * 否则为主动消息。
+ */
+export async function sendMediaByFileInfo(
+  token: string,
+  target: MediaTarget,
+  fileInfo: string,
+  opts?: { msgId?: string; msgSeq?: number }
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    content: "",
+    msg_type: 7,
+    media: { file_info: fileInfo },
+  };
+  if (opts?.msgId) {
+    body["msg_id"] = opts.msgId;
+    body["msg_seq"] = opts.msgSeq ?? nextMsgSeq(opts.msgId);
+  }
+  await post(`${mediaBase(target)}/messages`, token, body);
+}

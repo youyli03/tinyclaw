@@ -249,7 +249,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 - **`better-sqlite3` 未在 `package.json` 的 dependencies 声明**（`web/backend/db.ts:28` 用 `createRequire` 加载），干净环境 Dashboard 会崩。本机 `node_modules/better-sqlite3` 的预编译产物还是 2026-03-14 编的（ABI 127，而 Node 20.11 要 115）→ 在 `node --import tsx/esm` 的探针里加载会报 `ERR_DLOPEN_FAILED`，但**服务进程内是好的**（`/proc/<pid>/maps` 可见已映射，chat 记忆检索确实在注入）。要修就是 `npm rebuild better-sqlite3`。
 - **`AutoFreeClient.supportsToolCalls` 恒为 `true`**（`openrouter.ts:169-171`）→ OpenRouter 免费模型永远走不到 textMode。
-- **QQ 富媒体只能"内联"上传**：走 `file_data`（base64 塞进单次请求），**编码后约 10 MB 即网关上限 ≈ 原始文件 7.5 MB**；分片上传（`upload_prepare` → PUT → `upload_part_finish`）**未实现**，超限文件在本地就被拒绝（`outbound.ts` 的 `MAX_BASE64_CHARS`，判的是 **base64 长度**而非原始字节——曾按原始字节比，8.2 MB 文件放行后网关 500 `call inner proxy error`，用户却只看到"附件已发"）。另：`file_type` 顺序是 **1=图片 2=视频 3=语音 4=文件**（`api.ts` 曾把 audio/video 弄反，mp3 必然 400 850019）；类型不匹配时会自动回退 `file_type=4` 重发。
+- **QQ 富媒体的下发类型由文件格式决定，不是标签**（`outbound.ts` 的 `wireMediaType()`）：`.silk`→语音(3)、`.mp4`→视频(2)、`.png/.jpg`→图片(1)，**其余一律文件(4)** —— 所以 `mp3` 即使写成 `<audio>` 也是附件，不会被 QQ 当语音气泡；官方各类型只吃固定格式（否则 400 850019），被拒时改用 `file_type=4` 重发（分片路径在**预上传**阶段零字节代价发现）。
+- **QQ 富媒体有两条上传路径，别混**：**≤ 原始 7.5 MB** 走 `file_data`（base64 内联进单次请求，**编码后约 10 MB 即网关上限**，判的是 **base64 长度**而非原始字节——曾按原始字节比，8.2 MB 文件放行后网关 500 `call inner proxy error`，用户却只看到"附件已发"）；**更大**走官方**分片上传**（`upload_prepare` → 逐片 PUT → `upload_part_finish` → 带 `upload_id` 合并 `file_info` → `msg_type:7` 发送），硬上限 **200 MB**，超硬限制才在本地拒绝。分片协议的 `file_size` / `block_size` 都是**字符串**，`md5_10m` 取**前 10,002,432 字节**的 MD5（不是整文件）。⚠️ **c2c openid 按 bot 隔离**：`7EE1BD…` 只对 `[channels.qqbots.chat]` 有效，用别的 bot 发会得到 `11255 用户/群已注销`。
 - **`gateway.ts:184` 的 finally 删队列会丢新消息**；`api.ts:74` 的 token singleflight 失败后永久卡死。
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
 - **`system-prompt.ts:1-3` 文件头注释已被误编辑破坏**，改动该文件时顺手修复。
