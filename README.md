@@ -85,8 +85,12 @@ clientId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ## CLI 速查
 
 ```bash
-tinyclaw status                        # 服务状态
-tinyclaw start / restart / logs [-f]   # 启动 / 重启 / 查看日志
+tinyclaw status                        # 服务状态(含 systemd 状态/运行时长/日志来源)
+tinyclaw start / restart               # 启动 / 重启(有 systemd unit 时一律交给 systemd)
+tinyclaw logs [-f] [-n N]              # 查看日志:自动识别来源(systemd → journal,否则 service.log)
+tinyclaw logs -l warn --since "1h ago" # 只看 WARN 以上 / 按时间范围;--grep <re> 正则过滤
+tinyclaw help <command>                # 查看某命令的用法(不会执行该命令)
+tinyclaw --version                     # CLI 版本
 
 tinyclaw agent new <id>                # 创建 Agent
 tinyclaw agent edit <id>               # 编辑系统提示

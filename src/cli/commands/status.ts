@@ -16,6 +16,7 @@ import { CONFIG_PATH } from "../../config/writer.js";
 import { ConfigSchema } from "../../config/schema.js";
 import { parse } from "smol-toml";
 import { loadSavedGitHubToken } from "../../llm/copilotSetup.js";
+import { SYSTEMD_UNIT, journalctlAvailable, systemdUnitPath, systemdUptimeText, systemdUnitState } from "../systemd.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 
@@ -40,6 +41,28 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   console.log(`进程状态：${processStatus}`);
+
+  // ── 托管方式与日志位置（决定 tinyclaw logs 能不能看到实时输出）──────────────
+  const unitState = systemdUnitState();
+  const managed = systemdUnitPath() !== null;
+  if (managed && unitState !== "unknown") {
+    const up = systemdUptimeText();
+    const stateText =
+      unitState === "active"
+        ? green(`active${up ? `（已运行 ${up}）` : ""}`)
+        : unitState === "failed"
+          ? red("failed")
+          : yellow(unitState);
+    console.log(`systemd：${stateText}  ${dim(SYSTEMD_UNIT)}`);
+    if (unitState === "active" && journalctlAvailable()) {
+      console.log(
+        `日志：${cyan(`journalctl --user -u ${SYSTEMD_UNIT}`)}  ${dim("（tinyclaw logs -f 即读这里）")}`
+      );
+    }
+  } else if (pid > 0) {
+    console.log(`托管：${dim("CLI 自启动（非 systemd）")}`);
+    console.log(`日志：${cyan("~/.tinyclaw/service.log")}  ${dim("（tinyclaw logs -f）")}`);
+  }
 
   // ── 配置文件 ──────────────────────────────────────────────────────────────────
   if (!fs.existsSync(CONFIG_PATH)) {

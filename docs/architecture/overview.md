@@ -572,13 +572,23 @@ export interface Connector {
 
 ## CLI 配置工具（`tinyclaw`）
 
-通过 `bun link` 将项目注册为全局命令，无需每次用 `bun run` 调用。
+通过 `npm link` 将项目注册为全局命令（运行时是 node + tsx，不是 bun）。
 
 **安装：**
 ```bash
-cd /path/to/tinyclaw && bun link
+cd /path/to/tinyclaw && npm link
 tinyclaw completions install && source ~/.bashrc
 ```
+
+**服务托管方式决定日志去哪**（CLI 会自动判断，见 `src/cli/systemd.ts`）：
+
+| 启动方式 | 进程归属 | 日志 |
+|---|---|---|
+| `systemctl --user start tinyclaw`（生产用法） | systemd 守护，crash 自动拉起 | journal（`journalctl --user -u tinyclaw.service`） |
+| `tinyclaw start` | detached 进程，无人守护 | `~/.tinyclaw/service.log` |
+
+`logs` 只读 journal 的两种情况：unit 处于 active/activating，或 unit 存在但没在跑（读历史日志）；
+`service.log` 有内容时优先读文件。想强制指定用 `--source`。
 
 **命令列表：**
 
@@ -592,8 +602,11 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string） |
 | `tinyclaw auth github` | 重新执行 Device Flow OAuth |
 | `tinyclaw auth status` | 检查 token 有效性 |
-| `tinyclaw status` | 服务进程 + 配置摘要 + channel 状态 |
-| `tinyclaw restart` | 向 `.service_pid` 指向的进程发送 SIGTERM |
+| `tinyclaw status` | 服务进程 + systemd 状态与运行时长 + 日志来源 + 配置摘要 + channel 状态 |
+| `tinyclaw logs [-f] [-n N] [-l <level>] [--since <t>] [--grep <re>] [--source journal\|file]` | 查看服务日志。**来源自动识别**：unit 处于 active 时读 `journalctl --user -u tinyclaw.service -o cat`，否则读 `~/.tinyclaw/service.log`；tty 下顺带剥掉进度条的 ANSI 控制符 |
+| `tinyclaw restart` | unit 文件存在时一律 `systemctl --user restart tinyclaw.service`；不存在才回退到旧的自拉起流程 |
+| `tinyclaw help <command>` | 打印某命令的用法摘要（**不执行**该命令，避免 `help restart` 真去重启） |
+| `tinyclaw --version` | 输出版本（读 `package.json`） |
 | `tinyclaw completions install` | 自动写入 `~/.bashrc` / `~/.zshrc` / fish completions |
 
 **扩展方式（注册新命令）：**

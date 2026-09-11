@@ -327,10 +327,11 @@ function printHelp(): void {
   const maxName = Math.max(...Object.keys(COMMANDS).map((n) => n.length));
 
   console.log(`
-${bold("tinyclaw CLI")}  —  配置与管理工具
+${bold("tinyclaw CLI")}  —  配置与管理工具  ${dim(`v${cliVersion()}`)}
 
 ${bold("用法：")}
   tinyclaw <command> [subcommand] [args...]
+  tinyclaw help <command>          查看某命令的用法与子命令
   tinyclaw <command> -h            查看该命令的子命令列表
   tinyclaw <command> <sub> -h      查看子命令的完整参数说明
 
@@ -344,6 +345,59 @@ ${bold("命令：")}`);
   console.log();
 }
 
+/** 某条命令的用法摘要（不执行命令模块，避免 `help restart` 真去重启服务） */
+function printCommandHelp(name: string): boolean {
+  const cmd = COMMANDS[name];
+  if (!cmd) return false;
+  console.log(`\n${bold(name)}  ${dim(cmd.description)}\n`);
+  console.log(`${bold("用法：")}  tinyclaw ${cmd.usage}`);
+  if (cmd.subcommands && cmd.subcommands.length > 0) {
+    console.log(`${bold("子命令：")}  ${cmd.subcommands.join("  ")}`);
+  }
+  console.log(`\n${dim(`完整参数说明：tinyclaw ${name} -h`)}\n`);
+  return true;
+}
+
+/** 拼写纠错：命令行只差一两个字符时给出建议（Levenshtein，阈值 2） */
+function suggestCommand(input: string): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const name of Object.keys(COMMANDS)) {
+    const d = editDistance(input.toLowerCase(), name.toLowerCase());
+    if (d < bestDist) {
+      bestDist = d;
+      best = name;
+    }
+  }
+  return bestDist <= 2 ? best : null;
+}
+
+function editDistance(a: string, b: string): number {
+  const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0]!;
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j]!;
+      dp[j] = Math.min(dp[j]! + 1, dp[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return dp[b.length]!;
+}
+
+/** CLI 版本（读 package.json，失败时退化为 unknown） */
+function cliVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf-8")
+    ) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 // ── 主入口 ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -355,14 +409,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!cmdName || cmdName === "help" || cmdName === "--help" || cmdName === "-h") {
+  if (cmdName === "-v" || cmdName === "--version" || cmdName === "version") {
+    console.log(cliVersion());
+    return;
+  }
+
+  if (cmdName === "help") {
+    // `help <command>` 只打印用法摘要，**不执行**命令模块
+    // （否则 `tinyclaw help restart` 会真的去重启服务）
+    const target = rest[0];
+    if (target && printCommandHelp(target)) return;
+    printHelp();
+    return;
+  }
+
+  if (!cmdName || cmdName === "--help" || cmdName === "-h") {
     printHelp();
     return;
   }
 
   const cmd = COMMANDS[cmdName];
   if (!cmd) {
-    console.error(red(`未知命令 "${cmdName}"`));
+    const hint = suggestCommand(cmdName);
+    console.error(red(`未知命令 "${cmdName}"`) + (hint ? dim(`  你是不是想输入 "${hint}"？`) : ""));
     printHelp();
     process.exit(1);
   }

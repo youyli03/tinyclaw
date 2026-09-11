@@ -9,41 +9,37 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { bold, green, red, yellow, dim } from "../ui.js";
 import { run as startRun } from "./start.js";
+import { SYSTEMD_UNIT, systemdUnitPath, systemdUnitState } from "../systemd.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
-
-/** systemd user unit 名称(与 ~/.config/systemd/user/tinyclaw.service 对应) */
-const SYSTEMD_UNIT = "tinyclaw.service";
 
 export const description = "重启 tinyclaw 主服务(停止旧进程并重新启动)";
 export const usage = "restart";
 
 export async function run(_args: string[]): Promise<void> {
   // ── systemd 托管检测 ──────────────────────────────────────────────────────
-  // 若服务由 systemd user unit 管理,直接交回 systemd 重启:
-  // CLI 旧逻辑(detached spawn)拉起的进程不在 systemd 守护范围内,
-  // supervisor crash 后无人拉起(2026-08-09 曾因此产生孤儿进程)。
-  try {
-    const state = execSync(`systemctl --user is-active ${SYSTEMD_UNIT}`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5_000,
-    })
-      .trim()
-      .toLowerCase();
-    if (state === "active" || state === "activating" || state === "reloading") {
-      execSync(`systemctl --user restart ${SYSTEMD_UNIT}`, {
+  // 只要 unit 文件存在，就一律交回 systemd 重启：
+  // 即使当前是 inactive/failed，也让 systemd 成为唯一管理者 ——
+  // CLI 旧逻辑（detached spawn）拉起的进程不在 systemd 守护范围内，
+  // supervisor crash 后无人拉起（2026-08-09 曾因此产生孤儿进程）。
+  if (systemdUnitPath() !== null) {
+    const before = systemdUnitState();
+    try {
+      execFileSync("systemctl", ["--user", "restart", SYSTEMD_UNIT], {
         stdio: "inherit",
         timeout: 30_000,
       });
-      console.log(`${green("✓")} 已通过 systemd 重启 ${SYSTEMD_UNIT}(crash 后由 systemd 自动拉起)`);
+      console.log(
+        `${green("✓")} 已通过 systemd 重启 ${SYSTEMD_UNIT}` +
+          dim(`（重启前 ${before}；crash 后由 systemd 自动拉起）`)
+      );
       return;
+    } catch (err) {
+      console.error(yellow(`systemd 重启失败，退回 CLI 自启动：${(err as Error).message}`));
     }
-  } catch {
-    /* systemd 不可用或 unit 不存在 → 走下方旧逻辑 */
   }
 
   // ── 停止旧进程 ──────────────────────────────────────────────────────────────
