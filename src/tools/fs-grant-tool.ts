@@ -18,22 +18,27 @@ registerTool({
     function: {
       name: "fs_grant",
       description:
-        "申请**一个路径/目录**的写权限（路径级无感授权，不打扰用户）。\n" +
-        "适用场景：你需要写用户家目录里、但不在你自己 agent 目录内的文件时（例如 ~/Documents、~/.config/xxx、某个项目目录）。\n" +
-        "限制：只接受 $HOME 内、已存在、且非密钥/非受保护目录（如 ~/.ssh）的路径；其他 agent 的目录不能申请。" +
-        "cron / loop 等无人值守运行**不能**使用本工具（它们的可写范围由任务配置声明）。\n" +
-        "授权默认 1 小时有效，期间 write_file / edit_file / exec_shell 都可写该路径；每一次申请都会写入审计。" +
-        "**请优先在当前工作目录内完成工作**，只有确实必要时才申请外部路径。",
+        "Request write access to **one path or directory** (path-level silent elevation; the user is not asked).\n" +
+        "Use it when you need to write somewhere in the user's home directory that is outside your own workspace or " +
+        "outside your agent directory (for example `~/Documents`, `~/.config/xxx`, `~/.tinyclaw/data`, or `memory/` " +
+        "inside your own agent directory).\n" +
+        "Limits: only paths under $HOME that already exist, are not secret (no `config.toml` / `secrets.toml` / " +
+        "`*.key` / `~/.ssh` …) and do not belong to another agent. Unattended runs (cron / loop) cannot use this tool " +
+        "at all — their writable scope comes from the task configuration.\n" +
+        "The grant lasts 1 hour by default; during that time `write_file` / `edit_file` / `exec_shell` may write the " +
+        "path, and every request is audited. **Prefer finishing the work inside your current workspace** and only " +
+        "request access when it is genuinely necessary.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "要申请写权限的绝对路径或 ~ 开头路径（目录或文件，必须已存在）",
+            description:
+              "Absolute path (or `~`-prefixed path) of an existing directory or file you need to write",
           },
           reason: {
             type: "string",
-            description: "为什么必须写这个路径（会记入审计，便于用户事后复核）",
+            description: "Why you must write this path (recorded in the audit log for the user to review)",
           },
         },
         required: ["path"],

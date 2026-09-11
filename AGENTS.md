@@ -190,6 +190,40 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - 新增 CLI 子命令：在 `src/cli/index.ts` 的 `COMMANDS` 加一行，子命令表由各模块 `export const subcommands` 自动汇聚（不需要手改 `SUBCOMMANDS`）。
 - 新增斜杠命令：`src/commands/registry.ts` 的 `registerCommand`，并在 `builtin.ts` 或 `src/code/index.ts` 里注册。
 
+### 语言约定（prompt / 工具描述 / 回复）
+
+**给模型的文本优先英文，给用户的文本跟随用户语言。** 判据是"这段字符串的读者是谁"：
+
+| 内容 | 语言 | 理由 |
+|---|---|---|
+| 内置 system prompt 与所有注入段（自指、沙箱、`__purpose`、反馈等） | **英文优先** | 指令性文本；英文 token 更省、与工具 schema 同语言，模型遵循更稳 |
+| 工具 `spec.function.description`、参数 `description` | **英文优先** | schema 层本就与 OpenAI 约定同语言 |
+| 工具**返回给模型**的结果、拒绝原因（`已拒绝：…`、`错误：…`） | **中文**（现状，保持不变） | 模型会**原样转述**给用户，见"错误处理"节 |
+| Agent 回复用户 | **跟随用户语言** | 中文用户→中文；英文用户→英文；不因 prompt 是英文而改用英文回复 |
+| 代码注释、`docs/`、本文件 | 中文（现状） | 面向维护者 |
+| commit message | 英文（§10.1） | 已有规则 |
+
+约束与禁忌：
+
+- ❌ 不要把**面向用户的**错误/提示文案改成英文 —— 用户会直接看到英文报错。用户可见字符串继续用中文（`错误：<原因>` / `已拒绝：<原因>`）。
+- ❌ 不要为了"统一语言"去翻译 `docs/`、注释或历史日志。
+- ✅ 新增 prompt 段落 / 新工具时按本规则直接用英文；改动既有中文段落时**顺手翻成英文**（渐进迁移，不需要一次性全量）。
+- ✅ 英文 prompt 里引用用户可见文案时，保留中文原文（例如提示"工具会返回 `已拒绝：…`"）。
+
+> **现状（未按本规则改写的部分）**：内置 prompt 的 `buildBuiltinSystem`（`agent.ts:202`）221 行中 **147 行含中文**；
+> `src/tools/**` 的 231 条工具/参数 `description` 中 **119 条仍为中文**（涉及 23 个文件，`memory.ts` 25 条最多）。
+> 这些属于**待渐进迁移**的存量，不要在文档里宣称"已全面英文"。
+>
+> **已迁移的部分**：`buildSelfAccessPrompt` / `buildSandboxPrompt` 两段全英文，`fs_grant` 与 `self_runtime_*`
+> 的描述（含参数）全英文。
+> **回复语言已从"写死中文"改为"跟随用户语言"**：`agent.ts` 的「通用规范」、文字模式说明、
+> `code/system-prompt.ts` 的三处 `- 用中文回复，简洁明了` 都已替换为
+> `Always reply in the user's own language …`，并明确告诉模型"prompt 是英文不等于要用英文回复"。
+> ⚠️ 这两段**由探针锁死语言**：`tmp/probe-sandbox-prompt-20260911.ts` 断言沙箱段与自指段不含**任何**中文字符、
+> 断言源码里已无「用中文回复」，`tmp/probe-self-access-20260911.ts`、`tmp/probe-p25-live-20260911.ts`
+> 断言英文关键词 —— 翻回中文会立刻变红。
+> 存量盘点用 `tmp/lang-inventory-20260911.ts`（迁移后回来更新本段数字）。
+
 ---
 
 ## 7. 已知陷阱（动手前必看）
@@ -299,7 +333,6 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **QQ 富媒体有两条上传路径，别混**：**≤ 原始 7.5 MB** 走 `file_data`（base64 内联进单次请求，**编码后约 10 MB 即网关上限**，判的是 **base64 长度**而非原始字节——曾按原始字节比，8.2 MB 文件放行后网关 500 `call inner proxy error`，用户却只看到"附件已发"）；**更大**走官方**分片上传**（`upload_prepare` → 逐片 PUT → `upload_part_finish` → 带 `upload_id` 合并 `file_info` → `msg_type:7` 发送），硬上限 **200 MB**，超硬限制才在本地拒绝。分片协议的 `file_size` / `block_size` 都是**字符串**，`md5_10m` 取**前 10,002,432 字节**的 MD5（不是整文件）。⚠️ **c2c openid 按 bot 隔离**：`7EE1BD…` 只对 `[channels.qqbots.chat]` 有效，用别的 bot 发会得到 `11255 用户/群已注销`。
 - **`gateway.ts:184` 的 finally 删队列会丢新消息**；`api.ts:74` 的 token singleflight 失败后永久卡死。
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
-- **`system-prompt.ts:1-3` 文件头注释已被误编辑破坏**，改动该文件时顺手修复。
 - **`mcp-servers/` 与 `scripts/` 不在 `tsconfig` 的 `include` 范围内**（只含 `src/**/*`），改动它们后 typecheck 不会覆盖。
 - **Subagent 未修的剩余问题**：
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）

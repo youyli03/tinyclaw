@@ -66,14 +66,15 @@ registerTool({
     function: {
       name: "self_runtime_scan",
       description:
-        "查看**你自己的运行时目录**（~/.tinyclaw）的磁盘占用（只读）。返回：总占用、顶层各项占用" +
-        "（按大小排序）、最大的若干文件、以及**可清理候选**（附体积、原因、风险等级 safe/caution）。\n" +
-        "适用场景：用户问「你的数据有多大 / 磁盘满了吗」，或要清理空间时先取真实数据再决定删什么。\n" +
-        "需要被授予 [self_access] 权限；密钥类文件只计入体积、不会出现在清单里。",
+        "Inspect the disk usage of **your own runtime directory** (~/.tinyclaw) — read-only. Returns total usage, " +
+        "per-top-level-entry usage sorted by size, the largest files, and **cleanup candidates** with their size, " +
+        "reason and risk level (safe / caution).\n" +
+        "Use it when the user asks how much data you occupy, whether the disk is full, or before cleaning anything up.\n" +
+        "Requires the [selfAccess] grant; secret files are counted but never listed.",
       parameters: {
         type: "object",
         properties: {
-          top: { type: "number", description: "返回的最大文件条数（默认 12）" },
+          top: { type: "number", description: "Max number of entries to return (default 12)." },
         },
         required: [],
       },
@@ -129,19 +130,19 @@ registerTool({
     function: {
       name: "self_runtime_read",
       description:
-        "读取**你自己的运行时目录**（~/.tinyclaw）下的文件或列出目录内容（只读）。\n" +
-        "适用场景：查看自己的记忆文件（MEM.md / ACTIVE.md / 卡片）、会话记录、cron 任务定义、" +
-        "loop 配置、日志，或确认某个文件多大、什么时候改的。\n" +
-        "密钥类文件（config.toml / secrets.toml / mcp.toml / auth/** / *.key / *token*）不可读取。" +
-        "需要被授予 [self_access] 权限。",
+        "Read a file or list a directory under **your own runtime directory** (~/.tinyclaw) — read-only.\n" +
+        "Use it to inspect your memory files (MEM.md / ACTIVE.md / cards), session records, cron job definitions, " +
+        "loop configs, logs, or to check how large a file is and when it changed.\n" +
+        "Secret files (config.toml / secrets.toml / mcp.toml / auth/** / *.key / *token*) cannot be read. " +
+        "Requires the [selfAccess] grant.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "运行时目录下的绝对路径（如 ~/.tinyclaw/agents/default/memory/MEM.md）或用 ~ 开头的路径",
+            description: "Absolute path under the runtime directory (e.g. ~/.tinyclaw/agents/default/memory/MEM.md); a leading ~ is accepted.",
           },
-          max_bytes: { type: "number", description: "单次返回上限（默认取配置 maxReadBytes）" },
+          max_bytes: { type: "number", description: "Max bytes to return in one call (default: configured maxReadBytes)." },
         },
         required: ["path"],
       },
@@ -211,17 +212,17 @@ registerTool({
     function: {
       name: "self_runtime_delete",
       description:
-        "删除**你自己的运行时目录**（~/.tinyclaw）下的文件或目录，用于清理磁盘。\n" +
-        "必须显式传 `confirm: true`；先用 `dry_run: true` 可以只看会释放多少空间而不真删。\n" +
-        "受保护：运行时根目录本身、根下的 .git（配置备份仓库）、agents 目录整体，以及所有密钥文件。\n" +
-        "删除前建议先 self_runtime_scan 确认候选；对 [caution] 级候选（下载素材/产物/记忆归档）" +
-        "应先在回复里向用户说明再删。",
+        "Delete a file or directory under **your own runtime directory** (~/.tinyclaw) to free up disk space.\n" +
+        "You must pass `confirm: true`; use `dry_run: true` first to see how much space would be freed without deleting.\n" +
+        "Protected: the runtime root itself, its `.git` (the config backup repo), the `agents` directory as a whole, " +
+        "and every secret file. Run `self_runtime_scan` first to pick candidates; for [caution]-level candidates " +
+        "(downloaded assets, outputs, archived memory) explain to the user what will be removed before deleting.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "运行时目录下要删除的绝对路径（文件或目录）" },
-          confirm: { type: "boolean", description: "必须为 true 才真正删除" },
-          dry_run: { type: "boolean", description: "true = 只报告将释放的空间，不删除" },
+          path: { type: "string", description: "Absolute path of the file or directory to delete (under the runtime directory)." },
+          confirm: { type: "boolean", description: "Must be true for the deletion to actually happen." },
+          dry_run: { type: "boolean", description: "true = only report how much space would be freed, delete nothing." },
         },
         required: ["path", "confirm"],
       },

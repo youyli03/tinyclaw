@@ -368,7 +368,8 @@ function buildBuiltinSystem(
 
 ## 通用规范
 - 执行高危操作前，必须先用文字告知用户将要执行什么操作，等待用户回复确认后再执行
-- 用中文回复，简洁明了
+- **Always reply in the user's own language** — a Chinese user gets Chinese, an English user gets English.
+  This prompt is written in English for precision; that is **not** a reason to answer in English.
 - **不要使用奉承性语言**：禁止"这是个好问题"、"您的思路很棒/清晰"等赞美语；直接切入内容
 - **不要过度道歉**：出错时简短致歉后立即给出修正，无需反复道歉
 
@@ -428,7 +429,7 @@ ${chatFeedbackContent}
  * 格式约定：
  *   - 需要调用工具时，整条回复只包含一个 <tool_call> 块，不附加任何其他文字
  *   - 收到 [tool_result] 后继续推理，可再次调用工具
- *   - 所有工具执行完毕、任务确认完成后，输出最终中文回复，不得包含任何 <tool_call> 块
+ *   - 所有工具执行完毕、任务确认完成后，输出最终回复（语言跟随用户），不得包含任何 <tool_call> 块
  */
 function buildTextBasedToolInstructions(tools: ChatCompletionTool[]): string {
   const descs = tools
@@ -463,7 +464,7 @@ function buildTextBasedToolInstructions(tools: ChatCompletionTool[]): string {
    </tool_call>
 2. 系统执行工具后，会在 [tool_result:工具名] 消息中返回结果，你需继续推理
 3. 可多次调用工具，每次只调用一个
-4. **最终回复**：所有工具调用完毕、任务确认完成后，输出完整的中文回复，回复中不得包含任何 <tool_call> 块
+4. **最终回复**：所有工具调用完毕、任务确认完成后，输出完整回复，**语言跟随用户**（中文用户→中文），回复中不得包含任何 <tool_call> 块
 
 ## 可用工具
 
@@ -531,8 +532,8 @@ export function buildSystemPrompt(
   // 自指运行权限：只有被 [selfAccess].grantedAgents 授权的 agent 才被告知该能力
   // （未授权时提它只会让模型反复尝试并被拒）
   if (isSelfAccessGranted(agentId)) parts.push(buildSelfAccessPrompt(agentId));
-  // 沙箱：开启时告诉模型边界在哪、以及（若允许）怎么请求提权
-  const sandboxPrompt = buildSandboxPrompt();
+  // 沙箱：开启时告诉模型边界在哪、以及（若允许）两条提权路径怎么用
+  const sandboxPrompt = buildSandboxPrompt(agentId);
   if (sandboxPrompt) parts.push(sandboxPrompt);
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
@@ -553,36 +554,48 @@ export function buildSystemPrompt(
 }
 
 /**
- * 自指运行权限的 prompt 段（仅对被授权的 agent 注入）。
+ * Self-runtime access prompt section (injected only for granted agents).
  *
- * 目的：让 agent 知道"自己的运行时目录"在哪、能做什么、以及密钥是红线，
- * 从而可以自行回答"你占了多少磁盘""把没用的清掉"这类问题，而不必每次问用户。
+ * Purpose: tell the agent where "its own runtime directory" is, what it may do there,
+ * and that secrets are a hard line — so it can answer "how much disk are you using" or
+ * "clean up the junk" by itself instead of asking the user every time.
  */
 function buildSelfAccessPrompt(agentId: string): string {
   const root = runtimeRoot();
   return [
-    "## 自指运行权限（已授予）",
+    "## Self-runtime access (granted)",
     "",
-    `你被授予了对自己运行时目录 \`${root}\` 的**完整访问权**（agent: \`${agentId}\`），`,
-    "可以读写其中任何文件（记忆、会话记录、cron 任务、loop 配置、日志、缓存、下载与产出）。",
+    `You have been granted access to your own runtime directory \`${root}\` (agent: \`${agentId}\`).`,
+    "The dedicated tools below let you inspect and clean it up (memory, session records, cron jobs, loop",
+    "configs, logs, cache, downloads and outputs).",
     "",
-    "- 想看/清理自己的磁盘占用：先 `self_runtime_scan`（给出各项占用与可清理候选），",
-    "  再用 `self_runtime_read` 看具体内容、`self_runtime_delete` 删除（须 `confirm: true`，可先 `dry_run`）",
-    "- `self_status` 也会报告运行时占用",
-    "- 只动运行时目录的文件操作（write_file / edit_file / delete_file）对你**不再需要 MFA 确认**",
-    "- **密钥是红线**：`config.toml` / `secrets.toml` / `mcp.toml` / `auth/**` / `*.key` / 文件名含 token 的文件",
-    "  不可读、不可写、不可删；运行时根目录、根下 `.git`、`agents` 整体也不可删",
-    "- 删除 [caution] 级候选（下载素材 / 产出文件 / 记忆归档）之前，先向用户说明要删什么、能省多少空间",
+    "- To inspect or clean up disk usage: run `self_runtime_scan` first (per-directory usage plus cleanup",
+    "  candidates), then `self_runtime_read` to look at a specific file, and `self_runtime_delete` to remove one",
+    "  (requires `confirm: true`; pass `dry_run: true` to preview first).",
+    "- `self_status` also reports runtime usage.",
+    "- File operations that stay inside your own scope (your workspace, or runtime paths when",
+    "  `[selfAccess].wideWriteAccess` is on) do not require MFA confirmation.",
+    "- **Secrets are a hard line**: `config.toml` / `secrets.toml` / `mcp.toml` / `auth/**` / `*.key` / any file whose",
+    "  name contains `token` cannot be read, written or deleted. The runtime root itself, its `.git` and `agents` as",
+    "  a whole cannot be deleted either.",
+    "- Before deleting `[caution]`-level candidates (downloaded assets, outputs, archived memory), tell the user what",
+    "  will be removed and how much space it frees.",
+    "- Note: generic writes outside your workspace (this includes `memory/` and `skills/` when wideWriteAccess is",
+    "  off) require an explicit grant — see the sandbox section for the current rules.",
   ].join("\n");
 }
 
 /**
- * 沙箱说明段（仅在 `[sandbox].enabled` 时注入）。
+ * 沙箱说明段（仅在 `[sandbox].enabled && execShell === "sandbox"` 时注入）。
  *
  * 目的：让模型**知道边界**，不要反复尝试注定失败的路径（例如沙箱里 ssh 必然失败），
- * 并在确实需要时用 `exec_shell({ elevate: true })` 显式请求提权，而不是绕路或放弃。
+ * 并在确实需要时走**正确的提权入口**（`fs_grant` 换路径写权限 / `elevate` 让一条命令出沙箱），
+ * 而不是绕路、放弃、或者反复撞同一堵墙。
+ *
+ * ⚠️ 本段必须与实现同步（`sandbox/bwrap.ts` 的可写基座、`sandbox/elevation.ts`、
+ * `auth/fs-grant.ts`）。三者任一处改了范围，这里就要改 —— 否则模型会照着过期的边界行动。
  */
-function buildSandboxPrompt(): string | null {
+function buildSandboxPrompt(agentId: string): string | null {
   let cfg;
   try {
     cfg = loadConfig().sandbox;
@@ -591,37 +604,64 @@ function buildSandboxPrompt(): string | null {
   }
   if (!cfg.enabled || cfg.execShell !== "sandbox") return null;
 
+  const workspace = agentManager.workspaceDir(agentId).replace(runtimeRoot(), "~/.tinyclaw");
   const lines = [
-    "## 执行沙箱（你正在其中运行）",
+    "## Execution sandbox (you are running inside one)",
     "",
-    "你的 `exec_shell` 命令跑在隔离沙箱（bubblewrap）里，**不是**直接在宿主机上。规则：",
+    "Your `exec_shell` commands run in an isolated bubblewrap sandbox, **not** directly on the host. Boundaries:",
     "",
-    "- 可写：你自己的 agent 目录（含 workspace / memory）、`~/.tinyclaw/{tmp,cache,reports,scripts}`",
-    `  ${cfg.extraRwPaths.length > 0 ? `以及 ${cfg.extraRwPaths.join("、")}` : ""}`.trim(),
-    "- 只读：系统目录、`~/.nvm`、`~/.cache`、仓库等（读得到，改不了）",
-    "- **不可见（不是「没权限」，而是文件不存在）**：`~/.tinyclaw/{config,secrets,mcp}.toml`、`~/.tinyclaw/auth/`、",
-    "  `*.key`、`~/.ssh`、`~/.aws`、`~/.netrc` 等。所以 `ssh`、`git push`（走 SSH remote）、`scp` 之类**会直接失败**。",
-    `- 网络：${cfg.network === "allow" ? "允许出网" : "**禁止出网**（当前任务被判定为处理不可信内容）"}`,
+    `- **Writable by default: only your own workspace** — \`${workspace}\` (including \`tmp/\` \`output/\` \`downloads/\`) and the system \`/tmp\`.`,
+    "- **The rest of your agent directory is read-only**: `memory/` `cards/` `skills/` `notes/` `logs/` `MEM.md`",
+    "  `ACTIVE.md` `SYSTEM.md` `agent.toml` `access.toml` — writing them via the shell or `write_file` fails or is blocked.",
+    "  (Write your own memory with the `memory_*` tools: those are sanctioned entry points and are not affected.)",
+    "- Readable but not writable: system directories, `~/.nvm`, `~/.cache`, repositories, other `~/.tinyclaw` data.",
+    "- **Invisible (the file simply does not exist — this is not a permission error)**:",
+    "  `~/.tinyclaw/{config,secrets,mcp}.toml`, `~/.tinyclaw/auth/`, `*.key`, `~/.ssh`, `~/.aws`, `~/.netrc`.",
+    "  Consequently `ssh`, `git push` over SSH and `scp` **fail outright**.",
+    `- Network: ${cfg.network === "allow" ? "outbound allowed" : "**outbound denied** (this task was classified as handling untrusted content)"}`,
+    "",
+    "### Writing outside your workspace (two different escape hatches — do not confuse them)",
+    "",
   ];
 
-  if (cfg.elevation.enabled) {
+  if (cfg.grant.enabled) {
     lines.push(
-      "",
-      `- **需要宿主机权限时**：用 \`exec_shell({ command, elevate: true })\` 请求在沙箱外执行一次。`,
-      "  会先请用户批准（只对**这一条命令**生效、默认 120 秒有效），用户拒绝就用沙箱内的替代方案，",
-      "  **不要重复请求同一条命令**（会被节流拒绝）。无人值守（cron / loop）场景一律不允许提权。"
+      "- **Need write access to a path** (including `memory/` `skills/` inside your agent directory, or",
+      "  `~/.tinyclaw/data`, `~/Documents`, …): call `fs_grant({ path, reason })` first. **The user is not asked**;",
+      "  it takes effect immediately, lasts 1 hour by default and is audited. Afterwards `write_file` / `edit_file` /",
+      "  `exec_shell` can write that path. **Prefer getting the work done inside your workspace** and only ask when it is",
+      "  genuinely necessary — do not treat `fs_grant` as a default step."
     );
   } else {
     lines.push(
-      "",
-      "- 当前**不允许提权**：路径被沙箱挡住时，改用沙箱内可完成的做法（例如用 HTTPS + token 替代 SSH 推送），",
-      "  或直接告诉用户你需要他在沙箱外执行什么命令。"
+      "- `fs_grant` is currently **disabled**: only the workspace is writable. Ask the user to make other changes."
     );
   }
-  return lines.filter((l) => l !== undefined).join("\n");
+
+  if (cfg.elevation.enabled) {
+    lines.push(
+      "- **Need one command to leave the sandbox** (e.g. `ssh` / `git push`, which requires `~/.ssh`):",
+      "  `exec_shell({ command, elevate: true })`. It applies to **that one command only**, is valid for 120 seconds by",
+      "  default, and requires user approval (read-only commands may be auto-approved; side-effecting ones are confirmed",
+      "  every time). If the user declines, use a sandbox-side alternative and **do not repeat the same request** (it is throttled)."
+    );
+  } else {
+    lines.push(
+      "- `elevate` is currently **disabled**: when you need host capabilities, tell the user which command to run outside the sandbox."
+    );
+  }
+
+  lines.push(
+    "",
+    "⚠️ In unattended runs (cron / loop) **neither escape hatch is available**: their writable scope is fixed by the task",
+    "configuration's `writablePaths` and cannot be widened at runtime — report failures honestly instead of retrying."
+  );
+
+  return lines.join("\n");
 }
 
-/** 格式化工具调用描述（用于 MFA 警告消息） */function describeToolCall(name: string, args: Record<string, unknown>): string {
+/** 格式化工具调用描述（用于 MFA 警告消息） */
+function describeToolCall(name: string, args: Record<string, unknown>): string {
   if (name === "exec_shell") return `exec_shell: ${String(args["command"] ?? "")}`;
   if (name === "write_file") return `write_file: ${String(args["path"] ?? "")}`;
   if (name === "delete_file") return `delete_file: ${String(args["path"] ?? "")}`;

@@ -1,6 +1,5 @@
 /**
- * Code 模式专用 system prom- **涉及任何文件写入/修改的任务，无论大小，都必须先调用 exit_plan_mode 等待用户确认后再执行。不允许因任务看起来简单而跳过规划阶段。**
-pt 构建器。
+ * Code 模式专用 system prompt 构建器。
  *
  * 与 chat 模式的 buildSystemPrompt() 相比，code 模式的 prompt 更加精简：
  * - 无 MEM.md / SKILLS.md 持久记忆加载
@@ -181,7 +180,7 @@ function buildAutoModePrompt({
   3. **仅在用户明确同意后**才执行 \`git commit\`；用户要求修改时按意见调整后重新请求确认。
   - commit message 采用 Conventional Commits 格式，**全英文**:type(scope): English summary;Body 逐条列出改动要点(英文)。
   - 未经用户同意，禁止 \`git commit\` / \`git commit --amend\` / \`git push\`；用户拒绝后不要反复追问。
-- 用中文回复，简洁明了
+- **Always reply in the user's own language** — a Chinese user gets Chinese, an English user gets English. This prompt is written in English for precision; that is **not** a reason to answer in English.
 
 
 
@@ -237,6 +236,8 @@ function buildPlanModePrompt({
 ## 工作原则
 
 Plan 模式分为两个严格隔离的阶段：
+
+- **涉及任何文件写入/修改的任务，无论大小，都必须先调用 exit_plan_mode 等待用户确认后再执行。不允许因任务看起来简单而跳过规划阶段。**
 
 ### 阶段一：分析与规划
 1. 使用只读工具（read_file、exec_shell 只读命令）充分了解代码库结构
@@ -328,7 +329,7 @@ Plan 模式分为两个严格隔离的阶段：
 - 本地文件使用绝对路径（如 \`${workspacePath}/output/cat.png\`），确保文件确实存在后再发送
 - 远程资源使用公网可访问的 https:// URL
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式
-- 用中文回复，简洁明了
+- **Always reply in the user's own language** — a Chinese user gets Chinese, an English user gets English. This prompt is written in English for precision; that is **not** a reason to answer in English.
 
 
 ${envSection}${visionSection}${feedbackSection}${codeHookText ? `\n\n## 行为钩子（来自 provider 配置）\n\n${codeHookText}` : ""}${existingPlanSection}`;
@@ -434,5 +435,5 @@ export function renderSharedDiagramsAndMedia(workspacePath: string): string {
 - 本地文件使用绝对路径（如 \`${workspacePath}/output/cat.png\`），确保文件确实存在后再发送
 - 远程资源使用公网可访问的 https:// URL
 - 禁止把图片内容转成 base64 文本输出——必须用上述标签格式
-- 用中文回复，简洁明了`;
+- **Always reply in the user's own language** — a Chinese user gets Chinese, an English user gets English. This prompt is written in English for precision; that is **not** a reason to answer in English.`;
 }
