@@ -198,12 +198,12 @@ export function buildSandboxPlan(opts: {
   }
 
   // ── 可写目录 ──────────────────────────────────────────────────────────────
+  // **默认只有 workspace**（+ 系统临时目录）。agent 目录下的其他部分
+  // （memory / cards / skills / notes / logs / MEM.md / SYSTEM.md / agent.toml …）
+  // 以及运行时目录的其他部分与 code 项目目录，都必须**显式声明**：
+  // cron/loop 用 `writablePaths`，chat/cli 用 `fs_grant`（agent 主动触发提权）。
   const rwPaths = [
-    agentManager.agentDir(agentId), // agents/<id>（含 workspace / memory / skills）
-    path.join(root, "tmp"),
-    path.join(root, "cache"),
-    path.join(root, "reports"),
-    path.join(root, "scripts"),
+    agentManager.workspaceDir(agentId), // agents/<id>/workspace
     path.join(os.tmpdir()),
     ...expandWritablePaths(cfg.extraRwPaths),
     // code 模式的 cwd（项目目录）：不 bind 就没法改项目（2026-09-11 修复）

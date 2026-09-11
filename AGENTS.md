@@ -224,12 +224,16 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   需要时用 `exec_shell({ elevate: true })` 走**提权通道**（`src/sandbox/elevation.ts`）：
   按风险分级（E1 只读可免批 / E2 有副作用每次确认）、批准后签发**绑定命令哈希的一次性令牌**（默认 120s，换命令即失效）、
   同命令 5 分钟内请求节流、**cron/loop 一律不许提权**、无交互通道即 fail-closed，且提权必须发一条用户可见提示 + 写审计。
-- **沙箱可写范围默认最小，靠"显式声明"扩展**：基础集 = 自己的 agent 目录 + `/tmp`（code 模式另加项目目录 `ctx.cwd`）；
-  cron job / loop trigger 用**各自的** `writablePaths` 显式声明（如 `~/.tinyclaw/data`、`~/.tinyclaw/dashboard.db`、`~/FinanceSkill`），
-  经 `ToolContext.sandboxExtraRwPaths` / `AgentRunOptions.sandboxExtraRwPaths` 传到 `buildSandboxPlan`。
-  `~/.tinyclaw/{cache,scripts,reports}` 等**不再默认可写**。声明**文件**时会自动放开其 SQLite 边车
-  （`-wal`/`-shm`/`-journal`），否则 WAL 模式会 `attempt to write a readonly database`。
-  密钥掩码的例外走 `[sandbox].readableSecretPaths`（默认空）；取 key 方式的重新设计见 `tmp/job-credentials-design-20260911.md`。
+- **沙箱可写范围默认最小：只有 workspace**。基础集 = `agents/<id>/workspace` + `/tmp`（code 模式另加项目目录 `ctx.cwd`）；
+  **agent 目录下的其他部分**（`memory/` `cards/` `skills/` `notes/` `logs/` `MEM.md` `ACTIVE.md` `SYSTEM.md` `agent.toml`
+  `access.toml` …）与运行时目录其他部分、`~/FinanceSkill` 等，都**必须显式声明或由 agent 主动提权**：
+  cron job / loop trigger 用**各自的** `writablePaths`（经 `ToolContext.sandboxExtraRwPaths` /
+  `AgentRunOptions.sandboxExtraRwPaths` 传到 `buildSandboxPlan`），chat / cli 用 `fs_grant`。
+  声明**文件**时会自动放开其 SQLite 边车（`-wal`/`-shm`/`-journal`），否则 WAL 模式会 `attempt to write a readonly database`。
+  ⚠️ 例外：**专用工具不受此限** —— `memory_*` / `write_report` / `create_skill` / `self_runtime_*` 直接写它们的
+  专属文件（不经 `checkWritePath`），属于"被认可的接口"而不是任意写入；只有 `write_file` / `edit_file` / `delete_file`
+  三个通用工具走 `checkWritePath` 的白名单。
+  密钥掩码的例外走 `[sandbox].readableSecretPaths`（默认空）；按任务的密钥声明见下条。
 - **两条提权路径，别混**（`AGENTS.md` 之外见 `docs/architecture/overview.md` 沙箱节）：
   - `fs_grant`（`auth/fs-grant.ts` + `tools/fs-grant-tool.ts`）：**路径级**、不打扰用户、带 TTL（默认 3600s）、写审计；
     授权后工具层（`checkWritePath` 认 `Session.grantedWritePaths`）与沙箱层（bind 成可写）**口径一致**；

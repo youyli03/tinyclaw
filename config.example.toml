@@ -288,7 +288,7 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # enabled     = true               # 审计流:~/.tinyclaw/audit/YYYY-MM.jsonl(0600,追加写)
 # maxArgChars = 500                # 单条参数摘要上限
 
-# 路径级"无感提权"(fs_grant):agent 可申请 $HOME 内非密钥路径的写权限,
+# 路径级"无感提权"(fs_grant):agent 可申请 $HOME 内非密钥路径的写权限(HOME 内默认可写只有自己的 workspace),
 # 不打扰用户、带 TTL、写审计;cron/loop 一律拒绝。适合"chat 里想写某个外部目录"。
 [sandbox.grant]
 # enabled          = true          # 总开关(默认 true)

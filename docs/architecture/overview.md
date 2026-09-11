@@ -357,18 +357,22 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 掩码例外：`[sandbox].readableSecretPaths` 里显式列出的路径保持可读（默认空），
 用于"脚本直接读 `secrets.toml` 取 key"这类现实需求 —— 密钥取用方式的重新设计见 `tmp/job-credentials-design-20260911.md`。
 
-**沙箱可写范围**（默认最小）：
+**沙箱可写范围**（默认最小：**只有 workspace**）：
 
 | 场景 | 可写 |
 |---|---|
-| 任何来源 | 自己的 agent 目录（`agents/<id>`，含 `workspace/`）、`/tmp` |
+| 任何来源 | `agents/<id>/workspace`（含 `tmp/` `output/` `downloads/`）+ 系统 `/tmp` |
 | code 模式 | 另加**当前项目目录**（`codedir`，即 `ctx.cwd`） |
-| cron job | 另加该 job 配置里 `writablePaths` 显式声明的路径（如 `~/.tinyclaw/data`、`dashboard.db`、`~/FinanceSkill`） |
+| cron job | 另加该 job 配置里 `writablePaths` 显式声明的路径（如 `~/.tinyclaw/data`、`dashboard.db`） |
 | loop trigger | 同上，`loops/<id>.json` 的 `writablePaths` |
-| 其他（`cache/` `scripts/` `reports/` 等） | ❌ 只读，需要就显式声明 |
+| chat / cli | 用 `fs_grant` 主动申请（路径级、TTL、审计） |
+| agent 目录其他部分（`memory/` `cards/` `skills/` `MEM.md` `SYSTEM.md` `agent.toml` `access.toml` …） | ❌ 需显式声明/提权 |
 
 声明**文件**时会自动放开它的 SQLite 边车（`-wal` / `-shm` / `-journal`）——否则 WAL 模式下会报
 `attempt to write a readonly database`。
+⚠️ **专用工具不受白名单限制**：`memory_*` / `write_report` / `create_skill` / `self_runtime_*` 直接写自己的
+专属文件（不经 `checkWritePath`），它们是被认可的接口；只有 `write_file` / `edit_file` / `delete_file`
+三个通用工具走路径白名单。
 
 **无人值守白名单**（`[sandbox.unattended]`）：cron / loop 的工具调用按 `allowedTools` 放行，默认包含
 只读（`read_file`/`search_store`/`self_*`/`cron_list`/`mcp_list_servers`/`session_get`）、记忆写入、

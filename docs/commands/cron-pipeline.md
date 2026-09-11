@@ -84,7 +84,8 @@ Job 文件存放在 `~/.tinyclaw/cron/jobs/<id>.json`，直接编辑 JSON 即可
 
 > **注意**：Pipeline 模式内部强制使用 stateful session（`cron:<id>`）。`stateful: false` 时（默认），每次 run 开始前会自动清空 session JSONL，确保每次运行使用干净的上下文。如需保留跨 run 历史记忆，设置 `clearSessionOnRun: false` 或 `stateful: true`。
 >
-> **沙箱可写范围**：无人值守任务在沙箱里默认只能写**自己的 agent 目录**（`~/.tinyclaw/agents/<id>`）与 `/tmp`。
+> **沙箱可写范围**：无人值守任务在沙箱里默认只能写**自己的 workspace**（`~/.tinyclaw/agents/<id>/workspace`）与 `/tmp`；
+> agent 目录下的其他部分（`memory/` `skills/` `MEM.md` …）同样不可写。
 > 脚本需要写别处时用 `writablePaths` **显式声明**（支持 `~` 前缀），例如
 > `["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]`；声明**文件**时会自动放开其
 > SQLite 边车（`-wal`/`-shm`/`-journal`）。`mfaExempt` 默认 **false**（高危工具仍会尝试向用户确认，

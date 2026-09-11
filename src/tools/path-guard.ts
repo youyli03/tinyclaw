@@ -269,7 +269,7 @@ export function argsAreWithinOwnScope(args: Record<string, unknown>, ctx?: ToolC
   collectAbsolutePaths(args, paths);
   if (paths.length === 0) return false;
   const agentId = ctx?.agentId ?? "default";
-  const own = [agentManager.agentDir(agentId), os.tmpdir(), "/tmp"];
+  const own = [agentManager.workspaceDir(agentId), os.tmpdir(), "/tmp"];
   const session = ctx?.masterSession;
   const wideRuntime = hasWideRuntimeWrite(agentId);
 
@@ -365,10 +365,12 @@ export function checkWritePath(
   }
 
   // ── 第1层：白名单检查 ─────────────────────────────────────────────────────
+  // **默认只有 workspace**（+ 系统临时目录）。agent 目录下的其他部分（memory / skills /
+  // MEM.md / SYSTEM.md / agent.toml …）与运行时目录其他部分都属于"越界"：
+  // 由用户确认，或先由 agent 主动 `fs_grant` 申请（路径级、带 TTL、写审计）。
   const agentId = ctx?.agentId ?? "default";
   const bases: string[] = [
     agentManager.workspaceDir(agentId), // ~/.tinyclaw/agents/<id>/workspace
-    agentManager.agentDir(agentId), // ~/.tinyclaw/agents/<id>
     path.join(os.tmpdir()), // /tmp 或系统临时目录
     "/tmp", // 明确包含 /tmp（tmpdir() 可能返回 /var/folders/... on macOS）
   ];
