@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
+import { buildSandboxPlan, describeSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
+import { auditToolCall } from "../auth/tool-policy.js";
 import { locateAndReplace } from "./edit-file-core.js";
 import { loadConfig } from "../config/loader.js";
 
@@ -72,6 +74,52 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
   const timeoutSec = parsedTimeoutSec;
   const timeoutMs = timeoutSec * 1000;
 
+  // ── 沙箱（边界层）────────────────────────────────────────────────────────
+  // `[sandbox].enabled && execShell="sandbox"` 时把命令关进 bwrap：
+  // 密钥文件在沙箱内不存在、未绑定目录只读、可选断网。
+  const sandboxCfg = loadConfig().sandbox;
+  const wantSandbox = sandboxCfg.enabled && sandboxCfg.execShell === "sandbox";
+  let spawnCmd = "bash";
+  let spawnArgs = ["-c", command];
+  let spawnEnv: NodeJS.ProcessEnv | undefined;
+  if (wantSandbox) {
+    const availability = sandboxAvailable();
+    if (!availability.available) {
+      const reason = availability.reason ?? "bwrap 不可用";
+      if (sandboxCfg.onUnavailable === "deny") {
+        return `[安全拦截] 沙箱不可用（${reason}），已拒绝执行。如需退回本机执行，请设置 [sandbox].onUnavailable = "host"。`;
+      }
+      console.warn(`[sandbox] ${reason}，按配置退回本机执行`);
+    } else {
+      const plan = buildSandboxPlan({
+        command,
+        agentId: ctx?.agentId ?? "default",
+        ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
+        cfg: sandboxCfg,
+      });
+      const [head, ...tail] = plan.argv;
+      spawnCmd = head ?? "bwrap";
+      spawnArgs = tail;
+      if (plan.env) spawnEnv = plan.env;
+      console.log(`[sandbox] ${describeSandboxPlan(plan)}: ${command.slice(0, 80)}`);
+      auditToolCall({
+        event: "sandbox",
+        origin: ctx?.sessionId?.startsWith("cron_")
+          ? "cron"
+          : ctx?.sessionId?.startsWith("slave:")
+            ? "slave"
+            : "chat",
+        agentId: ctx?.agentId ?? "default",
+        ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+        tool: "exec_shell",
+        decision: "info",
+        reason: describeSandboxPlan(plan),
+        args: { command },
+        cfg: sandboxCfg,
+      });
+    }
+  }
+
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
@@ -87,10 +135,11 @@ async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): 
       resolve(message);
     };
 
-    const child = spawn("bash", ["-c", command], {
+    const child = spawn(spawnCmd, spawnArgs, {
       stdio: ["ignore", "pipe", "pipe"],
       detached: true, // 让 bash 成为新进程组 leader，kill 时可杀整组
       ...(ctx?.cwd ? { cwd: ctx.cwd } : {}),
+      ...(spawnEnv ? { env: spawnEnv } : {}),
     });
 
     // 若是 slave session，打印子进程 PID（便于追踪或手动 kill）
@@ -154,8 +203,10 @@ registerTool({
     function: {
       name: "exec_shell",
       description:
-        `在本机执行 shell 命令（需要 MFA 确认）。默认超时 ${DEFAULT_EXEC_TIMEOUT_SEC} 秒；` +
-        "对于 build/test/install/长网络请求等长任务，必须显式传入更大的 timeout_sec。",
+        `在本机执行 shell 命令。默认超时 ${DEFAULT_EXEC_TIMEOUT_SEC} 秒；` +
+        "对于 build/test/install/长网络请求等长任务，必须显式传入更大的 timeout_sec。" +
+        "执行环境由 [sandbox] 配置决定：开启沙箱时命令跑在 bubblewrap 内（密钥文件不可见、未绑定目录只读），" +
+        "此时 ssh / git push 之类需要 ~/.ssh 的操作会失败。",
       parameters: {
         type: "object",
         properties: {

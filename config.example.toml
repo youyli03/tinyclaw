@@ -267,3 +267,26 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # allowDelete   = true         # false 时 self_runtime_delete 只做 dry-run(默认 true)
 # exemptMfa     = true         # 只动运行时目录的调用不再逐次 MFA 确认(默认 true)
 # maxReadBytes  = 200000       # self_runtime_read 单次返回上限字节(默认 200000)
+
+# ── 沙箱与权限约束 ──────────────────────────────────────────────────────────────
+# 边界层(内核强制):exec_shell 跑进 bubblewrap 挂载命名空间 —— 密钥文件被空文件掩码
+#   (沙箱内"不存在"而不是"检查后拒绝"),未绑定目录只读,可断网。
+# 策略层:审计流 + 无人值守(cron/loop)工具白名单与 MFA 兜底。
+# 方案与取证:tmp/sandbox-permission-design-20260911.md
+[sandbox]
+# enabled        = false            # 总开关(默认 false = 保持历史行为)
+# execShell      = "host"           # "sandbox" = 进 bwrap; "host" = 直接本机执行
+# onUnavailable  = "deny"           # bwrap 不可用时:deny 拒绝执行 / host 退回本机
+# maskSecrets    = true             # 掩码 config/secrets/mcp.toml、auth/、~/.ssh、*.key …
+# network        = "allow"          # "deny" 用于处理不可信内容的任务(同时强制收敛环境变量)
+# inheritEnv     = true             # ⚠️ 文件掩码不覆盖环境变量(见 schema 注释)
+# extraRwPaths   = []               # 额外可写目录(如技能目录),支持 ~ 前缀
+
+[sandbox.audit]
+# enabled     = true               # 审计流:~/.tinyclaw/audit/YYYY-MM.jsonl(0600,追加写)
+# maxArgChars = 500                # 单条参数摘要上限
+
+[sandbox.unattended]
+# mode        = "allowlist"        # cron/loop 只允许 allowedTools;"all" = 旧行为;"deny" = 更严
+# mfaFallback = "deny"             # 无人值守且 MFA 无法送达时:deny 拒绝(默认,推荐)/ allow 放行
+# allowedTools = [ "read_file", "exec_shell", ... ]   # 默认见 src/config/schema.ts

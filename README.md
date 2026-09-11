@@ -12,6 +12,9 @@
 - **跨 Session 通信**:`session_get / session_send` 实现不同 Agent session 之间消息互传
 - **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server
 - **MFA 鉴权**:高危工具支持 Azure AD number-matching 推送、TOTP 验证码、文字确认三种方式
+- **沙箱与审计**:`exec_shell` 可跑进 bubblewrap —— 密钥文件在沙箱内被掩码成空文件(内核强制,不是"检查后拒绝"),
+  未绑定目录只读、可断网;所有工具调用落入 `~/.tinyclaw/audit/` 审计流(参数已脱敏);
+  cron/loop 等无人值守路径按工具白名单放行,且 MFA 无法送达时默认**拒绝**而非放行
 - **向量记忆**:对话摘要自动向量化,token 超阈值时自动压缩;`/compact` 手动压缩;多 Agent 独立命名空间
 - **Dashboard**:内置 Web UI(`tinyclaw web`),展示指标趋势图、日报存档、Cron 任务状态
 - **Code 模式**:`/code` 切换代码专注会话,内置 Plan / Auto 子模式,滑动窗口压缩保留最近上下文

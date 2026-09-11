@@ -328,6 +328,113 @@ const SelfAccessSchema = z
 export type SelfAccessConfig = z.infer<typeof SelfAccessSchema>;
 
 /**
+ * 沙箱与权限约束（`[sandbox]`）。
+ *
+ * 两层结构（详见 `tmp/sandbox-permission-design-20260911.md`）：
+ * - **边界层**：`enabled` + `execShell = "sandbox"` 时，`exec_shell` 跑进 bubblewrap
+ *   命名空间 —— 密钥文件被空文件掩码（沙箱内根本不存在）、未绑定目录只读、可选断网。
+ * - **策略层**：`audit`（审计流）与 `unattended`（无人值守路径的工具白名单 + MFA 兜底）。
+ *
+ * 默认全关（`enabled = false`、`execShell = "host"`），保持与历史行为一致，便于灰度。
+ */
+const SandboxSchema = z
+  .object({
+    /** 总开关：false 时 execShell/onUnavailable/掩码都不生效（审计与无人值守策略仍独立生效） */
+    enabled: z.boolean().default(false),
+    /** `exec_shell` 在哪执行：`sandbox` = bwrap 内，`host` = 直接在本机（历史行为） */
+    execShell: z.enum(["sandbox", "host"]).default("host"),
+    /** bwrap 不可用（未安装/内核不支持）时的策略：`deny` = 拒绝执行，`host` = 退回本机执行 */
+    onUnavailable: z.enum(["deny", "host"]).default("deny"),
+    /** 是否用空文件/空目录掩码密钥路径（config/secrets/mcp.toml、auth/、~/.ssh …） */
+    maskSecrets: z.boolean().default(true),
+    /** 沙箱内是否允许联网；`deny` 用于处理不可信内容的任务 */
+    network: z.enum(["allow", "deny"]).default("allow"),
+    /** 额外可写目录（沙箱内除 workspace 外唯一可写的地方），支持 `~` 前缀 */
+    extraRwPaths: z.array(z.string()).default([]),
+    /**
+     * 沙箱内是否继承服务进程的环境变量。
+     *
+     * ⚠️ **文件掩码不覆盖环境变量**：`~/.tinyclaw/env` 会在启动时被注入 `process.env`
+     * （`main.ts` 的 `loadEnvFile`），所以只要继承环境，沙箱里的命令依然能拿到那些密钥。
+     * 默认 true 以保持现有技能（如需要 IWENCAI_API_KEY 的交易脚本）可用；
+     * `network = "deny"` 时**强制不继承**（那个场景正是要防外泄）。
+     */
+    inheritEnv: z.boolean().default(true),
+    /** `inheritEnv = false` 时仍透传的环境变量（缺省值够跑 bash/python/git） */
+    envAllowlist: z
+      .array(z.string())
+      .default(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TZ", "TMPDIR", "TERM"]),
+
+    /** 审计流：所有工具调用的决策记录，追加写、agent 不可改 */
+    audit: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** 自定义目录，默认 `~/.tinyclaw/audit` */
+        dir: z.string().optional(),
+        /** 单条记录里参数摘要的最大字符数 */
+        maxArgChars: z.number().int().min(50).default(500),
+      })
+      .default({}),
+
+    /** 无人值守路径（cron / loop）的策略 */
+    unattended: z
+      .object({
+        /**
+         * `allowlist` = 只允许 allowedTools 里的工具（默认）；
+         * `all` = 放行全部（等于旧行为）；`deny` = 除明确安全工具外全部拒绝
+         */
+        mode: z.enum(["allowlist", "all", "deny"]).default("allowlist"),
+        /** allowlist 模式下允许的工具名 */
+        allowedTools: z
+          .array(z.string())
+          .default([
+            // 读与计算
+            "read_file",
+            "read_image",
+            "self_status",
+            "self_runtime_scan",
+            "self_runtime_read",
+            "search_store",
+            "memory_read_mem",
+            "memory_write_mem",
+            "memory_read_active",
+            "memory_write_active",
+            "memory_append",
+            "memory_append_card",
+            "memory_append_feedback",
+            "memory_search",
+            // 写（限 workspace / 运行时目录，仍受 path-guard 约束）
+            "write_file",
+            "edit_file",
+            "write_report",
+            "db_write",
+            "render_diagram",
+            "send_report",
+            "notify_user",
+            // 执行与子 Agent（exec_shell 在沙箱开启时进 bwrap）
+            "exec_shell",
+            "skill_run",
+            "create_skill",
+            "agent_fork",
+            "agent_wait",
+            "agent_status",
+            "agent_trace",
+            "agent_abort",
+            "loop_exit",
+          ]),
+        /**
+         * 无人值守且 MFA 无法送达（job 未绑定输出目标 / loop 无回调）时的兜底：
+         * `deny` = 拒绝该工具调用（默认，符合"无人值守最严"）；`allow` = 放行（旧行为）
+         */
+        mfaFallback: z.enum(["deny", "allow"]).default("deny"),
+      })
+      .default({}),
+  })
+  .default({});
+
+export type SandboxConfig = z.infer<typeof SandboxSchema>;
+
+/**
  * 交互等待提醒配置。
  *
  * 所有需要等待用户回复的场景(MFA 确认 / ask_user / plan 审批 / 等待输入)在注册
@@ -866,6 +973,7 @@ export const ConfigSchema = z.object({
   submitter: SubmitterSchema.default({}),
   interactive: InteractiveSchema.default({}),
   selfAccess: SelfAccessSchema,
+  sandbox: SandboxSchema,
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,

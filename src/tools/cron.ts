@@ -120,6 +120,13 @@ registerTool({
             description: "通知策略(默认 always)。llm=由LLM决定,输出含[NOTIFY]块时才推送",
           },
           stateful: { type: "boolean", description: "是否保留跨 run 对话历史(默认 false)" },
+          mfaExempt: {
+            type: "boolean",
+            description:
+              "是否豁免定时任务的 MFA 确认（默认 false）。为 false 时，任务里调用 write_file/delete_file 等高危工具" +
+              "仍会走一次用户确认（若任务绑定了可交互的输出目标）；无人值守且无法送达时会按 [sandbox.unattended].mfaFallback 处理。" +
+              "只有在你确认该任务无需人工复核时才传 true。",
+          },
           peerId: { type: "string", description: "推送目标的 QQ peerId(不填则仅写 log)" },
           msgType: {
             type: "string",
@@ -205,7 +212,10 @@ registerTool({
           (args["notify"] as "always" | "on_change" | "on_error" | "never" | "llm") ?? "always",
       },
       stateful: Boolean(args["stateful"] ?? false),
-      mfaExempt: true, // agent 调用本身已经过 MFA，默认豁免
+      // MFA 豁免：默认 **false** —— 新建的定时任务在"改文件/删文件"这类高危工具上
+      // 仍需要一次确认（能送达就送达）。只有显式传 mfaExempt=true 才豁免。
+      // 历史实现写死 true，等于"创建即豁免"，与"无人值守最严"相反。
+      mfaExempt: args["mfaExempt"] === true,
       ...(args["model"] ? { model: String(args["model"]) } : {}),
       ...(Array.isArray(args["steps"]) && args["steps"].length > 0
         ? { steps: args["steps"] as import("../cron/schema.js").PipelineStep[] }

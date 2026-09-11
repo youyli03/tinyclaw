@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { Session } from "../core/session.js";
 import { runAgent } from "../core/agent.js";
 import { agentManager } from "../core/agent-manager.js";
+import { auditToolCall, enforceUnattendedTool, unattendedMfaFallback } from "../auth/tool-policy.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
@@ -209,12 +210,51 @@ async function runPipelineJob(
 
     if (step.type === "tool") {
       console.log(`[cron] job=${job.id} ${stepLabel} 执行工具: ${step.name}`);
+      // 无人值守策略：cron 的 tool 步骤过去完全绕过 MFA 与任何准入检查，
+      // 现在统一走白名单裁决（拒绝时写入审计并合成一条 tool_result 让 LLM 看到原因）
+      const stepPolicy = enforceUnattendedTool({
+        toolName: step.name,
+        origin: "cron",
+        agentId: job.agentId,
+        sessionId: session.sessionId,
+      });
+      if (!stepPolicy.allow) {
+        auditToolCall({
+          event: "policy",
+          origin: "cron",
+          agentId: job.agentId,
+          sessionId: session.sessionId,
+          tool: step.name,
+          decision: "deny",
+          reason: "无人值守白名单外（cron tool 步骤）",
+          args: step.args as Record<string, unknown>,
+        });
+        console.warn(`[cron] job=${job.id} ${stepLabel} 被策略拒绝: ${step.name}`);
+        lastResult = stepPolicy.reason ?? `已拒绝：${step.name}`;
+        const deniedCallId = `pipeline_step${i + 1}_${step.name}_denied`;
+        session.addAssistantWithToolCalls("", [
+          { callId: deniedCallId, name: step.name, args: step.args as Record<string, unknown> },
+        ]);
+        session.addToolResultMessage(deniedCallId, lastResult);
+        continue;
+      }
+      const stepStartMs = Date.now();
       const toolResult = await executeTool(
         step.name,
         step.args as Record<string, unknown>,
         toolCtx
       );
       lastResult = toolResult;
+      auditToolCall({
+        event: "tool",
+        origin: "cron",
+        agentId: job.agentId,
+        sessionId: session.sessionId,
+        tool: step.name,
+        decision: "allow",
+        args: step.args as Record<string, unknown>,
+        durationMs: Date.now() - stepStartMs,
+      });
 
       // 将工具输出以合成 tool call 对注入 session：
       // assistant(tool_calls) + tool(result)，使后续 LLM 步骤以原生工具结果格式感知数据
@@ -234,6 +274,7 @@ async function runPipelineJob(
         `[cron] job=${job.id} ${stepLabel} 触发 LLM，msg: "${step.content.slice(0, 60)}"`
       );
       const result = await runAgent(session, step.content, {
+        origin: "cron",
         onMFARequest,
         systemPrompt: systemPrompt,
         ...(notifyFn ? { onNotify: notifyFn } : {}),
@@ -309,12 +350,14 @@ async function _runJob(
 
   const session = new Session(sessionId, { agentId: job.agentId });
 
-  // MFA 处理：exempt = 自动通过，否则透传给 connector（如无 connector 则自动通过）
+  // MFA 处理：exempt = 自动通过；可交互时透传给 connector；
+  // **既未豁免又无法送达用户时不再自动通过**（见 [sandbox.unattended].mfaFallback）
+  const reachableUser = !!(bridge && job.output.peerId && bridge.requestUserInput);
   const onMFARequest = job.mfaExempt
     ? async () => true
-    : bridge && job.output.peerId && bridge.requestUserInput
+    : reachableUser
       ? async (warningMsg: string, verifyCode?: (code: string) => boolean) => {
-          const answer = await bridge.requestUserInput!(
+          const answer = await bridge!.requestUserInput!(
             job.output.peerId!,
             job.output.msgType,
             warningMsg,
@@ -326,7 +369,16 @@ async function _runJob(
           }
           return /^确认$|^y$|^yes$/i.test(answer.trim());
         }
-      : async () => true;
+      : async () => {
+          // 无法送达（未绑定输出目标 / 无 connector）→ 交由 mfaFallback 决定
+          const fallback = unattendedMfaFallback({
+            toolName: "(cron run)",
+            origin: "cron",
+            agentId: job.agentId,
+            sessionId,
+          });
+          return fallback.allow;
+        };
 
   let status: "success" | "error" = "success";
   let resultText = "";
@@ -401,6 +453,7 @@ ${message}`;
     } else {
       // ── 单步模式（向后兼容）────────────────────────────────────────────────
       const result = await runAgent(session, job.message, {
+        origin: "cron",
         onMFARequest,
         systemPrompt: systemPrompt,
         ...(notifyFn ? { onNotify: notifyFn } : {}),

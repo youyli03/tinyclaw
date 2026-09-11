@@ -198,15 +198,29 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 > **修好其中任一项后，必须同步删除本表中对应行**（否则本文件自身就变成了 §7.3 所警告的漂移源）。
 
-### 7.1 安全模型是"写严读松"
+### 7.1 安全模型：工具层"写严读松" + 可选的沙箱边界层
 
-- **MFA 只在一条路径上生效**：检查点在 `agent.ts:2009` 起的 MFA 块。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:372`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
-- **MFA fail-open**：`agent.ts:2042-2044`（无交互回调时 `mfaPassed = true`）。新增鉴权分支请 fail-closed。
-- **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts:409-413`）与 `read_image`（`system.ts:510-512`）现在会经 `checkReadPath()` 拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
+- **MFA 只在 ReAct 主循环生效**（`agent.ts:2058` 起的 MFA 块）。`cron/runner.ts`（Pipeline tool step）与
+  `loop-trigger.ts`（Loop steps）直接 `executeTool()`，**不经过 MFA** —— 但它们现在**必过无人值守白名单**
+  （`auth/tool-policy.ts` 的 `enforceUnattendedTool`，白名单在 `[sandbox.unattended].allowedTools`）。
+  新增"绕过 ReAct 循环直接调工具"的入口时，**必须**同样调用 `enforceUnattendedTool` + `auditToolCall`。
+- **MFA 兜底已改为 fail-closed**：无人值守（cron/loop）且无交互回调时按 `[sandbox.unattended].mfaFallback`
+  处理，默认 `deny`（历史行为是 `mfaPassed = true` 静默放行）。交互式运行（chat/cli）无回调时仍按旧行为放行，
+  并会留审计记录。`cron_add` 的 `mfaExempt` 默认值已从写死 `true` 改为 `false`。
+- **沙箱是可选边界层，不是默认**：`[sandbox].enabled && execShell = "sandbox"` 时 `exec_shell` 进 bwrap ——
+  密钥文件被空文件掩码（沙箱内**不存在**）、未绑定目录只读、可断网、`onUnavailable = "deny"` 时 bwrap 缺失即拒绝。
+  ⚠️ **掩码不覆盖环境变量**：`~/.tinyclaw/env` 会注入 `process.env`（`main.ts` 的 `loadEnvFile`），
+  `inheritEnv = true` 时沙箱内照样能读到；`network = "deny"` 会强制收敛环境。
+  ⚠️ 掩码使 `~/.ssh` 在沙箱内为空 → agent 的 shell 里 `ssh` / `git push` 会失败（需 HTTPS + token 或提权，提权尚未实现）。
+- **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts`）与 `read_image` 经 `checkReadPath()`
+  拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，
+  但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
 - **自指权限（`[selfAccess].grantedAgents`）是本仓库唯一"按 agent 放开"的授权口**：被授权的 agent 拿到 `~/.tinyclaw` 全树（含 `self_runtime_delete` 真删、通用文件工具免越界确认、免 MFA）。密钥例外由 `path-guard.ts` 的 `isRuntimeSecretPath()` 统一裁决——**新增任何读写/删除入口都必须调用它**（写作走 `checkWritePath`、读作走 `checkReadPath`），否则就把"密钥除外"这个承诺打破了。
-- **`path-guard` 不解析符号链接**（`path-guard.ts:118-193` 无 `realpathSync`），workspace 内软链可逃逸。
-- **`redactKnownSecrets` 全仓无调用点**（`utils/redact.ts:65-75`），日志脱敏实际未生效。
+- **`exec_shell` 的工具层守卫仍然很薄**：只拦"写危险系统路径"（17 个 `/etc/*` 前缀）。真正兜住它的是沙箱边界层；
+  沙箱关着的时候，shell 能读 `secrets.toml` / `config.toml` / `~/.ssh`（`tmp/sandbox-gap-probe.sh` 有取证）。
+- **`path-guard` 不解析符号链接**（`path-guard.ts` 无 `realpathSync`），workspace 内软链可逃逸。
 - **`config show` 泄密**：`config/schema-display.ts:42-43` 只脱敏 copilot/openai 的 key，deepseek/openrouter/mimo/google 明文；qqbot 脱敏路径写的是旧的 `channels.qqbot.*`。
+  （`redactKnownSecrets` 现已接入审计流，不再是"全仓无调用点"。）
 
 ### 7.2 别以为这些代码在跑
 

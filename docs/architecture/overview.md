@@ -317,8 +317,45 @@ maxReadBytes  = 200000        # self_runtime_read 单次返回上限
 另有三个"删了会出事"的保护项：运行时根目录本身、根下的 `.git`（`tinyclaw-submitter` 的配置备份仓库）、
 `agents` 整体。
 
-### 代码/日常操作分离（code_assist 双子 Agent）
+### 沙箱与权限约束（`[sandbox]`）
 
+权限分两层，各司其职：
+
+| 层 | 机制 | 拦得住 | 拦不住 |
+|---|---|---|---|
+| **边界层** | `exec_shell` 跑进 `bwrap`：全盘只读为底 + 按目录可写 + **密钥文件掩码成空文件** + 可选断网 | 静态二进制、直接 `syscall()`、任何绕过"检查"的玩法（内核强制） | 环境变量里的密钥（见下） |
+| **策略层** | 审计流（`~/.tinyclaw/audit/YYYY-MM.jsonl`，0600 追加写）+ 无人值守白名单 + MFA 兜底 | 越权**意图**：`delete_file` 之类在 cron/loop 里被拒并被记录 | 铁了心绕开策略实现的代码（因此不能当安全边界） |
+
+```toml
+[sandbox]
+enabled       = true          # 总开关（默认 false）
+execShell     = "sandbox"     # "sandbox" | "host"
+onUnavailable = "deny"        # bwrap 不可用时拒绝执行，而不是偷偷退回本机
+maskSecrets   = true
+network       = "allow"       # "deny" 用于不可信内容任务（同时强制收敛环境变量）
+inheritEnv    = true
+extraRwPaths  = ["/home/lyy/FinanceSkill"]
+
+[sandbox.audit]
+enabled = true
+
+[sandbox.unattended]
+mode        = "allowlist"     # cron/loop 只允许 allowedTools
+mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（历史行为是静默放行）
+```
+
+**掩码清单**（`src/sandbox/bwrap.ts` 的 `MASK_FILES` / `MASK_DIRS` / `MASK_HOME_PATHS`）：
+`~/.tinyclaw/{config,secrets,mcp}.toml`、`env`、`.github_token`、`yingli_token.json`、`auth/`、
+运行时目录下的 `*.key` / `*.pem` / `*.p12`、`~/.ssh`、`~/.aws`、`~/.netrc`、`~/.gnupg`、
+`~/.config/gh`、`~/.docker/config.json`。
+
+⚠️ **环境变量是掩码盖不住的一条通道**：`~/.tinyclaw/env` 在服务启动时被注入 `process.env`
+（`main.ts` 的 `loadEnvFile`），所以 `inheritEnv = true` 时沙箱内的命令仍能看到那些变量。
+`network = "deny"` 会**强制**收敛环境（只透传 `envAllowlist`），因为那个场景正是要防外泄。
+长期方案：技能改走 `http_request` 的 `$SECRET_NAME` 间接引用，而不是依赖原始环境变量。
+
+⚠️ **副作用**：沙箱内 `~/.ssh` 被掩码 → `git push` / `ssh` 在 agent 的 shell 里会失败（改用 HTTPS + token）；
+未绑定目录一律只读，需要写入的新目录要加进 `extraRwPaths`。
 **code_assist 工具**：Master Agent 将代码任务委派给两个后台子 Agent 协作完成，不污染主对话历史。
 
 #### 架构图

@@ -18,6 +18,8 @@ import {
 } from "../tools/reserved-args.js";
 import { createPurposeArbiter } from "./purpose-arbiter.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
+import { auditToolCall, enforceUnattendedTool, unattendedMfaFallback } from "../auth/tool-policy.js";
+import type { RunOrigin } from "../security/audit.js";
 import {
   argsAreSelfRuntimeOnly,
   isSelfAccessGranted,
@@ -578,6 +580,14 @@ function buildSelfAccessPrompt(agentId: string): string {
 }
 
 export interface AgentRunOptions {
+  /**
+   * 本次运行的来源，决定权限策略：
+   * - `cron` / `loop` = **无人值守**：工具按 `[sandbox.unattended]` 白名单放行，
+   *   且 MFA 无法送达时默认拒绝（而不是静默放行）
+   * - `chat` / `cli` / `slave` = 有交互路径（slave 继承其 master 的来源）
+   * 省略时按 `unknown` 处理（不套用无人值守白名单）。
+   */
+  origin?: RunOrigin;
   /** 替换 Agent SYSTEM.md 的自定义 prompt（优先级高于文件） */
   systemPrompt?: string;
   /** 追加到 Agent SYSTEM.md 之后的额外 prompt（不替换，适合 slave 注入规则） */
@@ -1799,6 +1809,7 @@ async function runAgentInner(
       purposeArbiter?.onToolStart(call.name, purpose);
 
       let result: string;
+      let err0: unknown;
       const currentDepth = opts.slaveDepth ?? 0;
       try {
         result = await executeTool(call.name, toolArgs, {
@@ -1834,6 +1845,7 @@ async function runAgentInner(
           ...(opts.onLoopExit ? { onLoopExit: opts.onLoopExit } : {}),
         });
       } catch (err) {
+        err0 = err;
         if (err instanceof PlanAbortError) {
           // exit_plan_mode 被用户新消息中断:用"未执行"消息替代 approved:false，避免 AI 误判继续执行
           result = "操作被用户新消息中断，此工具调用未执行";
@@ -1859,6 +1871,20 @@ async function runAgentInner(
           result.slice(origLen - tailLen);
       }
       const toolDurationMs = Date.now() - toolStartMs;
+      // 审计：成功路径也留痕（决策 + 耗时 + 意图），便于事后回答"它到底做了什么"
+      auditToolCall({
+        event: "tool",
+        origin: opts.origin,
+        agentId: session.agentId,
+        sessionId: session.sessionId,
+        tool: call.name,
+        decision: err0 ? "deny" : "allow",
+        args: toolArgs,
+        ...(purpose ? { purpose } : {}),
+        durationMs: toolDurationMs,
+        ...(err0 ? { error: err0 instanceof Error ? err0.message : String(err0) } : {}),
+        cfg: loadConfig().sandbox,
+      });
       opts.onToolResult?.(call.name, result);
       bus.emit({
         type: "tool:result",
@@ -2045,10 +2071,41 @@ async function runAgentInner(
 
       toolsUsed.push(call.name);
 
+      // ── 无人值守策略（cron / loop）：白名单外直接拒绝 ────────────────────
+      // 这两条路径没有人能审批，所以只能靠事前白名单；审计在策略模块内落盘。
+      const sandboxCfg = loadConfig().sandbox;
+      const policyStripped = stripReservedArgs(call.args as Record<string, unknown>);
+      const policyArgs = policyStripped.args;
+      const policyDecision = enforceUnattendedTool({
+        toolName: call.name,
+        origin: opts.origin,
+        agentId: session.agentId,
+        sessionId: session.sessionId,
+        cfg: sandboxCfg,
+      });
+      if (!policyDecision.allow) {
+        auditToolCall({
+          event: "policy",
+          origin: opts.origin,
+          agentId: session.agentId,
+          sessionId: session.sessionId,
+          tool: call.name,
+          decision: "deny",
+          reason: "无人值守白名单外",
+          args: policyArgs,
+          ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
+          cfg: sandboxCfg,
+        });
+        const denyMsg = policyDecision.reason ?? `已拒绝：${call.name}`;
+        if (!textMode) session.addToolResultMessage(call.callId, denyMsg);
+        else session.addSystemMessage(`[tool_result:${call.name}]\n${denyMsg}`);
+        continue;
+      }
+
       // ── MFA 检查(需要用户交互,先 flush 并发批次再串行)────────────
       const mfaCfg = loadConfig().auth.mfa;
       // MFA 判定与提示文案都用"剥离保留字段后"的参数，避免 __purpose 混进警告文本
-      const mfaArgs = stripReservedArgs(call.args as Record<string, unknown>).args;
+      const mfaArgs = policyArgs;
       // 自指权限豁免：被授权 agent 只动 ~/.tinyclaw 内且不含密钥时，不再逐次要求 MFA
       const selfAccessCfg = loadConfig().selfAccess;
       const selfAccessExempt =
@@ -2064,6 +2121,7 @@ async function runAgentInner(
         await flushConcurrentBatch();
         bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, mfaArgs) });
         let mfaPassed = false;
+        let mfaFailOpen = false;
         try {
           if (mfaCfg?.interface === "msal") {
             await requireMFA(opts.onMFAPrompt);
@@ -2080,6 +2138,7 @@ async function runAgentInner(
               if (!mfaPassed) opts.onMFAPrompt?.("✗ TOTP 验证失败，操作已取消");
             } else {
               mfaPassed = true;
+              mfaFailOpen = true;
             }
           } else if (opts.onMFARequest) {
             const desc = describeToolCall(call.name, mfaArgs);
@@ -2087,6 +2146,7 @@ async function runAgentInner(
             if (!mfaPassed) opts.onMFAPrompt?.("✗ MFA 被拒绝，操作已取消");
           } else {
             mfaPassed = true;
+            mfaFailOpen = true;
           }
         } catch {
           const msg = "操作被取消：MFA 未通过";
@@ -2094,6 +2154,36 @@ async function runAgentInner(
           if (!textMode) session.addToolResultMessage(call.callId, msg);
           else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
           continue;
+        }
+
+        // 无交互回调（无人值守）时的兜底：默认拒绝，而不是静默放行
+        if (mfaFailOpen) {
+          const fallback = unattendedMfaFallback({
+            toolName: call.name,
+            origin: opts.origin,
+            agentId: session.agentId,
+            sessionId: session.sessionId,
+            cfg: sandboxCfg,
+          });
+          if (!fallback.allow) {
+            auditToolCall({
+              event: "mfa",
+              origin: opts.origin,
+              agentId: session.agentId,
+              sessionId: session.sessionId,
+              tool: call.name,
+              decision: "deny",
+              reason: "无交互回调且 unattended.mfaFallback=deny",
+              args: mfaArgs,
+              ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
+              cfg: sandboxCfg,
+            });
+            bus.emit({ type: "mfa:denied" });
+            const msg = fallback.reason ?? "操作被取消：无人值守且无法进行 MFA 确认";
+            if (!textMode) session.addToolResultMessage(call.callId, msg);
+            else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
+            continue;
+          }
         }
 
         if (!mfaPassed) {

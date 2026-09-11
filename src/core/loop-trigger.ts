@@ -18,6 +18,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { executeTool, getTool, type ToolContext } from "../tools/registry.js";
+import { auditToolCall, enforceUnattendedTool } from "../auth/tool-policy.js";
 import type { Session } from "./session.js";
 import type { runAgent as RunAgentFn } from "./agent.js";
 
@@ -371,12 +372,44 @@ export class LoopTriggerManager {
         const parts: string[] = [];
         for (const step of cfg.steps) {
           console.log(`[loop-trigger] id=${cfg.id} tool step: ${step.name}`);
+          // 无人值守策略：loop 的 tool 步骤过去直接 executeTool，完全绕过 MFA 与准入检查
+          const stepPolicy = enforceUnattendedTool({
+            toolName: step.name,
+            origin: "loop",
+            agentId: cfg.agentId,
+            sessionId: session.sessionId,
+          });
+          if (!stepPolicy.allow) {
+            auditToolCall({
+              event: "policy",
+              origin: "loop",
+              agentId: cfg.agentId,
+              sessionId: session.sessionId,
+              tool: step.name,
+              decision: "deny",
+              reason: `无人值守白名单外（loop ${cfg.id} tool 步骤）`,
+              args: step.args as Record<string, unknown>,
+            });
+            parts.push(`[${step.name}]\n${stepPolicy.reason ?? "已拒绝"}`);
+            continue;
+          }
           try {
+            const stepStartMs = Date.now();
             const result = await executeTool(
               step.name,
               step.args as Record<string, unknown>,
               toolCtx
             );
+            auditToolCall({
+              event: "tool",
+              origin: "loop",
+              agentId: cfg.agentId,
+              sessionId: session.sessionId,
+              tool: step.name,
+              decision: "allow",
+              args: step.args as Record<string, unknown>,
+              durationMs: Date.now() - stepStartMs,
+            });
             parts.push(`[${step.name}]\n${result}`);
           } catch (err) {
             parts.push(
@@ -424,6 +457,7 @@ export class LoopTriggerManager {
       const finalContent = await session.runExclusive(async () => {
         session.addLoopTaskMessage(taskRef, content);
         const { content: out } = await this.runAgent!(session, content, {
+          origin: "loop",
           skipAddUserMessage: true,
           skipMemorySearch: true,
           ...(notifyHint ? { systemPromptSuffix: notifyHint } : {}),
@@ -497,6 +531,7 @@ ${msg}`;
       slaveRunFn: (s, c, o) =>
         this.runAgent!(s, c, {
           ...(o as Parameters<typeof RunAgentFn>[2]),
+          origin: "loop",
           slaveDepth: 1,
           ...(notifyFn ? { onNotify: notifyFn } : {}),
         }),
