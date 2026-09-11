@@ -111,51 +111,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "search_markets",
-      description: "按关键词搜索 Polymarket 市场/事件。返回市场列表（包含问题、价格、成交量等）。",
+      description:
+        "Search Polymarket markets/events by keyword. Returns a market list " +
+        "(question, prices, volume, and more).",
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string", description: "搜索关键词，如 \"Bitcoin\" 或 \"election\"" },
-          limit: { type: "number", description: "返回数量上限，默认 20，最大 100", default: 20 },
-          active: { type: "boolean", description: "只返回活跃市场，默认 true", default: true },
+          query: { type: "string", description: "Search keywords, e.g. \"Bitcoin\" or \"election\"" },
+          limit: { type: "number", description: "Maximum number of results, default 20, max 100", default: 20 },
+          active: { type: "boolean", description: "Return only active markets, default true", default: true },
         },
         required: ["query"],
       },
     },
     {
       name: "list_markets",
-      description: "列出活跃市场，可按 volume（成交量）或 liquidity（流动性）排序。",
+      description: "List active markets, optionally sorted by volume or liquidity.",
       inputSchema: {
         type: "object",
         properties: {
-          limit: { type: "number", description: "返回数量上限，默认 20", default: 20 },
+          limit: { type: "number", description: "Maximum number of results, default 20", default: 20 },
           order: {
             type: "string",
             enum: ["volume24hr", "liquidityNum", "volume"],
-            description: "排序字段，默认 volume24hr",
+            description: "Sort field, default volume24hr",
             default: "volume24hr",
           },
-          active: { type: "boolean", description: "只返回活跃市场，默认 true", default: true },
-          tag: { type: "string", description: "按标签筛选，如 \"crypto\"、\"politics\"" },
+          active: { type: "boolean", description: "Return only active markets, default true", default: true },
+          tag: { type: "string", description: "Filter by tag, e.g. \"crypto\", \"politics\"" },
         },
         required: [],
       },
     },
     {
       name: "get_market",
-      description: "获取单个市场详情，包括 clobTokenIds（订单簿查询用）、价格、成交量等。",
+      description:
+        "Get one market's details, including clobTokenIds (used for order book queries), " +
+        "prices, volume, and more.",
       inputSchema: {
         type: "object",
         properties: {
-          slug: { type: "string", description: "市场 slug，如 \"will-bitcoin-reach-100k\"" },
-          condition_id: { type: "string", description: "市场 conditionId（0x 开头）" },
+          slug: { type: "string", description: "Market slug, e.g. \"will-bitcoin-reach-100k\"" },
+          condition_id: { type: "string", description: "Market conditionId (starts with 0x)" },
         },
         required: [],
       },
     },
     {
       name: "get_orderbook",
-      description: "获取指定 outcome token 的订单簿（bids/asks 深度）。token_id 来自 get_market 的 clobTokenIds。",
+      description:
+        "Get the order book (bids/asks depth) of an outcome token. " +
+        "token_id comes from clobTokenIds returned by get_market.",
       inputSchema: {
         type: "object",
         properties: {
@@ -166,19 +172,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_price",
-      description: "获取指定 outcome token 的当前价格：中间价(midpoint)、买价(best_bid)、卖价(best_ask)、价差(spread)。",
+      description:
+        "Get the current price of an outcome token: midpoint, best_bid, best_ask, spread.",
       inputSchema: {
         type: "object",
         properties: {
           token_id: { type: "string", description: "outcome token ID" },
-          side: { type: "string", enum: ["BUY", "SELL"], description: "可选，指定方向" },
+          side: { type: "string", enum: ["BUY", "SELL"], description: "Optional, restrict to one side" },
         },
         required: ["token_id"],
       },
     },
     {
       name: "get_price_history",
-      description: "获取指定 outcome token 的历史价格曲线（时间序列）。",
+      description: "Get the historical price curve (time series) of an outcome token.",
       inputSchema: {
         type: "object",
         properties: {
@@ -186,79 +193,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           interval: {
             type: "string",
             enum: ["1m", "5m", "1h", "6h", "1d", "1w", "max"],
-            description: "时间粒度，默认 1d",
+            description: "Time granularity, default 1d",
             default: "1d",
           },
-          fidelity: { type: "number", description: "数据点密度，interval=max 时可指定，如 100" },
-          start_ts: { type: "number", description: "开始时间戳（Unix 秒）" },
-          end_ts: { type: "number", description: "结束时间戳（Unix 秒）" },
+          fidelity: { type: "number", description: "Data point density; only valid when interval=max, e.g. 100" },
+          start_ts: { type: "number", description: "Start timestamp (Unix seconds)" },
+          end_ts: { type: "number", description: "End timestamp (Unix seconds)" },
         },
         required: ["token_id"],
       },
     },
     {
       name: "get_trades",
-      description: `查询成交记录。可按 maker_address（钱包地址）或 market（conditionId）筛选。若不传 maker_address，自动使用配置的默认钱包${DEFAULT_WALLET ? `（${DEFAULT_WALLET}）` : ""}。`,
+      description: `Query trades. Filter by maker_address (wallet address) or market (conditionId). If maker_address is omitted, the configured default wallet is used${DEFAULT_WALLET ? ` (${DEFAULT_WALLET})` : ""}.`,
       inputSchema: {
         type: "object",
         properties: {
-          maker_address: { type: "string", description: `钱包地址（0x...），不填则使用配置的默认钱包${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
-          market: { type: "string", description: "市场 conditionId" },
-          limit: { type: "number", description: "返回数量上限，默认 20", default: 20 },
-          offset: { type: "number", description: "分页偏移量，默认 0", default: 0 },
+          maker_address: { type: "string", description: `Wallet address (0x...); if omitted, the configured default wallet is used${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
+          market: { type: "string", description: "Market conditionId" },
+          limit: { type: "number", description: "Maximum number of results, default 20", default: 20 },
+          offset: { type: "number", description: "Pagination offset, default 0", default: 0 },
         },
         required: [],
       },
     },
     {
       name: "get_positions",
-      description: `查询钱包地址在 Polymarket 的当前持仓（含盈亏数据）。若不传 user，自动使用配置文件中的钱包地址${DEFAULT_WALLET ? `（${DEFAULT_WALLET}）` : "（未配置，请传入 user 参数）"}。`,
+      description: `Query the current Polymarket positions of a wallet address (with PnL data). If user is omitted, the wallet address from the config file is used${DEFAULT_WALLET ? ` (${DEFAULT_WALLET})` : " (not configured, pass the user parameter)"}.`,
       inputSchema: {
         type: "object",
         properties: {
-          user: { type: "string", description: `钱包地址（0x...），不填则使用配置的默认钱包${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
-          market: { type: "string", description: "按市场 conditionId 筛选（可选）" },
-          size_threshold: { type: "number", description: "最小持仓量筛选（可选）" },
-          limit: { type: "number", description: "返回数量上限，默认 50", default: 50 },
-          offset: { type: "number", description: "分页偏移量，默认 0", default: 0 },
+          user: { type: "string", description: `Wallet address (0x...); if omitted, the configured default wallet is used${DEFAULT_WALLET ? ` ${DEFAULT_WALLET}` : ""}` },
+          market: { type: "string", description: "Filter by market conditionId (optional)" },
+          size_threshold: { type: "number", description: "Minimum position size filter (optional)" },
+          limit: { type: "number", description: "Maximum number of results, default 50", default: 50 },
+          offset: { type: "number", description: "Pagination offset, default 0", default: 0 },
         },
         required: [],
       },
     },
     {
       name: "place_order",
-      description: "下单（限价单 GTC/GTD 或市价单 FOK）。需要配置私钥（POLY_PRIVATE_KEY 环境变量或 ~/.tinyclaw/polymarket.key）。",
+      description:
+        "Place an order (limit order GTC/GTD, or market order FOK). Requires a configured " +
+        "private key (POLY_PRIVATE_KEY env var or ~/.tinyclaw/polymarket.key).",
       inputSchema: {
         type: "object",
         properties: {
-          token_id: { type: "string", description: "outcome token ID（来自 clobTokenIds）" },
-          side: { type: "string", enum: ["BUY", "SELL"], description: "买入或卖出" },
+          token_id: { type: "string", description: "outcome token ID (from clobTokenIds)" },
+          side: { type: "string", enum: ["BUY", "SELL"], description: "Buy or sell" },
           order_type: {
             type: "string",
             enum: ["GTC", "GTD", "FOK"],
-            description: "GTC/GTD 为限价单，FOK 为市价单",
+            description: "GTC/GTD are limit orders, FOK is a market order",
           },
-          price: { type: "number", description: "限价单价格（0~1 之间），市价单不需要" },
-          size: { type: "number", description: "限价单份数（shares），市价单不需要" },
-          amount: { type: "number", description: "市价单 USDC 金额（FOK 时使用）" },
+          price: { type: "number", description: "Limit order price (between 0 and 1); not used for market orders" },
+          size: { type: "number", description: "Limit order size in shares; not used for market orders" },
+          amount: { type: "number", description: "Market order amount in USDC (used with FOK)" },
         },
         required: ["token_id", "side", "order_type"],
       },
     },
     {
       name: "cancel_order",
-      description: "撤销指定订单。需要配置私钥。",
+      description: "Cancel one order. Requires a configured private key.",
       inputSchema: {
         type: "object",
         properties: {
-          order_id: { type: "string", description: "订单 ID" },
+          order_id: { type: "string", description: "Order ID" },
         },
         required: ["order_id"],
       },
     },
     {
       name: "cancel_all",
-      description: "撤销所有未成交挂单。需要配置私钥。",
+      description: "Cancel all open (unfilled) orders. Requires a configured private key.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -267,11 +276,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_open_orders",
-      description: "查看当前未成交挂单列表。需要配置私钥。",
+      description: "List the currently open (unfilled) orders. Requires a configured private key.",
       inputSchema: {
         type: "object",
         properties: {
-          market: { type: "string", description: "可选，按市场 conditionId 筛选" },
+          market: { type: "string", description: "Optional, filter by market conditionId" },
         },
         required: [],
       },

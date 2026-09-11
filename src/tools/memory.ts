@@ -50,8 +50,9 @@ registerTool({
     function: {
       name: "memory_read_mem",
       description:
-        "读取当前 Agent 的 MEM.md 持久记忆文件内容。" +
-        "用于在 session 内获取最新的 MEM.md 内容(session 初始化后若 MEM.md 被更新过,需调用本工具刷新)。",
+        "Read the current Agent's MEM.md persistent memory file. " +
+        "Use it to get the latest MEM.md content within a session " +
+        "(call it to refresh if MEM.md changed after session initialization).",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -152,25 +153,35 @@ registerTool({
     function: {
       name: "memory_write_mem",
       description:
-        "写入当前 Agent 的 MEM.md 持久记忆文件——章节级更新,不会破坏其他章节内容。\n" +
-        "必须指定 section(目标章节标题,不含 ## 前缀),如「👤 用户偏好」、「📝 行为反馈记录」。\n" +
-        "- mode=upsert(默认):替换该章节的全部内容,保留其他所有章节不变\n" +
-        "- mode=append:在该章节末尾追加内容,不覆盖现有内容\n" +
-        "若指定的章节不存在,会自动在 MEM.md 末尾追加新章节。\n" +
-        "无需 MFA,适合在禁用了 write_file 的 Agent 中使用。",
+        "Write the current Agent's MEM.md persistent memory file - a section-level update " +
+        "that leaves all other sections intact.\n" +
+        "You must specify section: the target section heading without the ## prefix, copied " +
+        "verbatim from MEM.md.\n" +
+        "- mode=upsert (default): replaces that section's body, other sections intact\n" +
+        "- mode=append: append at the end of the section without overwriting it\n" +
+        "If the specified section does not exist, a new one is appended at the end of MEM.md.\n" +
+        "No MFA required; suitable for agents where write_file is disabled.",
       parameters: {
         type: "object",
         properties: {
           section: {
             type: "string",
             description:
-              "目标章节标题,不含 ## 前缀,例如「👤 用户偏好」或「📝 行为反馈记录」。MEM.md 现有章节:👤 用户偏好 / 🎯 当前任务 / 🗂️ 常用技能与任务 / 🐛 踩坑记录 / ✅ 已完成大事 / 📝 行为反馈记录 / 📝 近期变更",
+              "Target section heading without the ## prefix, copied verbatim from MEM.md " +
+              "(do not translate it). MEM.md has a fixed set of emoji-prefixed sections: user " +
+              "preferences / current tasks / common skills and tasks / pitfalls / completed " +
+              "milestones / behavior feedback / recent changes",
           },
-          content: { type: "string", description: "章节的新内容(不含 ## 标题行本身)" },
+          content: {
+            type: "string",
+            description: "New section content (without the ## heading)",
+          },
           mode: {
             type: "string",
             enum: ["upsert", "append"],
-            description: "upsert(默认):替换章节全部内容;append:追加到章节末尾",
+            description:
+              "upsert (default): replaces the whole section body; " +
+              "append: appends at the end of the section",
           },
         },
         required: ["section", "content"],
@@ -194,16 +205,21 @@ registerTool({
     function: {
       name: "memory_append_feedback",
       description:
-        "记录用户对 AI 行为的纠正/要求到 feedback.md（跨 session 永久生效，会注入后续每一轮的 system prompt）。\n" +
-        "当用户明确说「不要…」「以后…」「每次都要…」这类纠正时调用。\n" +
-        "无需 MFA；自动去重（同义条目不会重复记录）并自动裁剪（文件超长时丢弃最早的条目）。",
+        "Record a user correction or requirement about the AI's behavior into feedback.md " +
+        "(permanent across sessions; injected into the system prompt on every later turn).\n" +
+        "Call it when the user explicitly states a correction such as stop doing X, " +
+        "from now on do Y, or always do Z.\n" +
+        "No MFA required; entries are deduplicated and the file is trimmed automatically " +
+        "(equivalent items are not stored twice; oldest are dropped when it grows too long).",
       parameters: {
         type: "object",
         properties: {
           content: {
             type: "string",
             description:
-              "一句话描述要遵守的行为约束，例如「回复不要用奉承性语言」「股票分析只给结论不给操作建议」",
+              "One sentence describing the behavior rule to follow " +
+              "(e.g. do not use flattering language; in stock analysis give conclusions only, " +
+              "without trading advice)",
           },
         },
         required: ["content"],
@@ -229,8 +245,9 @@ registerTool({
     function: {
       name: "memory_read_active",
       description:
-        "读取当前 Agent 的 ACTIVE.md 活跃上下文文件内容。" +
-        "用于在 session 内获取最新的近期活跃事项、短期未完成事项和生活/项目上下文。",
+        "Read the current Agent's ACTIVE.md active-context file. " +
+        "Use it to get the latest recent activity, short-term open items and life/project " +
+        "context within a session.",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -251,28 +268,33 @@ registerTool({
     function: {
       name: "memory_write_active",
       description:
-        "写入当前 Agent 的 ACTIVE.md 活跃上下文文件。" +
-        "支持 overwrite(覆盖全文,默认)和 append(追加到末尾)两种模式。" +
-        "无需 MFA,适合记录近期活跃话题、当前未完成事项和最新明确要求。",
+        "Write the current Agent's ACTIVE.md active-context file. " +
+        "Supports two modes: overwrite (replace the whole file, default) and " +
+        "append (add at the end). " +
+        "No MFA required; suitable for recording recent active topics, current open items and " +
+        "the latest explicit requirements.",
       parameters: {
         type: "object",
         properties: {
           topic: {
             type: "string",
             description:
-              "topic 文件名(不含 .md 后缀,如 constraints/architecture)。" +
-              "不传则写入 MEMORY.md 索引。",
+              "Topic file name (without the .md suffix, e.g. constraints/architecture). " +
+              "If omitted, the MEMORY.md index is written instead.",
           },
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀)。" + "传此参数时 upsert 该章节内容,而非操作整个文件。",
+              "Section heading (without the ## prefix). " +
+              "When given, that section is upserted instead of the whole file.",
           },
-          content: { type: "string", description: "要写入的内容" },
+          content: { type: "string", description: "Content to write" },
           mode: {
             type: "string",
             enum: ["overwrite", "append"],
-            description: "写入模式:overwrite 覆盖全文(默认),append 追加到末尾",
+            description:
+              "Write mode: overwrite replaces the whole file (default), " +
+              "append adds at the end",
           },
         },
         required: ["content"],
@@ -297,24 +319,30 @@ registerTool({
     function: {
       name: "memory_append_card",
       description:
-        "向当前 Agent 的 cards/ 目录追加一张结构化记忆卡片,并触发 cards collection 索引更新。" +
-        "适合显式存储偏好、约束、关系、决策、open loop、任务状态等高价值记忆。",
+        "Append a structured memory card to the current Agent's cards/ directory " +
+        "and trigger a cards collection index update. " +
+        "Use it to explicitly store high-value memories such as preferences, constraints, " +
+        "relationships, decisions, open loops and task status.",
       parameters: {
         type: "object",
         properties: {
-          type: { type: "string", enum: [...CARD_TYPES], description: "卡片类型" },
-          scope: { type: "string", description: "记忆范围,如 personal / project:tinyclaw" },
-          facet: { type: "string", description: "主题面,如 communication / memory / reminder" },
-          title: { type: "string", description: "卡片标题" },
-          summary: { type: "string", description: "卡片正文摘要" },
-          status: { type: "string", enum: [...CARD_STATUSES], description: "状态,默认 active" },
-          importance: { type: "number", description: "重要性 0~1,默认 0.7" },
-          ts: { type: "string", description: "ISO 时间,可选" },
-          tags: { type: "array", items: { type: "string" }, description: "标签数组,可选" },
+          type: { type: "string", enum: [...CARD_TYPES], description: "Card type" },
+          scope: { type: "string", description: "Memory scope, e.g. personal / project:tinyclaw" },
+          facet: { type: "string", description: "Facet, e.g. communication / memory / reminder" },
+          title: { type: "string", description: "Card title" },
+          summary: { type: "string", description: "Card body summary" },
+          status: {
+            type: "string",
+            enum: [...CARD_STATUSES],
+            description: "Status, default active",
+          },
+          importance: { type: "number", description: "Importance 0~1, default 0.7" },
+          ts: { type: "string", description: "ISO timestamp, optional" },
+          tags: { type: "array", items: { type: "string" }, description: "Tags array, optional" },
           supersedes: {
             type: "array",
             items: { type: "string" },
-            description: "覆盖的旧卡 ID,可选",
+            description: "IDs of superseded cards, optional",
           },
         },
         required: ["type", "scope", "facet", "title", "summary"],
@@ -355,18 +383,24 @@ registerTool({
     function: {
       name: "memory_search",
       description:
-        "在当前 Agent 的历史记忆中做语义向量搜索,返回相关片段。" +
-        "适合在需要查询特定历史信息时手动调用,补充自动注入的记忆上下文。" +
-        "无需 MFA,无需 read_file 权限。",
+        "Run a semantic vector search over the current Agent's historical memory and return " +
+        "relevant fragments. " +
+        "Use it as a manual lookup for specific historical information, complementing " +
+        "the automatically injected memory context. " +
+        "No MFA required and no read_file permission needed.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "搜索查询词(自然语言,支持中英文)" },
-          limit: { type: "number", description: "最多返回条数,默认 5,最大 20" },
+          query: {
+            type: "string",
+            description: "Search query text (natural language; Chinese and English both work)",
+          },
+          limit: { type: "number", description: "Maximum number of results, default 5, max 20" },
           include_obsolete: {
             type: "boolean",
             description:
-              "是否包含已过期(obsolete/resolved)的卡片,默认 false。设为 true 可翻查历史记忆",
+              "Whether to include expired (obsolete/resolved) cards, default false. " +
+              "Set it to true to search past memories",
           },
         },
         required: ["query"],
@@ -394,13 +428,15 @@ registerTool({
     function: {
       name: "memory_append",
       description:
-        "主动追加一条记忆到当前 Agent 的历史存档(按日期归档的 .md 文件),并触发 QMD 向量索引更新。" +
-        "适合在对话中主动存储重要结论、用户偏好等信息,无需等到对话压缩时自动归档。" +
-        "无需 MFA,无需 write_file 权限。",
+        "Proactively append a memory entry to the current Agent's history archive " +
+        "(date-based .md files) and trigger a QMD vector index update. " +
+        "Use it to store important conclusions, user preferences and similar content during " +
+        "a conversation, without waiting for automatic archiving at compaction time. " +
+        "No MFA required; no write_file permission needed.",
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "要存储的记忆内容(支持 Markdown 格式)" },
+          content: { type: "string", description: "Memory content to store (Markdown format)" },
         },
         required: ["content"],
       },
@@ -451,33 +487,40 @@ registerTool({
     function: {
       name: "code_note_read",
       description:
-        "读取指定项目的跨 session 记忆(MEMORY.md 索引或 topic 文件)。默认摘要模式(各条目标题+前200字);" +
-        "summary=false 全文;topic 传文件名(不含 .md);section 传分区名;不传 project 列出所有已知项目。",
+        "Read the cross-session memory of the given project (MEMORY.md index or a topic file). " +
+        "Default is summary mode (each entry's title plus the first 200 characters); " +
+        "summary=false returns the full text; topic takes a file name (without .md); " +
+        "section takes a section name; omit project to list all known projects.",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
             description:
-              "项目 slug(如 _home_lyy_tinyclaw 或 ssh_m1saka.cc_opt_app);不传则列出所有已知项目",
+              "Project slug (e.g. _home_lyy_tinyclaw or ssh_m1saka.cc_opt_app); " +
+              "omit it to list all known projects",
           },
           summary: {
             type: "boolean",
-            description: "摘要模式(默认 true):标题+前 200 字;false 返回全文",
+            description:
+              "Summary mode (default true): title plus the first 200 characters; " +
+              "false returns the full text",
           },
           limit: {
             type: "number",
-            description: "摘要模式下最多返回的条目数(默认 50)",
+            description: "Maximum number of entries in summary mode (default 50)",
           },
           topic: {
             type: "string",
             description:
-              "topic 文件名(不含 .md 后缀,如 constraints/architecture),读其全文并附 age warning",
+              "Topic file name (without the .md suffix, e.g. constraints/architecture); " +
+              "reads its full text and adds an age warning",
           },
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀),仅返回该章节内容",
+              "Section heading (without the ## prefix); " +
+              "returns only that section's content",
           },
         },
         required: [],
@@ -618,37 +661,46 @@ registerTool({
     function: {
       name: "code_note_write",
       description:
-        "向指定项目的跨 session 记忆(MEMORY.md 或 topic 文件)写入/追加。" +
-        "发现跨 session 约束/重要里程碑/非显而易见根因、任务完成(说已完成)前立即调用,不等 session 结束。" +
-        "mode=append(默认)追加;overwrite 覆写(谨慎)。详细格式与示例见 skill memory-keeper",
+        "Write or append to the cross-session memory of the given project " +
+        "(MEMORY.md or a topic file). " +
+        "Call it immediately when you find a cross-session constraint, a key milestone or a " +
+        "non-obvious root cause, before reporting a task as done; do not wait for the session " +
+        "to end. " +
+        "mode=append (default) appends; overwrite rewrites the whole file (use with care). " +
+        "See the memory-keeper skill for the detailed format and examples",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
             description:
-              "项目 slug(如 _home_lyy_tinyclaw)。按仓库/服务器语义命名,不确定先 code_clarify_project",
+              "Project slug (e.g. _home_lyy_tinyclaw). Name it by repo/server semantics; " +
+              "use code_clarify_project first if unsure",
           },
           topic: {
             type: "string",
             description:
-              "topic 文件名(不含 .md 后缀,如 constraints/architecture);不传则写 MEMORY.md 索引",
+              "Topic file name (without the .md suffix, e.g. constraints/architecture); " +
+              "omit it to write the MEMORY.md index",
           },
           section: {
             type: "string",
             description:
-              "分点/章节标题(不含 ## 前缀),upsert 该章节内容而非整个文件",
+              "Section heading (without the ## prefix); " +
+              "upserts that section instead of the whole file",
           },
           content: {
             type: "string",
             description:
-              "要写入的内容(Markdown)。写 MEMORY.md 索引时格式: - [YYYY-MM-DD] [s:5] 摘要 → topic.md;" +
-              "[s:N]=稳定性(1-10),默认 5,越高在 prompt 中存活越久",
+              "Content to write (Markdown). For the MEMORY.md index use the format: " +
+              "- [YYYY-MM-DD] [s:5] summary → topic.md; " +
+              "[s:N]=stability (1-10), default 5; " +
+              "the higher the value the longer it survives in the prompt",
           },
           mode: {
             type: "string",
             enum: ["append", "overwrite"],
-            description: "append(默认)追加到末尾;overwrite 全量覆写",
+            description: "append (default) appends at the end; overwrite rewrites the whole file",
           },
         },
         required: ["content"],
@@ -741,19 +793,21 @@ registerTool({
     function: {
       name: "code_note_search",
       description:
-        "在当前 Agent 的项目记忆（code_note 存储）中做语义向量搜索，返回相关片段。\n" +
-        "遇到任何关于项目历史/约束/进度/决策的疑问时先调用此工具搜索，找不到再用 code_note_read 读完整记忆。\n" +
-        "无需 MFA，无需 read_file 权限。",
+        "Run a semantic vector search over the current Agent's project memory " +
+        "(code_note store) and return relevant fragments.\n" +
+        "Call it first for any question about project history, constraints, progress or " +
+        "decisions; if nothing is found, use code_note_read for the full memory.\n" +
+        "No MFA required and no read_file permission needed.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索查询词（自然语言，支持中英文）",
+            description: "Search query text (natural language; Chinese and English both work)",
           },
           limit: {
             type: "number",
-            description: "最多返回条数，默认 5，最大 20",
+            description: "Maximum number of results, default 5, max 20",
           },
         },
         required: ["query"],
@@ -785,18 +839,23 @@ registerTool({
     function: {
       name: "code_clarify_project",
       description:
-        "无法确定当前操作属于哪个项目时调用:列出已知项目让用户选择/输入新项目名;传 ssh_host 自动 DNS 比对已有 IP 映射",
+        "Call it when you cannot tell which project the current operation belongs to; it lists " +
+        "known projects so the user can pick one or type a new name; pass ssh_host to compare " +
+        "against the existing IP mapping via DNS automatically",
       parameters: {
         type: "object",
         properties: {
           hint: {
             type: "string",
-            description: "当前操作的线索(如仓库名、服务描述),帮助用户做出判断",
+            description:
+              "Clue about the current operation (e.g. repo name, service description) " +
+              "to help the user decide",
           },
           ssh_host: {
             type: "string",
             description:
-              "当前操作涉及 SSH 时传 hostname(如 m1saka.cc),自动 DNS 解析比对",
+              "Pass the hostname (e.g. m1saka.cc) when the operation involves SSH; " +
+              "resolved via DNS and compared automatically",
           },
         },
         required: [],

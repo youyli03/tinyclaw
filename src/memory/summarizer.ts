@@ -48,85 +48,85 @@ function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void 
   }
 }
 
-const SUMMARIZE_SYSTEM = `你是一个对话压缩引擎。把给定的对话历史压缩成一个结构化检查点，让另一个模型能够零损耗地接续工作。
+const SUMMARIZE_SYSTEM = `You are a conversation compression engine. Compress the given conversation history into a structured checkpoint so that another model can continue the work with zero loss.
 
-严格按以下 Markdown 结构输出：**每个章节都要保留、顺序不变**；章节无内容时写「(无)」，不要删除章节。用简短的项目符号，不要写散文段落。
+Output strictly in the following Markdown structure: **keep every section, in the same order**; write "(none)" for a section with no content — never drop a section. Use short bullet points, not prose paragraphs.
 
-## 主要请求与意图
-- 用户最初及演变后的目标；措辞重要时原文引用
+## Primary Requests and Intent
+- The user's original goal and how it evolved; quote verbatim when the wording matters
 
-## 关键技术概念
-- 涉及的技术、框架、模式与约定
+## Key Technical Concepts
+- Technologies, frameworks, patterns, and conventions involved
 
-## 涉及的文件与代码
-- 精确路径：为什么重要、关键改动或代码片段
+## Files and Code Involved
+- Exact paths: why they matter, key changes or code snippets
 
-## 错误与修复
-- 错误信息：如何解决，以及相关的用户反馈
+## Errors and Fixes
+- Error messages: how they were resolved, plus related user feedback
 
-## 待办任务
-- 用户明确要求但尚未完成的工作
+## Pending Tasks
+- Work the user explicitly asked for that is not finished yet
 
-## 当前工作
-- 压缩发生时正在进行的精确工作
+## Current Work
+- The exact work in progress at the moment of compression
 
-## 下一步
-- 紧接着要做的唯一动作，或「(无)」
+## Next Step
+- The single immediate action to take next, or "(none)"
 
-## 关键上下文
-- 决策及其理由、约束、用户偏好、未决问题、继续所需的数据
+## Key Context
+- Decisions and their rationale, constraints, user preferences, open questions, and data needed to continue
 
-## 用户原始消息
-- 逐条列出用户发送的所有非工具结果消息原文（防止意图漂移）
+## Original User Messages
+- List verbatim every non-tool-result message the user sent (guards against intent drift)
 
-规则：
-- 用简洁的中文工程语言；**精确保留**文件路径、命令、错误串、标识符、数值、函数签名与语法片段
-- 忠实记录用户反馈与明确指令，尤其是纠正
-- 不要提及本次摘要请求，也不要提及上下文被压缩
-- 只输出检查点正文，不要调用任何工具
-- 若对话中已存在 <compacted-summary> 块，它是**先前的检查点**：不要原样照抄，保留仍然成立的事实、丢弃过时的、把新信息合并进同一结构`;
+Rules:
+- Write the checkpoint in the user's own language, using concise engineering prose; **preserve exactly** file paths, commands, error strings, identifiers, numbers, function signatures, and code fragments
+- Record user feedback and explicit instructions faithfully, especially corrections
+- Do not mention this summarization request, and do not mention that the context was compressed
+- Output only the checkpoint body; do not call any tools
+- If the conversation already contains a <compacted-summary> block, it is a **prior checkpoint**: do not copy it verbatim; keep the facts that still hold, drop the outdated ones, and merge new information into the same structure`;
 
 /** Code 模式专属摘要提示词，结构同上但强化技术上下文与命令/结果 */
-const CODE_SUMMARIZE_SYSTEM = `你是一个编码会话压缩引擎。把给定的编码会话历史压缩成结构化检查点，让另一个模型能够零损耗地接续编码工作。
+const CODE_SUMMARIZE_SYSTEM = `You are a coding session compression engine. Compress the given coding session history into a structured checkpoint so that another model can continue the coding work with zero loss.
 
-严格按以下 Markdown 结构输出：**每个章节都要保留、顺序不变**；章节无内容时写「(无)」。用简短的项目符号。
+Output strictly in the following Markdown structure: **keep every section, in the same order**; write "(none)" for a section with no content. Use short bullet points.
 
-## 主要请求与意图
-- 用户要求实现 / 修改 / 调试的具体内容，含所有明确需求；措辞重要时原文引用
+## Primary Requests and Intent
+- What the user asked to implement / modify / debug, including every explicit requirement; quote verbatim when the wording matters
 
-## 关键技术概念
-- 语言、框架、依赖、架构模式与约定
+## Key Technical Concepts
+- Languages, frameworks, dependencies, architectural patterns, and conventions
 
-## 涉及的文件与代码
-- 精确路径：文件作用、做了哪些改动、关键代码片段（函数签名 / 核心逻辑）
+## Files and Code Involved
+- Exact paths: role of the file, what was changed, key code snippets (function signatures / core logic)
 
-## 错误与修复
-- 错误信息（越详细越好）、修复方法，以及用户纠正过的做法
+## Errors and Fixes
+- Error messages (the more detail the better), how they were fixed, and approaches the user corrected
 
-## 问题解决过程
-- 已解决的问题与仍在排查的工作
+## Problem-Solving Process
+- Problems already solved and work still under investigation
 
-## 待办任务
-- 用户明确要求但尚未完成的任务
+## Pending Tasks
+- Tasks the user explicitly asked for that are not finished yet
 
-## 当前工作
-- 压缩发生时正在进行的具体工作：文件名、代码片段、执行的命令及结果
+## Current Work
+- The exact work in progress at the moment of compression: file names, code snippets, commands run and their results
 
-## 下一步
-- 紧接着要做的唯一动作，或「(无)」
+## Next Step
+- The single immediate action to take next, or "(none)"
 
-## 关键上下文
-- 决策及理由、约束、环境 / 端口 / 路径等事实、未决问题
+## Key Context
+- Decisions and rationale, constraints, facts such as environment / ports / paths, open questions
 
-## 用户原始消息
-- 逐条列出用户发送的所有非工具结果消息原文（防止意图漂移）
+## Original User Messages
+- List verbatim every non-tool-result message the user sent (guards against intent drift)
 
-规则：
-- 用简洁的中文工程语言；**精确保留**文件路径、命令、错误串、标识符、数值、函数签名与语法片段
-- 忠实记录用户反馈与明确指令，尤其是纠正
-- 不要提及本次摘要请求，也不要提及上下文被压缩
-- 只输出检查点正文，不要调用任何工具
-- 若会话中已存在 <compacted-summary> 块，它是**先前的检查点**：不要照抄，保留仍成立的事实、丢弃过时的、合并新信息`;
+Rules:
+- Write the checkpoint in the user's own language, using concise engineering prose; **preserve exactly** file paths, commands, error strings, identifiers, numbers, function signatures, and code fragments
+- Record user feedback and explicit instructions faithfully, especially corrections
+- Do not mention this summarization request, and do not mention that the context was compressed
+- Output only the checkpoint body; do not call any tools
+- If the session already contains a <compacted-summary> block, it is a **prior checkpoint**: do not copy it verbatim; keep the facts that still hold, drop the outdated ones, and merge new information`;
 
 /** Code 模式 context window 触发压缩的阈值（75%） */
 const CODE_SUMMARIZE_THRESHOLD = 0.6;
@@ -670,9 +670,9 @@ export function selectRetainedFromIndex(
 }
 
 /** 轻量 diary 提炼：单轮 user+assistant 交互提炼提示词 */
-const DISTILL_TURN_SYSTEM = `你是一个对话日记助手。
-用 1-3 句中文提炼本轮对话的核心内容：用户的意图、AI 的主要行动或结论。
-要求：简洁、精准，不要加前缀（如"本轮"、"摘要："等），直接输出内容。`;
+const DISTILL_TURN_SYSTEM = `You are a conversation diary assistant.
+Distill the core of this turn in 1-3 sentences: the user's intent, and the AI's main actions or conclusions.
+Requirements: concise and precise; add no prefix (such as "This turn", "Summary:"), just output the content in the user's own language.`;
 
 /**
  * 压缩时蒸馏系统 prompt（模板）。
@@ -683,17 +683,21 @@ function buildCompressDistillPrompt(
   envKeys?: string,
   feedbackKeys?: string
 ): string {
-  const envSection = envKeys ? `\n⚠️ 以下环境 key 已存在 ENV.md,请勿重复输出:\n${envKeys}` : "";
+  const envSection = envKeys
+    ? `\n⚠️ The following environment keys already exist in ENV.md — do not output them again:\n${envKeys}`
+    : "";
   const fbSection = feedbackKeys
-    ? `\n⚠️ 以下行为约束已记录在 feedback.md,请勿重复输出:\n  - ${feedbackKeys}`
+    ? `\n⚠️ The following behavior constraints are already recorded in feedback.md — do not output them again:\n  - ${feedbackKeys}`
     : "";
   return `[⚠️BLOCKED:zh_you_are]。
-你看到的是一批被压缩掉的旧对话消息（包含用户消息和 AI 的工具调用/回复）。
-从这些消息中提炼出值得写入各项目长期记忆的要点。
-重点关注：里程碑进度、发现的关键约束、非显然的根因、完成的重要改动。
-如果整批消息都没有值得记录的内容，输出 {"projects":[],"notes":[]}。
+You are distilling a batch of old conversation messages that were compressed away (they contain user messages and the AI's tool calls / replies).
+Extract the points worth writing into the long-term memory of each project.
+Focus on: milestone progress, key constraints discovered, non-obvious root causes, and important completed changes.
+If the whole batch contains nothing worth recording, output {"projects":[],"notes":[]}.
 
-你必须输出合法 JSON，格式如下：
+Write all extracted content in the user's own language.
+
+You must output valid JSON in the following format:
 {
   "projects": [
     {"path": "win:F:/Github/fpgallm", "slug": "ssh_win_F_Github_fpgallm"},
@@ -715,31 +719,33 @@ function buildCompressDistillPrompt(
   ]
 }
 
-⚠️ behavior_corrections 约束:只记跨项目通用的行为纠正(适用于所有项目)。
-不记专属于单一项目的规则(如"tinyclaw 中不要改 YAML")。若无新增则留空数组。
+⚠️ behavior_corrections constraint: record only cross-project behavior corrections (rules that apply to every project).
+Do not record rules that belong to a single project (such as "in tinyclaw do not edit YAML"). Leave the array empty if there is nothing new.
 
-路径格式规则(重要):
-- 本地路径:/home/lyy/xxx 或 ~/xxx(输出时统一用绝对路径 /home/lyy/xxx)
-- Windows MCP 路径:F:/Github/xxx 等,输出时写成 win:F:/Github/xxx
-- SSH 远程路径:m1saka.cc:/opt/app 等
-- 无法归属到具体项目的分析性内容:project 字段填 "分析"
+Path format rules (important):
+- Local paths: /home/lyy/xxx or ~/xxx (always output the absolute form /home/lyy/xxx)
+- Windows MCP paths: F:/Github/xxx etc., output as win:F:/Github/xxx
+- SSH remote paths: m1saka.cc:/opt/app etc.
+- Analytical content that cannot be attributed to a specific project: set the project field to the literal
+  string "分析" — **copy it exactly as written here, do NOT translate it** (the value is matched literally
+  by the code that files the note)
 
 ${knownProjects}${envSection}${fbSection}
 
-只输出 JSON，不要输出其他内容。确保 JSON 合法（注意字符串中的引号和换行要转义）。`;
+Output JSON only, nothing else. Make sure the JSON is valid (escape quotes and newlines inside strings).`;
 }
 /** 单轮蒸馏（保留兼容，用于 distillCodeTurnToNotes） */
 const CODE_DISTILL_SYSTEM = `[⚠️BLOCKED:zh_you_are]。
-根据以下代码会话的最新一轮交互（用户消息 + AI 回复），提炼出值得写入项目长期记忆的要点。
-重点关注：里程碑进度、发现的关键约束、非显然的根因、完成的重要改动。
-如果本轮没有值得记录的内容（如只是闲聊、询问、未完成操作），直接输出空字符串（不要输出任何内容）。
-若有内容，用 1-5 句中文要点（可以是短语），每行一条，直接输出，不要加前缀和标题。
-⚠️ 重要：每条要点开头必须注明实际被修改/涉及的项目路径（绝对路径或 ~/xxx 形式），例如 [~/pin-hunter-bot] 或 [~/tinyclaw/src]。
-  - 路径必须来自 AI 回复中实际操作或 read_file/exec_shell 的文件路径，不能用当前工作目录（codeWorkdir）替代
-  - 若同一轮改动涉及多个项目，每个项目分别写一行并各自标注路径
-  - 若 AI 本轮未修改任何文件（只有分析/解释），标注为 [分析] 前缀而非项目路径
-  - 不要把 workdir 当成改动路径，也不要省略实际项目路径
-  - 本地路径可用 ~/xxx 缩写；SSH 远程路径必须用 host:/path 或 user@host:/path 绝对格式，不能写 ~`;
+Based on the latest turn of a coding session below (user message + AI reply), extract the points worth writing into the project's long-term memory.
+Focus on: milestone progress, key constraints discovered, non-obvious root causes, and important completed changes.
+If this turn has nothing worth recording (for example small talk, a question, or an unfinished operation), output an empty string (output nothing at all).
+If there is content, write 1-5 short lines in the user's own language (phrases are fine), one point per line, output directly without prefixes or headings.
+⚠️ Important: each line must start by naming the project path actually modified/involved (an absolute path or the ~/xxx form), for example [~/pin-hunter-bot] or [~/tinyclaw/src].
+  - The path must come from files the AI actually touched, or from read_file/exec_shell paths in the reply; never substitute the current working directory (codeWorkdir)
+  - If this turn touched several projects, write one line per project, each labeled with its own path
+  - If the AI modified no files this turn (analysis/explanation only), label the line with the [分析] prefix instead of a project path
+  - Do not treat the workdir as a changed path, and do not omit the real project path
+  - Local paths may use the ~/xxx shorthand; SSH remote paths must use the absolute host:/path or user@host:/path form, never ~`;
 
 /**
  * 扫描 code/projects/ 目录，生成已知 project slug 清单，
@@ -754,7 +760,7 @@ function injectKnownProjects(agentId: string): string {
 
     if (dirs.length === 0) return "";
 
-    const lines: string[] = ["已知项目 slug（请复用，不要新建）："];
+    const lines: string[] = ["Known project slugs (reuse them; do not create new ones):"];
     for (const slug of dirs) {
       if (slug.startsWith("ssh_win_")) {
         const rest = slug.slice("ssh_win_".length);
@@ -984,7 +990,9 @@ function parseAndWriteDistillJson(
     }
 
     const resolveSlug = (project: string): string | null => {
-      if (project === "分析") return null;
+      // 「无法归到某个项目」的分析类条目：prompt 要求字面输出「分析」，但模型可能译成
+      // analysis/general，这里宽容一点，避免落到下面凭空生成一个垃圾项目目录。
+      if (/^(分析|analysis|general|misc)$/i.test(project.trim())) return null;
       if (pathToSlug.has(project)) return pathToSlug.get(project)!;
 
       const slug = pathToProjectSlug(project);
@@ -1189,54 +1197,54 @@ async function distillProjectCompression(
         : memoryContent || "(MEMORY.md 不存在)";
 
     const curatorPrompt = `[⚠️BLOCKED:zh_you_are]。
-你是项目「${projectSlug}」的记忆管理员(memory curator)。你的任务是根据被压缩的旧对话消息,自主维护项目记忆。
+You are the memory curator for the project "${projectSlug}". Your job is to maintain the project memory on your own, based on the compressed old conversation messages.
 
-## 当前项目记忆
+## Current Project Memory
 
-### MEMORY.md(索引文件,每行是一条摘要 + 指向 topic 文件)
+### MEMORY.md (index file; each line is a summary plus a pointer to a topic file)
 \`\`\`
 ${memTruncated}
 \`\`\`
 
-### topic 文件(详情)
+### topic files (details)
 ${topicSection}
 
-## 待蒸馏的旧对话消息
+## Old Conversation Messages to Distill
 
-以下是被压缩掉的旧对话历史(已按轮次格式化)。请从中提炼值得保留的项目记忆:
+Below is the compressed old conversation history (already formatted by turn). Extract the project memory worth keeping:
 
 \`\`\`
 ${historyText.slice(0, 12000)}
 \`\`\`
 
-## 你的任务
+## Your Task
 
-请根据这些消息更新项目记忆。你可以:
-- 在 MEMORY.md 中新增/修改/删除/合并摘要行(保持日期分区格式)
-- 在 topic 文件中新增/重写/删除内容
-- 创建新的 topic 文件(适合新主题领域,如某个重要模块的专门文档)
-- 删除过时或已解决的问题条目
-- 合并重复或相似的条目
-- 重新组织记忆结构
-- 若无需任何修改,输出空的 files 对象
+Update the project memory based on these messages. You may:
+- Add / modify / delete / merge summary lines in MEMORY.md (keep the date-partition format)
+- Add / rewrite / remove content in topic files
+- Create new topic files (for a new subject area, such as dedicated documentation for an important module)
+- Delete outdated or already-resolved entries
+- Merge duplicate or similar entries
+- Reorganize the memory structure
+- If no change is needed, output an empty files object
 
-**重要约束:**
-- 你输出的每个文件值必须是该文件的**完整新内容**(不是 diff)
-- 不需要修改的文件不要出现在 files 中
-- MEMORY.md 保持轻量(每行摘要 ≤ 150 字),详情放 topic 文件
-- 延续现有的日期分区格式,不要做激进的重构
-- 对已有的正确信息不要删除或重写,只做增量更新
-- **MEMORY.md 条目格式**: 按日期分区(\`### YYYY-MM-DD\`),每分区下条目格式 \`- [类型] [s:N] 摘要\`,topic 引用换行缩进 \`  → topic.md\`
-  - s 为稳定性(stability, 1-10),影响该条记忆在 prompt 中的存活时间
-  - s:9-10 = 永久约束/硬规则("永远不能自行 kill 进程")
-  - s:7-8 = 长期有效的架构理解/核心事实
-  - s:5-6 = 当前事项/中等稳定
-  - s:3-4 = 临时信息/快速变化的进度
-  - s:1-2 = 短期活跃/即将过时
-  - 同一事实多次出现时,提高 s 值(强化机制)
-  - 已有条目若仍需保持高稳定性,保留其较高的 s 值
+**Important constraints:**
+- Every file value you output must be the **complete new content** of that file (not a diff)
+- Files that need no change must not appear in files
+- Keep MEMORY.md lightweight (each summary line ≤ 150 characters); put details in topic files
+- Continue the existing date-partition format; do not perform aggressive restructuring
+- Do not delete or rewrite existing correct information; make incremental updates only
+- **MEMORY.md entry format**: partitions by date (\`### YYYY-MM-DD\`), and under each partition the entry format is \`- [type] [s:N] summary\`, with topic references indented on the next line as \`  → topic.md\`
+  - s is stability (1-10); it controls how long the memory survives in the prompt
+  - s:9-10 = permanent constraints / hard rules ("never kill a process on your own")
+  - s:7-8 = long-lived architectural understanding / core facts
+  - s:5-6 = current matter / medium stability
+  - s:3-4 = temporary information / fast-changing progress
+  - s:1-2 = short-term active / about to become outdated
+  - When the same fact appears several times, raise its s value (reinforcement mechanism)
+  - If an existing entry still needs high stability, keep its higher s value
 
-必须输出合法 JSON,格式:
+You must output valid JSON in the following format:
 {
   "files": {
     "MEMORY.md": "完整新内容...",
@@ -1250,7 +1258,8 @@ ${historyText.slice(0, 12000)}
     {"content": "跨项目通用的行为纠正"}
   ]
 }
-只输出 JSON,不要输出其他内容。`;
+Write all file contents in the user's own language.
+Output JSON only, nothing else.`;
 
     // 4. 调用 summarizer LLM
     const client = llmRegistry.get("summarizer");
@@ -1667,39 +1676,41 @@ function summarizeCardInventory(agentId: string): string {
 }
 
 const CHAT_DISTILL_PROMPT = `[⚠️BLOCKED:zh_you_are]。
-你是一个对话记忆萃取助手。
-从被压缩的旧对话历史中,提炼出值得写入持久记忆的新内容。
+You are a conversation memory extraction assistant.
+From the compressed old conversation history, extract the new content worth writing into persistent memory.
 
-当前 MEM.md 已包含:
+The current MEM.md already contains:
 {{mem_summary}}
 
-当前 Cards 已有:
+The current Cards already contain:
 {{card_inventory}}
 
-你的任务:
-1. 检查对话中是否出现了新的偏好/约束/决策/例行事务/待跟踪事项
-2. **只输出真正新的内容**(当前 MEM.md 和 Cards 中没有的)
-3. 若对话中有语义相同但表述更精确的版本,用新版本覆盖(通过 supersedes 去重)
-4. 若无新增内容,输出 {"cards":[],"mem_updates":{}}
+Your task:
+1. Check whether the conversation introduced new preferences / constraints / decisions / routines / open loops / trackable items
+2. **Output only genuinely new content** (not already present in MEM.md or Cards)
+3. If the conversation contains a semantically identical but more precise version, overwrite with the new version (deduplicated via supersedes)
+4. If there is nothing new, output {"cards":[],"mem_updates":{}}
 
-Cards 输出格式(MemoryCard JSON):
+Write everything you output in the user's own language.
+
+Card output format (MemoryCard JSON):
 - type: preference/constraint/decision/routine/open_loop/life_event/project_fact/relationship/task_state
-- scope: 范围(general/project:stock/project:tinyclaw 等)
-- facet: 分类维度(同类 cards 合并到同一 facet)
-- importance: 0-1 重要性(同时影响记忆存活时间,见下方指引)
-- title: 简短标题(≤30字)
-- summary: 完整说明(1-3 句)
-- supersedes: 要替换的旧 card id 数组(可选)
-- 不填 id/ts/status(由系统自动生成)
+- scope: scope (general/project:stock/project:tinyclaw etc.)
+- facet: classification dimension (cards of the same kind merge into the same facet)
+- importance: 0-1 importance (also controls how long the memory survives; see the guidance below)
+- title: short title (≤30 characters)
+- summary: full description (1-3 sentences)
+- supersedes: array of old card ids to replace (optional)
+- Do not set id/ts/status (generated automatically by the system)
 
-importance 取值指引(影响该记忆能被记住多久):
-- 0.8-1.0: 核心偏好/硬约束(如"永远不要 sudo rm"),半衰期 180 天,几乎永不过期
-- 0.5-0.7: 重要习惯/决策/事实,半衰期 60-90 天,数月后自然淡出
-- 0.3-0.4: 一般事项/临时记忆,半衰期 14-45 天,几周后淡出
-- 0.1-0.2: 短期活跃信息,快速过期
-⚠️ 同一事实多次出现(如用户多次强调某个偏好),应逐步提高 importance(强化机制)
+importance guidance (controls how long the memory is retained):
+- 0.8-1.0: core preferences / hard constraints (such as "never sudo rm"), half-life 180 days, practically never expires
+- 0.5-0.7: important habits / decisions / facts, half-life 60-90 days, fades naturally after months
+- 0.3-0.4: ordinary matters / temporary memory, half-life 14-45 days, fades after a few weeks
+- 0.1-0.2: short-term active information, expires quickly
+⚠️ When the same fact appears several times (for example the user restates a preference), raise its importance step by step (reinforcement mechanism)
 
-MEM.md 更新格式(按章节):
+MEM.md update format (by section):
 {
   "mem_updates": {
     "👤 用户偏好": ["- 新偏好1", "- 新偏好2"],
@@ -1709,18 +1720,19 @@ MEM.md 更新格式(按章节):
     "📅 近期变更": ["- [日期] 变更描述"]
   }
 }
-每条 item 以 "- " 开头,与 MEM.md 现有格式保持一致。
+Keep the section keys exactly as given above (they are the actual MEM.md section headings).
+Each item must start with "- ", consistent with the existing MEM.md format.
 
-⚠️ Cards 去重规则:
-- 同一 facet + 同一 scope 的 preference/constraint 视为重复,不要重复输出
-- 标题相同或高度相似的 card 视为重复
-- 如果旧 card 内容需要更新(更精确的表述),在 supersedes 中引用旧 card id
+⚠️ Card deduplication rules:
+- preference/constraint cards with the same facet + the same scope count as duplicates; do not output them twice
+- Cards with identical or highly similar titles count as duplicates
+- If an old card needs updating (a more precise wording), reference the old card id in supersedes
 
-⚠️ MEM.md 去重规则:
-- 若新条目与已有条目语义相同(只是换个说法),不要输出
-- 若新条目是已有条目的精炼版,仍可输出(由程序合并)
+⚠️ MEM.md deduplication rules:
+- If a new entry is semantically identical to an existing one (just rephrased), do not output it
+- If a new entry is a refined version of an existing one, it may still be output (the program merges it)
 
-只输出合法 JSON,不要输出其他内容。`;
+Output valid JSON only, nothing else.`;
 
 /**
  * 应用 MEM.md 章节补丁:对每个章节执行 append 模式,带基本去重。

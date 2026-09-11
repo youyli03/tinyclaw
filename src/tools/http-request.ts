@@ -153,29 +153,35 @@ registerTool({
     function: {
       name: "http_request",
       description:
-        "发送 HTTPS 请求(GET/POST),返回状态码+响应体。仅支持 https。\n" +
-        "headers 的 value 支持 `$SECRET_NAME` 占位符,从 ~/.tinyclaw/secrets.toml 读取真实值(AI 不可见,仅 headers 生效)",
+        "Send an HTTPS request (GET/POST) and return the status code plus response body. " +
+        "Only https is supported.\n" +
+        "Header values support the `$SECRET_NAME` placeholder, resolved from " +
+        "~/.tinyclaw/secrets.toml (invisible to the AI, headers only)",
       parameters: {
         type: "object",
         properties: {
           method: {
             type: "string",
             enum: ["GET", "POST"],
-            description: "HTTP 方法：GET 或 POST",
+            description: "HTTP method: GET or POST",
           },
           url: {
             type: "string",
-            description: "请求 URL，必须以 https:// 开头",
+            description: "Request URL, must start with https://",
           },
           headers: {
             type: "object",
             description:
-              "请求头 KV(可选)。value 可用 `$SECRET_NAME` 占位符引用 secrets.toml 凭证,如 { \"Authorization\": \"$TB_TOKEN\" }",
+              "Request headers as key-value pairs (optional). Values may reference " +
+              "secrets.toml credentials with the `$SECRET_NAME` placeholder, " +
+              "e.g. { \"Authorization\": \"$TB_TOKEN\" }",
             additionalProperties: { type: "string" },
           },
           body: {
             type: "string",
-            description: "请求体字符串（可选，POST 时使用），通常为 JSON.stringify 后的内容",
+            description:
+              "Request body string (optional, used for POST), usually the output of " +
+              "JSON.stringify",
           },
         },
         required: ["method", "url"],

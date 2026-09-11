@@ -210,19 +210,34 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - ✅ 新增 prompt 段落 / 新工具时按本规则直接用英文；改动既有中文段落时**顺手翻成英文**（渐进迁移，不需要一次性全量）。
 - ✅ 英文 prompt 里引用用户可见文案时，保留中文原文（例如提示"工具会返回 `已拒绝：…`"）。
 
-> **现状（未按本规则改写的部分）**：内置 prompt 的 `buildBuiltinSystem`（`agent.ts:202`）221 行中 **147 行含中文**；
-> `src/tools/**` 的 231 条工具/参数 `description` 中 **119 条仍为中文**（涉及 23 个文件，`memory.ts` 25 条最多）。
-> 这些属于**待渐进迁移**的存量，不要在文档里宣称"已全面英文"。
+> **现状（已迁移 / 仍保留中文）**——数字由 `tmp/lang-inventory-20260911.ts` 盘点，改完回来更新：
 >
-> **已迁移的部分**：`buildSelfAccessPrompt` / `buildSandboxPrompt` 两段全英文，`fs_grant` 与 `self_runtime_*`
-> 的描述（含参数）全英文。
-> **回复语言已从"写死中文"改为"跟随用户语言"**：`agent.ts` 的「通用规范」、文字模式说明、
-> `code/system-prompt.ts` 的三处 `- 用中文回复，简洁明了` 都已替换为
-> `Always reply in the user's own language …`，并明确告诉模型"prompt 是英文不等于要用英文回复"。
-> ⚠️ 这两段**由探针锁死语言**：`tmp/probe-sandbox-prompt-20260911.ts` 断言沙箱段与自指段不含**任何**中文字符、
-> 断言源码里已无「用中文回复」，`tmp/probe-self-access-20260911.ts`、`tmp/probe-p25-live-20260911.ts`
-> 断言英文关键词 —— 翻回中文会立刻变红。
-> 存量盘点用 `tmp/lang-inventory-20260911.ts`（迁移后回来更新本段数字）。
+> | 面 | 状态 |
+> |---|---|
+> | `buildBuiltinSystem`（`agent.ts:202`，225 行） | 正文已全英文；剩 15 行中文**全是注释与故意保留的示例**（`__purpose` 中文样板、引用的 `"⚠️ 附件发送失败"`），**不含中文指令** |
+> | `buildSelfAccessPrompt` / `buildSandboxPrompt` | 0 行中文 |
+> | `src/tools/**` 工具/参数 `description`（232 条） | 剩 **2 条**：`memory.ts` 里 `ask_user` 选项的 `description`（返回给模型的数据） |
+> | 5 个 MCP server 的 `description`（155 条） | 剩 **9 条**：`mcp-servers/notes/index.ts` 的 `DEFAULT_CATEGORIES` 分类/字段说明（运行时数据，不是 schema） |
+> | code 模式 prompt（`code/system-prompt.ts` / `code/project-prompt.ts`） | 已全英文（仅用户可见样例保留中文原话） |
+> | 其它 prompt 语料 | 已英文：`memory/summarizer.ts`（压缩/蒸馏）、`core/memory-maintenance.ts`、`core/slave-manager.ts`、`cron/runner.ts`、`core/loop-trigger.ts`、`skills/registry.ts`、`tools/skill-creator.ts`、`memory/qmd.ts` 的检索标签 |
+> | Agent 回复用户 | 已从"写死中文"改为**跟随用户语言**（`agent.ts` 通用规范 + 文字模式 + code 模式三处） |
+>
+> ⚠️ **这些字面量是数据键/匹配串，永远不要翻译**（翻了会静默失效）：
+> `MEM.md` / `ACTIVE.md` 的章节名（`👤 用户偏好`、`🎯 当前任务`、`🐛 踩坑记录` …）、`MEMORY.md` 的
+> `⛔ 约束` / `🧠 架构` / `📊 进度` / `🐛 问题` / `📝 决策`、`[对话历史摘要]`、`[编码会话历史摘要]`、
+> `[分析]`（`summarizer.ts` 的 `resolveSlug` 比对，已同时兼容 `analysis/general/misc`）、
+> `[⚠️BLOCKED:zh_you_are]`（注入检测器依赖）、`[压缩蒸馏]`、`[NOTIFY]`/`[/NOTIFY]`、`[工具结果已截断]`、
+> `# 本机环境上下文`、`[用户]:`/`[助手]:`/`[工具结果]:` 等 `formatMsgForSummary` 产出的前缀、
+> `[历史图片: …]`、以及 `error: "无新增"` 这类被代码比对的 sentinel。
+>
+> ✅ **prompt 里凡出现"模型写给用户"的样例文案**，都必须在同句注明 *written in the user's own language*，
+> 中文样例只是"中文用户视角的示例"。
+>
+> ⚠️ 语言由探针锁死：`tmp/probe-sandbox-prompt-20260911.ts` 断言沙箱段/自指段不含任何中文字符、内置 prompt
+> 本体无中文指令、源码里已无「用中文回复」；`tmp/probe-self-access-20260911.ts`、`tmp/probe-p25-live-20260911.ts`
+> 断言英文关键词 —— 翻回中文会立刻变红。存量盘点用 `tmp/lang-inventory-20260911.ts`，
+> 逐行判定「面向用户 / 面向模型」用 `tmp/lang-audit-20260911.ts`，MCP 等 tsconfig 覆盖不到的文件用
+> `tmp/check-syntax-20260911.ts` 做语法兜底。
 
 ---
 
@@ -297,6 +312,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `distillCodeTurnToNotes` 无调用者 | `memory/summarizer.ts:1351` |
 | `getVisionClient` / `buildAutoModePrompt` / `forceReleaseLock` | `llm/registry.ts:353` / `code/system-prompt.ts:107` / `core/project-router.ts:170` |
 | `loop-runner.restartSession` 有 bug 且无调用者 | `core/loop-runner.ts:61-75` |
+| `existingPlan` 恒为 `undefined` → 「Existing plan」段永远不渲染 | `code/system-prompt.ts:51`（形参在 `:217` 传入） |
 | `/auto` 已废弃（只返回提示） | `code/commands.ts:180-193` |
 
 > 旧条目「MicroCompact 调用点整段被注释」已删除：那段注释块已被真正的工具结果剪枝取代
@@ -334,6 +350,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **`gateway.ts:184` 的 finally 删队列会丢新消息**；`api.ts:74` 的 token singleflight 失败后永久卡死。
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
 - **`mcp-servers/` 与 `scripts/` 不在 `tsconfig` 的 `include` 范围内**（只含 `src/**/*`），改动它们后 typecheck 不会覆盖。
+- **Cron 推送口径不一致（潜在，当前 0 个 job 受影响）**：`runner.ts:531` 的常规推送分支额外要求
+  `job.output.sessionId`，而 `notify="llm"` 分支（`:511`）只要求 `peerId` —— 于是 `notify = always/on_error/on_change`
+  配 `sessionId = null`（schema 默认值）时会**静默不推送**，log 里也看不出来。实测 24 个 job 目前都填了 `sessionId`，
+  所以还没踩到；新建 job 时若只填 `peerId` 就会踩。
 - **Subagent 未修的剩余问题**：
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
   - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave

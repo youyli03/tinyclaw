@@ -180,26 +180,29 @@ registerTool({
     function: {
       name: "render_document",
       description:
-        "将文档/文件渲染为图片通过 QQ 发送。支持 PDF/Office/文本/代码等 LibreOffice 可打开格式;多页每页一张图",
+        "Render a document or file to images and send via QQ. Supports anything LibreOffice " +
+        "can open (PDF/Office/text/code); each page becomes one image",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "要渲染的文件绝对路径",
+            description: "Absolute path of the file to render",
           },
           pages: {
             type: "string",
             description:
-              "页码范围:单页 \"3\" / 范围 \"1-5\" / 逗号分隔 \"1,3,5\"。默认第 1 页",
+              "Page range: single page \"3\" / range \"1-5\" / comma-separated \"1,3,5\". " +
+              "Default page 1",
           },
           dpi: {
             type: "number",
-            description: "渲染分辨率(DPI),默认 150。值越大图片越清晰也越大。",
+            description:
+              "Render resolution (DPI), default 150. Higher values give sharper, larger images.",
           },
           width: {
             type: "number",
-            description: "输出图片宽度(像素),默认 800,适配 QQ 聊天窗口。",
+            description: "Output image width in pixels, default 800, fits the QQ chat window.",
           },
         },
         required: ["path"],

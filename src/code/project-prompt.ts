@@ -81,27 +81,27 @@ export function loadProjectContext(agentId: string, slug: string): ProjectContex
 
 /** 渲染「当前项目」block：workdir + MEMORY.md 全文 + topic 表 */
 export function renderProjectContext(ctx: ProjectContext): string {
-  let out = `## 当前项目\n\n`;
-  out += `项目: \`${ctx.slug}\`\n`;
-  out += `工作目录: \`${ctx.workdir}\`\n`;
-  out += `类型: ${ctx.type === "ssh" ? "远程(SSH)" : "本地"}\n`;
+  let out = `## Current project\n\n`;
+  out += `Project: \`${ctx.slug}\`\n`;
+  out += `Workdir: \`${ctx.workdir}\`\n`;
+  out += `Type: ${ctx.type === "ssh" ? "remote (SSH)" : "local"}\n`;
 
   // MEMORY.md 评分截断后注入
   if (ctx.memoryContent) {
     const cfg = loadConfig();
     const maxEntries = cfg.memory.codeInjectionMaxEntries ?? 30;
     const scored = injectScoredEntries(ctx.memoryContent, maxEntries);
-    out += `\n### 项目记忆 (MEMORY.md)\n\n${scored}\n`;
+    out += `\n### Project memory (MEMORY.md)\n\n${scored}\n`;
   }
 
   // Topic 表
   if (ctx.topics.length > 0) {
-    out += `\n### 专题文件\n\n`;
-    out += `| 文件 | 更新 | 行数 |\n`;
+    out += `\n### Topic files\n\n`;
+    out += `| File | Updated | Lines |\n`;
     out += `|------|------|------|\n`;
     for (const t of ctx.topics) {
       const stale = t.stale ? " ⚠️" : "";
-      const days = t.daysAgo === 0 ? "今天" : `${t.daysAgo}天前`;
+      const days = t.daysAgo === 0 ? "today" : `${t.daysAgo}d ago`;
       out += `| ${t.name} | ${days}${stale} | ${t.lineCount} |\n`;
     }
   }
@@ -112,66 +112,68 @@ export function renderProjectContext(ctx: ProjectContext): string {
 /** 渲染「项目记忆系统」指令（精简版：不含切换、不含 slug 约束） */
 /** 渲染「项目记忆系统」指令 */
 export function renderProjectMemoryInstructions(slug: string): string {
-  return `## 项目记忆系统
+  return `## Project memory system
 
-你已在项目 \`${slug}\` 的上下文中,项目记忆已注入,无需初始化。
+You are already in the context of project \`${slug}\`; its memory is injected below, so no
+initialization is needed.
 
-MEMORY.md 按分区组织,每分区下按日期存放摘要行:
+MEMORY.md is organized by section, and inside each section the summary lines are stored by date:
 
-| 分区 | topic 文件 | 用途 |
+| Section | topic file | Purpose |
 |------|-----------|------|
-| ⛔ 约束 | constraints | 不可违反的约束 |
-| 🧠 架构 | architecture | 模块架构理解 |
-| 📊 进度 | progress | 里程碑/当前状态 |
-| 🐛 问题 | bugs | 已知问题与根因 |
-| 📝 决策 | decisions | 设计决策及理由 |
+| ⛔ 约束 | constraints | Constraints that must not be violated |
+| 🧠 架构 | architecture | Module architecture understanding |
+| 📊 进度 | progress | Milestones / current status |
+| 🐛 问题 | bugs | Known issues and their root causes |
+| 📝 决策 | decisions | Design decisions and their rationale |
 
-**读取**:
-- \`code_note_read()\` — 读 MEMORY.md 索引
-- \`code_note_read({topic:"constraints"})\` — 读 topic 文件
-- \`code_note_read({section:"⛔ 约束"})\` — 读指定分区
-- \`code_note_search({query:"..."})\` — 语义搜索
+**Reading**:
+- \`code_note_read()\` - read the MEMORY.md index
+- \`code_note_read({topic:"constraints"})\` - read a topic file
+- \`code_note_read({section:"⛔ 约束"})\` - read the given section
+- \`code_note_search({query:"..."})\` - semantic search
 
-**写入**:
-- \`code_note_write({content:"[约束] 摘要 → constraints.md"})\` — 追加摘要行到 MEMORY.md
-- \`code_note_write({topic:"constraints", content:"详情"})\` — 写 topic 文件
-- \`code_note_write({section:"⛔ 约束", content:"..."})\` — 写 MEMORY.md 指定分区
-- \`code_note_write({topic:"constraints", section:"API限制", content:"..."})\` — 写 topic 指定分点
+**Writing**:
+- \`code_note_write({content:"[约束] 摘要 → constraints.md"})\` - append a summary line to MEMORY.md
+- \`code_note_write({topic:"constraints", content:"详情"})\` - write a topic file
+- \`code_note_write({section:"⛔ 约束", content:"..."})\` - write the given MEMORY.md section
+- \`code_note_write({topic:"constraints", section:"API限制", content:"..."})\` - write a named point inside a topic file
 
-MEMORY.md 超过约 200 行时,将旧条目详情移到对应 topic 文件,索引中只留摘要行。
+Once MEMORY.md grows past roughly 200 lines, move the details of old entries into the matching
+topic file and keep only the summary line in the index.
 
-**执行完毕前**: code_note_write 更新进度 → 向用户请求提交确认(获准后才 git commit) → 告知用户。
-**发现约束/根因**: 立即调 code_note_write,不等任务完成。`;
+**Before finishing**: update progress with code_note_write → ask the user to confirm the commit (run git commit only after approval) → inform the user.
+**On finding a constraint or a root cause**: call code_note_write immediately; do not wait for the task to finish.`;
 }
 
 // ── Project Switch Tools ─────────────────────────────────────────────────────
 
 /** 渲染「项目切换」指令:教 AI 如何切换到其他项目 */
 export function renderProjectSwitchTools(slug: string): string {
-  return `## 项目切换
+  return `## Project switching
 
-你当前绑定在项目 \`${slug}\`。若用户想操作其他项目:
+You are currently bound to project \`${slug}\`. If the user wants to work on another project:
 
-### 切换流程
+### Switching flow
 
-1. **确定路径** — 从上方 ENV.md 的 \`projects\` 字段查找目标项目路径
-2. **计算 slug** — 根据路径类型转换:
+1. **Find the path** - look up the target project path in the \`projects\` field of the ENV.md section above
+2. **Compute the slug** - convert according to the path type:
 
-| 类型 | 路径示例 | slug |
+| Type | Example path | slug |
 |------|---------|------|
-| 本地 | \`/home/lyy/tinyclaw\` | \`_home_lyy_tinyclaw\`（\`/\` → \`_\`） |
-| SSH 远程 | \`root@m1saka.cc:/opt/app\` | \`ssh_m1saka.cc_opt_app\`（\`ssh_\` + host + path,\`.\`/\`/\` → \`_\`） |
-| WinMCP | \`win:F:/Github/fpgallm\` | \`ssh_win_F_Github_fpgallm\`（\`ssh_win_\` + path,\`:\\/\` → \`_\`） |
+| Local | \`/home/lyy/tinyclaw\` | \`_home_lyy_tinyclaw\` (\`/\` → \`_\`) |
+| SSH remote | \`root@m1saka.cc:/opt/app\` | \`ssh_m1saka.cc_opt_app\` (\`ssh_\` + host + path,\`.\`/\`/\` → \`_\`) |
+| WinMCP | \`win:F:/Github/fpgallm\` | \`ssh_win_F_Github_fpgallm\` (\`ssh_win_\` + path,\`:\\/\` → \`_\`) |
 
-3. **调用 project_switch** — 可直接传路径(工具内部自动转 slug),传入用户任务描述:
-   \`project_switch({ project: "路径或slug", task: "用户需求描述" })\`
+3. **Call project_switch** - you may pass the path directly (the tool converts it to a slug internally); pass the user's task description too:
+   \`project_switch({ project: "path or slug", task: "user requirement description" })\`
 
-### 注意事项
+### Notes
 
-- \`project_switch\` 需要 **MFA 确认**,发送前告知用户即将切换
-- 若目标项目被其他 session 占用,切换会失败并返回占用者
-- 切换后 system prompt 自动替换为新项目上下文,AI 继续执行 task
-- 辅助工具:\`project_list\` 列出所有项目、\`project_status\` 查看当前绑定和锁`;
+- \`project_switch\` requires **MFA confirmation**; tell the user about the upcoming switch before sending it
+- If the target project is held by another session, the switch fails and returns the current holder
+- After the switch the system prompt is replaced with the new project context automatically and the AI keeps executing the task
+- Helper tools: \`project_list\` lists all projects, \`project_status\` shows the current binding and lock`;
 }
 
 // ── Build Full Prompt ────────────────────────────────────────────────────────
@@ -228,7 +230,7 @@ export function buildProjectSystemPrompt(
 
   // vision
   const visionSection = options.supportsVision
-    ? `\n\n## 视觉能力\n\n当前模型支持直接读取图片，收到含图片的消息时，直接观察并回答。`
+    ? `\n\n## Vision support\n\nThe current model can read images directly. When a message contains an image, observe it and answer directly.`
     : "";
 
   // 组装
@@ -263,7 +265,7 @@ export function buildProjectSystemPrompt(
 
   // 9. ENV
   if (envContent) {
-    parts.push(`\n\n## 本机环境上下文（ENV.md）\n\n${envContent}`);
+    parts.push(`\n\n## Local environment context (ENV.md)\n\n${envContent}`);
   }
 
   // 10. vision
@@ -272,7 +274,7 @@ export function buildProjectSystemPrompt(
   // 11. feedback
   if (feedbackContent) {
     parts.push(
-      `\n\n## 行为约束（来自历史反馈）\n\n以下是用户过去纠正过的行为，请严格遵守：\n\n${feedbackContent}`
+      `\n\n## Behavior constraints (from past feedback)\n\nBelow are behaviors the user corrected in the past; follow them strictly:\n\n${feedbackContent}`
     );
   }
 
@@ -280,7 +282,7 @@ export function buildProjectSystemPrompt(
   if (options.currentProvider) {
     const hookText = loadConfig().agent.responseHooks?.[options.currentProvider];
     if (hookText) {
-      parts.push(`\n\n## 行为钩子（来自 provider 配置）\n\n${hookText}`);
+      parts.push(`\n\n## Behavior hook (from provider config)\n\n${hookText}`);
     }
   }
 
@@ -304,17 +306,17 @@ function renderProjectWorkspace(
   planPath: string,
   _agentDir: string // same as agentDir, kept for symmetry
 ): string {
-  return `## 工作区
+  return `## Workspace
 
-三个核心目录，用途完全不同：
+Three core directories with completely different purposes:
 
-| 用途 | 路径 |
+| Purpose | Path |
 |------|------|
-| 项目代码（exec_shell 默认 cwd，git 操作） | ${workdir} |
-| Agent 配置（ENV.md / PLAN.md / feedback.md 均在 code/ 子目录） | ${agentDir} |
-| 文件输出（tmp/ output/ 子目录） | ${workspaceDir} |
+| Project code (exec_shell default cwd, git operations) | ${workdir} |
+| Agent config (ENV.md / PLAN.md / feedback.md all live under code/) | ${agentDir} |
+| File output (tmp/ and output/ subdirectories) | ${workspaceDir} |
 
-- PLAN.md（本 session 计划文件）：\`${planPath}\`，不存在时用 \`write_file\` 创建，已存在时只能用 \`edit_file\` 局部更新
-- 当用户明确纠正你的行为（"不要…"/"以后…"/"每次都要…"），调用 \`memory_append_feedback(content="…")\` 记录到 \`${agentDir}/code/feedback.md\`（无需 MFA，自动去重）
-> **所有 Agent 管理文件（ENV.md、PLAN.md、feedback.md）都在 Agent 配置目录的 code/ 下，不在项目目录。**`;
+- PLAN.md (this session's plan file): \`${planPath}\`; create it with \`write_file\` when it does not exist, and when it already exists you may only update it locally with \`edit_file\`
+- When the user explicitly corrects your behavior ("不要…" / "以后…" / "每次都要…" in their own words), call \`memory_append_feedback(content="…")\` to record it in \`${agentDir}/code/feedback.md\` (no MFA needed, deduplicated automatically)
+> **All agent-managed files (ENV.md, PLAN.md, feedback.md) live under code/ in the agent config directory, not in the project directory.**`;
 }

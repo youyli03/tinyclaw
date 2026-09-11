@@ -2,55 +2,13 @@
  * search_store 工具
  *
  * 对 memstores.toml 中已启用的 MemStore collection 做向量相似度搜索。
- * 在调用前会检测 ~/.tinyclaw/news/.update-pending 标记文件，
- * 若存在则先触发增量索引更新，再执行搜索。
+ * 增量索引由 `memory/news-watcher.ts` 负责（监听 ~/.tinyclaw/news/.update-pending，
+ * 启动时也会处理残留标记），本工具不再自己做懒触发。
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { registerTool, type ToolContext } from "./registry.js";
 import { loadMemStoresConfig } from "../config/loader.js";
-import { searchStore, updateStore } from "../memory/qmd.js";
-
-/** 更新挂起标记文件路径（由 news MCP server 在 fetch_and_store 后写入） */
-const PENDING_MARKER = path.join(os.homedir(), ".tinyclaw", "news", ".update-pending");
-
-/**
- * 检查并处理更新挂起标记。
- * 若文件存在，读取其内容（逗号分隔的 store 名列表），触发各 store 的增量索引，再删除标记。
- */
-async function flushPendingUpdates(agentId: string): Promise<void> {
-  if (!fs.existsSync(PENDING_MARKER)) return;
-  let names: string[] = [];
-  try {
-    const content = fs.readFileSync(PENDING_MARKER, "utf-8").trim();
-    names = content
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  } catch {
-    /* ignore */
-  }
-
-  if (names.length === 0) {
-    names = ["news"];
-  }
-
-  for (const name of names) {
-    try {
-      await updateStore(name, agentId);
-    } catch (e) {
-      console.warn(`[search_store] updateStore(${name}) 失败：${e}`);
-    }
-  }
-
-  try {
-    fs.unlinkSync(PENDING_MARKER);
-  } catch {
-    /* ignore */
-  }
-}
+import { searchStore } from "../memory/qmd.js";
 
 // ── 注册时读取配置，构建 spec ────────────────────────────────────────────────
 
@@ -65,14 +23,14 @@ if (enabledStores.length === 0) {
       function: {
         name: "search_store",
         description:
-          "在本地知识库（MemStore）中做语义向量搜索。当前没有已启用的 MemStore，" +
-          "请在 ~/.tinyclaw/memstores.toml 中配置并设置 enabled = true。",
+          "Run semantic vector search over local MemStore knowledge bases. No MemStore is enabled " +
+          "right now; configure one in ~/.tinyclaw/memstores.toml and set enabled = true.",
         parameters: {
           type: "object",
           properties: {
-            store: { type: "string", description: "MemStore 名称" },
-            query: { type: "string", description: "搜索查询" },
-            limit: { type: "number", description: "最多返回结果数，默认 8" },
+            store: { type: "string", description: "MemStore name" },
+            query: { type: "string", description: "Search query" },
+            limit: { type: "number", description: "Maximum number of results to return, default 8" },
           },
           required: ["store", "query"],
         },
@@ -93,28 +51,30 @@ if (enabledStores.length === 0) {
       function: {
         name: "search_store",
         description:
-          `在本地知识库（MemStore）中做语义向量搜索。\n\n` +
-          `**可用的知识库：**\n${storeTitles}\n\n` +
-          `适用场景：查询历史新闻、笔记、文档等本地存档内容。` +
-          `首次调用前若有新数据写入，会自动触发增量索引更新。\n\n` +
-          `⚠️ 此工具只能搜索**已存档**的历史内容。若需**抓取最新新闻**,` +
-          `请先用 \`mcp_list_servers\` 查看 news server,再用 \`mcp_enable_server\` 启用,` +
-          `然后调用 \`mcp_news_fetch_and_store\` 抓取最新内容。`,
+          `Run semantic vector search over local MemStore knowledge bases.\n\n` +
+          `**Available knowledge bases:**\n${storeTitles}\n\n` +
+          `Use it for archived local content such as past news, notes, and documents. ` +
+          `If new data was written before the first call, an incremental index update runs ` +
+          `automatically.\n\n` +
+          `⚠️ This tool only searches **archived** historical content. To get the latest ` +
+          `news, first use \`mcp_list_servers\` to find the news server, then ` +
+          `\`mcp_enable_server\` to enable it, and finally call ` +
+          `\`mcp_news_fetch_and_store\` to fetch the latest content.`,
         parameters: {
           type: "object",
           properties: {
             store: {
               type: "string",
               enum: storeNames,
-              description: `要搜索的知识库名称，可选：${storeNames.join(" / ")}`,
+              description: `Name of the knowledge base to search, one of: ${storeNames.join(" / ")}`,
             },
             query: {
               type: "string",
-              description: "搜索查询（自然语言，支持中英文）",
+              description: "Search query (natural language; Chinese and English are both fine)",
             },
             limit: {
               type: "number",
-              description: "最多返回结果数，默认 8，最大 20",
+              description: "Maximum number of results to return, default 8, max 20",
             },
           },
           required: ["store", "query"],

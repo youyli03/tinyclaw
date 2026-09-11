@@ -14,15 +14,15 @@ registerTool({
     function: {
       name: "notify_user",
       description:
-        "立即向用户发送一条通知消息，不等当前任务结束。" +
-        "适用于长任务中途汇报发现、进度片段或需要提前告知的信息。" +
-        "调用后继续执行当前任务，不影响后续工具调用。",
+        "Send the user a message immediately, without waiting for the current task to finish. " +
+        "Use it for mid-task findings, progress snippets, or info the user should know early. " +
+        "The current task keeps running after the call; later tool calls are unaffected.",
       parameters: {
         type: "object",
         properties: {
           message: {
             type: "string",
-            description: "要发送给用户的消息内容",
+            description: "Message content to send to the user",
           },
         },
         required: ["message"],

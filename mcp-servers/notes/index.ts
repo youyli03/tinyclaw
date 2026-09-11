@@ -252,35 +252,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "list_categories",
-      description: `列出当前 agent（${AGENT_ID}）的所有笔记分类，包含名称、类型、描述、字段定义。`,
+      description:
+        "List all note categories of the current agent " +
+        `(${AGENT_ID}), including name, type, description, and field definitions.`,
       inputSchema: { type: "object", properties: {} },
     },
     {
       name: "create_category",
       description:
-        "新建一个笔记分类。\n" +
-        "- structured：需提供 fields 字段列表，写入时强制按字段记录\n" +
-        "- timestamped：自动加时间戳，内容自由（提醒、点子）\n" +
-        "- freeform：完全自由格式，按块追加（领域知识点）",
+        "Create a new note category.\n" +
+        "- structured: requires a fields list; writes must follow those fields\n" +
+        "- timestamped: auto-adds a timestamp, free-form content (reminders, ideas)\n" +
+        "- freeform: fully free format, appended as blocks (domain knowledge)",
       inputSchema: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "分类名（小写字母+下划线，如 docker_notes）",
+            description: "Category name (lowercase letters and underscores, e.g. docker_notes)",
           },
           type: {
             type: "string",
             enum: ["structured", "timestamped", "freeform"],
-            description: "格式类型",
+            description: "Format type",
           },
           description: {
             type: "string",
-            description: "分类用途描述",
+            description: "What the category is for",
           },
           fields: {
             type: "array",
-            description: "字段定义列表（仅 structured 类型需要）",
+            description: "Field definition list (required only for the structured type)",
             items: {
               type: "object",
               properties: {
@@ -298,19 +300,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "add_note",
       description:
-        "向指定分类写入一条笔记。\n" +
-        "- structured 分类：content 必须是字段名->值的对象，如 {\"code\":\"002361\",\"action\":\"买\",...}\n" +
-        "- timestamped 分类：content 为字符串，自动加时间戳\n" +
-        "- freeform 分类：content 为字符串，自由内容",
+        "Append one note to a category.\n" +
+        "- structured category: content must be an object of field name -> value, " +
+        "e.g. {\"code\":\"002361\",\"action\":\"buy\",...}\n" +
+        "- timestamped category: content is a string, a timestamp is added automatically\n" +
+        "- freeform category: content is a string, free-form",
       inputSchema: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            description: "分类名（需已存在，可先调用 list_categories 查询）",
+            description: "Category name (must already exist; call list_categories first to check)",
           },
           content: {
-            description: "笔记内容：structured 时传对象，其他类型传字符串",
+            description: "Note content: an object for structured categories, a string otherwise",
           },
         },
         required: ["category", "content"],
@@ -318,17 +321,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "query_notes",
-      description: "读取指定分类的笔记内容（Markdown 格式），可通过 limit 限制返回行数。",
+      description:
+        "Read the notes of a category (Markdown format); limit caps the number of returned lines.",
       inputSchema: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            description: "分类名",
+            description: "Category name",
           },
           limit: {
             type: "number",
-            description: "最多返回最近 N 行内容（不传则返回全部）",
+            description: "Return at most the last N lines (omit to return everything)",
           },
         },
         required: ["category"],
@@ -337,21 +341,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "search_notes",
       description:
-        "在所有或指定分类中进行关键词全文搜索（文本匹配，多词空格分隔为 OR 逻辑）。",
+        "Full-text keyword search across all categories or one category " +
+        "(plain text match; space-separated words are OR-ed).",
       inputSchema: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词，多词空格分隔",
+            description: "Search keywords, separated by spaces",
           },
           category: {
             type: "string",
-            description: "限定分类名（不传则搜索全部分类）",
+            description: "Restrict to one category (omit to search all categories)",
           },
           max_results: {
             type: "number",
-            description: "最多返回结果数，默认 20",
+            description: "Maximum number of results, default 20",
           },
         },
         required: ["query"],
@@ -360,17 +365,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "delete_note",
       description:
-        "按 note_id 删除指定分类中的某条笔记。note_id 可从 query_notes 返回的内容中找到。",
+        "Delete one note from a category by note_id. " +
+        "note_id can be found in the content returned by query_notes.",
       inputSchema: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            description: "分类名",
+            description: "Category name",
           },
           note_id: {
             type: "string",
-            description: "笔记 ID（格式 note-YYYYMMDDHHMMSSMMM）",
+            description: "Note ID (format note-YYYYMMDDHHMMSSMMM)",
           },
         },
         required: ["category", "note_id"],
@@ -379,11 +385,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_due_reminders",
       description:
-        "【每次对话开始时调用】获取 reminders 分类中需要提醒的条目。\n" +
-        "同一条提醒 24 小时内只返回一次（内部记录上次提醒时间），避免频繁打扰。\n" +
-        "返回值：{ due: [{note_id, text}], total_reminders: N }\n" +
-        "- due 为空数组时表示当前无需提醒（静默，不要向用户说没有提醒）\n" +
-        "- due 不为空时，在回复用户第一条消息时顺带提示这些内容",
+        "[Call at the start of every conversation] Get the entries in the reminders category " +
+        "that are due.\n" +
+        "The same reminder is returned at most once per 24 hours (the last reminder time is " +
+        "tracked internally), to avoid frequent interruptions.\n" +
+        "Returns: { due: [{note_id, text}], total_reminders: N }\n" +
+        "- An empty due array means nothing is due right now (stay silent; do not tell the user " +
+        "there are no reminders)\n" +
+        "- When due is non-empty, mention these entries along with your first reply to the user",
       inputSchema: { type: "object", properties: {} },
     },
   ],

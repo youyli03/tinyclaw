@@ -15,32 +15,33 @@ registerTool({
     function: {
       name: "write_report",
       description:
-        "将一篇日报（Markdown 格式）写入本地文件，供 Dashboard 日报页展示。\n\n" +
-        "type 为日报类型标签，建议值：\n" +
-        "  stock   — 股市日报\n" +
-        "  weather — 天气日报\n" +
-        "  daily   — 每日摘要\n" +
-        "  news    — 新闻摘要\n" +
-        "  custom  — 自定义\n\n" +
-        "date 格式 YYYY-MM-DD，不填则写入今天。同一 type+date 重复写入会覆盖。",
+        "Write a report (Markdown) to a local file for the Dashboard reports page.\n\n" +
+        "type is the report type tag; suggested values:\n" +
+        "  stock   - stock market report\n" +
+        "  weather - weather report\n" +
+        "  daily   - daily summary\n" +
+        "  news    - news summary\n" +
+        "  custom  - custom\n\n" +
+        "date format is YYYY-MM-DD; when omitted it writes to today. Writing the same type+date " +
+        "again overwrites the existing file.",
       parameters: {
         type: "object",
         properties: {
           type: {
             type: "string",
-            description: "日报类型标签（如 stock、weather、daily）",
+            description: "Report type tag (e.g. stock, weather, daily)",
           },
           content: {
             type: "string",
-            description: "日报正文，Markdown 格式",
+            description: "Report body in Markdown",
           },
           title: {
             type: "string",
-            description: "日报标题（可选），若内容开头没有 # 标题则自动前置",
+            description: "Report title (optional), prepended when there is no leading # heading",
           },
           date: {
             type: "string",
-            description: "日期（YYYY-MM-DD，可选，默认今天）",
+            description: "Date (YYYY-MM-DD, optional, defaults to today)",
           },
         },
         required: ["type", "content"],

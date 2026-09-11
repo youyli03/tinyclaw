@@ -70,105 +70,150 @@ registerTool({
     type: "function",
     function: {
       name: "cron_add",
-      description: `创建定时任务。
-- 模式: pipeline(steps,纯工具零消耗,推荐)/ message(调 LLM,创建前须告知用户)/ manual(仅手动触发)
-- 创建前须确认: 意图与执行流程 / 调度时间 / 推送给谁 / 通知策略 / 输出要求 / 是否需 LLM;描述模糊先 ask_user
-- 详细教程与 JSON 模板见 skill cron-creator(说"定时任务/每天提醒/每N分钟"等自动触发)`,
+      description:
+        "Create a scheduled task.\n" +
+        "- Modes: pipeline (steps, pure tool calls, zero LLM cost, recommended) / " +
+        "message (calls the LLM, tell the user first) / manual (trigger only)\n" +
+        "- Confirm before creating: intent and execution flow / schedule time / push target / " +
+        "notify policy / output requirements / whether an LLM is needed; ask_user if vague\n" +
+        "- Full tutorial and JSON templates: skill cron-creator " +
+        '(auto-triggers on "scheduled task / daily reminder / every N minutes")',
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "任务短名称(可选),列表与日志展示;不填则用 message 截断",
+            description:
+              "Short task name (optional), shown in lists and logs; " +
+              "defaults to a truncated message",
           },
           message: {
             type: "string",
             description:
-              "发给 cron agent 的自然语言任务指令(无需手写 shell)。须含四要素:①意图(做什么)②执行流程(数据来源/关键步骤)③约束(失败处理,禁止编造)④输出要求(内容+格式)。模板见 skill cron-creator",
+              "Natural-language task instruction sent to the cron agent (no shell needed). " +
+              "Must contain four parts: (1) intent (what to do) (2) execution flow (data " +
+              "source / key steps) (3) constraints (failure handling, no fabrication) " +
+              "(4) output requirements (content + format). Template: skill cron-creator",
           },
           type: {
             type: "string",
             enum: ["once", "every", "daily", "manual"],
-            description: "调度类型。once/every/daily 三选一;manual=无自动调度,仅 cron_run 手动触发",
+            description:
+              "Schedule type. Choose one of once/every/daily; manual = no automatic " +
+              "schedule, only cron_run triggers it",
           },
-          runAt: { type: "string", description: "[once] ISO 8601 触发时间(type=once 时必填)" },
-          intervalSecs: { type: "number", description: "[every] 间隔秒数,如 300=每5分钟(type=every 时必填)" },
+          runAt: {
+            type: "string",
+            description: "[once] ISO 8601 trigger time; required when type=once",
+          },
+          intervalSecs: {
+            type: "number",
+            description:
+              "[every] Interval in seconds, e.g. 300 = every 5 minutes; required for type=every",
+          },
           timeOfDay: {
             type: "string",
             description:
-              "[daily] 单个触发时间,格式 HH:MM(本地时间);type=daily 时必填 timeOfDay 或 timesOfDay;多时段请用 timesOfDay",
+              "[daily] Single trigger time, format HH:MM (local time); for type=daily provide " +
+              "either timeOfDay or timesOfDay; use timesOfDay for multiple times",
           },
           timesOfDay: {
             type: "array",
             items: { type: "string" },
             description:
-              '[daily] 多个触发时间点,格式 ["HH:MM", ...],优先于 timeOfDay。例:["09:00","12:00","20:00"];type=daily 时必填其一',
+              '[daily] Multiple trigger times, format ["HH:MM", ...], takes precedence over ' +
+              'timeOfDay. Example: ["09:00","12:00","20:00"]; for type=daily provide one of the two',
           },
           timeRange: {
             type: "object",
             description:
-              '[every] 限制触发时段;格式 {start:"HH:MM", end:"HH:MM", weekdays?:[0-6], timezone?:IANA时区名},0=周日...6=周六,不填=每天。段外跳过不触发;支持跨午夜(如 21:30→04:00);timezone 如 "America/New_York",不填=本地时区',
+              "[every] Restrict the trigger window; format " +
+              '{start:"HH:MM", end:"HH:MM", weekdays?:[0-6], timezone?:IANA name}, ' +
+              "0=Sunday...6=Saturday, omit = every day. Ticks outside the window are skipped; " +
+              "crossing midnight is supported (e.g. 21:30 -> 04:00); " +
+              'timezone e.g. "America/New_York", omit = local timezone',
           },
           agentId: {
             type: "string",
             description:
-              "使用的 agent(默认 default)。交互式会话中由调用方 agent 决定,仅 CLI 等无 agent 上下文场景生效",
+              "Agent to use (default default). In interactive sessions the caller decides; " +
+              "it only takes effect in contexts without an agent, such as CLI",
           },
           notify: {
             type: "string",
             enum: ["always", "on_change", "on_error", "never", "llm"],
-            description: "通知策略(默认 always)。llm=由LLM决定,输出含[NOTIFY]块时才推送",
+            description:
+              "Notify policy (default always). llm = decided by the LLM, pushes only when the " +
+              "output contains a [NOTIFY] block",
           },
-          stateful: { type: "boolean", description: "是否保留跨 run 对话历史(默认 false)" },
+          stateful: {
+            type: "boolean",
+            description: "Keep conversation history across runs (default false)",
+          },
           mfaExempt: {
             type: "boolean",
             description:
-              "是否豁免定时任务的 MFA 确认（默认 false）。为 false 时，任务里调用 write_file/delete_file 等高危工具" +
-              "仍会走一次用户确认（若任务绑定了可交互的输出目标）；无人值守且无法送达时会按 [sandbox.unattended].mfaFallback 处理。" +
-              "只有在你确认该任务无需人工复核时才传 true。",
+              "Whether to exempt this scheduled task from MFA confirmation (default false). " +
+              "When false, high-risk tools such as write_file/delete_file still go through one " +
+              "confirmation (if the task has an interactive output target); when unattended " +
+              "and it cannot be delivered, [sandbox.unattended].mfaFallback applies. " +
+              "Pass true only when you are sure this task needs no human review.",
           },
           writablePaths: {
             type: "array",
             items: { type: "string" },
             description:
-              "沙箱可写豁免（默认空）。无人值守任务在沙箱里默认只能写自己的 agent 目录；脚本需要写别处时**显式列出**，" +
-              '例如 ["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]。只对当前 job 生效，' +
-              "且不放宽密钥掩码。",
+              "Sandbox write exemptions (default empty). In the sandbox an unattended task " +
+              "can only write its own agent directory by default; when a script needs to " +
+              "write elsewhere, list it **explicitly**, e.g. " +
+              '["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]. ' +
+              "Applies only to this job and does not relax the secret mask.",
           },
           secrets: {
             type: "array",
             items: { type: "string" },
             description:
-              "该任务声明要读取的密钥名（secrets.toml 里的条目名，如 DEEPSEEK_API_KEY；默认空）。" +
-              "沙箱默认把 secrets.toml 掩码成空文件；声明后运行时只把**这几把 key** 暴露给该任务的脚本" +
-              "（bind 回原路径，脚本无需改动）。未声明 = 脚本读到空文件。",
+              "Secret names this task declares it needs to read (names in secrets.toml, e.g. " +
+              "DEEPSEEK_API_KEY; default empty). The sandbox masks it to an empty file by " +
+              "default; once declared, only **these keys** are exposed to this task's scripts at " +
+              "runtime (bound to the original path, no script change needed). Not declared = " +
+              "the script reads an empty file.",
           },
-          peerId: { type: "string", description: "推送目标的 QQ peerId(不填则仅写 log)" },
+          peerId: {
+            type: "string",
+            description: "QQ peerId of the push target (omitted = log only)",
+          },
           msgType: {
             type: "string",
             enum: ["c2c", "group", "guild", "dm"],
-            description: "消息类型(默认 c2c)",
+            description: "Message type (default c2c)",
           },
           botId: {
             type: "string",
             description:
-              "(可选)指定推送用 QQBot connector,对应 config.toml [channels.qqbots] 的 key(如 main/chat)。不填自动从 session 推断",
+              "(Optional) QQBot connector to push with, the key in config.toml [channels.qqbots] " +
+              "(e.g. main/chat). If omitted, it is inferred from the session",
           },
           model: {
             type: "string",
             description:
-              '(可选)运行模型,格式 "provider/model-id",如 "deepseek/deepseek-v4-flash"。' +
-              "provider 必须是 config.toml 里已配置的 [providers.*](copilot/openai/openrouter/deepseek/mimo/google);" +
-              "解析失败会回退 daily 后端并记一条错误日志。不填则直接用 daily 后端",
+              '(Optional) Model to run, format "provider/model-id", e.g. ' +
+              '"deepseek/deepseek-v4-flash". provider must be a configured [providers.*] in ' +
+              "config.toml (copilot/openai/openrouter/deepseek/mimo/google); on a parse failure it " +
+              "falls back to the daily backend and logs an error. If omitted, the daily backend " +
+              "is used directly.",
           },
           steps: {
             type: "array",
             description:
-              "【Pipeline 模式】串行步骤: {type:'tool',name,args}=直接调工具不走 LLM; {type:'msg',content}=注入消息触发 LLM。最后 msg 的 LLM 输出为推送内容;无 msg 则取最后 tool 输出。模板见 skill cron-creator",
+              "[Pipeline mode] Serial steps: {type:'tool',name,args} = call the tool " +
+              "directly, no LLM; {type:'msg',content} = inject a message to trigger the LLM. " +
+              "The LLM output of the last msg is the pushed content; if there is no msg, the " +
+              "last tool output is used. Template: skill cron-creator",
             items: {
               type: "object",
               description:
-                "Pipeline 步骤:{ type: 'tool', name, args } 或 { type: 'msg', content }",
+                "Pipeline step: { type: 'tool', name, args } or { type: 'msg', content }",
             },
           },
         },
@@ -293,13 +338,15 @@ registerTool({
     type: "function",
     function: {
       name: "cron_list",
-      description: "列出 cron jobs(含调度/状态/结果摘要/下次触发时间),includeLogs 可附加最近 3 条日志",
+      description:
+        "List cron jobs (schedule/state/result summary/next run); includeLogs adds " +
+        "the last 3 logs",
       parameters: {
         type: "object",
         properties: {
           includeLogs: {
             type: "boolean",
-            description: "附加最近 3 条日志(默认 false)",
+            description: "Append the last 3 logs (default false)",
           },
         },
         required: [],
@@ -352,7 +399,7 @@ registerTool({
     type: "function",
     function: {
       name: "cron_remove",
-      description: "删除指定 id 的 cron job。",
+      description: "Delete the cron job with the given id.",
       parameters: {
         type: "object",
         properties: {
@@ -379,7 +426,7 @@ registerTool({
     type: "function",
     function: {
       name: "cron_enable",
-      description: "启用指定 id 的 cron job。",
+      description: "Enable the cron job with the given id.",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "job ID" } },
@@ -403,7 +450,7 @@ registerTool({
     type: "function",
     function: {
       name: "cron_disable",
-      description: "停用指定 id 的 cron job。",
+      description: "Disable the cron job with the given id.",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "job ID" } },
@@ -428,7 +475,8 @@ registerTool({
     function: {
       name: "cron_run",
       description:
-        "立即触发一次指定 cron job（不影响其定时计划）。执行结果会按 job 的 notify 策略决定是否推送。",
+        "Trigger the given cron job once immediately (does not affect its schedule). " +
+        "Whether the result is pushed follows the job's notify policy.",
       parameters: {
         type: "object",
         properties: {

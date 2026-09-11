@@ -15,14 +15,15 @@ registerTool({
     function: {
       name: "loop_exit",
       description:
-        "退出当前 loop 监控窗口。调用后本时间段内不再继续 tick，等到下一个时间窗口重新开始。" +
-        "仅在任务明确完成或用户要求停止时调用。",
+        "Exit the current loop monitoring window. After calling it, no more ticks run in this " +
+        "time window; monitoring restarts at the next window. Call it only when the task is " +
+        "clearly done or the user asks to stop.",
       parameters: {
         type: "object",
         properties: {
           reason: {
             type: "string",
-            description: "退出原因（简短说明）",
+            description: "Reason for exiting (short explanation)",
           },
         },
         required: [],

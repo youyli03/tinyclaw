@@ -26,29 +26,35 @@ registerTool({
     function: {
       name: "search_newsnow",
       description:
-        "搜索 NewsNow 热榜新闻（华尔街见闻/财联社/知乎/微博等中文财经平台热榜）。\n" +
-        "使用向量语义检索（RKLLM NPU embedding），按语义相关度排序结果。\n" +
-        "设 fresh=true 时先实时抓取最新热榜再搜索（额外约 20-30 秒），适合需要最新数据的场景。\n" +
-        "数据仅含热榜标题 + 排名，不含文章正文。",
+        "Search NewsNow trending news (Chinese finance platforms: Wallstreetcn, Cailianpress, " +
+        "Zhihu, Weibo, etc.).\n" +
+        "Uses vector semantic retrieval (RKLLM NPU embedding) and ranks the results by " +
+        "semantic relevance.\n" +
+        "With fresh=true it first fetches the latest trending lists and then searches " +
+        "(about 20-30 seconds extra), suited to cases that need the newest data.\n" +
+        "Data contains trending titles and ranks only, no article body.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索查询（自然语言，如：芯片下跌、非农数据发布、央行政策）",
+            description:
+              "Search query (natural language, e.g. chip prices falling, nonfarm payrolls, " +
+              "central bank policy)",
           },
           days: {
             type: "number",
-            description: "搜索最近 N 天数据（默认 7）",
+            description: "Search data from the last N days (default 7)",
           },
           limit: {
             type: "number",
-            description: "最多返回结果数（默认 10）",
+            description: "Maximum number of results to return (default 10)",
           },
           fresh: {
             type: "boolean",
             description:
-              "true = 搜索前先抓取最新热榜（约 20-30 秒）；false = 直接搜索本地已有数据（默认）",
+              "true = fetch the latest trending lists before searching (about 20-30 seconds); " +
+              "false = search the existing local data directly (default)",
           },
         },
         required: ["query"],

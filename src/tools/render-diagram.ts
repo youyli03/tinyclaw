@@ -29,34 +29,38 @@ registerTool({
     function: {
       name: "render_diagram",
       description:
-        "将图表代码渲染为图片，通过 QQ 发送。支持两种类型：" +
-        "（1）mermaid：流程图/时序图/类图/状态机/ER图/甘特图/饼图等，传入 mermaid 语法代码；" +
-        "（2）python：任意 Python 绘图代码（matplotlib/graphviz 等），代码直接生成图形即可，" +
-        '无需手动 savefig（工具会自动保存），或手动调用 plt.savefig(os.environ["DIAGRAM_OUTPUT_FILE"]) 指定路径。' +
-        "渲染失败时工具会返回详细错误，请根据错误修正代码后重试。",
+        "Render diagram code into an image and send it via QQ. Supports two types: " +
+        "(1) mermaid: flowcharts, sequence, class, state, ER, gantt and pie charts; pass the " +
+        "mermaid syntax code. (2) python: any Python drawing code (matplotlib/graphviz, etc.) " +
+        "that renders the figure directly; no manual savefig needed (the tool saves the file), " +
+        'or call plt.savefig(os.environ["DIAGRAM_OUTPUT_FILE"]) to choose the path yourself. ' +
+        "On failure the detailed error is returned: fix the code and retry.",
       parameters: {
         type: "object",
         properties: {
           type: {
             type: "string",
             enum: ["mermaid", "python"],
-            description: "图表类型：mermaid（流程图/架构图）或 python（数据图表/自定义绘图）",
+            description:
+              "Diagram type: mermaid (flowcharts/architecture) or python (data charts or " +
+              "custom plots)",
           },
           code: {
             type: "string",
             description:
-              "mermaid 语法代码（如 `graph LR\\n  A-->B`）" +
-              "或 Python 绘图代码（如 `import matplotlib.pyplot as plt\\nplt.plot([1,2,3])`）",
+              "mermaid syntax code (e.g. `graph LR\\n  A-->B`) or Python drawing code (e.g. " +
+              "`import matplotlib.pyplot as plt\\nplt.plot([1,2,3])`)",
           },
           filename: {
             type: "string",
-            description: "输出文件名（不含扩展名），默认自动生成时间戳文件名",
+            description: "Output file name (without extension); defaults to a timestamped name",
           },
           theme: {
             type: "string",
             enum: ["light", "dark"],
             description:
-              "mermaid 图表配色主题：light（亮色，默认）或 dark（暗色/技术风格）。python 类型忽略此参数。",
+              "mermaid color theme: light (bright, default) or dark (dark/technical style). " +
+              "Ignored for the python type.",
           },
         },
         required: ["type", "code"],

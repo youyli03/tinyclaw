@@ -36,31 +36,39 @@ registerTool({
     function: {
       name: "read_url",
       description:
-        "通过无头浏览器访问 URL,提取文本/截图,支持 JS 渲染,结果缓存本地",
+        "Load a URL in a headless browser and extract its text or a screenshot. " +
+        "Supports JS rendering and caches the result locally.",
       parameters: {
         type: "object",
         properties: {
           url: {
             type: "string",
-            description: "要访问的网页 URL",
+            description: "Web page URL to visit",
           },
           mode: {
             type: "string",
             enum: ["text", "screenshot", "both", "html"],
-            description: "获取模式：text（提取正文，默认）/ screenshot（截图）/ both（文本+截图）",
+            description:
+              "Capture mode: text (extract main content, default) / screenshot / " +
+              "both (text + screenshot)",
           },
           wait_ms: {
             type: "number",
-            description: "页面加载后额外等待时间（毫秒，默认 2000），用于等待 JS 渲染完成",
+            description:
+              "Extra wait after page load in milliseconds (default 2000) to let JS " +
+              "rendering finish",
           },
           width: {
             type: "number",
-            description: "viewport 宽度(像素,默认 1280)。截图时也影响全页宽度",
+            description:
+              "Viewport width in pixels (default 1280); also affects the full-page " +
+              "screenshot width",
           },
           offset: {
             type: "number",
             description:
-              "截图模式:起始 Y 像素(截 offset~offset+900px);文字模式:字符偏移",
+              "Screenshot mode: starting Y pixel (captures offset~offset+900px); " +
+              "text mode: character offset",
           },
         },
         required: ["url"],

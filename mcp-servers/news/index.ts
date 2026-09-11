@@ -9,13 +9,14 @@
  *   search_trendradar    — 在 TrendRadar 热榜 SQLite DB 中做关键词检索(中文财经热榜)
  *   rebuild_index     — 写入 .update-pending 标记，触发主进程侧 QMD 重新索引
  *
- * 启动方式：bun run /path/to/mcp-servers/news/index.ts
+ * 启动方式：node --import tsx/esm /path/to/mcp-servers/news/index.ts
  * 配置方式：~/.tinyclaw/mcp.toml [servers.news]
  *
  * 数据目录：~/.tinyclaw/news/
  *   YYYY-MM/YYYY-MM-DD.md   每日存档（Markdown）
  *   seen_urls.db             L1 URL 去重数据库（由 Python 脚本维护）
- *   .update-pending          存在时，主进程 search_store 会触发 QMD 重新索引
+ *   .update-pending          存在时由主进程 memory/news-watcher.ts 监听到并触发 QMD 增量索引
+ *                            （启动时也会清理残留标记；不再依赖 search_store 的懒触发）
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -178,26 +179,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "fetch_and_store",
       description:
-        "从 HackerNews、RSS 等多源按 topics 抓取新闻，自动去重后写入当日 Markdown 存档。\n" +
-        "写入完成后标记 QMD 索引更新（下次 search_store 调用时自动生效）。",
+        "Fetch news by topics from multiple sources (HackerNews, RSS, ...), deduplicate " +
+        "automatically and append the result to today's Markdown archive.\n" +
+        "After writing it records the QMD index update marker; tinyclaw's main process " +
+        "rebuilds the index automatically when that marker appears.",
       inputSchema: {
         type: "object",
         properties: {
           topics: {
             type: "string",
-            description: "逗号分隔的话题关键词，如 'AI,LLM,开源'",
+            description: "Comma-separated topic keywords, e.g. 'AI,LLM,open source'",
           },
           since_hours: {
             type: "number",
-            description: "只抓取最近 N 小时内的内容，默认 24",
+            description: "Only fetch items published within the last N hours, defaults to 24",
           },
           sources: {
             type: "string",
-            description: "逗号分隔的数据源：hn（HackerNews）、rss（RSS 聚合），默认 'hn,rss'",
+            description:
+              "Comma-separated data sources: hn (HackerNews), rss (RSS aggregation), " +
+              "default 'hn,rss'",
           },
           max: {
             type: "number",
-            description: "最多保留条目数（去重后），默认 50",
+            description: "Maximum number of items to keep after deduplication, defaults to 50",
           },
         },
         required: ["topics"],
@@ -205,47 +210,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_day",
-      description: "读取指定日期的本地新闻存档（Markdown 格式）。不传日期则返回今天的存档。",
+      description:
+        "Read the local news archive of a given date (Markdown format). Returns today's " +
+        "archive when no date is given.",
       inputSchema: {
         type: "object",
         properties: {
           date: {
             type: "string",
-            description: "日期，格式 YYYY-MM-DD，默认今天",
+            description: "Date in YYYY-MM-DD format, defaults to today",
           },
         },
       },
     },
     {
       name: "list_days",
-      description: "列出本地已有新闻存档的日期列表（最近 N 天，默认 30）。",
+      description:
+        "List the dates of the local news archives available (most recent N days, defaults to 30).",
       inputSchema: {
         type: "object",
         properties: {
           limit: {
             type: "number",
-            description: "最多返回的日期数量，默认 30",
+            description: "Maximum number of dates to return, defaults to 30",
           },
         },
       },
     },
     {
       name: "search_local",
-      description: "在本地新闻存档中做全文关键词搜索（简单文本匹配，不依赖向量索引）。多个关键词空格分隔时为 OR 逻辑，任意一词命中即返回。",
+      description:
+        "Full-text keyword search over the local news archives (plain text matching, no vector " +
+        "index required). Space-separated keywords are ORed: a hit on any single keyword counts.",
       inputSchema: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词（支持多关键词，空格分隔）",
+            description: "Search keywords (multiple keywords supported, space-separated)",
           },
           days: {
             type: "number",
-            description: "只搜索最近 N 天的存档，默认 7",
+            description: "Only search archives from the last N days, defaults to 7",
           },
           max_results: {
             type: "number",
-            description: "最多返回结果数，默认 20",
+            description: "Maximum number of results to return, defaults to 20",
           },
         },
         required: ["query"],
@@ -254,8 +264,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "rebuild_index",
       description:
-        "写入 .update-pending 标记文件，触发主进程（tinyclaw agent）在下次 search_store 调用时重新索引 news 知识库。\n" +
-        "通常在手动编辑存档文件后调用。",
+        "Write the .update-pending marker file, which makes tinyclaw's main process rebuild " +
+        "the news knowledge base index automatically.\n" +
+        "Normally called after the archive files have been edited by hand.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -264,27 +275,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "search_trendradar",
       description:
-        "在 TrendRadar 热榜 SQLite DB 中做关键词检索，返回中文财经热榜条目（华尔街见闻/财联社/微博/知乎等）。\n" +
-        "数据来源：/home/lyy/TrendRadar/output/news/*.db，仅含热榜 title + rank，不含正文。\n" +
-        "适合查询近期财经热点、股票/公司相关热搜词。",
+        "Run a keyword search over the TrendRadar hot-list SQLite DB and return Chinese finance " +
+        "hot-list entries (Wallstreetcn/CLS/Weibo/Zhihu ...).\n" +
+        "Data source: /home/lyy/TrendRadar/output/news/*.db; only hot-list title + rank are " +
+        "stored, no article body.\n" +
+        "Suited to looking up recent finance topics and stock/company related hot searches.",
       inputSchema: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词(如 NVDA、美光、芯片)",
+            description: "Search keywords (e.g. NVDA, Micron, chips)",
           },
           days: {
             type: "number",
-            description: "搜索最近 N 天数据,默认 7",
+            description: "Search data from the last N days, defaults to 7",
           },
           limit: {
             type: "number",
-            description: "最多返回结果数,默认 30",
+            description: "Maximum number of results to return, defaults to 30",
           },
           platforms: {
             type: "string",
-            description: "平台过滤,逗号分隔(如 '华尔街见闻,财联社热门'),不填则搜索所有平台",
+            description:
+              "Platform filter, comma-separated (e.g. '华尔街见闻,财联社热门'); all " +
+              "platforms are searched when omitted",
           },
         },
         required: ["query"],
@@ -293,19 +308,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "fetch_newsnow",
       description:
-        "从 NewsNow 公共 API 抓取中文财经热榜(华尔街见闻/财联社/知乎/微博等),\n" +
-        "存入 ~/.tinyclaw/newsnow/YYYY-MM-DD.db。\n" +
-        "抓取后即可用 search_trendradar 检索。每次约需 10-30 秒。",
+        "Fetch the Chinese finance hot lists from the public NewsNow API " +
+        "(Wallstreetcn/CLS/Zhihu/Weibo ...),\n" +
+        "storing them into ~/.tinyclaw/newsnow/YYYY-MM-DD.db.\n" +
+        "The result can be searched with search_trendradar right away. Each run takes " +
+        "about 10-30 seconds.",
       inputSchema: {
         type: "object",
         properties: {
           platforms: {
             type: "string",
-            description: "平台 ID 逗号分隔(如 wallstreetcn-hot,cls-hot),不填则抓取全部 11 个平台",
+            description:
+              "Comma-separated platform IDs (e.g. wallstreetcn-hot,cls-hot); all 11 " +
+              "platforms are fetched when omitted",
           },
           date: {
             type: "string",
-            description: "写入日期 YYYY-MM-DD(默认今天)",
+            description: "Write date YYYY-MM-DD (defaults to today)",
           },
         },
         required: [],
@@ -461,7 +480,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         markUpdatePending(["news"]);
         return ok({
           message:
-            "已写入 .update-pending 标记。下次在 tinyclaw 中调用 search_store 时将自动重建 news 索引。",
+            "已写入 .update-pending 标记，tinyclaw 主进程的 news-watcher 会自动重建 news 索引（无需再调用 search_store）。",
         });
       }
 

@@ -26,44 +26,52 @@ registerTool({
     function: {
       name: "agent_fork",
       description:
-        "后台 fork 一个 Slave agent 异步执行任务(继承 Master 最近上下文),立即返回 slave_id 不阻塞。\n" +
-        "result_mode: inject(默认,完成后自动注入 Master 并通知用户)/ wait(静默,需 agent_wait 取结果)。" +
-        "详细编排说明见 skill agent-orchestration",
+        "Fork a Slave agent in the background to run a task asynchronously (inheriting " +
+        "the Master's recent context); returns slave_id immediately without blocking.\n" +
+        "result_mode: inject (default: auto-inject into the Master on completion and " +
+        "notify the user) / wait (silent, fetch the result via agent_wait). " +
+        "See skill agent-orchestration for full orchestration details",
       parameters: {
         type: "object",
         properties: {
           task: {
             type: "string",
-            description: "Slave 需要完成的具体任务描述（清晰、可独立执行）",
+            description:
+              "Concrete task for the Slave to complete (clear and independently " +
+              "executable)",
           },
           context_rounds: {
             type: "number",
             description:
-              "继承轮数**上限**（与 context_mode 取更严格者）。默认 10，最大 30。" +
-              "预算不足时会自动少给；不要指望靠调大它塞进全部历史",
+              "**Upper bound** on inherited rounds (the stricter of this and context_mode). " +
+              "Default 10, max 30. When the budget is short, fewer rounds are given " +
+              "automatically; do not expect raising it to fit the whole history",
           },
           context_mode: {
             type: "string",
             enum: ["task-only", "minimal", "standard", "full"],
             description:
-              "继承模式（默认取 config 的 memory.slaveContextMode）：" +
-              "task-only=完全不继承（最省，system prompt 里的 MEM.md 仍在）；" +
-              "minimal=Master 摘要 + 最近 ≤6 轮；" +
-              "standard=摘要 + 预算内尽可能多的近期轮次；" +
-              "full=同上但不设轮数上限（仍受预算约束）。" +
-              "注意：继承提供的是「近因」（最近聊了什么），远期由 MEM.md / ACTIVE.md / 语义检索承担，" +
-              "背景要求请写进 task",
+              "Inheritance mode (defaults to memory.slaveContextMode from config): " +
+              "task-only = inherit nothing (cheapest; MEM.md in the system prompt stays); " +
+              "minimal = Master summary + at most the 6 most recent rounds; " +
+              "standard = summary + as many recent rounds as the budget allows; " +
+              "full = same as standard but with no round cap (still limited by the budget). " +
+              "Note: inheritance covers recency (what was just discussed); long-term " +
+              "context comes from MEM.md / ACTIVE.md / semantic retrieval; put background " +
+              "needs in task",
           },
           progress_interval_secs: {
             type: "number",
             description:
-              "进度汇报间隔(秒,30~3600);不设置则仅完成时通知",
+              "Progress reporting interval in seconds (30-3600); " +
+              "if not set, notify only when the task completes",
           },
           result_mode: {
             type: "string",
             enum: ["inject", "wait"],
             description:
-              "inject(默认):完成自动注入 Master;wait:静默,用 agent_wait 取结果",
+              "inject (default): auto-inject into the Master on completion; " +
+              "wait: silent, fetch the result with agent_wait",
           },
         },
         required: ["task"],
@@ -145,18 +153,19 @@ registerTool({
     function: {
       name: "agent_status",
       description:
-        "查询后台 Slave 运行状态/进度;不传 slave_id 列出全部(status_filter 过滤),运行中排最前",
+        "Query the status/progress of background Slaves; omit slave_id to list all " +
+        "(filtered by status_filter), with running ones first",
       parameters: {
         type: "object",
         properties: {
           slave_id: {
             type: "string",
-            description: "要查询的 Slave ID（agent_fork 返回的 slave_id）",
+            description: "Slave ID to query (the slave_id returned by agent_fork)",
           },
           status_filter: {
             type: "string",
             enum: ["running", "done", "error", "aborted"],
-            description: "只显示指定状态的 Slave（不传则显示全部）",
+            description: "Only show Slaves with this status (omit to show all)",
           },
         },
       },
@@ -204,20 +213,24 @@ registerTool({
     function: {
       name: "agent_wait",
       description:
-        "等待后台 Slave 完成并返回结果。传 slave_id 等单个;不传等当前会话全部。\n" +
-        "timeout_secs 默认 300,超时标记 error。inject 模式已完成则立即返回。详细见 skill agent-orchestration",
+        "Wait for background Slaves to finish and return results. Pass slave_id to wait " +
+        "for one; omit it to wait for all Slaves in the current session.\n" +
+        "timeout_secs defaults to 300; on timeout the Slave is marked error. In inject " +
+        "mode an already-finished Slave returns immediately. See skill agent-orchestration",
       parameters: {
         type: "object",
         properties: {
           slave_id: {
             type: "string",
             description:
-              "要等待的单个 Slave ID（agent_fork 返回的 slave_id）。不传则等待当前会话的所有 Slave。",
+              "Single Slave ID to wait for (the slave_id returned by agent_fork). " +
+              "Omit to wait for all Slaves in the current session.",
           },
           timeout_secs: {
             type: "number",
             description:
-              "等待超时秒数（默认 300 秒）。超时后将未完成的 Slave 标记为 error 并返回。",
+              "Wait timeout in seconds (default 300). On timeout, unfinished Slaves " +
+              "are marked error and returned.",
           },
         },
       },
@@ -280,25 +293,29 @@ registerTool({
     function: {
       name: "agent_trace",
       description:
-        "检索已归档的 Slave 执行轨迹（子 agent 的完整过程留档）。\n" +
-        "不传 slave_id：列出最近归档的轨迹（含任务、状态、工具、归档目录）。\n" +
-        "传 slave_id：返回该 Slave 的最终结果全文 + 轨迹文件路径（轨迹 JSONL 含每轮工具调用与结果）。\n" +
-        "归档目录形如 ~/.tinyclaw/slaves/YYYY-MM/YYYY-MM-DD-<slaveId>/。",
+        "Search archived Slave execution traces (the full record of a sub-agent's run).\n" +
+        "Without slave_id: list recent archived traces (task, status, tools, directory).\n" +
+        "With slave_id: returns the full final result plus the trace file path " +
+        "(the trace JSONL contains every round's tool calls and results).\n" +
+        "Archive directories look like ~/.tinyclaw/slaves/YYYY-MM/YYYY-MM-DD-<slaveId>/.",
       parameters: {
         type: "object",
         properties: {
           slave_id: {
             type: "string",
-            description: "要检索的 Slave ID（也接受归档目录名，如 2026-09-10-a1b2c3d4）",
+            description:
+              "Slave ID to search (also accepts an archive directory name, " +
+              "e.g. 2026-09-10-a1b2c3d4)",
           },
           limit: {
             type: "number",
-            description: "不传 slave_id 时，列出最近多少条（默认 20）",
+            description: "When slave_id is omitted, how many recent entries to list (default 20)",
           },
           full: {
             type: "boolean",
             description:
-              "传 slave_id 时是否一并返回轨迹 JSONL 全文（默认 false，只返回路径；轨迹可能很长）",
+              "With slave_id, whether to also return the full trace JSONL " +
+              "(default false: only the path; traces may be long)",
           },
         },
       },
@@ -360,13 +377,13 @@ registerTool({
     type: "function",
     function: {
       name: "agent_abort",
-      description: "软中断一个正在运行的 Slave agent。",
+      description: "Soft-abort a running Slave agent.",
       parameters: {
         type: "object",
         properties: {
           slave_id: {
             type: "string",
-            description: "要中断的 Slave ID",
+            description: "Slave ID to abort",
           },
         },
         required: ["slave_id"],

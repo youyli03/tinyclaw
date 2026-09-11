@@ -275,27 +275,34 @@ registerTool({
     function: {
       name: "exec_shell",
       description:
-        `在本机执行 shell 命令。默认超时 ${DEFAULT_EXEC_TIMEOUT_SEC} 秒；` +
-        "对于 build/test/install/长网络请求等长任务，必须显式传入更大的 timeout_sec。" +
-        "执行环境由 [sandbox] 配置决定：开启沙箱时命令跑在 bubblewrap 内（密钥文件不可见、未绑定目录只读），" +
-        "此时 ssh / git push 之类需要 ~/.ssh 的操作会失败 —— 若确实必要，可传 elevate: true 请求在沙箱外执行一次" +
-        "（需用户批准；cron / loop 等无人值守场景一律不允许）。",
+        `Execute a shell command locally. Default timeout ${DEFAULT_EXEC_TIMEOUT_SEC} seconds; ` +
+        "for long-running work such as build, test, install or slow network calls, pass a larger " +
+        "timeout_sec explicitly. The execution environment follows the [sandbox] config: " +
+        "when the sandbox is enabled the command runs inside bubblewrap (secret files hidden, " +
+        "unbound directories read-only), so operations needing ~/.ssh (ssh / git push) fail; " +
+        "if truly necessary, pass elevate: true to request one execution outside the sandbox " +
+        "(requires user approval, never allowed in unattended scenarios such as cron / loop).",
       parameters: {
         type: "object",
         properties: {
-          command: { type: "string", description: "要执行的 bash 命令" },
+          command: { type: "string", description: "Bash command to execute" },
           elevate: {
             type: "boolean",
             description:
-              "是否请求在**沙箱外**（宿主机）执行（默认 false）。只在沙箱挡住你必须做的事时使用，例如需要 ~/.ssh 的 " +
-              "ssh / git push、需要写沙箱外目录、需要 systemctl。会先向用户请求批准并获得一次性令牌（仅对这条命令、" +
-              "默认 120 秒有效）；用户拒绝或无人值守（cron/loop）时会被直接拒绝，此时应改用沙箱内的替代方案。",
+              "Request execution **outside the sandbox** (on the host), default false. " +
+              "Use it only when the sandbox blocks what you must do, for example ssh / git " +
+              "push that need ~/.ssh, writing outside the sandbox, or systemctl. It asks " +
+              "for user approval, then issues a one-time token (valid for this command " +
+              "only, 120 seconds by default); if the user refuses, or the run is " +
+              "unattended (cron/loop), it is denied outright and you should use an " +
+              "in-sandbox alternative instead.",
           },
           timeout_sec: {
             type: "integer",
             description:
-              `命令超时时间（秒，可选，默认 ${DEFAULT_EXEC_TIMEOUT_SEC}）。` +
-              "预计超过 1 分钟的命令必须显式设置更大的值，例如构建、测试、安装依赖。",
+              `Command timeout in seconds (optional, default ${DEFAULT_EXEC_TIMEOUT_SEC}). ` +
+              "Commands expected to take over 1 minute must set a larger value explicitly, " +
+              "for example build, test or dependency installation.",
           },
         },
         required: ["command"],
@@ -383,12 +390,12 @@ registerTool({
     type: "function",
     function: {
       name: "write_file",
-      description: "写入文件内容（需要 MFA 确认）。",
+      description: "Write content to a file (requires MFA confirmation).",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "文件绝对或相对路径" },
-          content: { type: "string", description: "文件内容" },
+          path: { type: "string", description: "Absolute or relative file path" },
+          content: { type: "string", description: "File content" },
         },
         required: ["path", "content"],
       },
@@ -431,11 +438,11 @@ registerTool({
     type: "function",
     function: {
       name: "delete_file",
-      description: "删除文件或目录（需要 MFA 确认）。",
+      description: "Delete a file or directory (requires MFA confirmation).",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "要删除的文件或目录路径" },
+          path: { type: "string", description: "Path of the file or directory to delete" },
         },
         required: ["path"],
       },
@@ -484,17 +491,24 @@ registerTool({
     function: {
       name: "edit_file",
       description:
-        "精确替换文件中的一段文本(需要 MFA 确认)。old_str 须与文件内容匹配且唯一出现;支持全角/半角标点、省略号(U+2026)、首尾空白自动容错,未匹配时返回差异诊断(含行号与 Unicode 码点)。适合局部修改,避免 write_file 覆写整个文件。",
+        "Replace one exact text segment in a file (requires MFA confirmation). old_str must " +
+        "match the file content and appear exactly once; full-width/half-width punctuation, " +
+        "ellipsis (U+2026) and leading/trailing whitespace are tolerated automatically, " +
+        "and an unmatched old_str returns a diff diagnosis (with line numbers and Unicode " +
+        "code points). Use it for local edits instead of overwriting the whole file with " +
+        "write_file.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "文件路径" },
+          path: { type: "string", description: "File path" },
           old_str: {
             type: "string",
             description:
-              "要被替换的原始文本,必须与文件内容完全匹配(含空格、换行),且在文件中唯一出现;全角/半角标点差异可自动容错",
+              "Original text to be replaced; it must match the file content exactly (including " +
+              "spaces and newlines) and appear exactly once in the file. Full-width/half-width " +
+              "punctuation differences are tolerated automatically",
           },
-          new_str: { type: "string", description: "替换后的新文本" },
+          new_str: { type: "string", description: "New text to replace it with" },
         },
         required: ["path", "old_str", "new_str"],
       },
@@ -594,19 +608,22 @@ registerTool({
     function: {
       name: "read_file",
       description:
-        "读取文件内容（不超过 50KB）。支持 PDF(.pdf)、Word(.docx)、Excel(.xlsx/.xls) 及普通文本文件，" +
-        "自动提取纯文本。可通过 offset/length 参数分段读取大文件。",
+        "Read file content (up to 50KB). Supports PDF (.pdf), Word (.docx), Excel (.xlsx/.xls) " +
+        "and plain text files, extracting text automatically. Use offset/length to read large " +
+        "files in chunks.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "文件路径" },
+          path: { type: "string", description: "File path" },
           offset: {
             type: "integer",
-            description: "字符偏移，从第几个字符开始读取（默认 0）",
+            description: "Character offset to start reading from (default 0)",
           },
           length: {
             type: "integer",
-            description: "最大读取字符数（默认 50000）。对于大文件可减小此值分段读取",
+            description:
+              "Maximum characters to read (default 50000). For large files, lower this " +
+              "value to read in chunks",
           },
         },
         required: ["path"],
@@ -625,16 +642,21 @@ registerTool({
     function: {
       name: "read_image",
       description:
-        "读取本地图片文件，返回 base64 data URL，供视觉模型分析图片内容（上限 8 MB）。" +
-        "当历史消息中的图片被丢弃（显示为 [历史图片: /path...]）时，可调用此 tool 重新加载查看。",
+        "Read a local image file and return a base64 data URL for a vision model to analyze " +
+        "(limit 8 MB). When an image in earlier messages was dropped (shown as " +
+        "`[历史图片: /path...]`), call this tool to load and view it again.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "图片的绝对路径（支持 png/jpg/webp/gif）" },
+          path: {
+            type: "string",
+            description: "Absolute path to the image (png/jpg/webp/gif supported)",
+          },
           prompt: {
             type: "string",
             description:
-              "可选的视觉模型提问指令,会拼接到默认描述 prompt 前面。例如:请重点关注杯子里的液体颜色",
+              "Optional question for the vision model, prepended to the default description " +
+              "prompt, e.g. focus on the color of the liquid in the cup",
           },
         },
         required: ["path"],

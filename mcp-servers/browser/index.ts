@@ -65,7 +65,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "status",
-      description: "返回当前浏览器会话状态（模式、是否连接、当前 URL 和标题）",
+      description:
+        "Return the current browser session status (mode, connection state, current URL and title)",
       inputSchema: {
         type: "object",
         properties: {},
@@ -73,15 +74,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "navigate",
-      description: "导航到指定 URL，返回最终 URL 和页面标题",
+      description: "Navigate to the given URL and return the final URL and page title",
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "目标 URL（需包含 https:// 等协议前缀）" },
+          url: {
+            type: "string",
+            description: "Target URL (must include a protocol prefix such as https://)",
+          },
           waitUntil: {
             type: "string",
             enum: ["load", "domcontentloaded", "networkidle", "commit"],
-            description: "等待条件，默认 domcontentloaded",
+            description: "Wait condition, defaults to domcontentloaded",
           },
         },
         required: ["url"],
@@ -89,103 +93,131 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "screenshot",
-      description: "对当前页面截图，保存到本地文件并返回绝对路径",
+      description:
+        "Take a screenshot of the current page, save it to a local file and return its path",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "自定义保存路径（绝对路径），不填则自动生成文件名" },
-          fullPage: { type: "boolean", description: "是否截取完整页面（含滚动部分），默认 false" },
+          path: {
+            type: "string",
+            description: "Custom save path (absolute); a filename is generated when omitted",
+          },
+          fullPage: {
+            type: "boolean",
+            description:
+              "Whether to capture the full page including the scrolled-out part, default false",
+          },
         },
       },
     },
     {
       name: "get_text",
-      description: "提取当前页面或指定元素的可见文本内容",
+      description: "Extract the visible text of the current page or of a specified element",
       inputSchema: {
         type: "object",
         properties: {
           selector: {
             type: "string",
-            description: "CSS 选择器，不填则依次尝试 article、#js_content、body",
+            description:
+              "CSS selector; when omitted, article, #js_content and body are tried in order",
           },
         },
       },
     },
     {
       name: "click",
-      description: "点击符合 CSS 选择器的元素",
+      description: "Click the element matching the CSS selector",
       inputSchema: {
         type: "object",
         properties: {
-          selector: { type: "string", description: "CSS 选择器（如 button.submit、a[href='/login']）" },
+          selector: {
+            type: "string",
+            description: "CSS selector (e.g. button.submit, a[href='/login'])",
+          },
         },
         required: ["selector"],
       },
     },
     {
       name: "type",
-      description: "向指定输入框填入文本",
+      description: "Fill text into the given input field",
       inputSchema: {
         type: "object",
         properties: {
-          selector: { type: "string", description: "CSS 选择器（输入框）" },
-          text: { type: "string", description: "要输入的文本" },
-          clear: { type: "boolean", description: "输入前是否先清空，默认 true" },
+          selector: { type: "string", description: "CSS selector (the input field)" },
+          text: { type: "string", description: "Text to enter" },
+          clear: { type: "boolean", description: "Whether to clear the field first, default true" },
         },
         required: ["selector", "text"],
       },
     },
     {
       name: "scroll",
-      description: "滚动整个页面或指定元素",
+      description: "Scroll the whole page or a specified element",
       inputSchema: {
         type: "object",
         properties: {
           direction: {
             type: "string",
             enum: ["down", "up", "left", "right"],
-            description: "滚动方向，默认 down",
+            description: "Scroll direction, defaults to down",
           },
-          px: { type: "number", description: "滚动像素数，默认 500" },
+          px: { type: "number", description: "Number of pixels to scroll, defaults to 500" },
           selector: {
             type: "string",
-            description: "要滚动的元素选择器，不填则滚动整个页面",
+            description:
+              "Selector of the element to scroll; the whole page is scrolled when omitted",
           },
         },
       },
     },
     {
       name: "evaluate",
-      description: "在当前页面上下文中执行 JavaScript，返回执行结果（JSON 序列化）",
+      description:
+        "Execute JavaScript in the current page context and return the result (JSON-serialized)",
       inputSchema: {
         type: "object",
         properties: {
-          code: { type: "string", description: "要执行的 JS 代码（表达式或 IIFE）" },
+          code: {
+            type: "string",
+            description: "JavaScript code to execute (an expression or an IIFE)",
+          },
         },
         required: ["code"],
       },
     },
     {
       name: "use_cdp",
-      description: "切换到 CDP 模式，连接到本机已启动的 Chromium（需先运行 openclaw-browser-session.sh start）",
+      description:
+        "Switch to CDP mode and connect to a Chromium instance already running on this " +
+        "machine (run openclaw-browser-session.sh start first)",
       inputSchema: {
         type: "object",
         properties: {
-          cdpPort: { type: "number", description: "CDP 调试端口，默认 9222" },
+          cdpPort: { type: "number", description: "CDP debugging port, defaults to 9222" },
         },
       },
     },
     {
       name: "attach_openclaw",
       description:
-        "激活 OpenClaw 浏览器扩展的 relay 连接（需先 use_cdp 或已处于 CDP 模式）。" +
-        "自动读取 ~/.openclaw/openclaw.json 中的 gateway token，也可手动传入。",
+        "Activate the relay connection of the OpenClaw browser extension (requires use_cdp " +
+        "first, or an already active CDP mode). " +
+        "The gateway token is read from ~/.openclaw/openclaw.json automatically and can " +
+        "also be passed explicitly.",
       inputSchema: {
         type: "object",
         properties: {
-          cdpPort: { type: "number", description: "CDP 端口，默认 9222（未处于 CDP 模式时自动切换）" },
-          relayPort: { type: "number", description: "OpenClaw relay 端口，默认 18792" },
-          gatewayToken: { type: "string", description: "Gateway auth token，不填则从 openclaw.json 读取" },
+          cdpPort: {
+            type: "number",
+            description:
+              "CDP port, defaults to 9222 (switches mode automatically when not in CDP)",
+          },
+          relayPort: { type: "number", description: "OpenClaw relay port, defaults to 18792" },
+          gatewayToken: {
+            type: "string",
+            description: "Gateway auth token; read from openclaw.json when omitted",
+          },
         },
       },
     },

@@ -158,24 +158,27 @@ const RECALL_INJECT_MAX_CHARS = 1_500;
  */
 const RECALL_TIMEOUT_MS = 3_000;
 
-const SLAVE_SYSTEM_PROMPT = `## ⚠️ 你正在以【Sub-Agent / Slave】身份运行（后台异步执行）
+const SLAVE_SYSTEM_PROMPT = `## ⚠️ You are running as a【Sub-Agent / Slave】(background, asynchronous)
 
-以下规则必须严格遵守：
+The following rules are mandatory:
 
-### 执行规范
-1. **直接执行**：消息中包含你的具体任务，立即执行，不要询问用户确认或追问细节
-2. **无人值守**：没有用户在线，所有决策须自主完成，不依赖人工介入
-3. **简洁输出**：仅输出最终结果和关键信息，不要描述执行步骤
-4. **禁止嵌套 fork**：不得调用 agent_fork 工具（禁止嵌套 Slave）
+### Execution rules
+1. **Act now**: the message contains your concrete task — execute it immediately; do not ask the
+   user for confirmation and do not chase extra details
+2. **Unattended**: no user is online; decide everything yourself, never depend on a human
+3. **Terse output**: report only the final result and key facts, do not narrate the steps
+4. **No nested fork**: you must not call the agent_fork tool (nested Slaves are forbidden)
 
-### 上下文说明
-- 若有"Master 对话历史摘要"system 消息，是 Master 历史对话的压缩摘要（只读背景）
-- "## 以下为 Master 的历史对话"之后的 user / assistant / tool / system 消息，
-  是 Master 最近若干轮的完整对话记录（只读），**包含工具调用与其返回结果**
-- **最后一条 user 消息是你的具体任务**，请直接执行
+### About your context
+- If a "Master conversation summary" system message is present, it is a compressed summary of the
+  Master's earlier conversation (read-only background)
+- The user / assistant / tool / system messages after the "## 以下为 Master 的历史对话" header are the
+  Master's complete recent conversation (read-only) and **include tool calls with their results**
+- **The last user message is your concrete task** — execute it directly
 
-### 轨迹说明
-- 你的完整执行轨迹（含每次工具调用与结果）会被归档留档，可被 Master 通过 agent_trace 检索`;
+### About your trajectory
+- Your full execution trajectory (every tool call and its result) is archived and can be retrieved
+  by the Master via agent_trace`;
 
 // ── 上下文继承（两条 fork 路径共用） ──────────────────────────────────────────
 
@@ -341,7 +344,8 @@ function buildSlaveContext(
     );
     if (!covered) {
       slaveSession.addSystemMessage(
-        `## Master 对话历史摘要（本会话更早部分的压缩）\n\n${masterSession.lastSummary}`
+        `## Master conversation summary (compressed earlier part of this session)\n\n` +
+          `${masterSession.lastSummary}`
       );
       summaryInjected = true;
     }
@@ -522,11 +526,13 @@ class SlaveManager {
 
     // Append a brief continuation hint so the Slave knows it's running headless
     slaveSession.addSystemMessage(
-      "## ⚠️ Sub-Agent 后台续跑提示\n\n" +
-        "你是一个在后台继续执行的 Sub-Agent（Slave）。" +
-        "上方对话历史是原 Master 会话的完整上下文（含已执行工具的结果）。\n" +
-        "请直接从当前状态继续完成任务，无需重复已完成的步骤，无用户在线，自主决策。\n" +
-        "禁止调用 agent_fork 工具（不得嵌套 fork）。"
+      "## ⚠️ Sub-Agent background continuation\n\n" +
+        "You are a Sub-Agent (Slave) continuing in the background. " +
+        "The conversation above is the original Master session's full context, including the " +
+        "results of tools that were already executed.\n" +
+        "Resume the task from the current state; do not repeat steps that are already done. " +
+        "No user is online, so decide autonomously.\n" +
+        "Do not call the agent_fork tool (nested fork is forbidden)."
     );
 
     log.info(
@@ -786,10 +792,10 @@ class SlaveManager {
         if (raw) {
           const truncated =
             raw.length > ACTIVE_INJECT_MAX_CHARS
-              ? `${raw.slice(0, ACTIVE_INJECT_MAX_CHARS)}\n…（ACTIVE.md 超长已截断）`
+              ? `${raw.slice(0, ACTIVE_INJECT_MAX_CHARS)}\n… (ACTIVE.md truncated: too long)`
               : raw;
           session.addSystemMessage(
-            `## 主人近期活跃上下文（ACTIVE.md）\n\n${truncated}`
+            `## Master's recent active context (ACTIVE.md)\n\n${truncated}`
           );
           activeInjected = true;
         }
@@ -812,7 +818,7 @@ class SlaveManager {
       if (hit && hit.trim()) {
         const truncated =
           hit.length > RECALL_INJECT_MAX_CHARS ? `${hit.slice(0, RECALL_INJECT_MAX_CHARS)}…` : hit;
-        session.addSystemMessage(`## 相关历史记忆（语义检索）\n\n${truncated}`);
+        session.addSystemMessage(`## Related past memory (semantic retrieval)\n\n${truncated}`);
         recallChars = truncated.length;
       }
     } catch (err) {

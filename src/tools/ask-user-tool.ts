@@ -35,34 +35,36 @@ registerTool({
     function: {
       name: "ask_user",
       description:
-        "遇到需求模糊、存在多个合理方向、或需要用户决策时调用此工具向用户提问。" +
-        "可提供 2～5 个预设选项（含推荐标记），同时允许用户自由输入。" +
-        "Chat 和 Code 模式下均可使用。不要用此工具询问可以通过读取文件/执行命令自行确认的事项。",
+        "Use this when the request is ambiguous, several reasonable directions exist, or the " +
+        "user must decide. Offers 2-5 preset options (with a recommended flag) and still allows " +
+        "free-form input. Works in both Chat and Code mode. Do not use it to ask about anything " +
+        "you can confirm yourself by reading files or running commands.",
       parameters: {
         type: "object" as const,
         properties: {
           question: {
             type: "string",
-            description: "展示给用户的问题文本，简洁明确。",
+            description: "Question text shown to the user, short and unambiguous.",
           },
           options: {
             type: "array",
             description:
-              "预设选项列表（可选，建议 2～5 项）。每项包含 label、可选的 description 和 recommended 标记。",
+              "Preset option list (optional, 2-5 items recommended). Each item has a label, an " +
+              "optional description, and a recommended flag.",
             items: {
               type: "object",
               properties: {
                 label: {
                   type: "string",
-                  description: "选项标签，简短明确（例：直接修改现有文件）。",
+                  description: "Option label, short and clear (e.g. edit the existing file).",
                 },
                 description: {
                   type: "string",
-                  description: "选项补充说明（可选，例：保留旧文件备份）。",
+                  description: "Extra explanation for the option (optional, e.g. keep a backup).",
                 },
                 recommended: {
                   type: "boolean",
-                  description: "是否为推荐选项，默认 false。",
+                  description: "Whether this is the recommended option. Default false.",
                 },
               },
               required: ["label"],
@@ -70,7 +72,9 @@ registerTool({
           },
           allow_freeform: {
             type: "boolean",
-            description: "是否允许用户自由输入（默认 true）。设为 false 时用户只能选预设选项。",
+            description:
+              "Whether to allow free-form user input (default true). When false, the user can " +
+              "only pick one of the preset options.",
           },
         },
         required: ["question"],

@@ -36,19 +36,27 @@ registerTool({
     function: {
       name: "skill_run",
       description:
-        "执行一个已注册 skill:fork sub-agent 注入 skill 文档作为指南,同步等待结果。\n" +
-        "用户请求匹配可用技能时优先调用;长耗时 skill 先告知用户。async=true 后台执行完自动通知",
+        "Run a registered skill: forks a sub-agent with the skill doc injected as a guide " +
+        "and waits for the result synchronously.\n" +
+        "Prefer this when a user request matches an available skill; for long-running " +
+        "skills, tell the user first. async=true runs in the background and notifies " +
+        "on completion",
       parameters: {
         type: "object",
         properties: {
           skill_name: {
             type: "string",
             description:
-              "skill 名称(与 SKILLS.md 中 name 一致,如 stock-daily-report)",
+              "Skill name (must match name in SKILLS.md, e.g. stock-daily-report)",
           },
           args: {
             type: "string",
-            description: "传给 skill 的附加参数或说明（可选）",
+            description: "Extra arguments or notes passed to the skill (optional)",
+          },
+          async: {
+            type: "boolean",
+            description:
+              "true = run in the background and notify on completion instead of waiting (default false)",
           },
         },
         required: ["skill_name"],
@@ -90,10 +98,10 @@ registerTool({
 
     // 3. 构建 sub-agent task
     const task = args
-      ? `执行以下技能：${skillName}\n\n附加说明：${args}`
-      : `执行以下技能：${skillName}`;
+      ? `Run the following skill: ${skillName}\n\nExtra notes: ${args}`
+      : `Run the following skill: ${skillName}`;
 
-    const systemPromptSuffix = `## 当前执行的 Skill 文档\n\n${skillDoc}`;
+    const systemPromptSuffix = `## Skill document being executed\n\n${skillDoc}`;
 
     // 4. fork sub-agent 并同步等待（复用 masterSession 的 agentId，使用空 context window）
     const slaveSession = new Session(`skill:${skillName}:${Date.now()}`, {

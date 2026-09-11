@@ -20,33 +20,35 @@ registerTool({
     function: {
       name: "db_write",
       description:
-        "将一条业务指标数据写入 Dashboard 本地数据库（~/.tinyclaw/dashboard.db）。" +
-        "用于记录随时间变化的数值，如电费余额、高级请求次数、自定义指标等。" +
-        "数据写入后可在 Dashboard 概览页和指标页以折线图/柱状图展示。\n\n" +
-        "category 建议值：electric（电费）、copilot（AI请求）、custom（自定义）\n" +
-        "key 建议值：balance（余额）、daily_count（日用量）、total_count（累计）",
+        "Write one business metric into the Dashboard local database (~/.tinyclaw/dashboard.db). " +
+        "Use it to record values that change over time, such as an electricity balance or the " +
+        "number of premium requests. Written data shows up as a line or bar chart on the " +
+        "Dashboard overview and metrics pages.\n\n" +
+        "Category suggestions: electric (electricity), copilot (AI requests), custom (custom)\n" +
+        "Key suggestions: balance (remaining balance), daily_count (daily usage), " +
+        "total_count (cumulative total)",
       parameters: {
         type: "object",
         properties: {
           category: {
             type: "string",
-            description: "数据分类，如 electric / copilot / custom",
+            description: "Data category, e.g. electric / copilot / custom",
           },
           key: {
             type: "string",
-            description: "指标键名，如 balance / daily_count / total_count",
+            description: "Metric key name, e.g. balance / daily_count / total_count",
           },
           value: {
             type: "number",
-            description: "指标数值",
+            description: "Metric value",
           },
           note: {
             type: "string",
-            description: "可选备注，如充值原因、数据来源等",
+            description: "Optional note, e.g. top-up reason or data source",
           },
           ts: {
             type: "number",
-            description: "可选时间戳（Unix 秒），默认为当前时间",
+            description: "Optional timestamp (Unix seconds), defaults to the current time",
           },
         },
         required: ["category", "key", "value"],

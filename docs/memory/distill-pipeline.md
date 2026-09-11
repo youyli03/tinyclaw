@@ -149,9 +149,11 @@ Code 模式在长期会话中会积累大量上下文（工具调用、代码片
 蒸馏 prompt 末尾附加：
 
 ```
-⚠️ 以下环境 key 已存在于 ENV.md，请勿重复输出：
+⚠️ The following environment keys already exist in ENV.md — do not output them again:
   projects::tinyclaw, projects::pin-hunter-bot, tools::aria2c, services::MCSManager
 ```
+
+（prompt 正文为英文，见 `AGENTS.md` §6；上面第二行是注入的 key 清单数据。）
 
 LLM 看到此清单后不会浪费 output token 重复输出已存在的 key，
 token 消耗极小（几十个 key 名）。
@@ -193,10 +195,17 @@ token 消耗极小（几十个 key 名）。
 
 ### 4.3 跨项目通用性约束
 
-蒸馏 prompt 中明确：
+蒸馏 prompt 中明确（原文英文，见 `src/memory/summarizer.ts` 的 `buildCompressDistillPrompt`）：
 
 ```
-⚠️ behavior_corrections 必须是跨项目通用的行为约束，不要记录专属于当前项目的规则：
+⚠️ behavior_corrections constraint: record only cross-project behavior corrections (rules that apply to every project).
+Do not record rules that belong to a single project (such as "in tinyclaw do not edit YAML"). Leave the array empty
+if there is nothing new.
+```
+
+判定示例（属文档说明，不在 prompt 里）：
+
+```
   ✅ "排查网络问题前先确认目标机器"（通用）
   ✅ "不要自行执行 force push，须先告知风险"（通用）
   ❌ "tinyclaw 中不要直接改 YAML 配置"（仅适用于 tinyclaw，属于 NOTES.md）
@@ -211,7 +220,7 @@ token 消耗极小（几十个 key 名）。
 已存在清单注入示例：
 
 ```
-⚠️ 以下行为约束已记录在 feedback.md，请勿重复输出：
+⚠️ The following behavior constraints are already recorded in feedback.md — do not output them again:
   - 后续在 Plan 模式下需要提交方案时一定要调用 exit_plan_mode
   - 排查网络问题前先确认目标机器是 rk3588 还是 Windows
 ```

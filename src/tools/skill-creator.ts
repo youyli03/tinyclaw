@@ -5,75 +5,81 @@ import { registerTool } from "./registry.js";
 
 const AGENTS_ROOT = path.join(os.homedir(), ".tinyclaw", "agents");
 
-const SKILL_GUIDE = `# tinyclaw Skill 创建指南
+const SKILL_GUIDE = `# tinyclaw Skill Authoring Guide
 
-## Skill 是什么
+## What a Skill is
 
-Skill 是封装了特定领域知识和工作流程的文档，注册到 Agent 后在每次对话初始化时加载到上下文。
-它让 Agent 无需重新摸索就能执行特定任务。
+A Skill is a document that packages domain knowledge and a workflow. Once registered to an Agent
+it is loaded into context every time a conversation is initialized, so the Agent can perform that
+task without exploring from scratch.
 
-## 目录结构
+## Directory layout
 
-每个 Skill 是一个目录，位于：
+Each Skill is a directory rooted at:
 
     ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/
 
-其中主文档文件名任意（建议 \`SKILL.md\` 或 \`README.md\`），路径在 SKILLS.md 中显式声明。
+The main document may use any file name (\`SKILL.md\` or \`README.md\` are recommended); its path is
+declared explicitly in SKILLS.md.
 
-可选子目录：
-- \`scripts/\`    — 可被 exec_shell 调用的脚本
-- \`references/\` — 详细参考文档（篇幅较长时从主文档拆出）
-- \`assets/\`     — 模板、样例文件等
+Optional subdirectories:
+- \`scripts/\`    — scripts that can be invoked through exec_shell
+- \`references/\` — long-form reference material split out of the main document
+- \`assets/\`     — templates, sample files, and similar
 
-## SKILL.md 格式
+## SKILL.md format
 
-文件必须以 YAML frontmatter 开头（name 和 description 为必填）：
+The file must start with YAML frontmatter (\`name\` and \`description\` are required):
 
 \`\`\`markdown
 ---
 name: my-skill
-description: 一句话说明此 skill 的用途（≤1024 字符，不含 < >）
+description: One sentence describing what this skill is for (<=1024 chars, no < >)
 ---
 
 # My Skill
 
-...正文内容...
+...body content...
 \`\`\`
 
-**名称规范**：小写字母、数字、连字符，不以连字符开头/结尾，不含连续连字符，≤64 字符。
+**Naming rules**: lowercase letters, digits and hyphens only; must not start or end with a hyphen;
+no consecutive hyphens; <=64 characters.
 
-## SKILLS.md 格式
+## SKILLS.md format
 
-Agent 的技能目录文件位于 \`~/.tinyclaw/agents/<agent-id>/SKILLS.md\`，每行一条：
+The Agent's skill registry lives at \`~/.tinyclaw/agents/<agent-id>/SKILLS.md\`, one entry per line:
 
 \`\`\`
-- <skill-name>: <skill主文档绝对路径> — <简短描述>
+- <skill-name>: <absolute path to the skill main document> — <short description>
 \`\`\`
 
-示例：
+Example:
 \`\`\`
 - weather-reporter: /home/user/.tinyclaw/agents/default/skills/weather-reporter/SKILL.md — 查询并格式化天气报告
 - sql-helper: /home/user/.tinyclaw/agents/default/skills/sql-helper/README.md — 生成和优化 SQL 查询
 \`\`\`
 
-## 创建步骤
+The text after the em dash is the description shown to the user in the registry — keep it in the
+user's language.
 
-### 1. 确定 agent-id
+## Creation steps
 
-如果用户没有指定，默认使用 \`default\`。
+### 1. Determine the agent-id
 
-### 2. 创建 skill 目录和主文档
+If the user did not specify one, use \`default\`.
 
-使用 \`write_file\` 创建主文档。路径：
+### 2. Create the skill directory and main document
+
+Use \`write_file\` to create the main document at:
 
     ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/SKILL.md
 
-示例内容（替换 TODO 部分）：
+Sample content (replace every TODO / placeholder):
 
 \`\`\`markdown
 ---
 name: <skill-name>
-description: <一句话描述>
+description: <one-sentence description, in the user's language>
 ---
 
 # <Skill Title>
@@ -91,39 +97,46 @@ description: <一句话描述>
 <容易出错的地方、前置条件、特殊情况处理>
 \`\`\`
 
-### 3. 注册到 SKILLS.md
+⚠️ Write the whole skill document in the user's language (the headings above are Chinese because
+this sample targets a Chinese user; translate them when the user speaks another language).
+The frontmatter keys \`name\` and \`description\` stay byte-identical. Replace the \`<...>\` markers
+with real content — never leave literal placeholders such as \`<...>\` in the written file.
 
-用 \`exec_shell\` 追加一行到 \`~/.tinyclaw/agents/<agent-id>/SKILLS.md\`：
+### 3. Register it in SKILLS.md
+
+Append one line to \`~/.tinyclaw/agents/<agent-id>/SKILLS.md\` with \`exec_shell\`:
 
 \`\`\`bash
-echo "- <skill-name>: ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/SKILL.md — <描述>" >> ~/.tinyclaw/agents/<agent-id>/SKILLS.md
+echo "- <skill-name>: ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/SKILL.md — <description>" >> ~/.tinyclaw/agents/<agent-id>/SKILLS.md
 \`\`\`
 
-若文件不存在则先创建：
+Create the file first if it does not exist:
 
 \`\`\`bash
 touch ~/.tinyclaw/agents/<agent-id>/SKILLS.md
 \`\`\`
 
-### 4. 验证
+### 4. Verify
 
 \`\`\`bash
 cat ~/.tinyclaw/agents/<agent-id>/SKILLS.md
 cat ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/SKILL.md
 \`\`\`
 
-确认目录已创建：
+Confirm the directory was created:
 
 \`\`\`bash
 ls ~/.tinyclaw/agents/<agent-id>/skills/<skill-name>/
 \`\`\`
 
-## 设计原则
+## Design principles
 
-- **简洁优先**：上下文窗口是有限资源，只写 Agent 真正需要的信息，不写 Agent 本身已知的通识
-- **自包含**：Skill 文档要让 Agent 无需外部上下文就能执行任务
-- **自由度匹配任务**：操作易出错时用精确步骤；方案多样时用高层指导
-- **不过度设计**：不是所有任务都需要 Skill，简单的一次性任务直接交给 Agent 即可
+- **Brevity first**: the context window is a scarce resource — write only what the Agent genuinely
+  needs, and skip general knowledge the Agent already has
+- **Self-contained**: the document must let the Agent finish the task with no external context
+- **Match the freedom level to the task**: use exact steps when an operation is error-prone, and
+  high-level guidance when several approaches are valid
+- **No over-design**: not every task needs a Skill; simple one-off work can go straight to the Agent
 `;
 
 function buildGuide(agentId: string): string {
@@ -134,13 +147,17 @@ function buildGuide(agentId: string): string {
   if (fs.existsSync(skillsPath)) {
     const content = fs.readFileSync(skillsPath, "utf-8").trim();
     if (content.length > 0) {
-      existingSkills = `\n\n## 当前已注册的 Skills（agent: ${agentId}）\n\n${content}`;
+      existingSkills = `\n\n## Currently registered Skills (agent: ${agentId})\n\n${content}`;
     }
   } else {
-    existingSkills = `\n\n## 当前已注册的 Skills（agent: ${agentId}）\n\n（暂无，SKILLS.md 不存在）`;
+    existingSkills =
+      `\n\n## Currently registered Skills (agent: ${agentId})` +
+      `\n\n(none yet, no SKILLS.md)`;
   }
 
-  const note = `\n\n## 路径参考（agent: ${agentId}）\n\n- SKILLS.md：\`${skillsPath}\`\n- skills 目录：\`${skillsDir}\``;
+  const note =
+    `\n\n## Path reference (agent: ${agentId})` +
+    `\n\n- SKILLS.md: \`${skillsPath}\`\n- skills dir: \`${skillsDir}\``;
 
   return SKILL_GUIDE + note + existingSkills;
 }
@@ -151,13 +168,13 @@ registerTool({
     type: "function",
     function: {
       name: "create_skill",
-      description: "获取 Skill 创建指南(含目标 agent 已注册 skills)",
+      description: "Get the Skill creation guide (including the target agent's registered skills)",
       parameters: {
         type: "object",
         properties: {
           agent_id: {
             type: "string",
-            description: '目标 agent，默认 "default"',
+            description: 'Target agent, defaults to "default"',
           },
         },
         required: [],

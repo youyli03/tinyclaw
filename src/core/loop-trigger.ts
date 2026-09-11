@@ -433,14 +433,14 @@ export class LoopTriggerManager {
 
       // allowExit=true 时在 message 末尾追加退出提示（退出条件由用户写在 message 字段里）
       const exitHint = cfg.allowExit
-        ? "\n\n---\n你可以调用 loop_exit 工具退出本次监控窗口。退出条件见上面的任务描述。"
+        ? "\n\n---\nYou may call the loop_exit tool to end this monitoring window. The exit condition is given in the task description above."
         : "";
       // notify=llm/always 时注入格式说明
       const notifyHint =
         cfg.notify === "llm"
-          ? "\n\n---\n如需将内容推送给用户，请用 [NOTIFY]...[/NOTIFY] 块包裹。不需要推送时直接回复，不要加该标签。"
+          ? "\n\n---\nTo push content to the user, wrap it in a [NOTIFY]...[/NOTIFY] block. If nothing needs pushing, reply normally without those tags."
           : cfg.notify === "always"
-            ? "\n\n---\n你的回复将直接推送给用户，请保持简洁。"
+            ? "\n\n---\nYour reply is pushed straight to the user, so keep it concise."
             : "";
       // notifyHint 不存入 session 历史（不拼入 content），改为 systemPromptSuffix 临时注入，
       // 避免 [NOTIFY] 格式指令持久化到 .jsonl，污染后续普通聊天上下文。

@@ -16,9 +16,10 @@ registerTool({
     function: {
       name: "mcp_list_servers",
       description:
-        "列出所有已配置的 MCP server（名称、描述、启用状态、连接状态、工具数量）。" +
-        "返回轻量目录，不包含具体工具 schema。" +
-        "若需使用某个 server 的工具，先调用此工具查看可用 server，再调用 mcp_enable_server 启用。",
+        "List all configured MCP servers (name, description, enabled state, connection " +
+        "state, tool count). Returns a lightweight catalog without per-tool schemas. " +
+        "To use a server's tools, call this tool first to see the available servers, then " +
+        "call mcp_enable_server to enable one.",
       parameters: {
         type: "object",
         properties: {},
@@ -60,14 +61,15 @@ registerTool({
     function: {
       name: "mcp_enable_server",
       description:
-        "启用指定 MCP server：建立连接（首次时）并将其工具注册到 LLM 上下文中。" +
-        "返回该 server 的完整工具文档（工具名列表及说明），下一轮对话即可直接调用这些工具。",
+        "Enable the given MCP server: connects on first use and registers its tools in the " +
+        "LLM context. Returns the server's full tool docs (tool names and descriptions); " +
+        "these tools can be called directly in the next turn.",
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "要启用的 MCP server 名称（与 mcp.toml 中的键名一致）",
+            description: "Name of the MCP server to enable (must match the key in mcp.toml)",
           },
         },
         required: ["name"],
@@ -93,14 +95,15 @@ registerTool({
     function: {
       name: "mcp_disable_server",
       description:
-        "禁用指定 MCP server 的工具（从 LLM 上下文中隐藏）。" +
-        "底层连接保持，再次 enable 时无需重连。适用于暂时不需要某个 server 的工具以节省 token。",
+        "Disable the given MCP server's tools (hide them from the LLM context). The " +
+        "underlying connection stays alive, so enabling it again needs no reconnect. " +
+        "Use it when a server's tools are not needed for now, to save tokens.",
       parameters: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "要禁用的 MCP server 名称",
+            description: "Name of the MCP server to disable",
           },
         },
         required: ["name"],

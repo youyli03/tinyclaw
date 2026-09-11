@@ -404,12 +404,15 @@ class SkillRegistry {
 
     const rules = [
       "",
-      "**[Skill 调用规则 — 严格遵守]**",
-      "1. 当用户意图与 <description> 或 <trigger_phrases> **相关**（含模糊匹配、语义相近）时即可触发，无需精确匹配",
-      '2. **触发前必须先调用 read_file 读取 <doc_path> 获取完整文档**，禁止凭记忆回答 skill 相关问题（包括"你会怎么做"这类询问）',
-      "3. 读完文档后再判断：执行请求 → skill_run；仅询问行为 → 按文档如实回答，不要编造路径/步骤",
-      "4. 使用 skill_run 工具执行实际操作，禁止绕过 skill_run 自行实现步骤",
-      "5. 未找到匹配 skill 时，告知用户并询问是否继续",
+      "**[Skill invocation rules — strictly follow]**",
+      "1. Trigger a skill whenever the user's intent is **related** to a <description> or a",
+      "   <trigger_phrases> (fuzzy and semantic matches count); no exact match is required",
+      "2. **Before triggering you MUST read <doc_path> with read_file**; never answer skill",
+      '   questions from memory (including questions like "how would you do it")',
+      "3. After reading the document: execution request → skill_run; question about behavior →",
+      "   answer truthfully from the document; do not invent paths or steps",
+      "4. Do the actual work through the skill_run tool; never re-implement its steps yourself",
+      "5. If no skill matches, tell the user and ask whether to continue",
     ].join("\n");
 
     let snapshot = `<available_skills>\n${skillBlocks.join("\n")}\n</available_skills>` + rules;
@@ -423,7 +426,7 @@ class SkillRegistry {
         const trimmed = skillBlocks.slice(0, count);
         snapshot =
           `<available_skills>\n${trimmed.join("\n")}\n</available_skills>` +
-          `\n  <!-- ${entries.length - count} 个 skill 因超出长度限制被截断 -->` +
+          `\n  <!-- ${entries.length - count} skills truncated (length limit exceeded) -->` +
           rules;
       }
     }

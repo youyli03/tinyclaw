@@ -29,37 +29,40 @@ registerTool({
     function: {
       name: "send_report",
       description:
-        "将 Markdown 渲染为图片立即推送。type: markdown(默认,支持标题/列表/表格/代码块)/ mermaid(图表代码)/ python(绘图代码)。\n" +
-        "渲染失败自动降级为纯文本发送",
+        "Render Markdown to an image and push it immediately. type: markdown (default; " +
+        "supports headings/lists/tables/code blocks) / mermaid (diagram code) / python " +
+        "(plotting code).\n" +
+        "On render failure it automatically falls back to sending plain text",
       parameters: {
         type: "object",
         properties: {
           markdown: {
             type: "string",
             description:
-              "Markdown 格式的快报正文（type=markdown 时必填，其余类型可选用于描述文字）",
+              "Report body in Markdown (required when type=markdown; optional caption for others)",
           },
           type: {
             type: "string",
             enum: ["markdown", "mermaid", "python"],
-            description: "内容类型：markdown（默认）/ mermaid（图表代码）/ python（绘图代码）",
+            description: "Content type: markdown (default) / mermaid (diagram) / python (plot)",
           },
           code: {
             type: "string",
-            description: "图表代码（type=mermaid 或 type=python 时使用）",
+            description: "Diagram code (used when type=mermaid or type=python)",
           },
           title: {
             type: "string",
-            description: "（可选）快报标题，用于日志记录，方便归档查找",
+            description: "(Optional) Report title, logged for easier archiving and lookup",
           },
           filename: {
             type: "string",
-            description: "（可选）输出文件名（不含扩展名），默认自动生成时间戳文件名",
+            description:
+              "(Optional) Output file name without extension, defaults to a timestamp name",
           },
           theme: {
             type: "string",
             enum: ["light", "dark"],
-            description: "（可选）主题：light（默认）或 dark。仅对 mermaid 类型有效。",
+            description: "Optional theme: light (default) or dark. Only for the mermaid type.",
           },
         },
         required: [],

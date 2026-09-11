@@ -58,7 +58,12 @@ type MemoryQueryKind =
   | "profile_query"
   | "general_query";
 type MemorySource =
-  "长期记忆" | "当前活跃上下文" | "相关卡片" | "近期日记" | "项目记忆" | "会话记录";
+  | "Long-term memory"
+  | "Active context"
+  | "Related cards"
+  | "Recent diary"
+  | "Project memory"
+  | "Session records";
 type SearchCandidate = SearchResult & {
   blendedScore: number;
   decayedScore: number;
@@ -395,7 +400,7 @@ async function searchCardsByType(
     CARDS_COLLECTION,
     query,
     Math.max(limit * 2, limit),
-    "相关卡片"
+    "Related cards"
   );
   return results.filter((r) => {
     const body = (r.body ?? "").toLowerCase();
@@ -419,12 +424,12 @@ function formatMemorySections(results: SearchCandidate[]): string {
   }
 
   const orderedSources: MemorySource[] = [
-    "长期记忆",
-    "当前活跃上下文",
-    "相关卡片",
-    "近期日记",
-    "项目记忆",
-    "会话记录",
+    "Long-term memory",
+    "Active context",
+    "Related cards",
+    "Recent diary",
+    "Project memory",
+    "Session records",
   ];
   const sections: string[] = [];
   for (const source of orderedSources) {
@@ -458,12 +463,12 @@ export async function searchMemory(
       MEMORY_COLLECTION,
       query,
       limit,
-      "近期日记"
+      "Recent diary"
     );
     if (generalResults.length === 0) return "";
     const reranked = applyMMR(generalResults, limit);
     if (reranked.length === 0) return "";
-    return `## 近期日记\n\n${reranked
+    return `## Recent diary\n\n${reranked
       .map((r) => {
         const score = Math.round(r.blendedScore * 100);
         const evergreen = isEvergreen(r) ? " 🌿" : "";
@@ -475,7 +480,13 @@ export async function searchMemory(
 
   const candidates: SearchCandidate[] = [];
   if (kind === "preference_query" || kind === "decision_query" || kind === "profile_query") {
-    const memResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "长期记忆");
+    const memResults = await hybridSearchCollection(
+      s,
+      MEMORY_COLLECTION,
+      query,
+      limit,
+      "Long-term memory"
+    );
     candidates.push(...memResults.filter((r) => isEvergreen(r)));
   }
   if (kind === "active_context_query" || kind === "preference_query") {
@@ -484,7 +495,7 @@ export async function searchMemory(
       ACTIVE_COLLECTION,
       query,
       limit,
-      "当前活跃上下文"
+      "Active context"
     );
     candidates.push(...activeResults);
   }
@@ -498,7 +509,13 @@ export async function searchMemory(
   );
   candidates.push(...cardResults.slice(0, limit));
 
-  const diaryResults = await hybridSearchCollection(s, MEMORY_COLLECTION, query, limit, "近期日记");
+  const diaryResults = await hybridSearchCollection(
+    s,
+    MEMORY_COLLECTION,
+    query,
+    limit,
+    "Recent diary"
+  );
   if (kind === "active_context_query")
     candidates.push(...diaryResults.filter((r) => !isEvergreen(r)));
   else candidates.push(...diaryResults.slice(0, limit));
@@ -510,7 +527,7 @@ export async function searchMemory(
       CODE_NOTES_COLLECTION,
       query,
       limit,
-      "项目记忆"
+      "Project memory"
     );
     candidates.push(...codeNotesResults.slice(0, limit));
     const codeSessionResults = await hybridSearchCollection(
@@ -518,7 +535,7 @@ export async function searchMemory(
       "code_sessions",
       query,
       limit,
-      "会话记录"
+      "Session records"
     );
     candidates.push(...codeSessionResults.slice(0, limit));
   }
@@ -605,7 +622,7 @@ export async function searchStore(
     const preview = (r.body ?? "").trim();
     return `[${score}%] ${r.title || r.displayPath}\n${preview}`.trim();
   });
-  return `## Store: ${name} 搜索结果\n\n${lines.join("\n\n---\n\n")}`;
+  return `## Store: ${name} search results\n\n${lines.join("\n\n---\n\n")}`;
 }
 
 export async function updateStore(name: string, agentId = "default"): Promise<void> {

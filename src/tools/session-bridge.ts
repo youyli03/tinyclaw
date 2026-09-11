@@ -19,14 +19,17 @@ registerTool({
     function: {
       name: "session_get",
       description:
-        "列举对当前 Agent 可见的所有活跃 session（经 access.toml 双向权限过滤）。\n\n" +
-        "返回 JSON 数组，每项包含：\n" +
-        "- sessionId：会话标识符\n" +
-        "- agentId：绑定的 Agent ID\n" +
-        "- running：当前是否正在执行任务\n" +
-        "- isLoop：是否为 loop session（有定时任务配置）\n" +
-        "- recentActivity:最近10条操作记录（最新在前），每条含ts（时间戳）和event（tool_call/tool_result/error）\n\n" +
-        "权限说明：需要在 access.toml 中配置 can_access（发送方）和 allow_from（接收方）双向授权。",
+        "List all active sessions visible to the current Agent (filtered by bidirectional " +
+        "access.toml permissions).\n\n" +
+        "Returns a JSON array; each item contains:\n" +
+        "- sessionId: session identifier\n" +
+        "- agentId: the bound Agent ID\n" +
+        "- running: whether a task is currently executing\n" +
+        "- isLoop: whether it is a loop session (has a scheduled task config)\n" +
+        "- recentActivity: the latest 10 operations (newest first); each has ts " +
+        "(timestamp) and event (tool_call/tool_result/error)\n\n" +
+        "Permissions: requires can_access (sender) and allow_from (receiver) configured in " +
+        "access.toml (bidirectional).",
       parameters: {
         type: "object",
         properties: {},
@@ -56,24 +59,27 @@ registerTool({
     function: {
       name: "session_send",
       description:
-        "向指定 session 注入一条消息，触发该 session 的 Agent 处理任务。\n\n" +
-        "工作流程：\n" +
-        "1. 检查 access.toml 双向权限\n" +
-        "2. 若目标 session 正在运行，等待当前任务完成\n" +
-        "3. 注入消息，走完整 runAgent 路径\n\n" +
-        "适用场景：loop session 向普通 session 汇报结果、Master Agent 分派任务给专用 Agent 等。\n\n" +
-        "权限说明：需要在 access.toml 中配置 can_access（发送方）和 allow_from（接收方）双向授权。\n" +
-        "可用 session_get 工具查看有权访问的 session 列表。",
+        "Inject a message into the given session, triggering that session's Agent " +
+        "to handle the task.\n\n" +
+        "Workflow:\n" +
+        "1. Check the bidirectional access.toml permissions\n" +
+        "2. If the target session is running, wait for its current task to finish\n" +
+        "3. Inject the message and run the full runAgent path\n\n" +
+        "Use cases: a loop session reporting results to a normal session, a Master Agent " +
+        "dispatching tasks to a dedicated Agent, and so on.\n\n" +
+        "Permissions: requires can_access (sender) and allow_from (receiver) configured in " +
+        "access.toml (bidirectional).\n" +
+        "Use the session_get tool to see the sessions you may access.",
       parameters: {
         type: "object",
         properties: {
           target_session_id: {
             type: "string",
-            description: "目标 session 的 ID（可通过 session_get 获取可用列表）",
+            description: "ID of the target session (use session_get to list the available ones)",
           },
           message: {
             type: "string",
-            description: "要注入的消息内容",
+            description: "Message content to inject",
           },
         },
         required: ["target_session_id", "message"],

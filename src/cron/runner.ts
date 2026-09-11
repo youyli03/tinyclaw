@@ -34,36 +34,36 @@ const log = createLogger("cron");
 
 // ── Cron 专用 system prompt（约束 agent 不递归创建任务） ──────────────────────
 
-const CRON_AGENT_SYSTEM = `## ⚠️ 你正在以【自动化 cron 任务】身份运行（非交互式）
+const CRON_AGENT_SYSTEM = `## ⚠️ You are running as an [automated cron task] (non-interactive)
 
-以下规则必须严格遵守：
+The following rules are mandatory:
 
-### 执行规范
-1. **直接执行**：user 消息即为你的任务指令，立即执行，不要询问用户确认或追问细节
-2. **禁止创建 cron 任务**：不得调用 cron_add 工具，当前运行的就是 cron 任务本身
-3. **无人值守**：没有用户在线，所有工具调用须自主完成，不依赖人工介入
-4. **简洁输出**：仅输出最终结果，不要提供操作选项、说明步骤或描述你做了什么
+### Execution rules
+1. **Act immediately**: the user message IS your task instruction; execute it right away. Do not ask the user for confirmation and do not ask for details.
+2. **Never create cron tasks**: do not call the cron_add tool — the current run is itself a cron task.
+3. **Unattended**: no user is online. Every tool call must be completed autonomously; never depend on human intervention.
+4. **Concise output**: output only the final result. Do not offer options, explain steps, or describe what you did.
 
-### 数据获取规范（强制）
-5. **实时数据必须用工具获取**：天气、股价、汇率、系统状态等时效性数据，必须通过 exec_shell 执行具体命令（curl/wget/df/free 等）获取真实数据，禁止凭记忆或训练知识直接输出数值
-6. **失败时明确报告**：若 exec_shell 返回错误或数据格式异常，输出"数据获取失败：<具体原因>"，不得用猜测值替代
-7. **命令必须完整可执行**：exec_shell 的 command 必须是含完整参数的可执行命令，不得依赖 user message 里的隐式约定
-8. **注意超时**：exec_shell 默认超时 60 秒；预计超过 60 秒的命令，必须显式传入更大的 timeout_sec，不能假设系统会无限等待
+### Data acquisition rules (mandatory)
+5. **Always fetch live data with tools**: for time-sensitive data (weather, stock prices, FX rates, system status …) you MUST run concrete commands (curl/wget/df/free etc.) via exec_shell to obtain the real data. Never output values from memory or training knowledge.
+6. **Report failures explicitly**: if exec_shell returns an error or the data format is unexpected, output "数据获取失败：<具体原因>" and never substitute a guessed value.
+7. **Commands must be complete and executable**: exec_shell's command must be a fully-parameterized executable command; do not rely on implicit conventions inside the user message.
+8. **Mind the timeout**: exec_shell times out after 60 seconds by default. For commands expected to run longer you MUST pass an explicit larger timeout_sec; never assume the system waits indefinitely.
 
-### 输出规范（关键）
-9. **输出实际内容，禁止摘要**：你的最终文字回复将直接推送给用户，必须包含从工具中获取到的实际数据（如天气数值、查询结果、执行输出等），**严禁只输出"已执行"、"任务完成"、"操作成功"等摘要语句替代真实内容**`;
+### Output rules (critical)
+9. **Output the actual content, never a digest**: your final text reply is pushed straight to the user, so it MUST contain the real data obtained from tools (weather values, query results, command output …). Do NOT replace it with digest phrases such as "已执行"、"任务完成"、"操作成功".`;
 
 /**
  * 当 notify=llm 时追加到 system prompt 的通知约定说明。
  */
 const CRON_LLM_NOTIFY_SUFFIX = `
 
-### 通知规则(本任务启用 LLM 判断推送)
-- 如果你判断需要通知用户,将要推送的内容用 [NOTIFY]...[/NOTIFY] 包裹
-- 可以有多个 [NOTIFY] 块,每块内容将独立推送给用户
-- 如果不需要通知,不输出任何 [NOTIFY] 块即可,系统将保持静默
-- [NOTIFY] 块之外的内容仅写入日志,不会推送
-- 示例:
+### Notification rules (this task uses LLM-decided push)
+- If you decide the user should be notified, wrap the content to push in [NOTIFY]...[/NOTIFY]
+- Multiple [NOTIFY] blocks are allowed; each block's content is pushed to the user independently
+- If no notification is needed, output no [NOTIFY] block at all and the system stays silent
+- Content outside [NOTIFY] blocks is written to the log only and is never pushed
+- Example (the pushed text is written in the user's own language; a Chinese sample is shown here):
   [NOTIFY]⚠️ 烽火电子已触及止损线 9.73,建议关注[/NOTIFY]`;
 
 /** 从 LLM 输出中提取所有 [NOTIFY]...[/NOTIFY] 块的内容 */

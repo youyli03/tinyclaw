@@ -29,20 +29,24 @@ registerTool({
     function: {
       name: "project_switch",
       description:
-        "切换到指定项目。切换后后续对话将使用项目上下文(MEMORY.md + topic 文件)。" +
-        "若目标项目已被其他 session 占用则返回错误。" +
-        "task 参数为切换后要执行的任务,将被注入为 user 消息,AI 下一轮将直接开始 ReAct。",
+        "Switch to the given project. Subsequent turns then use the project context " +
+        "(MEMORY.md + topic files). If another session already holds that project, an error is " +
+        "returned. The task argument runs after the switch: injected as a user message, and " +
+        "the AI starts ReAct on the next turn.",
       parameters: {
         type: "object",
         properties: {
           project: {
             type: "string",
-            description: "项目 slug(如 _home_lyy_tinyclaw)或绝对路径(如 /home/lyy/tinyclaw)",
+            description:
+              "Project slug (e.g. _home_lyy_tinyclaw) or absolute path " +
+              "(e.g. /home/lyy/tinyclaw)",
           },
           task: {
             type: "string",
             description:
-              "切换后要执行的任务描述(必填)。例如:'看看最近 commit'、'修复 auth.ts 的类型错误'",
+              "Task description to run after the switch (required). For example: 'look at the " +
+              "recent commits', 'fix the type error in auth.ts'",
           },
         },
         required: ["project", "task"],
@@ -127,7 +131,7 @@ registerTool({
     type: "function",
     function: {
       name: "project_status",
-      description: "查看当前 session 的项目绑定状态、锁持有者等信息。",
+      description: "Show the current session's project binding and lock holder.",
       parameters: {
         type: "object",
         properties: {},
@@ -176,7 +180,7 @@ registerTool({
     type: "function",
     function: {
       name: "project_list",
-      description: "列出所有已注册的项目(slug + 工作目录)。",
+      description: "List all registered projects (slug + working directory).",
       parameters: {
         type: "object",
         properties: {},

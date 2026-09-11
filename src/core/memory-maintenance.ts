@@ -45,87 +45,99 @@ const ACTIVE_SECTION_KEYS = [
 /** MEM.md 备份保留份数 */
 const MEM_BACKUP_KEEP = 10;
 
-const DISTILL_MEM_SYSTEM = `你是一个记忆提炼助手。
-你的任务是基于近期对话摘要日记(diary),对 MEM.md 进行全量重构:合并语义相同的条目,
-删除已完成/过时的内容,保留仍有价值的长期记忆。
+const DISTILL_MEM_SYSTEM = `You are a memory distillation assistant.
+Your task is to fully rebuild MEM.md based on the recent conversation-summary diary: merge entries with
+the same meaning, drop finished/outdated content, and keep long-term memories that are still valuable.
 
-MEM.md 有以下固定章节(不得新增其他章节):
-- ## 👤 用户偏好       ← 长期稳定:回复风格、操作习惯、禁忌。合并语义相同的条目
-- ## 🎯 当前任务       ← 常更新:正在做什么、下一步,必须反映最新状态（⚠️ 整体替换原章节，只保留最近仍在进行的任务，≤8条，删除已完成/过时条目）
-- ## 🗂️ 常用技能与任务 ← 已建立的 skill/cron/脚本,路径+一句话说明
-- ## 🐛 踩坑记录       ← 错误原因+修复方法,避免重蹈覆辙。合并根因相同的条目
-- ## ✅ 已完成大事      ← 里程碑级成果(不写日常琐事)
-- ## 📝 近期变更       ← Worklog,格式:- YYYY-MM-DD: 事件摘要(最多保留20条)
+MEM.md has the following fixed sections (do not add any other section):
+- ## 👤 用户偏好       ← Long-term stable: reply style, working habits, taboos. Merge entries with the same meaning
+- ## 🎯 当前任务       ← Frequently updated: what is being worked on and the next step; must reflect the latest state (⚠️ replace the whole section, keep only tasks still in progress, ≤8 items, drop finished/outdated entries)
+- ## 🗂️ 常用技能与任务 ← Established skills/cron/scripts, path + one-line description
+- ## 🐛 踩坑记录       ← Root cause + fix, so the same mistake is not repeated. Merge entries with the same root cause
+- ## ✅ 已完成大事      ← Milestone-level results (no daily trivia)
+- ## 📝 近期变更       ← Worklog, format: - YYYY-MM-DD: event summary (keep at most 20 entries)
 
-目标:
-1. 将当前 MEM.md 和 diary 中的新信息合并,输出去冗余后的完整 MEM.md
-2. 语义完全相同的条目合并为一条(不仅看措辞,更要看实质)
-3. MEM.md 属于 chat 模式通用长期记忆,不仅服务工程项目,也要覆盖日常对话中的长期偏好、习惯、关系和稳定事实
-4. diary 中新增的长期稳定信息补充进对应章节
-5. 不要新增 MEM.md 中不存在的章节
+The section headings above are written in Chinese. Copy them **verbatim** into the output file; never
+translate, reword or reorder them.
 
-直接输出去冗余后的完整 MEM.md(包含 # 持久记忆 标题和所有 ## 章节),不要输出任何前缀或说明文字。`;
+Goals:
+1. Merge the current MEM.md with the new information in the diary and output the full de-duplicated MEM.md
+2. Merge entries that mean exactly the same thing into one (judge the substance, not just the wording)
+3. MEM.md is a general long-term memory for chat mode: it serves not only engineering projects but also
+   long-term preferences, habits, relationships and stable facts from everyday conversation
+4. Add newly appearing long-term stable information from the diary to the matching section
+5. Do not create sections that MEM.md does not already have
 
-const DISTILL_ACTIVE_SYSTEM = `你是一个活跃上下文提炼助手。
-你的任务是从近期对话摘要日记(diary)中,提炼出仍然活跃、短期内大概率会继续被提起的上下文,
-并以"章节补丁"格式输出,方便程序按章节精确更新 ACTIVE.md。
+Output the full de-duplicated MEM.md directly (including the # 持久记忆 heading and all ## sections).
+Do not output any prefix or explanatory text. Refer to the memory content itself in the user's own language.`;
 
-ACTIVE.md 有以下固定章节(不得新增其他章节):
+const DISTILL_ACTIVE_SYSTEM = `You are an active-context distillation assistant.
+Your task is to extract, from the recent conversation-summary diary, the context that is still active and
+likely to come up again in the short term, and to output it as a "section patch" so the program can update
+ACTIVE.md section by section.
+
+ACTIVE.md has the following fixed sections (do not add any other section):
 - ## 最近活跃话题
 - ## 当前未完成事项
 - ## 最近明确要求
 - ## 近期生活上下文
 - ## 近期项目上下文
 
-输出规则:
-1. 只保留最近 7~14 天仍然活跃的信息
-2. 必须同时考虑生活场景和项目场景,不要把 ACTIVE.md 写成纯任务面板
-3. 若所有章节均无需更新,只输出 "无新增"
+The section headings above are written in Chinese. Copy them **verbatim** as the \`##\` heading of each patch
+section; never translate, reword or reorder them.
 
-直接输出补丁内容,不要输出任何前缀或说明文字。`;
+Output rules:
+1. Keep only information that is still active within the last 7~14 days
+2. Consider both everyday-life scenarios and project scenarios; do not turn ACTIVE.md into a pure task board
+3. If no section needs an update, output only "无新增"
 
-const DISTILL_CARDS_SYSTEM = `你是一个结构化记忆卡片提炼助手。
-请从近期 diary 中提炼高价值、可长期复用或需要持续跟踪的信息,输出 JSON 数组。
+Output the patch content directly under those verbatim Chinese \`##\` headings, with each entry on its own
+line starting with "- ". Do not output any prefix or explanatory text. Write entry content in the user's own
+language.`;
 
-允许的 type 只有（严格遵守，不得使用其他类型）:
-- preference    ← 用户明确表达的偏好/习惯/禁忌，AI 回复时需直接遵守
-- constraint    ← 用户明确禁止或要求的约束，AI 必须遵守，最高优先级
-- relationship  ← 重要关系事实（人物/组织/账号等）
-- routine       ← 用户的固定流程/习惯（如每天的固定操作）
-- open_loop     ← 未闭环的待办/问题（用户说"以后"/"下次"/"待做"的事）
-- life_event    ← 值得记录的重大生活事件
-- decision      ← 用户做出的重要决策（投资/架构/工具选型等）
-- task_state    ← 正在进行的任务的当前状态（有明确截止/里程碑）
-- project_fact  ← 项目相关的客观事实（路径/端口/密钥规则等）
+const DISTILL_CARDS_SYSTEM = `You are a structured memory-card distillation assistant.
+Extract from the recent diary the information that is high-value, reusable long term, or needs continued
+tracking, and output a JSON array.
 
-⛔ 禁止使用的类型（因为没有行动价值）:
-- profile   ← 禁止！用户特征描述，AI 无法从中获得行动指导
-- pattern   ← 禁止！行为模式观察，只是描述而非约束，不要生成
+The only allowed type values are (follow strictly, never use any other type):
+- preference    ← a preference/habit/taboo the user stated explicitly; the AI must follow it directly in replies
+- constraint    ← a constraint the user explicitly forbids or requires; the AI must obey it, highest priority
+- relationship  ← important relationship facts (people/organizations/accounts, etc.)
+- routine       ← a fixed process/habit of the user (such as a fixed daily operation)
+- open_loop     ← an unfinished task/question (something the user said "later"/"next time"/"to do")
+- life_event    ← a significant life event worth recording
+- decision      ← an important decision the user made (investment/architecture/tooling choice, etc.)
+- task_state    ← the current state of an ongoing task (with a clear deadline/milestone)
+- project_fact  ← objective project-related facts (paths/ports/secret rules, etc.)
 
-每张卡片字段:
-- type: 上述允许类型之一
-- scope: 如 personal / family / workflow / project:tinyclaw
-- facet: 简短主题,如 communication / memory / reminder / architecture
+⛔ Forbidden types (because they carry no action value):
+- profile   ← FORBIDDEN! A description of the user's traits; the AI cannot derive any action guidance from it
+- pattern   ← FORBIDDEN! An observation of behavior patterns; it only describes, it does not constrain — do not generate
+
+Fields of each card:
+- type: one of the allowed types above
+- scope: e.g. personal / family / workflow / project:tinyclaw
+- facet: a short topic, e.g. communication / memory / reminder / architecture
 - status: active / obsolete / resolved
-- importance: 0~1 数值
-- ts: ISO 时间字符串
-- title: 简短标题（能直接告诉 AI"要怎么做"，而不是"用户是什么人"）
-- summary: 1~4 句中文摘要（内容必须能直接指导 AI 行为或作为事实参考）
-- quote: 支撑该卡片的**逐字原文片段**（从下面提供的原文里**原样摘抄**，≤120 字，禁止改写/润色）
-- source: 该片段来源的文件路径（形如 memory/transcript/2026-09-09.md，从原文小节标题里取）
-- tags: 字符串数组(可选)
-- supersedes: 字符串数组(可选)
+- importance: a number 0~1
+- ts: ISO time string
+- title: a short title (it must tell the AI "what to do", not "what kind of person the user is")
+- summary: 1~4 sentences (write them in the user's own language; the content must directly guide AI behavior or serve as a factual reference)
+- quote: a **verbatim excerpt** supporting the card (copy it **as-is** from the source text below, ≤120 characters, no rewriting/polishing)
+- source: the file path the excerpt came from (for example memory/transcript/2026-09-09.md, taken from the source section heading)
+- tags: array of strings (optional)
+- supersedes: array of strings (optional)
 
-规则:
-1. 优先生成 constraint 和 preference：这两类直接约束 AI 行为，价值最高
-2. 合格的 card 标题应能回答"AI 在这件事上应该怎么做？"，而非"用户是什么样的人？"
-   ❌ 坏例：用户具备批判性思维 → 这是特征描述，不是约束
-   ✅ 好例：股票分析只输出结论，不给操作建议 → AI 直接遵守
-3. 同时覆盖生活和项目,不能只围绕工程任务
-4. 不要输出低价值流水账，不要重复 MEM.md 里已有的条目
-5. **quote 必须逐字来自提供的原文**（细节容易在摘要里丢失，原文引用是防丢关键）；找不到合适片段时省略 quote/source
-6. 若没有合适卡片,只输出 []
-7. 只输出合法 JSON,不要 markdown 代码块
+Rules:
+1. Prefer generating constraint and preference: these two directly constrain AI behavior and carry the most value
+2. A qualified card title should answer "what should the AI do about this?", not "what kind of person is the user?"
+   ❌ Bad: the user is critical in thinking → that is a trait description, not a constraint
+   ✅ Good: stock analysis outputs conclusions only, no trading advice → the AI can follow it directly
+3. Cover both life and projects; do not focus solely on engineering tasks
+4. Do not output low-value running logs, and do not repeat entries already present in MEM.md
+5. **quote must be verbatim from the provided source text** (details are easily lost in summaries; quoting the original is what prevents that loss); if no suitable excerpt exists, omit quote/source
+6. If there is no suitable card, output only []
+7. Output valid JSON only; do not use markdown code fences
 `;
 
 function msUntilTimeOfDay(timeOfDay: string): number {
@@ -297,8 +309,8 @@ class MemoryMaintenanceScheduler {
       {
         role: "user",
         content:
-          `## 近期日记内容\n\n${diaryContent.slice(0, 6000)}\n\n` +
-          `## 当前 MEM.md 完整内容\n\n${currentMem.slice(0, 20000)}`,
+          `## Recent diary entries\n\n${diaryContent.slice(0, 6000)}\n\n` +
+          `## Full current MEM.md content\n\n${currentMem.slice(0, 20000)}`,
       },
     ]);
 
@@ -377,8 +389,8 @@ class MemoryMaintenanceScheduler {
       {
         role: "user",
         content:
-          `## 近期日记内容\n\n${diaryContent.slice(0, 7000)}\n\n` +
-          `## 当前 ACTIVE.md 概况\n\n${summarizeActiveSections(agentId)}`,
+          `## Recent diary entries\n\n${diaryContent.slice(0, 7000)}\n\n` +
+          `## Current ACTIVE.md overview\n\n${summarizeActiveSections(agentId)}`,
       },
     ]);
 
@@ -425,7 +437,7 @@ class MemoryMaintenanceScheduler {
       { role: "system", content: DISTILL_CARDS_SYSTEM },
       {
         role: "user",
-        content: `## 近期对话原文\n\n${sourceText.slice(0, 12000)}`,
+        content: `## Recent conversation source text\n\n${sourceText.slice(0, 12000)}`,
       },
     ]);
 

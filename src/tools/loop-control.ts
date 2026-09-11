@@ -21,25 +21,28 @@ registerTool({
     function: {
       name: "loop_control",
       description:
-        "管理 Loop 触发器的运行状态。" +
-        "当用户说「停止监控」「暂停」「不用盯了」「退出 loop」等，调用此工具。" +
-        "action=pause 暂停 tick；action=resume 恢复；action=exit 退出当前时间窗口（下个窗口自动重置）。" +
-        'id 不填时默认操作名为 "monitor" 的 loop。',
+        "Manage the running state of a Loop trigger. " +
+        'Call this tool when the user says things like "stop watching", "pause", ' +
+        '"no need to keep an eye on it", or "exit the loop". ' +
+        "action=pause pauses the ticks; action=resume resumes; action=exit exits the current " +
+        "time window (the next window resets automatically). " +
+        'When id is omitted, it defaults to the loop named "monitor".',
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
             enum: ["pause", "resume", "exit"],
-            description: "操作类型：pause=暂停 / resume=恢复 / exit=退出本时间窗口",
+            description:
+              "Action type: pause = pause / resume = resume / exit = exit this time window",
           },
           id: {
             type: "string",
-            description: 'Loop ID（对应 ~/.tinyclaw/loops/<id>.json 中的 id 字段），默认 "monitor"',
+            description: 'Loop ID (id field in ~/.tinyclaw/loops/<id>.json), default "monitor"',
           },
           reason: {
             type: "string",
-            description: "操作原因（可选，用于日志）",
+            description: "Reason for the action (optional, used for logging)",
           },
         },
         required: ["action"],

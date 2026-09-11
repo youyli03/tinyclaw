@@ -295,8 +295,11 @@ exit_plan_mode(
 - ✅ 允许：`read_file`、`exec_shell`（只读分析）、`write_file` 写 PLAN.md
 - ⚠️ 禁止（软）：`exit_plan_mode` 批准前修改源代码
 - prompt 明确写了**「涉及任何文件写入/修改的任务，无论大小，都必须先调用 `exit_plan_mode`」**
-  （`src/code/system-prompt.ts` 的「工作原则」开头），即不允许因任务看起来简单而跳过规划阶段
+  （`## Working principles` 段开头），即不允许因任务看起来简单而跳过规划阶段
 - prompt 的回复语言规则是**跟随用户语言**（英文 prompt 不等于要用英文回复）；见 `AGENTS.md` §6
+- **prompt 正文为英文**（`AGENTS.md` §6 语言约定）：`buildCodeSystemPrompt()` / `buildPlanModePrompt()` /
+  `renderShared*()` 产出的指令文本全部英文，只有少数**用户可见示例**保留中文原话
+  （如 `"已完成"`、`提交 / 修改 message / 取消`），并在句子里注明"written in the user's own language"
 
 ### 用户交互示例
 

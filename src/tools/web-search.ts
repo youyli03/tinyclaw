@@ -94,26 +94,28 @@ registerTool({
     function: {
       name: "web_search",
       description:
-        "实时检索互联网信息,返回摘要和相关链接。优先使用 DeepSeek 官方搜索,失败时自动回退 Tavily。适合查询最新新闻、实时数据、不在本地知识库中的信息。",
+        "Search the internet in real time and return a summary plus relevant links. Prefers the " +
+        "official DeepSeek search and automatically falls back to Tavily on failure. Use it for " +
+        "the latest news, real-time data, and information not in the local knowledge base.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索查询词（支持中英文）",
+            description: "Search query (Chinese and English are both supported)",
           },
           topic: {
             type: "string",
             enum: ["general", "news", "finance"],
-            description: "搜索主题：general（通用，默认）/ news（新闻）/ finance（金融）",
+            description: "Search topic: general (default) / news / finance",
           },
           max_results: {
             type: "number",
-            description: "最多返回结果数（默认 5，最大 10）",
+            description: "Maximum number of results to return (default 5, max 10)",
           },
           include_answer: {
             type: "boolean",
-            description: "是否包含 Tavily 自动生成的摘要答案（默认 true）",
+            description: "Whether to include the Tavily-generated summary answer (default true)",
           },
         },
         required: ["query"],
