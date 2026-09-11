@@ -86,7 +86,8 @@ tinyclaw/
 │   │   ├── db-write.ts       # db_write(业务指标写入 dashboard.db,Dashboard 折线图展示)
 │   │   ├── search-store.ts   # search_store(向量语义搜索本地知识库,如 news)
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
-│   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务)
+│   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务/运行时占用)
+│   │   ├── self-runtime.ts   # self_runtime_scan/read/delete(自指：读写删自己的运行时目录，密钥除外)
 │   │   ├── skill-creator.ts  # create_skill(创建 Skill 文档并注册到 SKILLS.md)
 │   │   ├── skill-run.ts      # 技能执行辅助
 │   │   ├── agent-fork.ts     # agent_fork / agent_status / agent_wait / agent_trace / agent_abort
@@ -286,6 +287,35 @@ tinyclaw 支持三种 MFA 接口（通过 `auth.mfa.interface` 配置）：
 
 所有接口：超时 60s（可配）或用户拒绝 → 操作 abort  
 高危工具范围：`exec_shell` / `delete_file` / `write_file` / `edit_file`（以及 `config.toml` 自定义黑名单）
+
+### 自指运行权限（`[selfAccess]`）
+
+Agent 的"自身"就是 `~/.tinyclaw`。默认它对这里**没有**额外权限（越界路径要走确认流程），
+被 `config.toml` 授权的 agent 则获得**完整访问权**：
+
+```toml
+[selfAccess]
+grantedAgents = ["default"]   # 被授权的 agentId；"*" = 全部
+allowDelete   = true          # false 时 self_runtime_delete 只做 dry-run
+exemptMfa     = true          # 只动运行时目录的调用免除 MFA 逐次确认
+maxReadBytes  = 200000        # self_runtime_read 单次返回上限
+```
+
+**能力**：`self_runtime_scan`（占用扫描 + 可清理候选）、`self_runtime_read`（读文件/列目录）、
+`self_runtime_delete`（`confirm: true` 才真删，支持 `dry_run`）。此外 `write_file` / `edit_file` /
+`delete_file` 对运行时目录内的路径不再触发"越界确认"，`self_status` 也会报告运行时占用。
+
+**唯一的例外是密钥**（`tools/path-guard.ts` 的 `isRuntimeSecretPath`）：
+
+| 类别 | 内容 |
+|---|---|
+| 运行时根下按名拒绝 | `config.toml`、`secrets.toml`、`mcp.toml`、`env`、`.env`、`.github_token`、名字含 `token` 的文件、`auth/**` |
+| 全局按扩展名拒绝 | `*.key`、`*.pem`、`*.p12`、`*.pfx` |
+
+密钥不可读（`read_file` / `read_image` / `self_runtime_read` 一律拒绝）、不可写（`write_file` /
+`edit_file`）、不可删（`delete_file` / `self_runtime_delete`），且**不因授权而放宽**。
+另有三个"删了会出事"的保护项：运行时根目录本身、根下的 `.git`（`tinyclaw-submitter` 的配置备份仓库）、
+`agents` 整体。
 
 ### 代码/日常操作分离（code_assist 双子 Agent）
 

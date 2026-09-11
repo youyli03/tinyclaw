@@ -17,6 +17,7 @@ import { llmRegistry } from "../llm/registry.js";
 import { readExistingCards } from "../memory/cards.js";
 import { loadJobs } from "../cron/store.js";
 import { readFeedback } from "../core/feedback-writer.js";
+import { scanRuntime } from "../core/runtime-usage.js";
 
 /** 单文件统计（行数按非空行计） */
 function fileStats(filePath: string): { exists: boolean; bytes: number; lines: number } {
@@ -102,6 +103,31 @@ function countFeedbackLines(agentId: string, mode: "chat" | "code"): number {
 const fmtBytes = (n: number): string =>
   n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`;
 
+/**
+ * 运行时目录（~/.tinyclaw）的占用摘要。
+ *
+ * 与 `self_runtime_scan` 共用 `core/runtime-usage.ts` 的扫描内核；扫描失败时只回一行提示，
+ * 不让自省工具整体失败。
+ */
+function runtimeLines(): string[] {
+  try {
+    const usage = scanRuntime(undefined, 5);
+    const top = usage.entries.slice(0, 3);
+    const safe = usage.cleanupCandidates
+      .filter((c) => c.level === "safe")
+      .reduce((s, c) => s + c.bytes, 0);
+    return [
+      `- 合计：${fmtBytes(usage.totalBytes)} / ${usage.totalFiles.toLocaleString()} 个文件`,
+      ...top.map((e) => `- 占比最大：${e.path}/ ${fmtBytes(e.bytes)}`),
+      safe > 0
+        ? `- 可清理候选：约 ${fmtBytes(safe)}（详见 self_runtime_scan）`
+        : "- 可清理候选：无",
+    ];
+  } catch {
+    return ["- （运行时目录扫描失败）"];
+  }
+}
+
 registerTool({
   requiresMFA: false,
   spec: {
@@ -181,6 +207,10 @@ registerTool({
       `- 定时任务：${jobs.length} 个（启用 ${enabledJobs}）`,
       `- Loop session：${loops} 个启用`,
       `- Loop trigger：${triggers} 个配置`,
+      "",
+      "**运行时占用**",
+      "",
+      ...runtimeLines(),
     ];
     return lines.join("\n");
   },

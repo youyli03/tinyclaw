@@ -177,7 +177,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - 注册格式：`registerTool({ spec, requiresMFA, execute, hidden? })`。
 - **`spec.function.description` 必须与实现一致**。已知反例：`exec_shell` 描述写"需要 MFA 确认"，实际 `requiresMFA: false`（`system.ts:151-158`）——修实现或修描述，不要留着。
 - 所有工具结果统一经 `sanitizeToolResult()` 收口（`registry.ts:219`），不要在工具内部自己截断后再拼超长内容。
-- 涉及文件写入的工具**必须**调用 `checkWritePath()`（`tools/path-guard.ts`）；涉及读取的目前**没有**该检查（见 §7.1），新增读类工具请自行加校验。
+- 涉及文件写入的工具**必须**调用 `checkWritePath()`（`tools/path-guard.ts`）；涉及读取的**必须**调用 `checkReadPath()`（它只拦密钥与 `.ssh`/`.git`，**没有**工作区白名单，见 §7.1），新增读类工具请自行加校验。
 
 ### 错误处理
 
@@ -202,7 +202,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 - **MFA 只在一条路径上生效**：检查点在 `agent.ts:2009` 起的 MFA 块。`cron/runner.ts:221`（Pipeline tool step）与 `loop-trigger.ts:372`（Loop steps）直接 `executeTool()`，**完全绕过 MFA**；且 `cron_add` 默认写死 `mfaExempt: true`（`tools/cron.ts:206`）。新增任何"绕过 ReAct 循环直接调工具"的入口，必须自行补鉴权。
 - **MFA fail-open**：`agent.ts:2042-2044`（无交互回调时 `mfaPassed = true`）。新增鉴权分支请 fail-closed。
-- **读路径无边界**：`read_file`（`system.ts:409-413`）与 `read_image`（`system.ts:510-512`）只 `path.resolve` 后直接读，无白名单 → 可读 `~/.ssh/id_rsa`、`secrets.toml`。
+- **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts:409-413`）与 `read_image`（`system.ts:510-512`）现在会经 `checkReadPath()` 拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
+- **自指权限（`[selfAccess].grantedAgents`）是本仓库唯一"按 agent 放开"的授权口**：被授权的 agent 拿到 `~/.tinyclaw` 全树（含 `self_runtime_delete` 真删、通用文件工具免越界确认、免 MFA）。密钥例外由 `path-guard.ts` 的 `isRuntimeSecretPath()` 统一裁决——**新增任何读写/删除入口都必须调用它**（写作走 `checkWritePath`、读作走 `checkReadPath`），否则就把"密钥除外"这个承诺打破了。
 - **`path-guard` 不解析符号链接**（`path-guard.ts:118-193` 无 `realpathSync`），workspace 内软链可逃逸。
 - **`redactKnownSecrets` 全仓无调用点**（`utils/redact.ts:65-75`），日志脱敏实际未生效。
 - **`config show` 泄密**：`config/schema-display.ts:42-43` 只脱敏 copilot/openai 的 key，deepseek/openrouter/mimo/google 明文；qqbot 脱敏路径写的是旧的 `channels.qqbot.*`。

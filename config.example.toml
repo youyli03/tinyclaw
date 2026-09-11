@@ -253,3 +253,17 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # remindAfterSecs = 600    # 首次提醒延迟(秒),0 = 不提醒(默认 600 = 10 分钟)
 # remindIntervalSecs = 600 # 提醒间隔(秒,默认 600)
 # maxReminds = 3           # 最多提醒次数,0 = 不限(默认 3)
+
+# ── 自指运行权限 ────────────────────────────────────────────────────────────────
+# agent 的"自身"就是 ~/.tinyclaw。授权后该 agent 对这里拥有完整访问权(读写删),
+# 可用 self_runtime_scan / self_runtime_read / self_runtime_delete 查占用、清理磁盘,
+# 通用文件工具也不再对这些路径做越界确认。
+#
+# 唯一的例外是**密钥**:config.toml / secrets.toml / mcp.toml / env / auth/** /
+# *.key / *.pem / 文件名含 token 的文件,无论怎么授权都不可读、不可写、不可删。
+# 受保护的还有运行时根目录本身、根下的 .git(配置备份仓库)与 agents 整体。
+[selfAccess]
+# grantedAgents = ["default"]  # 被授权的 agentId 列表,"*" = 全部(默认 [])
+# allowDelete   = true         # false 时 self_runtime_delete 只做 dry-run(默认 true)
+# exemptMfa     = true         # 只动运行时目录的调用不再逐次 MFA 确认(默认 true)
+# maxReadBytes  = 200000       # self_runtime_read 单次返回上限字节(默认 200000)

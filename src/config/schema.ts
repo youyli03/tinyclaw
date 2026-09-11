@@ -295,6 +295,39 @@ const MFASchema = z.object({
 });
 
 /**
+ * 自指运行权限（agent 访问自己的运行时目录 `~/.tinyclaw`）。
+ *
+ * 配置示例（config.toml）：
+ * ```toml
+ * [selfAccess]
+ * grantedAgents = ["default"]   # 被授权的 agentId，"*" 表示全部
+ * allowDelete   = true          # 是否允许删除运行时文件（配合 confirm 参数）
+ * exemptMfa     = true          # 是否免除"只动运行时目录"的 MFA 确认
+ * maxReadBytes  = 200000        # self_runtime_read 单次返回上限
+ * ```
+ *
+ * 密钥（`config.toml` / `secrets.toml` / `mcp.toml` / `auth/**` / `*.key` / 名字含 token 的文件）
+ * **不在授权范围内**：无论怎么配置，读写都会被拒（见 `tools/path-guard.ts` 的 `isRuntimeSecretPath`）。
+ */
+const SelfAccessSchema = z
+  .object({
+    /** 被授予自指运行权限的 agentId 列表；空 = 无人拥有该能力（默认） */
+    grantedAgents: z.array(z.string()).default([]),
+    /** 是否允许 `self_runtime_delete` 真正删除（false 时该工具只做 dry-run 报告） */
+    allowDelete: z.boolean().default(true),
+    /**
+     * 是否对"参数只落在运行时目录内、且不含密钥"的工具调用免除 MFA。
+     * 仅对已授权 agent 生效；未授权时该开关无意义。
+     */
+    exemptMfa: z.boolean().default(true),
+    /** self_runtime_read 单次返回的最大字节数（超出截断并标注） */
+    maxReadBytes: z.number().int().min(1024).default(200_000),
+  })
+  .default({});
+
+export type SelfAccessConfig = z.infer<typeof SelfAccessSchema>;
+
+/**
  * 交互等待提醒配置。
  *
  * 所有需要等待用户回复的场景(MFA 确认 / ask_user / plan 审批 / 等待输入)在注册
@@ -832,6 +865,7 @@ export const ConfigSchema = z.object({
   memory: MemorySchema.default({}),
   submitter: SubmitterSchema.default({}),
   interactive: InteractiveSchema.default({}),
+  selfAccess: SelfAccessSchema,
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,

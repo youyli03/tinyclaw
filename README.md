@@ -154,7 +154,16 @@ tinyclaw completions install           # 安装 tab 补全
 
 | 工具 | 说明 |
 |------|------|
-| `self_status` | 查询自身运行状态(当前模型 / 上下文用量 / 缓存命中率 / 记忆规模 / 定时任务与 loop 数量 / 行为反馈条数) |
+| `self_status` | 查询自身运行状态(当前模型 / 上下文用量 / 缓存命中率 / 记忆规模 / 定时任务与 loop 数量 / 行为反馈条数 / 运行时目录占用) |
+| `self_runtime_scan` | 扫描**自己的运行时目录** `~/.tinyclaw` 的磁盘占用,并给出可清理候选(safe / caution);需 `[selfAccess]` 授权 |
+| `self_runtime_read` | 读取/列举运行时目录下的文件(记忆、会话、cron、loop、日志);密钥文件不可读 |
+| `self_runtime_delete` | 删除运行时目录下的文件或目录以清理磁盘(`confirm: true` 才执行,可先 `dry_run`) |
+
+> **自指运行权限**:`config.toml` 的 `[selfAccess].grantedAgents` 列出被授权的 agentId 后,
+> 该 agent 对 `~/.tinyclaw` 全树拥有完整访问权,但**密钥类文件始终除外**——
+> `config.toml` / `secrets.toml` / `mcp.toml` / `auth/**` / `*.key` / 名字含 token 的文件
+> 既不可读、也不可写、不可删(`read_file` 等通用工具同样受此限制)。受保护的还有运行时根目录本身、
+> 根下的 `.git`(配置备份仓库)与 `agents` 整体。
 
 ### 记忆与知识库
 

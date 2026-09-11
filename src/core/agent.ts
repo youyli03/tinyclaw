@@ -18,6 +18,11 @@ import {
 } from "../tools/reserved-args.js";
 import { createPurposeArbiter } from "./purpose-arbiter.js";
 import { MFAError, toolNeedsMFA } from "../auth/guard.js";
+import {
+  argsAreSelfRuntimeOnly,
+  isSelfAccessGranted,
+  runtimeRoot,
+} from "../tools/path-guard.js";
 import { PlanAbortError } from "../core/session.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
@@ -58,6 +63,7 @@ import "../tools/read-url.js";
 import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
 import "../tools/self-status.js";
+import "../tools/self-runtime.js";
 import "../tools/session-bridge.js";
 import "../tools/http-request.js";
 import "../tools/web-search.js";
@@ -507,8 +513,10 @@ function buildSkillReminder(agentId: string): string | null {
  * 构建最终 system prompt：内置 + 全局 SYSTEM.md（可选）+ Agent SYSTEM.md（可选）+ MEM.md（可选）+ SKILLS.md（可选）+ suffix（可选）
  * opts.systemPrompt 优先于从文件读取的 Agent 提示。
  * opts.systemPromptSuffix 追加到 Agent 提示之后（不替换）。
+ *
+ * 导出以便探针直接断言"自指权限段只对被授权的 agent 注入"（`tmp/probe-self-access-*.ts`）。
  */
-function buildSystemPrompt(
+export function buildSystemPrompt(
   agentId = "default",
   extra?: string,
   supportsVision = false,
@@ -517,6 +525,9 @@ function buildSystemPrompt(
 ): string {
   const workspacePath = agentManager.workspaceDir(agentId);
   const parts: string[] = [buildBuiltinSystem(workspacePath, supportsVision, agentId)];
+  // 自指运行权限：只有被 [selfAccess].grantedAgents 授权的 agent 才被告知该能力
+  // （未授权时提它只会让模型反复尝试并被拒）
+  if (isSelfAccessGranted(agentId)) parts.push(buildSelfAccessPrompt(agentId));
   const userPrompt = loadUserSystemPrompt();
   if (userPrompt) parts.push(userPrompt);
   const agentPrompt = extra ?? loadAgentSystemPrompt(agentId);
@@ -535,8 +546,31 @@ function buildSystemPrompt(
   return parts.join("\n\n");
 }
 
-/** 格式化工具调用描述（用于 MFA 警告消息） */
-function describeToolCall(name: string, args: Record<string, unknown>): string {
+/**
+ * 自指运行权限的 prompt 段（仅对被授权的 agent 注入）。
+ *
+ * 目的：让 agent 知道"自己的运行时目录"在哪、能做什么、以及密钥是红线，
+ * 从而可以自行回答"你占了多少磁盘""把没用的清掉"这类问题，而不必每次问用户。
+ */
+function buildSelfAccessPrompt(agentId: string): string {
+  const root = runtimeRoot();
+  return [
+    "## 自指运行权限（已授予）",
+    "",
+    `你被授予了对自己运行时目录 \`${root}\` 的**完整访问权**（agent: \`${agentId}\`），`,
+    "可以读写其中任何文件（记忆、会话记录、cron 任务、loop 配置、日志、缓存、下载与产出）。",
+    "",
+    "- 想看/清理自己的磁盘占用：先 `self_runtime_scan`（给出各项占用与可清理候选），",
+    "  再用 `self_runtime_read` 看具体内容、`self_runtime_delete` 删除（须 `confirm: true`，可先 `dry_run`）",
+    "- `self_status` 也会报告运行时占用",
+    "- 只动运行时目录的文件操作（write_file / edit_file / delete_file）对你**不再需要 MFA 确认**",
+    "- **密钥是红线**：`config.toml` / `secrets.toml` / `mcp.toml` / `auth/**` / `*.key` / 文件名含 token 的文件",
+    "  不可读、不可写、不可删；运行时根目录、根下 `.git`、`agents` 整体也不可删",
+    "- 删除 [caution] 级候选（下载素材 / 产出文件 / 记忆归档）之前，先向用户说明要删什么、能省多少空间",
+  ].join("\n");
+}
+
+/** 格式化工具调用描述（用于 MFA 警告消息） */function describeToolCall(name: string, args: Record<string, unknown>): string {
   if (name === "exec_shell") return `exec_shell: ${String(args["command"] ?? "")}`;
   if (name === "write_file") return `write_file: ${String(args["path"] ?? "")}`;
   if (name === "delete_file") return `delete_file: ${String(args["path"] ?? "")}`;
@@ -2015,8 +2049,15 @@ async function runAgentInner(
       const mfaCfg = loadConfig().auth.mfa;
       // MFA 判定与提示文案都用"剥离保留字段后"的参数，避免 __purpose 混进警告文本
       const mfaArgs = stripReservedArgs(call.args as Record<string, unknown>).args;
+      // 自指权限豁免：被授权 agent 只动 ~/.tinyclaw 内且不含密钥时，不再逐次要求 MFA
+      const selfAccessCfg = loadConfig().selfAccess;
+      const selfAccessExempt =
+        selfAccessCfg.exemptMfa &&
+        isSelfAccessGranted(session.agentId) &&
+        argsAreSelfRuntimeOnly(mfaArgs);
       if (
         (toolNeedsMFA(call.name, mfaArgs, mfaCfg) || getTool(call.name)?.requiresMFA) &&
+        !selfAccessExempt &&
         !session.mfaApprovedForThisRun &&
         !session.mfaPreApproved
       ) {

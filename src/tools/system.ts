@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { registerTool, type ToolContext } from "./registry.js";
-import { checkWritePath, checkExecCommand } from "./path-guard.js";
+import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
 import { locateAndReplace } from "./edit-file-core.js";
 import { loadConfig } from "../config/loader.js";
 
@@ -411,6 +411,9 @@ async function readFileImpl(args: Record<string, unknown>): Promise<string> {
   if (!filePath) return "错误:缺少 path 参数";
 
   const resolved = path.resolve(expandHome(filePath));
+  // 读路径守卫：密钥（~/.tinyclaw/config.toml、secrets.toml、auth/**、*.key …）与受保护目录不可读
+  const readCheck = checkReadPath(resolved);
+  if (!readCheck.allow) return `错误：禁止读取 "${resolved}"（${readCheck.reason}）`;
   if (!fs.existsSync(resolved)) return `文件不存在:${resolved}`;
 
   const offset = Math.max(0, Number(args["offset"] ?? 0) || 0);
@@ -509,6 +512,8 @@ registerTool({
   },
   execute: async (args: Record<string, unknown>) => {
     const imgPath = path.resolve(String(args["path"] ?? "").replace(/^~/, os.homedir()));
+    const readCheck = checkReadPath(imgPath);
+    if (!readCheck.allow) return `错误：禁止读取 "${imgPath}"（${readCheck.reason}）`;
     if (!fs.existsSync(imgPath)) return `文件不存在: ${imgPath}`;
     const stat = fs.statSync(imgPath);
     const MAX = 8 * 1024 * 1024;
