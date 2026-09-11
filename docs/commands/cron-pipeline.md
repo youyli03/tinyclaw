@@ -226,7 +226,7 @@ if signals:
   },
   "stateful": false,
   "mfaExempt": true,
-  "model": "copilot/claude-haiku-3.5",
+  "model": "deepseek/deepseek-v4-flash",
   "createdAt": "2026-01-01T00:00:00.000Z"
 }
 ```

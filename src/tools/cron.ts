@@ -134,7 +134,9 @@ registerTool({
           model: {
             type: "string",
             description:
-              '(可选)运行模型,格式 "provider/model-id",如 "copilot/claude-sonnet-4.6"。不填用 daily 后端',
+              '(可选)运行模型,格式 "provider/model-id",如 "deepseek/deepseek-v4-flash"。' +
+              "provider 必须是 config.toml 里已配置的 [providers.*](copilot/openai/openrouter/deepseek/mimo/google);" +
+              "解析失败会回退 daily 后端并记一条错误日志。不填则直接用 daily 后端",
           },
           steps: {
             type: "array",

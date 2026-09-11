@@ -17,9 +17,12 @@ import { agentManager } from "../core/agent-manager.js";
 import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
-import { parseModelSymbol, isPremiumModel, buildFallbackClient } from "../llm/registry.js";
-import { buildCopilotClient } from "../llm/copilot.js";
-import { LLMClient } from "../llm/client.js";
+import {
+  parseModelSymbol,
+  isPremiumModel,
+  buildFallbackClient,
+  llmRegistry,
+} from "../llm/registry.js";
 import type { AnyLLMClient } from "../llm/registry.js";
 import { loadConfig } from "../config/loader.js";
 import { executeTool } from "../tools/registry.js";
@@ -126,34 +129,22 @@ async function buildOverrideClient(job: CronJob): Promise<AnyLLMClient | undefin
     }
     // ── END Premium 白名单检查 ─────────────────────────────────────────────
 
+    // ── 统一委托给 registry 的通用解析 ─────────────────────────────────────
+    // 这里曾硬编码 copilot / openai 两个分支，其余 provider 一律 throw 并**静默回退 daily**：
+    // 结果是任何 `deepseek/…`、`mimo/…`、`google/…`、`openrouter/…` 的 job 都长期没用上指定模型，
+    // 还每轮刷一条 ERROR（实测 8 个 job 受影响，7 天 3222 条错误日志）。
+    // `buildClientForSymbol()` 覆盖 copilot / openai / openrouter / deepseek / mimo / google，
+    // 与 `llm.backends.*.model` 走的是同一套解析，不会再漂移。
     if (provider === "copilot") {
-      const copilotCfg = cfg.providers.copilot;
-      if (!copilotCfg) {
-        throw new Error("job.model 使用 copilot provider,但 [providers.copilot] 未配置");
-      }
-      const { client } = await buildCopilotClient({
-        githubToken: copilotCfg.githubToken,
-        model: modelId,
-        timeoutMs: copilotCfg.timeoutMs,
-      });
-      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
-      return client;
-    } else if (provider === "openai") {
-      const openaiCfg = cfg.providers.openai;
-      if (!openaiCfg) {
-        throw new Error("job.model 使用 openai provider,但 [providers.openai] 未配置");
-      }
-      console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
-      return new LLMClient({
-        baseUrl: openaiCfg.baseUrl,
-        apiKey: openaiCfg.apiKey,
-        model: modelId,
-        maxTokens: openaiCfg.maxTokens,
-        timeoutMs: openaiCfg.timeoutMs,
-      });
-    } else {
-      throw new Error(`job.model 使用未知 provider "${provider}"`);
+      // 该方法的 copilot 分支返回 daily 客户端（它为 fallback 列表设计，不按 modelId 建客户端），
+      // 对"指定某个 copilot 模型"的语义不完整。Copilot 已非本环境主路径，此处**显式告警**而非静默降级。
+      console.warn(
+        `[cron] job=${job.id} provider=copilot 已非主路径，将沿用 daily 客户端（不会按 ${modelId} 新建）`
+      );
     }
+    const client = llmRegistry.buildClientForSymbol(job.model);
+    console.log(`[cron] job=${job.id} 使用指定模型: ${job.model}`);
+    return client;
   } catch (err) {
     console.error(`[cron] job=${job.id} 模型初始化失败,回退到 daily:`, err);
     return undefined;
