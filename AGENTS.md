@@ -110,6 +110,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | Loop（runner / trigger） | `docs/commands/loop-session.md` / `docs/commands/loop-trigger.md` |
 | Code 模式（命令 / prompt / 子模式） | `docs/commands/code-mode.md` |
 | 记忆 / 压缩 / 蒸馏 | `docs/memory/qmd-embed.md` / `docs/memory/distill-pipeline.md` |
+| 工作区指令装载（`src/instructions/`） | `docs/commands/code-mode.md` 的「工作区指令注入」节 |
 | 重试 / 超时 / 流式稳定性 | `docs/architecture/retry.md` |
 | Agent 循环步骤 / 消息链 / 压缩触发 | `docs/architecture/agent-loop.md` |
 | QQBot / MCP server | `README.md` + 对应 `docs/mcp/*.md` |
@@ -354,6 +355,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   `job.output.sessionId`，而 `notify="llm"` 分支（`:511`）只要求 `peerId` —— 于是 `notify = always/on_error/on_change`
   配 `sessionId = null`（schema 默认值）时会**静默不推送**，log 里也看不出来。实测 24 个 job 目前都填了 `sessionId`，
   所以还没踩到；新建 job 时若只填 `peerId` 就会踩。
+- **本机 mtime 精度不可靠（实测）**：在 `/home/lyy/tinyclaw` 下对同一文件连续两次写入，
+  `statSync(p,{bigint:true}).mtimeNs` **完全相同**（实测 `1789219717043616105` vs `1789219717043616105`），
+  `mtimeMs` 亦然 → **任何"用 mtime 判断文件是否变了"的缓存都会漏掉更新**。
+  要用内容哈希（sha1/sha256）。参考实现：`src/instructions/workspace-prompt.ts` 的 `fingerprint()`。
 - **Subagent 未修的剩余问题**：
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
   - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave

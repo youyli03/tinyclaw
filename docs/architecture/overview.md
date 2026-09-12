@@ -74,6 +74,7 @@ tinyclaw/
 │   ├── tools/
 │   │   ├── registry.ts       # 工具注册表(spec / requiresMFA / hidden)+ ToolContext 定义
 │   │   ├── system.ts         # exec_shell / write_file / edit_file / delete_file / read_file / read_image
+│   │   ├── fs-search.ts      # grep / glob(ripgrep;复用 exec_shell 的沙箱/提权/审计链路)
 │   │   ├── http-request.ts   # http_request(HTTPS GET/POST,headers 支持 $SECRET_NAME 占位符)
 │   │   ├── code-assist.ts    # code_assist(双子 Agent 架构:daily 协调 + code 执行)
 │   │   ├── ask-master.ts     # ask_master(隐藏工具:daily 子 Agent 暂停向用户提问)
@@ -103,6 +104,9 @@ tinyclaw/
 │   │   ├── system-prompt.ts  # buildCodeSystemPrompt()（精简代码专注 prompt）
 │   │   ├── exit-plan-mode-tool.ts  # exit_plan_mode 工具（Plan 子模式计划审批）
 │   │   └── backends/         # 代码后端类型定义（扩展点）
+│   ├── instructions/         # 工作区指令（AGENTS.md 类）装载
+│   │   ├── agents-md.ts      # 向上找项目根 / 多候选 + local 覆盖 / 预算与二分截断 / 增量协调
+│   │   └── workspace-prompt.ts  # 渲染成 prompt 段（带指纹缓存），供 code / project 模式注入
 │   ├── commands/             # 斜杠命令注册表（/help /status /code /plan 等）
 │   │   ├── registry.ts       # parseCommand() + executeCommand()
 │   │   └── builtin.ts        # 内置斜杠命令（/help /status /code /chat /plan /auto /new）

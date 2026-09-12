@@ -170,6 +170,8 @@ export function isRuntimeSecretPath(absPath: string): boolean {
   for (let i = 0; i < segs.length - 1; i++) {
     if (SECRET_DIR_NAMES.has((segs[i] ?? "").toLowerCase())) return true;
   }
+  // 末段本身就是密钥目录（如 `~/.tinyclaw/auth`）——列目录同样属于暴露密钥，必须一并拒绝
+  if (SECRET_DIR_NAMES.has(lower)) return true;
   return false;
 }
 

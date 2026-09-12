@@ -49,7 +49,14 @@ function formatExecOutput(stdout: string, stderr: string): string {
   return output;
 }
 
-async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+/**
+ * exec_shell 的实现体。
+ *
+ * ⚠️ 对外导出仅供同目录的 `fs-search.ts`（grep / glob）复用 —— 目的是让那三个工具
+ * **共用同一条执行路径**（沙箱 / 提权 / 超时 / 审计 / 密钥掩码），
+ * 而不是自己再 spawn 一个子进程、绕开沙箱边界层。
+ */
+export async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
   const parsedTimeoutSec = parseExecTimeoutSec(args["timeout_sec"]);

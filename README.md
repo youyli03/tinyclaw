@@ -143,6 +143,8 @@ tinyclaw completions install           # 安装 tab 补全
 | `delete_file` | 删除文件或目录(MFA 可配) |
 | `read_file` | 读取文件内容(≤50KB) |
 | `read_image` | 读取本地图片返回 base64,供视觉模型分析 |
+| `grep` | ripgrep 正则检索文件内容(只读;默认遵守 `.gitignore`,自动跳过 `.git`;密钥路径拒绝) |
+| `glob` | ripgrep 按 glob 列文件(只读;按路径排序;密钥路径拒绝) |
 | `http_request` | 发送 HTTPS 请求,headers 支持 `$SECRET_NAME` 占位符 |
 
 ### Agent 协作

@@ -301,6 +301,28 @@ exit_plan_mode(
   `renderShared*()` 产出的指令文本全部英文，只有少数**用户可见示例**保留中文原话
   （如 `"已完成"`、`提交 / 修改 message / 取消`），并在句子里注明"written in the user's own language"
 
+### 工作区指令注入（AGENTS.md）
+
+code / project 模式会在 system prompt 末尾注入一段**工作区指令**（`<system-reminder>` 包裹），
+语义照搬 DSH 的 `@deepseek-ai/dsh-agent-instructions`（实现见 `src/instructions/agents-md.ts`）：
+
+- **向上探测项目根**：从工作目录向上找 `projectRootMarkers`（默认 `[".git"]`）
+- **同目录多候选 + local 覆盖**：基础候选 `AGENTS.md` / `CLAUDE.md`，之后是 `AGENTS.local.md` / `CLAUDE.local.md`；
+  同目录内 **trim 后内容相同**的文件会被折叠（保留最早候选）
+- **三态探测**：`absent`（不存在）与 `unavailable`（存在但读不到）分开处理，读取失败**不会**被当成"没有指令"
+- **字节预算**：单文件 `maxSourceBytes` 默认 1 MB（超限整个忽略，DSH 默认值）；一次注入 `maxBytes` 默认 **65536 B**
+  （取值照抄 DSH 生产 profile：`dsh-base/cordis.patch.yml` 里 `agent-instructions` 配的就是 `maxBytes: 65536`；
+  DSH 侧该字段是 required、无默认）；预算不够时**优先保住最具体的**（丢掉最宽泛的前缀），
+  再对最后一个文件做二分截断，并在段首写出 `Workspace instruction budget <N> bytes: omitted …; truncated … from X to Y bytes`
+- **用户全局层**：`~/.tinyclaw/AGENTS.md`（`dshHome` 映射到运行时目录）
+- **零文件时不注入**：这是**接线层**（`src/instructions/workspace-prompt.ts`）的规则 ——
+  模块 `renderWorkspaceInstructions()` 本身忠实于 DSH：没有候选文件时仍返回「帧 + intro」；
+  tinyclaw 判 `included.length === 0` 就不注入（DSH 会渲染只含 intro 的空基线，对 chat/无 AGENTS.md 的目录纯属噪音）
+- **优先级**：注入位置在 ENV.md 之后、`feedback.md`（用户亲口纠正）之前 —— 越靠后越具体、越优先
+- **缓存**：缓存也在**接线层**（模块只提供 `reconcileWorkspaceInstructions` 的按作用域增量重算）。
+  指纹用**内容 sha1**，不用 mtime —— 本机实测连续两次写入的 `mtimeNs` 完全相同（见 `AGENTS.md` §7.4）；
+  实测首次渲染 ~1.9 ms / 命中缓存 ~0.2 ms
+
 ### 用户交互示例
 
 ```

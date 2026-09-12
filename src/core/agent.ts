@@ -50,6 +50,7 @@ import { skillRegistry } from "../skills/registry.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/system.js";
+import "../tools/fs-search.js";
 import "../tools/cron.js";
 import "../tools/skill-creator.js";
 import "../tools/skill-run.js";

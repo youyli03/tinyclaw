@@ -429,6 +429,8 @@ const SandboxSchema = z
             // 读与计算
             "read_file",
             "read_image",
+            "grep",
+            "glob",
             "self_status",
             "self_runtime_scan",
             "self_runtime_read",
