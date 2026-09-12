@@ -334,7 +334,6 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `overview.md:71` `withMFA()` | 不存在 |
 | `overview.md:279` MFA 超时 60s | 默认 `timeoutSecs = 0`（永不超时） |
 | `overview.md:124` 语音 SILK→WAV | 代码中无 SILK 转换 |
-| `agent-loop.md:112` system prompt 只初始化一次 | 每轮重建（`agent.ts:966-1061`） |
 | `agent-loop.md:129-131` 记忆 top-5 + minScore=0.3 | 无 minScore 过滤 |
 | `agent-loop.md:219-221` `persistSummary` 异步不阻塞 | 被 `await`（`summarizer.ts:1462`） |
 | `retry.md:235` copilot 指数退避+jitter | 固定延迟（`copilot.ts:236,603`） |
