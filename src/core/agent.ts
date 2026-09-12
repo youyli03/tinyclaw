@@ -1992,9 +1992,8 @@ async function runAgentInner(
         }
       }
 
-      // 工作区指令增量：写/改/删成功后，按被触碰的路径重新协调（AGENTS.md 可能被新建/改动/删除），
-      // 变更作为一条 user 角色注入落到会话里 —— 下一轮 LLM 请求即可见。参考 DSH
-      // `dsh-agent-instructions` 的 "successful fs tool touches into the inbox"。
+      // 工作区指令：fs 工具（读/写/改/删）成功后重新协调 —— 身份变了只追加 diff，基线丢失则补发。
+      // 参考 DSH `dsh-agent-instructions`：`tools/result` 后重算、`agent/pre-step` 前同步。
       if (err0 === undefined && WORKSPACE_TOUCHING_TOOLS.has(call.name)) {
         const _touched = String(toolArgs["path"] ?? "");
         if (_touched) {
@@ -2002,13 +2001,12 @@ async function runAgentInner(
             const _touchedAbs = isAbsolute(_touched)
               ? _touched
               : resolvePath(runToolCwd(session, isCodeMode), _touched);
-            const _wsDelta = pushWorkspaceInstructionDeltas(session, runToolCwd(session, isCodeMode), [
+            const _ws = pushWorkspaceInstructionDeltas(session, runToolCwd(session, isCodeMode), [
               _touchedAbs,
             ]);
-            if (_wsDelta.changes.length > 0) {
+            if (_ws.pushed) {
               console.log(
-                `${logPrefix} 📄 workspace instructions delta: ` +
-                  _wsDelta.changes.map((c) => `${c.action} ${c.path}`).join(", ")
+                `${logPrefix} 📄 workspace instructions: ${_ws.action}（${call.name} → ${_touched}）`
               );
             }
           } catch {
@@ -2622,7 +2620,7 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
           const calls = (m as { role: "assistant"; tool_calls?: unknown[] }).tool_calls;
           if (!calls || calls.length === 0) lastAssistant = m;
         }
-        if (!lastUser && m.role === "user") lastUser = m;
+        if (!lastUser && m.role === "user" && !Session.isInjectedUserMessage(m)) lastUser = m;
         if (lastUser && lastAssistant) break;
       }
       if (lastUser && lastAssistant) {

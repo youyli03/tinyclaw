@@ -721,18 +721,19 @@ export class Session {
       }
     }
 
-    // 同类注入只保留最新一条（从后往前扫，先见到的即最新）
+    // 同类注入只保留最新一条（从后往前扫，先见到的即最新）。
+    // 工作区指令**先整批丢掉**（见 dropWorkspaceInstructions 的说明），由接线层重新下发完整基线。
+    const remaining = Session.dropWorkspaceInstructions(
+      this.messages as Array<ChatMessage & { _loopTaskRef?: string }>
+    );
     const seen = new Set<string>();
     const kept: Array<ChatMessage & { _loopTaskRef?: string }> = [];
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const m = this.messages[i]!;
+    for (let i = remaining.length - 1; i >= 0; i--) {
+      const m = remaining[i]!;
       const sys = m.role === "system" && typeof m.content === "string" ? m.content : "";
-      const usr = m.role === "user" && typeof m.content === "string" ? m.content : "";
       let key: string | null = null;
       if (sys.startsWith("<!-- memory:")) key = sys.split("\n")[0] ?? "<!-- memory:";
       else if (sys.startsWith("<!-- skill-reminder -->")) key = "<!-- skill-reminder -->";
-      // 工作区指令（user 角色）：按 `kind:scope` 收敛，baseline 与 delta 各自保留最新一条
-      else if (usr.startsWith("<!-- workspace-instructions:")) key = usr.split("\n")[0] ?? "<!-- workspace-instructions:";
       if (key !== null) {
         if (seen.has(key)) continue;
         seen.add(key);
@@ -740,6 +741,45 @@ export class Session {
       kept.push(m);
     }
     this.messages = kept.reverse();
+  }
+
+  /** 是否是一条工作区指令注入（AGENTS.md 类，baseline / delta 都算） */
+  static isWorkspaceInstruction(m: ChatMessage): boolean {
+    return (
+      typeof m.content === "string" && m.content.startsWith("<!-- workspace-instructions:")
+    );
+  }
+
+  /**
+   * 丢掉全部工作区指令注入（压缩时用）。
+   *
+   * 为什么不是"每类只留最新一条"：delta 是**相对上一版基线的 diff**，只留最后一条会丢掉中间变化；
+   * 而且基线一旦被卷进摘要，diff 的参照物就没了。所以压缩时整批丢弃，交由接线层在下一轮
+   * 重新下发一份"当前完整基线"（与 DSH 一致：压缩会卷走基线，之后按可见面重新下发）。
+   */
+  static dropWorkspaceInstructions<T extends ChatMessage>(messages: readonly T[]): T[] {
+    return messages.filter((m) => !Session.isWorkspaceInstruction(m));
+  }
+
+  /**
+   * 找出当前**仍然可见**的工作区指令基线（DSH `visibleBaselineSource` 的等价物）。
+   *
+   * 关键：判据是"消息列表里还在不在"，而不是任何内存状态——压缩会把注入整批丢掉，
+   * 那时必须重新下发一份完整基线，而不是继续发相对 diff（diff 的参照物已经没了）。
+   *
+   * @returns `kind:scope` 里的 scope（即注入时用的 `cwd#identity`），找不到返回 undefined
+   */
+  findVisibleWorkspaceBaseline(): string | undefined {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i]!;
+      if (typeof m.content !== "string") continue;
+      const prefix = "<!-- workspace-instructions:baseline:";
+      if (!m.content.startsWith(prefix)) continue;
+      const end = m.content.indexOf(" -->");
+      if (end < 0) continue;
+      return m.content.slice(prefix.length, end);
+    }
+    return undefined;
   }
 
   /**
@@ -831,6 +871,34 @@ export class Session {
   /** 工作区指令注入的 marker（注入方与统计字节数的一方必须用同一个，别各写一份） */
   static workspaceInstructionMarker(kind: "baseline" | "delta", scope: string): string {
     return `<!-- workspace-instructions:${kind}:${scope} -->`;
+  }
+
+  /**
+   * 是否是一条**注入类**的 user 消息（不是用户真人说的话）。
+   *
+   * ⚠️ 凡是要"找最后一条用户消息"的代码都必须先过这个判断：工作区指令的 delta 是在
+   * 一趟 run 中间（工具调用之后）追加的 user 消息，天真的反向扫描会把它当成用户输入——
+   * 已经踩过两次（`appendLastTurnToJsonl()` 会把真实提问挤出持久化范围；
+   * `distillTurnToDiary()` 会拿指令文本去提炼日记）。
+   */
+  static isInjectedUserMessage(m: ChatMessage): boolean {
+    return (
+      m.role === "user" &&
+      typeof m.content === "string" &&
+      (m.content.startsWith("<!-- workspace-instructions:") ||
+        m.content.startsWith("<!-- injected:"))
+    );
+  }
+
+  /**
+   * 本轮的起始下标：最后一条**真实用户消息**（跳过注入类 user 消息）。-1 表示还没有用户消息。
+   */
+  static findTurnStartIndex(messages: readonly ChatMessage[]): number {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.role === "user" && !Session.isInjectedUserMessage(m)) return i;
+    }
+    return -1;
   }
 
   /**
@@ -1358,14 +1426,8 @@ export class Session {
   appendLastTurnToJsonl(): void {
     const msgs = this.messages;
 
-    // 找最后一条 user 消息作为本轮起始点
-    let userIdx = -1;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i]?.role === "user") {
-        userIdx = i;
-        break;
-      }
-    }
+    // 找最后一条**真实**用户消息作为本轮起始点（跳过工作区指令等注入类 user 消息）
+    const userIdx = Session.findTurnStartIndex(msgs);
     if (userIdx < 0) return;
 
     // user 之后必须至少有一条 assistant 作为最终回复，否则本轮尚未完成

@@ -311,18 +311,31 @@ code / project 模式会把工作区指令（`AGENTS.md` / `CLAUDE.md` 及 local
 更重要的是它需要**中途可更新**——写进 system prompt 会触发 `Session.applySystemPrompt()` 那条
 「内容一变就把整份 system prompt 追加成一条消息」的路径（既重、又不支持增量）。
 
-**两条投递路径**：
+**两条投递路径 + 三条决策**（实现见 `src/instructions/workspace-prompt.ts` 的 `syncWorkspaceInstructions`，
+对齐 DSH `lib/index.js` 的 `compose` + `syncInbox`）：
 
-| 路径 | 触发时机 | 内容 |
-|---|---|---|
-| `baseline` | 每次 run 的 preamble 阶段；某 cwd **首次**出现时（或会话恢复后 state 丢失时） | 完整渲染的指令（含 `Sources:` 文件清单） |
-| `delta` | `write_file` / `edit_file` / `delete_file` **成功后**（`WORKSPACE_TOUCHING_TOOLS`） | 只含变更：`new` / `changed` / `removed` + 变更文件的新内容（对齐 DSH 的 `AgentInstructionChange`） |
+| 当前可见基线 | 身份 | 上一版状态 | 动作 |
+|---|---|---|---|
+| 无 | —— | —— | `baseline`：完整基线（含 `Sources:` 清单） |
+| 有 | 相同 | —— | **`none`：一条都不追加** |
+| 有 | 不同 | 对得上（同进程） | `delta`：只发变更文件（`new` / `changed` / `removed` + 新内容） |
+| 有 | 不同 | 对不上（重启/换目录） | `replacement-baseline`：完整基线 + 替换语 |
 
-- 注入消息带 marker：`<!-- workspace-instructions:{baseline|delta}:{cwd} -->`，因此**同内容重复调用不会重复追加**
-  （`Session.appendWorkspaceInstructions`），压缩时由 `_foldPreambleInjections()` 按 `kind:scope` 收敛为最新一条
-- 状态按 session 保存在接线层（WeakMap）：**会话恢复后 state 为空 → 下一次 run 重新下发 baseline**（自愈）
-- ⚠️ **局限**：`exec_shell` 里写文件**不会**触发 delta（与 DSH 只认自己 fs 工具的口径一致）——
-  用 `write_file` / `edit_file` 改 `AGENTS.md` 才会即时生效
+- **身份**写在 marker 里：`<!-- workspace-instructions:{baseline|delta}:{cwd}#{identity} -->`，
+  `identity = sha1(cwd + 每个文件的 scope/展示路径/内容摘要)[:12]`；判定"当前可见基线是不是这一版"靠**读 marker**，
+  不靠内存状态（对应 DSH 的 `visibleBaselineSource()`）
+- **纯追加**：已发送的消息**永不改写**（前缀缓存安全）；旧基线一直留着，"取代"关系写在文本里
+  （替换语为 DSH 原文：*"This complete workspace instruction baseline replaces all earlier workspace instruction baselines."*）
+- **变了只发 diff**：不会因为 AGENTS.md 改了就再塞一份 48 KB 的完整基线
+- **状态**：每 session 一份 `Map<cwd, {identity, state}>`（WeakMap）；status 只在身份对得上时才用于 diff，
+  所以**会话恢复 / 进程重启 → 自动走 `replacement-baseline`**（自愈）
+- **压缩后自愈**：`_foldPreambleInjections()` 会把工作区指令注入**整批丢掉**（不是"每类留最新一条"——
+  delta 是相对上一版基线的 diff，只留最后一条会丢掉中间变化），下一轮 run 发现"上下文里看不到基线"
+  → 重新下发一份**当前完整基线**（对应 DSH：压缩会卷走基线，之后按可见面重新下发）
+- **触碰集合** = `read_file` / `write_file` / `edit_file` / `delete_file`（对齐 DSH 的 `{read, write, edit}`：
+  **读也算**——读子目录文件可能"发现"那里新增的 AGENTS.md；`exec_shell` 里写文件**不算**，与 DSH 只认自己 fs 工具一致）
+- **cwd 之下的嵌套 AGENTS.md** 不在作用域链里，只能在被触碰时由 `reconcileWorkspaceInstructions()`
+  沿路径向上回溯发现 → 因此**身份没变也会跑一次 reconcile**（否则嵌套变化永远发现不了）
 
 渲染语义：
 
