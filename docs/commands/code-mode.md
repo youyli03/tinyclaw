@@ -303,8 +303,28 @@ exit_plan_mode(
 
 ### 工作区指令注入（AGENTS.md）
 
-code / project 模式会在 system prompt 末尾注入一段**工作区指令**（`<system-reminder>` 包裹），
-语义照搬 DSH 的 `@deepseek-ai/dsh-agent-instructions`（实现见 `src/instructions/agents-md.ts`）：
+code / project 模式会把工作区指令（`AGENTS.md` / `CLAUDE.md` 及 local 覆盖）注入会话。
+语义照搬 DSH 的 `@deepseek-ai/dsh-agent-instructions`（实现见 `src/instructions/agents-md.ts`），
+**投递方式也照搬它**：**不进 system prompt**，而是作为 **user 角色**的注入消息落到会话里。
+
+**为什么不用 system prompt**：指令是**仓库内容**（可能随克隆来的仓库被污染），放用户输入层不享受 system 的权威性；
+更重要的是它需要**中途可更新**——写进 system prompt 会触发 `Session.applySystemPrompt()` 那条
+「内容一变就把整份 system prompt 追加成一条消息」的路径（既重、又不支持增量）。
+
+**两条投递路径**：
+
+| 路径 | 触发时机 | 内容 |
+|---|---|---|
+| `baseline` | 每次 run 的 preamble 阶段；某 cwd **首次**出现时（或会话恢复后 state 丢失时） | 完整渲染的指令（含 `Sources:` 文件清单） |
+| `delta` | `write_file` / `edit_file` / `delete_file` **成功后**（`WORKSPACE_TOUCHING_TOOLS`） | 只含变更：`new` / `changed` / `removed` + 变更文件的新内容（对齐 DSH 的 `AgentInstructionChange`） |
+
+- 注入消息带 marker：`<!-- workspace-instructions:{baseline|delta}:{cwd} -->`，因此**同内容重复调用不会重复追加**
+  （`Session.appendWorkspaceInstructions`），压缩时由 `_foldPreambleInjections()` 按 `kind:scope` 收敛为最新一条
+- 状态按 session 保存在接线层（WeakMap）：**会话恢复后 state 为空 → 下一次 run 重新下发 baseline**（自愈）
+- ⚠️ **局限**：`exec_shell` 里写文件**不会**触发 delta（与 DSH 只认自己 fs 工具的口径一致）——
+  用 `write_file` / `edit_file` 改 `AGENTS.md` 才会即时生效
+
+渲染语义：
 
 - **向上探测项目根**：从工作目录向上找 `projectRootMarkers`（默认 `[".git"]`）
 - **同目录多候选 + local 覆盖**：基础候选 `AGENTS.md` / `CLAUDE.md`，之后是 `AGENTS.local.md` / `CLAUDE.local.md`；
@@ -313,15 +333,12 @@ code / project 模式会在 system prompt 末尾注入一段**工作区指令**�
 - **字节预算**：单文件 `maxSourceBytes` 默认 1 MB（超限整个忽略，DSH 默认值）；一次注入 `maxBytes` 默认 **65536 B**
   （取值照抄 DSH 生产 profile：`dsh-base/cordis.patch.yml` 里 `agent-instructions` 配的就是 `maxBytes: 65536`；
   DSH 侧该字段是 required、无默认）；预算不够时**优先保住最具体的**（丢掉最宽泛的前缀），
-  再对最后一个文件做二分截断，并在段首写出 `Workspace instruction budget <N> bytes: omitted …; truncated … from X to Y bytes`
+  再对最后一个文件做二分截断，并在段首写出 `Workspace instruction budget <N> bytes: omitted …; truncated … from X to Y bytes`。
+  注意 marker 与 `Sources:` 行算在预算之外的固定开销里（约 100 B）
 - **用户全局层**：`~/.tinyclaw/AGENTS.md`（`dshHome` 映射到运行时目录）
 - **零文件时不注入**：这是**接线层**（`src/instructions/workspace-prompt.ts`）的规则 ——
   模块 `renderWorkspaceInstructions()` 本身忠实于 DSH：没有候选文件时仍返回「帧 + intro」；
-  tinyclaw 判 `included.length === 0` 就不注入（DSH 会渲染只含 intro 的空基线，对 chat/无 AGENTS.md 的目录纯属噪音）
-- **优先级**：注入位置在 ENV.md 之后、`feedback.md`（用户亲口纠正）之前 —— 越靠后越具体、越优先
-- **缓存**：缓存也在**接线层**（模块只提供 `reconcileWorkspaceInstructions` 的按作用域增量重算）。
-  指纹用**内容 sha1**，不用 mtime —— 本机实测连续两次写入的 `mtimeNs` 完全相同（见 `AGENTS.md` §7.4）；
-  实测首次渲染 ~1.9 ms / 命中缓存 ~0.2 ms
+  tinyclaw 判 `included.length === 0` 就不注入（DSH 会渲染只含 intro 的空基线，对无 AGENTS.md 的目录纯属噪音）
 
 ### 用户交互示例
 

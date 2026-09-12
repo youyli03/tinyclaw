@@ -726,10 +726,13 @@ export class Session {
     const kept: Array<ChatMessage & { _loopTaskRef?: string }> = [];
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i]!;
-      const c = m.role === "system" && typeof m.content === "string" ? m.content : "";
+      const sys = m.role === "system" && typeof m.content === "string" ? m.content : "";
+      const usr = m.role === "user" && typeof m.content === "string" ? m.content : "";
       let key: string | null = null;
-      if (c.startsWith("<!-- memory:")) key = c.split("\n")[0] ?? "<!-- memory:";
-      else if (c.startsWith("<!-- skill-reminder -->")) key = "<!-- skill-reminder -->";
+      if (sys.startsWith("<!-- memory:")) key = sys.split("\n")[0] ?? "<!-- memory:";
+      else if (sys.startsWith("<!-- skill-reminder -->")) key = "<!-- skill-reminder -->";
+      // 工作区指令（user 角色）：按 `kind:scope` 收敛，baseline 与 delta 各自保留最新一条
+      else if (usr.startsWith("<!-- workspace-instructions:")) key = usr.split("\n")[0] ?? "<!-- workspace-instructions:";
       if (key !== null) {
         if (seen.has(key)) continue;
         seen.add(key);
@@ -794,6 +797,40 @@ export class Session {
     }
     this.messages.push({ role: "system", content: marked });
     return true;
+  }
+
+  /**
+   * 追加一条「工作区指令」注入消息（AGENTS.md / CLAUDE.md 类，见 `src/instructions/`）。
+   *
+   * 为什么是 **user 角色**而不是 system（对齐 DSH `dsh-agent-instructions` 的 `form: 'instructions'`）：
+   *  - 工作区指令是**仓库内容**，可能随克隆来的仓库被污染 → 放在用户输入层，不享受 system 的权威性；
+   *  - 不写进冻结的 system prompt（`messages[0]`），所以**可以在会话中途增补/更新**，
+   *    也不会触发 `applySystemPrompt()` 那条「内容变了就把整份 system prompt 追加一遍」的路径。
+   *
+   * 仍沿用注入约定：marker 前缀 + 「与最近一条同类完全相同则跳过」；压缩时由
+   * `_foldPreambleInjections()` 按 `kind:scope` 收敛为最新一条。
+   *
+   * @param kind  `baseline`（首次进入某工作目录的完整指令）或 `delta`（被触碰后的增量变更）
+   * @param scope 作用域标识（这里是 cwd，用于隔离不同项目）
+   * @returns 是否真的追加
+   */
+  appendWorkspaceInstructions(kind: "baseline" | "delta", scope: string, content: string): boolean {
+    const kindPrefix = `<!-- workspace-instructions:${kind}:`;
+    const marked = `${Session.workspaceInstructionMarker(kind, scope)}\n${content}`;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i]!;
+      if (m.role === "user" && typeof m.content === "string" && m.content.startsWith(kindPrefix)) {
+        if (m.content === marked) return false;
+        break;
+      }
+    }
+    this.messages.push({ role: "user", content: marked });
+    return true;
+  }
+
+  /** 工作区指令注入的 marker（注入方与统计字节数的一方必须用同一个，别各写一份） */
+  static workspaceInstructionMarker(kind: "baseline" | "delta", scope: string): string {
+    return `<!-- workspace-instructions:${kind}:${scope} -->`;
   }
 
   /**

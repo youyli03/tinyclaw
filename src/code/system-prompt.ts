@@ -16,7 +16,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { agentManager } from "../core/agent-manager.js";
 import { readFeedback, FEEDBACK_INJECT_MAX_CHARS } from "../core/feedback-writer.js";
 import { loadConfig } from "../config/loader.js";
-import { buildWorkspaceInstructionsSection } from "../instructions/workspace-prompt.js";
 
 export function buildCodeSystemPrompt(
   agentId = "default",
@@ -48,9 +47,6 @@ The current model can read images directly. When a message contains an image, ob
   // 读取 code/feedback.md（跨 session 永久有效的行为约束；注入长度受限）
   const feedbackContent = readFeedback(agentId, "code", FEEDBACK_INJECT_MAX_CHARS);
 
-  // 工作区指令（AGENTS.md / CLAUDE.md 及其 local 覆盖）——按 DSH 语义渲染，带字节预算
-  const instructionsSection = buildWorkspaceInstructionsSection(workspacePath);
-
   // PLAN.md 不再自动注入 system prompt，AI 在 session 开始时主动用 read_file 读取
   const existingPlan: string | undefined = undefined;
 
@@ -80,7 +76,6 @@ The current model can read images directly. When a message contains an image, ob
     planPath,
     workdirNote,
     visionSection,
-    instructionsSection,
     existingPlan,
     feedbackContent,
     sessionId,
@@ -95,8 +90,6 @@ interface PromptParts {
   workspaceDir: string;
   workdirNote: string;
   visionSection: string;
-  /** 工作区指令段（AGENTS.md / CLAUDE.md 及 local 覆盖，已按预算渲染） */
-  instructionsSection?: string;
   planPath?: string;
   /** 已有 PLAN.md 内容（非空时注入到 prompt 末尾，供会话恢复后 AI 感知上次计划） */
   existingPlan?: string | undefined;
@@ -221,7 +214,6 @@ function buildPlanModePrompt({
   planPath,
   workdirNote,
   visionSection,
-  instructionsSection,
   existingPlan,
   feedbackContent,
   sessionId,
@@ -229,9 +221,6 @@ function buildPlanModePrompt({
   codeHookText,
 }: PromptParts): string {
   const envSection = envContent ? `\n\n## Local environment context (ENV.md)\n\n${envContent}` : "";
-  // 工作区指令（AGENTS.md 等）：放在 ENV 之后、feedback（用户纠正）之前——
-  // 越靠后越"具体"、优先级越高，feedback 是用户亲口纠正的，理应压过仓库文档。
-  const instructions = instructionsSection ?? "";
   const existingPlanSection = existingPlan
     ? `\n\n## Existing plan (left over from an earlier session)\n\n> ⚠️ PLAN.md already has content; **overwriting it with write_file is forbidden**. Whether this is a new task or a continuation, you may only use \`edit_file\` to append to or modify the relevant parts, keeping the history trail.\n\n<existing-plan>\n${existingPlan}\n</existing-plan>`
     : "";
@@ -343,7 +332,7 @@ Three core directories with completely different purposes:
 - **Always reply in the user's own language** — a Chinese user gets Chinese, an English user gets English. This prompt is written in English for precision; that is **not** a reason to answer in English.
 
 
-${envSection}${instructions}${visionSection}${feedbackSection}${codeHookText ? `\n\n## Behavior hook (from provider config)\n\n${codeHookText}` : ""}${existingPlanSection}`;
+${envSection}${visionSection}${feedbackSection}${codeHookText ? `\n\n## Behavior hook (from provider config)\n\n${codeHookText}` : ""}${existingPlanSection}`;
 }
 // ── Shared sections (被 code prompt 和 project prompt 共用) ──────────────
 

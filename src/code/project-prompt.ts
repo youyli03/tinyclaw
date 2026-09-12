@@ -11,7 +11,6 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildWorkspaceInstructionsSection } from "../instructions/workspace-prompt.js";
 import {
   memoryIndexPath,
   getProjectMeta,
@@ -268,10 +267,6 @@ export function buildProjectSystemPrompt(
   if (envContent) {
     parts.push(`\n\n## Local environment context (ENV.md)\n\n${envContent}`);
   }
-
-  // 9.5 工作区指令（AGENTS.md / CLAUDE.md 及其 local 覆盖）——项目目录就是 cwd
-  const instructionsSection = buildWorkspaceInstructionsSection(ctx.workdir);
-  if (instructionsSection) parts.push(instructionsSection);
 
   // 10. vision
   if (visionSection) parts.push(visionSection);

@@ -32,6 +32,7 @@ import { loadConfig } from "../config/loader.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { isAbsolute, resolve as resolvePath } from "path";
 import { agentManager } from "./agent-manager.js";
 import { slaveManager } from "./slave-manager.js";
 import { buildCodeSystemPrompt } from "../code/system-prompt.js";
@@ -47,6 +48,11 @@ import {
   PromptIntegrityError,
 } from "../auth/prompt-integrity.js";
 import { skillRegistry } from "../skills/registry.js";
+import {
+  ensureWorkspaceInstructionsBaseline,
+  pushWorkspaceInstructionDeltas,
+  WORKSPACE_TOUCHING_TOOLS,
+} from "../instructions/workspace-prompt.js";
 
 // 确保所有工具在模块加载时注册
 import "../tools/system.js";
@@ -1124,6 +1130,17 @@ interface PrepareResult {
   totalVisionCacheCreationTokens: number;
 }
 
+/**
+ * 本 run 里「工具执行」与「工作区指令」共用的工作目录：
+ * code 模式且已绑定项目 → 项目目录；否则 agent workspace。
+ * 与 `executeTool` 的 `ctx.cwd` 取值保持一致，避免"指令按 A 目录算、工具按 B 目录写"。
+ */
+function runToolCwd(session: Session, isCodeMode: boolean): string {
+  return isCodeMode && session.codeWorkdir
+    ? session.codeWorkdir
+    : agentManager.workspaceDir(session.agentId);
+}
+
 async function runAgentInner(
   session: Session,
   userContent: string,
@@ -1316,6 +1333,20 @@ async function runAgentInner(
         session.appendSkillReminder(reminder);
       }
       bus.emit({ type: "preamble:skill-reminder", skills: reminder ? 1 : 0 });
+    }
+
+    // 2.4 工作区指令（AGENTS.md / CLAUDE.md 及 local 覆盖）：
+    // 首次进入某个工作目录时注入一份 baseline（**user 角色**，不进 system prompt），
+    // 之后只在该 run 里 fs 触碰文件后才下发增量（见 runWorkspaceDeltaAfterTool）。
+    if (!isSlave) {
+      const _wsCwd = runToolCwd(session, isCodeMode);
+      const _wsPush = ensureWorkspaceInstructionsBaseline(session, _wsCwd);
+      if (_wsPush.files > 0) {
+        console.log(
+          `${logPrefix} 📄 workspace instructions: ${_wsPush.files} file(s), ${_wsPush.bytes} B, ` +
+            `${_wsPush.pushed ? "injected" : "unchanged"}`
+        );
+      }
     }
 
     // 2.5 工具结果剪枝（参考 DSH dsh-compaction-tool-result-pruner）
@@ -1958,6 +1989,31 @@ async function runAgentInner(
           result = `操作被取消：${err.message}`;
         } else {
           result = `工具执行错误：${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      // 工作区指令增量：写/改/删成功后，按被触碰的路径重新协调（AGENTS.md 可能被新建/改动/删除），
+      // 变更作为一条 user 角色注入落到会话里 —— 下一轮 LLM 请求即可见。参考 DSH
+      // `dsh-agent-instructions` 的 "successful fs tool touches into the inbox"。
+      if (err0 === undefined && WORKSPACE_TOUCHING_TOOLS.has(call.name)) {
+        const _touched = String(toolArgs["path"] ?? "");
+        if (_touched) {
+          try {
+            const _touchedAbs = isAbsolute(_touched)
+              ? _touched
+              : resolvePath(runToolCwd(session, isCodeMode), _touched);
+            const _wsDelta = pushWorkspaceInstructionDeltas(session, runToolCwd(session, isCodeMode), [
+              _touchedAbs,
+            ]);
+            if (_wsDelta.changes.length > 0) {
+              console.log(
+                `${logPrefix} 📄 workspace instructions delta: ` +
+                  _wsDelta.changes.map((c) => `${c.action} ${c.path}`).join(", ")
+              );
+            }
+          } catch {
+            /* 协调失败不影响工具结果 */
+          }
         }
       }
 
