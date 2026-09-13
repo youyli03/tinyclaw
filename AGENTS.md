@@ -290,6 +290,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
     只接受 `$HOME` 内、已存在、非密钥、非 `~/.tinyclaw`、非 `.ssh` 等受保护目录；**cron/loop 一律拒绝**。
     免 MFA 判据 `argsAreSelfRuntimeOnly(args, ctx)` 同时认"运行时目录"与"已授权路径"。
   - `elevate`（`sandbox/elevation.ts`）：**命令级**、这条命令脱离沙箱在宿主机跑，E1 免批 / E2 每次确认。
+    ⚠️ **不下传给子 Agent**：提权与**发起方**绑定（执行发生在发起方的上下文里），子 Agent 调 `elevate: true` 一律拒绝；
+    而 `fs_grant` 的授权会**随 fork 继承**（`Session.inheritWriteGrantsTo()`，只复制 TTL 内的、不延长）——
+    所以"给子 Agent 开权限"的正确做法是 master 先 `fs_grant`，再 `agent_fork`。
 - **无人值守的密钥按任务声明**（方案 B，`sandbox/secrets-filter.ts`）：job / loop 配置 `secrets: ["NAME"]` →
   运行时物化一个只含这些 key 的临时文件并 bind 回 `~/.tinyclaw/secrets.toml`（脚本零改动），用后即删、物化写审计；
   未声明 = 脚本读到空文件。全局例外 `[sandbox].readableSecretPaths` 仍在，但优先用按任务声明。
@@ -363,6 +366,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
   - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
   - `tools/skill-run.ts` 的 skill 临时 session 在**失败路径不清理** JSONL（`deleteJsonl` 只在成功分支），且 300s 超时用的是 `Promise.race`，**不取消**后台仍在跑的 Slave
+  - **子 Agent 拿不到声明式密钥**：按任务声明的密钥（`sandbox/secrets-filter.ts` 方案 B）目前只有 cron job / loop trigger 能声明，`agent_fork` 与 `skill_run` 的子 Agent **无处声明、也不继承父的声明** → 它们在沙箱里 `exec_shell` 读 `~/.tinyclaw/secrets.toml` 一律是**空文件**。要让子 Agent 用密钥，需给 `agent_fork` 加 `secrets: [...]`（按任务声明 + 审计），暂未做
 
 ### 7.5 Loop 引擎（确认存在、影响真实运行）
 

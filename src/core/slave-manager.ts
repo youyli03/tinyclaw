@@ -445,6 +445,12 @@ class SlaveManager {
       mode,
       rounds: contextRounds,
     });
+
+    // 路径级授权（fs_grant）随 fork 继承给子 Agent：语义是"master 申请过的路径，子 Agent 可以用"。
+    // 只复制仍在有效期内的条目（TTL 取父的剩余时间）；子 Agent 依旧不能发起任何审批
+    // （approvalPolicy="never"）。同一份授权同时作用于**工具层**（checkWritePath 认
+    // Session.grantedWritePaths）与**沙箱层**（system.ts 读 ctx.masterSession.listWriteGrants()）。
+    const inheritedGrants = masterSession.inheritWriteGrantsTo(slaveSession);
     state.context = {
       mode: stats.mode,
       budgetTokens: stats.budgetTokens,
@@ -460,7 +466,8 @@ class SlaveManager {
       `[slave:${slaveId}] forked by ${masterSession.sessionId.slice(-12)}, mode=${stats.mode}, ` +
         `继承 ${stats.inheritedRounds} 轮 / ${stats.inheritedMessages} 条` +
         `${stats.summaryInjected ? " + 摘要" : ""}` +
-        `${stats.droppedRounds > 0 ? ` (预算不足未纳入 ${stats.droppedRounds} 轮)` : ""}, ` +
+        `${stats.droppedRounds > 0 ? ` (预算不足未纳入 ${stats.droppedRounds} 轮)` : ""}` +
+        `${inheritedGrants > 0 ? `, 继承 ${inheritedGrants} 条 fs_grant 授权` : ""}, ` +
         `约 ${stats.usedTokens}/${stats.budgetTokens} tokens, task="${task.slice(0, 60)}"`
     );
 
@@ -519,6 +526,8 @@ class SlaveManager {
     // auto-fork 的语义是"接着刚才那轮继续"，因此用 standard 而不是 config 默认值，
     // 但仍受预算约束（不设轮数上限）。
     const stats = buildSlaveContext(slaveSession, masterSession, { mode: "standard" });
+    // auto-fork continuation 同样是"master 的活接着干"，路径级授权一并继承（见 fork() 的说明）
+    const inheritedGrants = masterSession.inheritWriteGrantsTo(slaveSession);
     state.context = {
       mode: stats.mode,
       budgetTokens: stats.budgetTokens,
@@ -545,7 +554,8 @@ class SlaveManager {
       `[slave:${slaveId}] auto-fork continuation from ${masterSession.sessionId.slice(-12)}, ` +
         `继承 ${stats.inheritedMessages} 条` +
         `${stats.droppedRounds > 0 ? ` (预算裁剪丢 ${stats.droppedRounds} 轮)` : ""}, ` +
-        `约 ${stats.inheritedChars} 字符`
+        `约 ${stats.inheritedChars} 字符` +
+        `${inheritedGrants > 0 ? `, 继承 ${inheritedGrants} 条 fs_grant 授权` : ""}`
     );
 
     void this._run(

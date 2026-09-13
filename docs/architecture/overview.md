@@ -439,6 +439,15 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 **cron / loop 一律拒绝**（无人值守的可写范围只能由任务配置的 `writablePaths` 声明）。
 授权集合存在 `Session.grantedWritePaths`（带 TTL，`argsAreSelfRuntimeOnly()` 也会认它 → 免 MFA）。
 
+**授权随 fork 继承给子 Agent**：`agent_fork`（含 auto-fork continuation）与 `skill_run` 的同步子 Agent，
+在 fork 时把 master **仍在有效期内**的授权复制一份给子会话（`Session.inheritWriteGrantsTo()`，
+TTL 取父的剩余时间、不延长）。语义是"master 申请过的路径，子 Agent 也能用"——子 Agent 自己
+**没有任何审批能力**（`approvalPolicy: "never"`，见「Agent Fork」节），只是继承了一个已打开的范围。
+未申请过的路径不受影响，已过期的条目不会被复制。
+
+**`elevate` 不下传**：命令级提权与**发起方**绑定（执行发生在发起方的进程/沙箱上下文里），
+master 的提权令牌不能转给子 Agent；子 Agent 调 `exec_shell({ elevate: true })` 一律确定性拒绝。
+
 #### 无人值守的密钥：按任务声明（方案 B）
 
 沙箱默认把 `secrets.toml` 掩码成空文件。job / loop 在配置里声明所需密钥后，
@@ -632,6 +641,10 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
   - **审批策略钉死 `never`**:Slave 的 `runAgent` 一律带 `approvalPolicy: "never"`(对齐 DSH 委派语义),
     即不能弹 MFA、不能 `exec_shell({elevate: true})`、不能 `ask_user`,命中即确定性拒绝 + 审计;
     cron / loop 的无人值守消息步骤同样钉死该策略
+  - **继承路径级授权**:fork 时把 master **仍在有效期内**的 `fs_grant` 授权复制给 Slave
+    (`Session.inheritWriteGrantsTo()`,TTL 取父的剩余时间);工具层 `checkWritePath` 与沙箱层
+    (`ctx.masterSession.listWriteGrants()`)都会认它,因此"master 申请 → 子 Agent 可用"不需要子 Agent 伸手要权限
+    (子 Agent 也可自行 `fs_grant`,但 `elevate` 永不继承)
   - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session(注入消息带
     `<!-- subagent:result:<slaveId> -->` marker,使"最后一条真实用户消息"的判定不会把它当成用户输入),触发新一轮 LLM 推理后回复用户
   - `result_mode: "wait"`:Slave 完成后静默,Master 需主动调用 `agent_wait(slave_id)` 获取结果;适合并行 fork 多个 Slave 后统一汇总

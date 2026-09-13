@@ -131,6 +131,9 @@ registerTool({
     }
 
     const TIMEOUT_MS = 300_000; // 300s
+    // 与 agent_fork 一致：master 用 fs_grant 申请过的路径（TTL 内）随子 Agent 继承，
+    // 否则 skill 子 Agent 写那些目录会被拒（工具层）或只读（沙箱层）。子 Agent 仍无审批能力。
+    ctx.masterSession.inheritWriteGrantsTo(slaveSession);
     let result: string;
     try {
       const runResult = await Promise.race([

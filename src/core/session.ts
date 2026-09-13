@@ -243,6 +243,29 @@ export class Session {
     return [...this.grantedWritePaths.keys()];
   }
 
+  /**
+   * 把本会话**仍在有效期内**的写授权复制给另一个会话（子 Agent fork 时用）。
+   *
+   * 语义：master 用 `fs_grant` 申请过的路径，它 fork 出来的子 Agent 也能用 ——
+   * 子 Agent 自己**没有**任何审批能力（`approvalPolicy: "never"`），只是继承了一个
+   * master 已经打开的范围。复制后两者独立：父会话撤销/过期不影响已复制的条目。
+   *
+   * TTL 取**父的剩余时间**（不延长、不重置），已过期的条目不会被复制。
+   *
+   * @returns 实际复制的条数
+   */
+  inheritWriteGrantsTo(target: Session): number {
+    const now = Date.now();
+    this.pruneWriteGrants(now);
+    let copied = 0;
+    for (const [p, exp] of this.grantedWritePaths) {
+      if (exp <= now) continue;
+      target.grantWritePath(p, exp - now);
+      copied++;
+    }
+    return copied;
+  }
+
   private pruneWriteGrants(now: number): void {
     for (const [p, exp] of this.grantedWritePaths) {
       if (exp <= now) this.grantedWritePaths.delete(p);
