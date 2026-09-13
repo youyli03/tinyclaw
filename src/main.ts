@@ -947,14 +947,24 @@ ${message}`;
           }
         }
 
-        // ── 流式收尾：最终正文已通过流式送达时跳过普通发送 ────────────────
+        // ── 流式收尾：正文前段已流式送达时，只补发装不下的余量 ──────────────
         if (stream) {
           // 正文与媒体标签分开处理：媒体标签必须走普通发送路径才会被上传，
           // 否则流式会把 <file src=.../> 当作纯文本发给用户、文件永远发不出去。
           const { text: bodyText, mediaText } = splitMediaText(toSend);
           const streamBody = mediaText ? bodyText.trim() || streamShown : toSend;
-          const streamed = await stream.finish(streamBody);
-          if (streamed) {
+          const fin = await stream.finish(streamBody);
+          if (fin.streamed) {
+            // 平台的流式消息有长度预算（remain_msg_len）：超出的余量走普通发送，
+            // 否则平台会静默丢弃后续分片，消息停在"生成中"（手机只显示开头几个字）
+            if (fin.remainder.trim()) {
+              try {
+                await connector.send(msg.peerId, msg.type, fin.remainder, msg.messageId);
+                console.log(`[qqbot] 流式余量已用普通发送补上（${fin.remainder.length} 字符）`);
+              } catch (restErr) {
+                console.error("[qqbot] 流式余量发送失败:", restErr);
+              }
+            }
             if (mediaText) {
               try {
                 const outcome = await connector.send(
@@ -975,7 +985,9 @@ ${message}`;
                 console.error("[qqbot] 流式回复中的媒体发送失败:", mediaErr);
               }
             }
-            console.log("[qqbot] 最终回复已通过流式送达，跳过普通发送");
+            console.log(
+              `[qqbot] 最终回复已通过流式送达${fin.remainder.trim() ? "（余量已另发）" : ""}，跳过重复发送`
+            );
             return;
           }
         }

@@ -181,16 +181,31 @@ export interface C2CStreamChunk {
   msgSeq: number;
 }
 
+/** 单个流式分片的响应 */
+export interface StreamChunkResult {
+  /** 消息 ID：首片即后续分片必须携带的 `stream_msg_id` */
+  id?: string;
+  /**
+   * 平台回报的**流式消息剩余长度（字符数）**。
+   *
+   * ⚠️ 这是**硬约束**：整条流式消息有长度上限，超过之后平台**不再应用**后续分片
+   * （请求仍返回 200，不会报错），消息会永久停在"生成中"，最后一片 `input_state=10` 也丢掉。
+   * 因此必须读它、按它截断，并把装不下的部分改用普通发送（见 `C2CStreamSession`）。
+   * 响应未带该字段时为 undefined。
+   */
+  remainMsgLen?: number;
+}
+
 /**
  * 发送一个流式分片。
- * @returns 首片返回 stream_msg_id；后续分片返回服务端回显的 id
+ * @returns 首片返回 `stream_msg_id`；同时带回平台的剩余长度回报
  * @throws StreamApiError 非 2xx（含 40007 前缀不可修改 / 50002 频率限制）
  */
 export async function streamC2CMessage(
   token: string,
   userOpenid: string,
   chunk: C2CStreamChunk
-): Promise<string | undefined> {
+): Promise<StreamChunkResult> {
   const body: Record<string, unknown> = {
     input_mode: "replace",
     input_state: chunk.inputState,
@@ -227,9 +242,13 @@ export async function streamC2CMessage(
     throw new StreamApiError(resp.status, errCode, `stream_messages ${resp.status}: ${text.slice(0, 200)}`);
   }
   try {
-    return (JSON.parse(text) as { id?: string }).id;
+    const parsed = JSON.parse(text) as { id?: string; remain_msg_len?: number };
+    return {
+      ...(typeof parsed.id === "string" ? { id: parsed.id } : {}),
+      ...(typeof parsed.remain_msg_len === "number" ? { remainMsgLen: parsed.remain_msg_len } : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 

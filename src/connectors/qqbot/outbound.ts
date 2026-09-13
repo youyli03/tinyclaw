@@ -29,6 +29,7 @@ import {
   reserveMsgSeq,
   StreamApiError,
   type C2CStreamChunk,
+  type StreamChunkResult,
   type MediaTarget,
 } from "./api.js";
 import type { InboundMessage, SendOutcome } from "../base.js";
@@ -720,8 +721,58 @@ async function doSend(
 
 // ── C2C 流式回复会话 ──────────────────────────────────────────────────────────
 
+/**
+ * 单条流式消息的保守**字节**上限。
+ *
+ * 平台对整条流式消息有长度上限，响应里用 `remain_msg_len`（"流式消息剩余长度（字符数）"）回报；
+ * **超过之后平台不再应用后续分片，但请求仍返回 200** —— 于是消息停在"生成中"，最后一片
+ * `input_state=10` 也被丢掉。客户端表现：手机只显示最前面几个字（如 `对…`），别的设备显示完整正文
+ * （Dashboard 渲染的是会话正文，与这条流式消息无关）。
+ *
+ * 实测锚点（本机 QQ 单聊）：585 字（≈1755 B）完整到达；778 字（≈2334 B）、905 字（≈2715 B）被截断
+ * → 上限落在 (1755, 2334) 字节之间，取 **2048 B**。平台回报 `remain_msg_len` 时**两个口径都不越**。
+ */
+const STREAM_MAX_BYTES = 2048;
+
+/** 文本是否仍在流式消息容量内（容量未知时只按字节上限保守判断） */
+function fitsStreamBudget(text: string, capacity: number | undefined): boolean {
+  if (Buffer.byteLength(text, "utf-8") > STREAM_MAX_BYTES) return false;
+  return capacity === undefined || text.length <= capacity;
+}
+
+/**
+ * 取满足容量限制的**最长前缀**（二分），并尽量在段落/换行处断开，避免把一句话切成两半。
+ * 二分保证前提：若 `text.slice(0, n)` 超容量，则更长前缀也超。
+ */
+function fitStreamPrefix(text: string, capacity: number | undefined): string {
+  if (fitsStreamBudget(text, capacity)) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fitsStreamBudget(text.slice(0, mid), capacity)) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo <= 0) return "";
+  const head = text.slice(0, lo);
+  const boundary = Math.max(head.lastIndexOf("\n\n"), head.lastIndexOf("\n"));
+  // 只在回退幅度不大（不超过已成前缀的 1/3）时才按段落边界收，避免为了整齐丢掉太多内容
+  if (boundary >= Math.floor(lo * (2 / 3))) return text.slice(0, boundary + 1);
+  return head;
+}
+
 /** 单次分片发送函数（可注入，便于测试） */
-export type StreamChunkSender = (chunk: C2CStreamChunk) => Promise<string | undefined>;
+export type StreamChunkSender = (chunk: C2CStreamChunk) => Promise<StreamChunkResult>;
+
+/** `C2CStreamSession.finish()` 的结果：调用方据此决定还要不要补发、补发什么 */
+export interface StreamFinishResult {
+  /** 最终回复的前半段是否**已经通过流式送达**（true 时调用方只需补发 `remainder`） */
+  streamed: boolean;
+  /** 已通过流式送达的正文（平台已显示的部分） */
+  sentText: string;
+  /** 仍需用普通发送补发的剩余正文（可能为空串） */
+  remainder: string;
+}
 
 export interface C2CStreamOptions {
   appId: string;
@@ -747,6 +798,8 @@ const STREAM_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
  *  - `index` 必须在**每次请求前**递增（含重试）
  *  - 首片响应返回 `stream_msg_id`，后续分片复用；整个会话复用同一个 `msg_seq`
  *  - 429 / `err_code=50002` 用新 index 退避重试；其它错误直接放弃并回退普通发送
+ *  - **整条消息有长度上限**：超限后平台静默不再应用分片（请求仍 200），必须靠
+ *    `remain_msg_len` 自行截断，把装不下的部分交给普通发送（见 `finish()`）
  */
 export class C2CStreamSession {
   private readonly opts: C2CStreamOptions & { minIntervalMs: number };
@@ -761,6 +814,12 @@ export class C2CStreamSession {
   private failed = false;
   private started = false;
   private lastFlushAt = 0;
+  /** 本消息容量（字符）：首个响应 `remain_msg_len` + 该片正文长度；平台未回报则 undefined（只按字节上限） */
+  private capacity: number | undefined;
+  /** 是否已给平台发过 `input_state=10`（收尾后不得再追加内容） */
+  private finalized = false;
+  /** 是否已因超出容量而停止推送（避免每个节流周期都白发一次请求） */
+  private overBudget = false;
 
   constructor(opts: C2CStreamOptions) {
     this.opts = { minIntervalMs: 400, ...opts };
@@ -777,10 +836,16 @@ export class C2CStreamSession {
     return this.started;
   }
 
+  /** 平台回报的容量（字符），仅在收到首个响应后可用 */
+  get messageCapacity(): number | undefined {
+    return this.capacity;
+  }
+
   /** 追加一段增量文本（内部节流后以累计全文下发） */
   push(delta: string): void {
     if (this.closed || this.failed || !delta) return;
     this.buffer += delta;
+    if (this.overBudget) return; // 已超容量：不再发起请求，等收尾时截断 + 普通发送补余量
     this.schedule();
   }
 
@@ -793,32 +858,59 @@ export class C2CStreamSession {
     this.closed = true;
     this.clearTimer();
     await this.chain.catch(() => {});
-    if (this.started && !this.failed) await this.sendChunk(this.sent, 10);
+    if (this.started && !this.failed) {
+      this.finalized = await this.sendChunk(this.sent, 10);
+    }
   }
 
   /**
-   * 收尾。
+   * 收尾并给出"还要补发多少正文"。
+   *
    * @param finalText 最终回复正文
-   * @returns true 表示最终回复已通过流式送达（调用方应跳过普通发送）
+   * @returns `streamed=true` 时调用方只需发送 `remainder`；`false` 时正文整段走普通发送
    */
-  async finish(finalText: string): Promise<boolean> {
+  async finish(finalText: string): Promise<StreamFinishResult> {
     this.closed = true;
     this.clearTimer();
     await this.chain.catch(() => {});
-    if (this.failed) return false;
-
     const final = finalText.trim();
-    if (!this.started) {
-      if (!final) return false;
-      // 一个分片都没发出去（例如极短回复）：直接用结束片发一次
-      return await this.sendChunk(final, 10);
+    const fallback = (): StreamFinishResult => ({
+      streamed: false,
+      sentText: this.sent,
+      remainder: final,
+    });
+
+    // 已经收尾过（中间轮次触发工具调用时 closeEarly 定型了那条消息）→ 不能再追加，
+    // 平台会忽略收尾后的分片；此时最终回复整段走普通发送，避免尾部静默丢失
+    if (this.finalized || this.failed) return fallback();
+
+    // replace 模式下最终正文必须覆盖已下发正文，否则用已发内容收尾、正文交给普通发送
+    if (this.started && final && !final.startsWith(this.sent)) {
+      this.finalized = await this.sendChunk(this.sent, 10);
+      return fallback();
     }
-    // replace 模式下最终正文必须覆盖已下发正文，否则 rollover 交给普通发送
-    if (final && !final.startsWith(this.sent)) {
-      await this.sendChunk(this.sent, 10);
-      return false;
+
+    // 按容量取最长可发前缀（装不下时不硬灌：平台会静默丢弃，消息停在"生成中"）
+    const target = final || this.sent;
+    const prefix = fitStreamPrefix(target, this.capacity);
+    if (!prefix || (this.started && !prefix.startsWith(this.sent))) {
+      if (this.started) this.finalized = await this.sendChunk(this.sent, 10);
+      return fallback();
     }
-    return await this.sendChunk(final || this.sent, 10);
+
+    const ok = await this.sendChunk(prefix, 10);
+    this.finalized = ok;
+    if (!ok) {
+      // 收尾片失败：已下发的前缀仍在，余下部分必须让调用方补发，不能整段丢弃
+      return { streamed: true, sentText: this.sent, remainder: final.slice(this.sent.length) };
+    }
+    if (prefix.length < target.length) {
+      console.log(
+        `[qqbot] 流式消息容量 ${this.capacity ?? "?"} 字符：前 ${prefix.length} 字符已流式送达，` +
+          `剩余 ${target.length - prefix.length} 字符转普通发送`
+      );
+    }
+    return { streamed: true, sentText: prefix, remainder: final.slice(prefix.length) };
   }
 
   private clearTimer(): void {
@@ -841,6 +933,15 @@ export class C2CStreamSession {
     if (this.closed || this.failed) return;
     const target = this.buffer;
     if (target === this.sent) return;
+    if (!fitsStreamBudget(target, this.capacity)) {
+      // 超容量：继续推会被平台静默丢弃 → 停止推送，等收尾时用能装下的前缀定型
+      this.overBudget = true;
+      console.log(
+        `[qqbot] 流式已达长度预算（已发 ${this.sent.length} 字符，容量 ${this.capacity ?? "未知"}），` +
+          `停止流式推送，剩余正文转普通发送`
+      );
+      return;
+    }
     await this.sendChunk(target, 1);
   }
 
@@ -858,14 +959,25 @@ export class C2CStreamSession {
         ...(this.streamMsgId ? { streamMsgId: this.streamMsgId } : {}),
       };
       try {
-        const id = this.opts.sender
+        const res = this.opts.sender
           ? await this.opts.sender(chunk)
           : await streamC2CMessage(
               await getAccessToken(this.opts.appId, this.opts.clientSecret),
               this.opts.userOpenid,
               chunk
             );
-        if (!this.streamMsgId && id) this.streamMsgId = id;
+        if (!this.streamMsgId && res.id) this.streamMsgId = res.id;
+        if (res.remainMsgLen !== undefined) {
+          // 平台第一次回报容量：remain + 本片长度 = 这条流式消息的总容量（字符）。
+          // 多次回报时取**最小值**（若平台对某片做了截断，remain 会偏小 → 容量只会收紧不会放宽）。
+          const derived = res.remainMsgLen + text.length;
+          if (this.capacity === undefined || derived < this.capacity) {
+            this.capacity = derived;
+            console.log(
+              `[qqbot] 流式消息容量 ≈ ${this.capacity} 字符（平台回报剩余 ${res.remainMsgLen} + 本片 ${text.length}）`
+            );
+          }
+        }
         if (!this.started) {
           this.started = true;
           recordReply(this.opts.replyToId);
