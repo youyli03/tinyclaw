@@ -163,7 +163,7 @@ tinyclaw/
 │   │   └── workspace-prompt.ts  # 渲染成 prompt 段（带指纹缓存），供 code / project 模式注入
 │   ├── commands/             # 斜杠命令注册表（/help /status /code /plan 等）
 │   │   ├── registry.ts       # parseCommand() + executeCommand()
-│   │   └── builtin.ts        # 内置斜杠命令（/help /status /code /chat /plan /auto /new）
+│   │   └── builtin.ts        # 内置斜杠命令（/help /status /code /chat /plan /auto /new /think）
 │   ├── cron/                 # Cron 定时任务调度器
 │   │   ├── scheduler.ts      # 轮询 jobs/ 目录，热加载 job JSON，到时触发 runner
 │   │   ├── runner.ts         # 单步/Pipeline 两种模式；结果按策略推送；session 自动清理
@@ -277,6 +277,22 @@ tinyclaw/
   - `true`（默认）→ 通过 OpenAI `tools` 参数进行 function calling
   - `false` → 自动切换为**文本模式工具调用**：系统提示注入工具列表与格式规则，LLM 以 `<tool_call>` XML 块响应，Agent 正则解析后执行
 - 所有 LLM 调用均受**连接稳定性**保护（重试 / idle timeout / jitter），详见 [RETRY_AND_STABILITY.md](./RETRY_AND_STABILITY.md)
+
+#### 思考档位（DeepSeek 系后端）
+
+`[llm.backends.<role>]` 可配置三个互斥级别的字段（解析优先级见 `src/llm/thinking.ts`）：
+
+| 字段 | 线级效果 | 说明 |
+|---|---|---|
+| `disableThinking = true` | `{thinking:{type:"disabled"}}` | 彻底关闭思考（优先级最高） |
+| `reasoningEffort = "medium"` | `{thinking:{type:"enabled"}} + {reasoning_effort:"medium"}` | 合法值 **none / minimal / low / medium / high / xhigh / max**（api.deepseek.com 实测枚举；DSH 内部用的 `off` **不是**合法线级值，发了直接 400） |
+| `thinkingBudget = 4000` | `{thinking:{type:"enabled",budget_tokens:4000}}` | 旧路径，仅当 agent 传 `ChatOptions.enableThinking`（code 模式）时发送 |
+
+- 会话级覆盖：`/think <档位>` 写 `~/.tinyclaw/sessions/<sanitized-sessionId>.toml` 的 `[thinking] level`，
+  下一轮 LLM 请求即生效（无需重启），`/think default` 清除。优先级：会话覆盖 > `disableThinking` > `reasoningEffort` > `thinkingBudget`。
+- ⚠️ 只有 DeepSeek 系后端接线了这两个线级字段（`LLMClient` 的 `thinkingControl`）；Copilot / OpenRouter / Google 等后端**忽略**会话覆盖，`/think` 会直接提示不支持。
+- ⚠️ `reasoning_effort: "none"` **不等于**关闭思考（实测仍有 reasoning tokens 产出）；要关闭只能用 `off` / `disableThinking`。
+- `/think` 设置只作用于**该 session 的 ReAct 主循环**；压缩（summarizer）、视觉、cron job、subagent 各用自己的后端默认值。
 
 
 #### OpenAI-compatible（`provider` 不填 / 为 `"openai"`）
@@ -645,6 +661,9 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 - **并发保护**：上次 tick 未完成时自动跳过，不叠加执行
 - **日志**：`~/.tinyclaw/cron/logs/loop:<sanitized-sessionId>.jsonl`
 
+> `~/.tinyclaw/sessions/<sanitized-sessionId>.toml` 是**会话级配置文件**，除 `[loop]` 外还存
+> `[mcp_chat]` / `[mcp_code]`（会话启用哪些 MCP server）与 `[thinking] level`（`/think` 的思考档位覆盖）。
+
 详见 [LOOP_SESSION.md](./LOOP_SESSION.md)。
 
 ### 工具调用的 `__purpose`(进度旁白)
@@ -859,6 +878,9 @@ model   = "gpt-4o-mini"
 
 # DeepSeek 等支持思维链的模型可关闭 thinking(减少 token 消耗)
 # disableThinking = true   # 在对应后端节下添加
+# 也可指定思考档位(仅 DeepSeek 系后端):
+# reasoningEffort = "medium"   # none|minimal|low|medium|high|xhigh|max
+# 会话里用 `/think <档位>` 临时覆盖,`/think default` 恢复后端默认
 
 # ── LLM 后端（方案 B：GitHub Copilot 订阅） ──────────────────────────────────
 # 需先运行 `gh auth login`，或通过首次启动的 Device Flow 完成授权

@@ -21,6 +21,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
+import { isThinkingSetting, type ThinkingSetting } from "../llm/thinking.js";
 import {
   projectsDir,
   memoryIndexPath,
@@ -290,6 +291,56 @@ export class AgentManager {
     existing["loop"] = loopBlock;
 
     // 序列化为 TOML（手动构建，不依赖 toml 序列化库）
+    fs.writeFileSync(p, formatSessionToml(existing), "utf-8");
+  }
+
+  /**
+   * 读取指定 session 的思考档位（来自 sessions/<id>.toml 的 [thinking] 块的 level）。
+   * 没有配置块 / 值非法 → 返回 undefined（＝沿用后端 config 的默认档位）。
+   */
+  readSessionThinking(sessionId: string): ThinkingSetting | undefined {
+    const p = this.getSessionTomlPath(sessionId);
+    if (!fs.existsSync(p)) return undefined;
+    try {
+      const parsed = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
+      const block = parsed["thinking"];
+      if (!block || typeof block !== "object") return undefined;
+      const level = (block as Record<string, unknown>)["level"];
+      return typeof level === "string" && isThinkingSetting(level) ? level : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 写入/更新指定 session 的思考档位到 sessions/<id>.toml 的 [thinking] 块。
+   * `level = undefined` 时删除该块（恢复后端默认）。
+   */
+  writeSessionThinking(sessionId: string, level: ThinkingSetting | undefined): void {
+    const p = this.getSessionTomlPath(sessionId);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    let existing: Record<string, unknown> = {};
+    if (fs.existsSync(p)) {
+      try {
+        existing = parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
+      } catch {
+        /* 解析失败则覆盖写 */
+      }
+    }
+    if (level === undefined) {
+      delete existing["thinking"];
+    } else {
+      existing["thinking"] = { level };
+    }
+    if (Object.keys(existing).length === 0) {
+      // 没有其他配置块了：删掉空文件，避免 sessions/ 里堆积空 toml
+      try {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      } catch {
+        /* 忽略 */
+      }
+      return;
+    }
     fs.writeFileSync(p, formatSessionToml(existing), "utf-8");
   }
 

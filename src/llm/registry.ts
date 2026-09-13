@@ -3,6 +3,7 @@ import { AutoFreeClient, buildOpenRouterClient } from "./openrouter.js";
 import type { BackendRole } from "../config/schema.js";
 import { loadConfig } from "../config/loader.js";
 import { buildCopilotClient } from "./copilot.js";
+import { providerSupportsThinking } from "./thinking.js";
 
 export type BackendName = "daily" | "summarizer" | "code" | "vision";
 
@@ -178,6 +179,9 @@ class LLMRegistry {
           : role.thinkingBudget !== undefined ? { thinkingBudget: role.thinkingBudget }
           : role.disableThinking ? { disableThinking: true }
           : {}),
+        // 线级 thinking 参数（`thinking` / `reasoning_effort`）只有 DeepSeek 系端点认；
+        // 它决定会话级 `/think` 覆盖能否落到请求上（`/think` 用同一个判据提示用户）。
+        thinkingControl: providerSupportsThinking(provider),
       });
       this.clients.set(name, client);
       // DeepSeek 等非 Copilot provider：手动读取 config 中的 maxContextWindow

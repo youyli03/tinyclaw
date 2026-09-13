@@ -38,6 +38,11 @@ apiKey  = "sk-..."
 model   = "gpt-4o"
 # maxTokens = 4096    # 可选，默认 4096
 # timeoutMs = 120000  # 可选，默认 120000ms
+# ── DeepSeek 系后端的思考档位（可选）─────────────────────────────────────────
+# reasoningEffort = "medium"  # none|minimal|low|medium|high|xhigh|max，越高思考越多越贵
+#                             # 与 thinkingBudget 互斥；与 disableThinking 同时设置时后者优先
+# disableThinking = true      # 彻底关闭思考（发 thinking:{type:"disabled"}）
+# 会话里可用 `/think <档位>` 临时覆盖后端默认值（写入 sessions/<sessionId>.toml）
 # supportsToolCalls = false  # 可选。对接不支持 OpenAI function calling 的"弱模型"(部分本地/小厂模型)时设为 false,
 #                            # 自动改走文本模式工具调用(textMode):模型以 <tool_call>{"name":...,"args":...}</tool_call>
 #                            # XML 文本块响应,Agent 正则解析后执行,无需模型原生支持 tools 参数。

@@ -9,6 +9,12 @@
 import { registerCommand, listCommands, getCommand } from "./registry.js";
 import { slaveManager } from "../core/slave-manager.js";
 import { llmRegistry, parseModelSymbol } from "../llm/registry.js";
+import type { BackendRole } from "../config/schema.js";
+import {
+  THINKING_SETTINGS,
+  normalizeThinkingSetting,
+  providerSupportsThinking,
+} from "../llm/thinking.js";
 import { loadConfig } from "../config/loader.js";
 import {
   getCachedCopilotInfo,
@@ -762,5 +768,70 @@ registerCommand({
     }
 
     return `❌ 未知子命令 \`${sub}\`。用法: \`/loop list\` / \`/loop pause <id>\` / \`/loop resume <id>\``;
+  },
+});
+
+// ── /think ────────────────────────────────────────────────────────────────────
+
+/** 当前模式实际使用的后端角色（code 未配置时 registry 会回退到 daily） */
+function thinkingRoleFor(mode: "chat" | "code"): { key: "daily" | "code"; role: BackendRole } {
+  const backends = loadConfig().llm.backends;
+  if (mode === "code" && backends.code) return { key: "code", role: backends.code };
+  return { key: "daily", role: backends.daily };
+}
+
+registerCommand({
+  name: "think",
+  description: "查看/设置本会话的思考等级（DeepSeek thinking 档位，下一轮即生效）",
+  usage: "/think [off|none|minimal|low|medium|high|xhigh|max|default]",
+  execute({ session, args }) {
+    const { key: modeLabel, role } = thinkingRoleFor(session.mode);
+    const { provider } = parseModelSymbol(role.model);
+    if (!providerSupportsThinking(provider)) {
+      return (
+        `❌ 当前模型 \`${role.model}\` 不支持思考档位。\n` +
+        "只有 DeepSeek 系后端接线了 `thinking` / `reasoning_effort`；" +
+        "其它 provider（Copilot / OpenRouter / Google …）发这两个字段会被端点拒绝。"
+      );
+    }
+    const backendDefault = role.disableThinking ? "off" : (role.reasoningEffort ?? "未设置");
+    const override = session.getThinkingLevel();
+
+    if (args.length === 0) {
+      return [
+        "**思考等级（本会话）**",
+        `• 本会话覆盖：${override ? "`" + override + "`" : "（无）"}`,
+        `• 后端默认（${modeLabel} = \`${role.model}\`）：\`${backendDefault}\``,
+        `• 可用档位：${THINKING_SETTINGS.map((s) => "`" + s + "`").join(" ")}`,
+        "",
+        "`off` = 真正关闭思考（发 `thinking:{type:\"disabled\"}`）；" +
+          "其余为线级 `reasoning_effort`（越高思考越多、越贵）。",
+        "覆盖写入 `~/.tinyclaw/sessions/<sessionId>.toml` 的 `[thinking] level`，重启后仍生效。",
+      ].join("\n");
+    }
+
+    const raw = args[0]!.replace(/^\//, "").toLowerCase();
+    if (raw === "default" || raw === "reset" || raw === "backend" || raw === "inherit") {
+      session.setThinkingLevel(undefined);
+      return `✅ 已清除本会话覆盖，回到后端 ${modeLabel} 默认档位 \`${backendDefault}\`。`;
+    }
+
+    const level = normalizeThinkingSetting(raw);
+    if (!level) {
+      return (
+        `❌ 未知档位 \`${args[0]}\`。\n` +
+        `可用：${THINKING_SETTINGS.map((s) => "`" + s + "`").join(" ")}；` +
+        "`/think default` 清除覆盖。"
+      );
+    }
+
+    session.setThinkingLevel(level);
+    const effect =
+      level === "off"
+        ? "（关闭思考，只发正文）"
+        : level === backendDefault
+          ? "（与后端默认一致）"
+          : `（后端 ${modeLabel} 默认 \`${backendDefault}\`）`;
+    return `✅ 本会话思考等级已设为 \`${level}\`${effect}，下一轮 LLM 请求生效，无需重启。`;
   },
 });

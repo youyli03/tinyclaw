@@ -17,6 +17,7 @@ import {
   toolsToResponsesFormat,
   processResponsesStream,
 } from "./responses-ws.js";
+import { resolveThinkingParams, type ThinkingLevel, type ThinkingSetting } from "./thinking.js";
 
 /** 遍历 Error.cause 链，输出 "msg1 → msg2 → msg3" 格式字符串，便于日志和错误提示中显示完整原因 */
 function formatErrChain(err: unknown, maxDepth = 4): string {
@@ -300,12 +301,18 @@ export interface ResolvedBackend {
    *  {thinking: {type: "enabled", budget_tokens: budget}} 给 API。
    *  undefined = 模型不支持 thinking 或未配置。 */
   thinkingBudget?: number;
-  /** DeepSeek V4 思考强度(low/high/max)。
+  /** DeepSeek 思考强度(none/minimal/low/medium/high/xhigh/max)。
    *  设置后 client 发送 {reasoning_effort: X} + {thinking:{type:"enabled"}}。
    *  与 thinkingBudget 互斥:设置了 reasoningEffort 则 thinkingBudget 被忽略。 */
-  reasoningEffort?: "low" | "high" | "max";
+  reasoningEffort?: ThinkingLevel;
   /** [保留兼容] 禁用 thinking。设置 thinkingBudget 时此字段被忽略。 */
   disableThinking?: boolean;
+  /**
+   * 该后端是否接入了线级 thinking 参数（`thinking` / `reasoning_effort`）。
+   * 只有 DeepSeek 系后端为 true —— 它决定 ChatOptions.thinking 这类**会话级覆盖**
+   * 能否落到请求上（Copilot/OpenRouter 等端点不认这两个字段）。
+   */
+  thinkingControl?: boolean;
   /** 历史视觉消息保留数量,保留最近 N 条含图消息,默认 3 */
   maxHistoryImages?: number;
   /**
@@ -433,6 +440,13 @@ export interface ChatOptions {
    *  Code 模式默认 true，Chat 模式默认 false。
    */
   enableThinking?: boolean;
+  /**
+   * 本轮思考档位覆盖（来自会话级 `/think` 设置，见 `core/session.ts` 的 getThinkingLevel）。
+   * `off` = 真正关闭 thinking；其余为线级 reasoning_effort。
+   * ⚠️ 只在 backend.thinkingControl 为 true（DeepSeek 系）时生效，避免把
+   * DeepSeek 专有字段发给不认它的端点。
+   */
+  thinking?: ThinkingSetting;
   /**
    * 覆盖本轮的 X-Request-Id（UUID）。
    * /retry 命令传入上次失败请求的 requestId，服务端识别相同 ID 不重复计费。
@@ -910,17 +924,19 @@ export class LLMClient {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             messages: resolved as any,
             ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-            ...(this.backend.disableThinking
-              ? { thinking: { type: "disabled" } }
-              : this.backend.reasoningEffort
-                ? {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    reasoning_effort: this.backend.reasoningEffort as any,
-                    thinking: { type: "enabled" },
-                  }
-                : opts.enableThinking && this.backend.thinkingBudget
-                  ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
-                  : {}),
+            ...resolveThinkingParams({
+              ...(this.backend.thinkingControl && opts.thinking
+                ? { setting: opts.thinking }
+                : {}),
+              ...(this.backend.reasoningEffort !== undefined
+                ? { backendEffort: this.backend.reasoningEffort }
+                : {}),
+              ...(this.backend.disableThinking ? { backendDisabled: true } : {}),
+              ...(opts.enableThinking ? { enableThinking: true } : {}),
+              ...(this.backend.thinkingBudget !== undefined
+                ? { thinkingBudget: this.backend.thinkingBudget }
+                : {}),
+            }),
             ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
             ...(canUseTools
               ? {
@@ -1080,17 +1096,19 @@ export class LLMClient {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               messages: resolvedForStream as any,
               ...buildMaxTokenParam(this.backend.model, opts.maxTokens ?? this.backend.maxTokens),
-              ...(this.backend.disableThinking
-                ? { thinking: { type: "disabled" } }
-                : this.backend.reasoningEffort
-                  ? {
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      reasoning_effort: this.backend.reasoningEffort as any,
-                      thinking: { type: "enabled" },
-                    }
-                  : opts.enableThinking && this.backend.thinkingBudget
-                    ? { thinking: { type: "enabled", budget_tokens: this.backend.thinkingBudget } }
-                    : {}),
+              ...resolveThinkingParams({
+                ...(this.backend.thinkingControl && opts.thinking
+                  ? { setting: opts.thinking }
+                  : {}),
+                ...(this.backend.reasoningEffort !== undefined
+                  ? { backendEffort: this.backend.reasoningEffort }
+                  : {}),
+                ...(this.backend.disableThinking ? { backendDisabled: true } : {}),
+                ...(opts.enableThinking ? { enableThinking: true } : {}),
+                ...(this.backend.thinkingBudget !== undefined
+                  ? { thinkingBudget: this.backend.thinkingBudget }
+                  : {}),
+              }),
               ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
               ...(canUseTools
                 ? {

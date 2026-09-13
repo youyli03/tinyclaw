@@ -360,6 +360,15 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   + 日志点名 + 指标 `llm/empty_reply` → 仍为空则 `AgentRunResult.emptyReplyKind` 交给 `main.ts` 发**诚实**兜底
   （`⚠️ 模型这轮没有产出正文…`），`✅ 已完成` 只留给"工具已交付、模型确实没补充"的情形。
   ⚠️ 改 `agent.ts` 循环或 `main.ts` 兜底时**不要**把空正文当成正常收尾。
+- **思考档位的线级枚举与 DSH 不一样，别照抄（实测）**：`api.deepseek.com/v1` 的 `reasoning_effort`
+  只认 **`none|minimal|low|medium|high|xhigh|max`**；DSH 内部的 `off` **不是**合法值——发 `off` 直接
+  400 `unknown variant "off", expected one of none, minimal, low, medium, high, xhigh, max`。
+  真正"关闭思考"只有 `{thinking:{type:"disabled"}}`；`reasoning_effort:"none"` **不等于**关闭
+  （同一道题仍产出 ~142 reasoning tokens）。档位是**上限/引导**不是工作量下限：简单题 7 档几乎无差异
+  （~140 tokens），多步题 low=260 → high=319。这套枚举与解析只在 `src/llm/thinking.ts`
+  （`resolveThinkingParams()`），schema 与 `/think` 都从那里取，**不要**在别处再写一份档位表。
+  ⚠️ 会话级覆盖只对声明了 `thinkingControl` 的后端（DeepSeek 系）下发；给 Copilot/OpenRouter 发
+  `thinking` / `reasoning_effort` 会被端点拒绝。
 - **`gateway.ts:184` 的 finally 删队列会丢新消息**；`api.ts:74` 的 token singleflight 失败后永久卡死。
 - **`qmd.ts:258-280` 维度不一致时直接删整个 `index.sqlite`**（无备份）。
 - **`mcp-servers/` 与 `scripts/` 不在 `tsconfig` 的 `include` 范围内**（只含 `src/**/*`），改动它们后 typecheck 不会覆盖。

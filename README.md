@@ -73,6 +73,20 @@ supportsToolCalls = false   # 不支持 function calling 的模型走文本工�
 
 > Copilot 后端留空时按模型元数据（`capabilities.supports.tool_calls`）自动推断，通常无需手动设置。
 
+**思考档位(DeepSeek 系后端):**
+
+`none|minimal|low|medium|high|xhigh|max` 七档(越高思考越多、越贵),`disableThinking = true` 彻底关闭思考:
+
+```toml
+[llm.backends.daily]
+model = "deepseek/deepseek-v4.1-flash-expires-on-0910"
+reasoningEffort = "medium"   # 后端默认档位
+# disableThinking = true     # 或:完全关闭思考(优先级高于 reasoningEffort)
+```
+
+会话里用 `/think <档位>` 临时覆盖(写 `~/.tinyclaw/sessions/<sessionId>.toml`,重启后仍生效),
+`/think off` 关闭思考,`/think default` 恢复后端默认。仅 DeepSeek 系后端支持。
+
 **QQBot + MFA(可选):**
 ```toml
 [channels.qqbots.main]
@@ -129,6 +143,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `/plan` | Code 模式下切换到 Plan 子模式(先规划再执行) |
 | `/auto` | Code 模式下切换到 Auto 子模式(直接执行,默认) |
 | `/compact` | 手动触发上下文压缩(无需等 token 自动超限) |
+| `/think` | 查看/设置本会话思考档位(`off`/`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`,下一轮生效,仅 DeepSeek 系后端) |
 | `/new` | 新建会话 |
 
 ## 内置工具速查

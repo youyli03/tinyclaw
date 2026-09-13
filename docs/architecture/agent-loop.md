@@ -158,6 +158,9 @@ runAgent(session, userContent, opts)
 │      parseResponse() 正则提取所有 <tool_call> 块作为 tool_calls，剩余文本为 content
 │
 │    ┌── LLM chat(messages, [tools], signal=llmAc.signal)
+│    │    ├─ 思考档位：session.getThinkingLevel()（`/think` 写入的会话级覆盖）→
+│    │    │    与后端 config 的 reasoningEffort / disableThinking 一起交给
+│    │    │    llm/thinking.ts 的 resolveThinkingParams()（仅 DeepSeek 系后端生效）
 │    │    ├─ AbortError → break（被软中断取消）
 │    │    └─ 其他错误  → throw
 │    │
@@ -408,6 +411,22 @@ runAgent() 恢复
 5. **诚实兜底**：重试仍为空时结果带 `emptyReplyKind`，`main.ts` 对 `degenerate` / `length`
    发 `⚠️ 模型这轮没有产出正文（…），请再问一次或换个模型`；`✅ 已完成` 只留给
    "工具已交付结果、模型确实没有补充"的情形。
+
+---
+
+### 会话级思考档位（`/think`，`llm/thinking.ts`）
+
+- **命令**：`/think`（无参数看当前状态）· `/think <档位>` · `/think default` 清除覆盖。
+  合法档位 `off | none | minimal | low | medium | high | xhigh | max`（别名 `med`/`mid`/`min`/`disable` 归一化）。
+- **存储**：`~/.tinyclaw/sessions/<sanitized-sessionId>.toml` 的 `[thinking] level`（与 `[loop]` / `[mcp_*]` 同文件）。
+  `Session.getThinkingLevel()` 惰性读一次并缓存 → **重启后仍生效**；`/think default` 会删掉该块。
+- **生效点**：每轮 `client.streamChat()` 的 `ChatOptions.thinking`，优先级
+  会话覆盖 > `disableThinking` > `reasoningEffort` > `thinkingBudget`（见 `resolveThinkingParams()`）。
+- **边界**：只有声明了 `thinkingControl` 的后端（DeepSeek 系）会把它落到请求上；其它 provider 忽略，
+  `/think` 也会直接提示不支持。压缩 / 视觉 / cron / subagent 不受会话覆盖影响。
+- **实测锚点**（2026-09-13，`tmp/probe-reasoning-effort*.ts`）：档位是**上限/引导**而非工作量下限——
+  30th prime 这类简单题 7 个档位的 reasoning tokens 几乎相同（~140），换一道多步题 low=260 → high=319。
+  想省 token 只能 `off`（真关）或换更小的模型，不要指望调档位带来数量级差异。
 
 ---
 

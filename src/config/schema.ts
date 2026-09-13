@@ -144,12 +144,18 @@ const BackendRoleSchema = z.object({
   /** 禁用 thinking 模式（适用于 DeepSeek v4-pro 等 thinking 模型），默认 false */
   disableThinking: z.boolean().optional(),
   /**
-   * DeepSeek V4 思考强度控制(low/high/max),替代旧的 budget_tokens。
+   * DeepSeek 思考强度控制,替代旧的 budget_tokens。
    * 设置后 client 发送 {reasoning_effort: X} + {thinking:{type:"enabled"}}。
-   * 与 thinkingBudget 互斥:设置了 reasoningEffort 则 thinkingBudget 被忽略。
+   * 与 thinkingBudget 互斥:设置了 reasoningEffort 则 thinkingBudget 被忽略;
+   * 与 disableThinking 同时设置时 disableThinking 优先。
    * 不设置时沿用 thinkingBudget / disableThinking 旧逻辑。
+   * 合法取值以 api.deepseek.com 实测为准(见 `src/llm/thinking.ts` 顶部说明):
+   * none/minimal/low/medium/high/xhigh/max。想彻底关闭思考用 disableThinking。
+   * 该值只是后端**默认档位**;用户在会话里可用 `/think` 临时覆盖。
    */
-  reasoningEffort: z.enum(["low", "high", "max"]).optional(),
+  reasoningEffort: z
+    .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+    .optional(),
   /** 模型支持的最大 thinking token 预算。
    *  仅在 agent 通过 ChatOptions.enableThinking 显式开启时才发送 thinking 参数。
    *  例如 4000 = 模型最多用 4000 token 做内部推理。

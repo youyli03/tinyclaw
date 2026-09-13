@@ -1618,6 +1618,9 @@ async function runAgentInner(
 
       let streamBytes = 0;
       let lastProgressPrint = 0;
+      // 会话级思考档位（`/think` 写入 sessions/<id>.toml，惰性读一次并缓存）。
+      // 仅在 DeepSeek 系后端生效（client 用 backend.thinkingControl 把守）。
+      const sessionThinking = session.getThinkingLevel();
       try {
         response = await client.streamChat(
           reqMessages,
@@ -1655,6 +1658,8 @@ async function runAgentInner(
             // code 模式开启 thinking(内部推理),chat 模式不开启
             ...(isCodeMode ? { enableThinking: true } : {}),
             ...(isCodeMode ? { disableIdleAfterFirstChunk: true } : {}),
+            // 会话级 `/think` 覆盖（优先级高于 backend.reasoningEffort）
+            ...(sessionThinking ? { thinking: sessionThinking } : {}),
             // /retry 命令传入的 requestId override（首轮才有意义）
             ...(round === 0 && opts.turnRequestIdOverride
               ? { turnRequestIdOverride: opts.turnRequestIdOverride }

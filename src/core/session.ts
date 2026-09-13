@@ -23,6 +23,7 @@ import {
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 import { InboundMessageBus } from "./inbound-bus.js";
+import type { ThinkingSetting } from "../llm/thinking.js";
 
 /** Plan 模式审批结果 */
 export type PlanApprovalResult = {
@@ -293,6 +294,14 @@ export class Session {
   /** Code 子模式：auto（默认，直接执行）/ plan（先规划后执行） */
   codeSubMode: "auto" | "plan" = "auto";
 
+  /**
+   * 会话级思考档位缓存。
+   * - `undefined` = 尚未从 `sessions/<id>.toml` 读取过（惰性加载）
+   * - `null` = 读过，本会话没有覆盖（沿用后端 config 的 reasoningEffort / disableThinking）
+   * 持久化形式见 `agents` 目录外层的 `sessions/<id>.toml` 的 `[thinking] level`。
+   */
+  private _thinkingLevel: ThinkingSetting | null | undefined = undefined;
+
   /** Code 后端（当前仅 copilot，预留扩展） */
   codeBackend: string = "copilot";
 
@@ -449,6 +458,27 @@ export class Session {
 
   getMessages(): ChatMessage[] {
     return this.messages;
+  }
+
+  /**
+   * 本会话的思考档位（`/think` 设置）。
+   * 惰性从 `sessions/<id>.toml` 的 `[thinking] level` 读取一次并缓存；
+   * 返回 undefined = 未设置，交给后端 config 决定（daily 默认 medium / code 默认 max）。
+   */
+  getThinkingLevel(): ThinkingSetting | undefined {
+    if (this._thinkingLevel === undefined) {
+      this._thinkingLevel = agentManager.readSessionThinking(this.sessionId) ?? null;
+    }
+    return this._thinkingLevel ?? undefined;
+  }
+
+  /**
+   * 设置本会话的思考档位并持久化；传 undefined 表示清除覆盖（恢复后端默认）。
+   * 下一轮 LLM 请求即生效（无需重启）。
+   */
+  setThinkingLevel(level: ThinkingSetting | undefined): void {
+    this._thinkingLevel = level ?? null;
+    agentManager.writeSessionThinking(this.sessionId, level);
   }
 
   /**
