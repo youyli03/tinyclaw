@@ -111,6 +111,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | Code 模式（命令 / prompt / 子模式） | `docs/commands/code-mode.md` |
 | 记忆 / 压缩 / 蒸馏 | `docs/memory/qmd-embed.md` / `docs/memory/distill-pipeline.md` |
 | 工作区指令装载（`src/instructions/`） | `docs/commands/code-mode.md` 的「工作区指令注入」节 |
+| Web Dashboard（`src/web/backend/**`、`src/web/frontend/**`） | `docs/architecture/overview.md` 的「Dashboard(Web UI)」节 |
 | 重试 / 超时 / 流式稳定性 | `docs/architecture/retry.md` |
 | Agent 循环步骤 / 消息链 / 压缩触发 | `docs/architecture/agent-loop.md` |
 | QQBot / MCP server | `README.md` + 对应 `docs/mcp/*.md` |

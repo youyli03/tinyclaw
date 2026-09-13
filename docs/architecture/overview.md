@@ -22,8 +22,46 @@
 - 访问方式:`tinyclaw web` 显示访问地址,内置 URL token 认证(cookie 持久化)
 - **概览页**:今日系统/AI 请求趋势图,快速状态一览
 - **指标页**:按 category/key 分组的折线图/柱状图,由 `db_write` 工具写入 `dashboard.db`
+- **Token 页**:prompt 构成细分(见下)
 - **日报页**:展示 `write_report` 写入的 Markdown 日报存档,按 type+date 索引
 - **Cron 页**:可展开的任务卡片列表,显示最近运行状态与日志
+
+#### Token 页(prompt 构成细分)
+
+回答"钱花在哪一类"——把**每一次 LLM 请求**的 prompt 拆成七类（`src/memory/token-estimate.ts` 的
+`breakdownMessages()`，纯计算、无额外模型调用）：
+
+| 分类 | 判定（只用**已有 marker**，不给模型加可见内容） |
+|---|---|
+| `system` 系统提示 | `role=system`（内置 prompt / 技能提醒 / 格式纠错…） |
+| `instructions` 工作区指令 | 以 `<!-- workspace-instructions:` 开头（AGENTS.md 注入） |
+| `memory` 记忆注入 | 以 `<!-- memory:` / `<!-- injected:` 开头 |
+| `summary` 压缩摘要 | 含 `[对话历史摘要]` / `[编码会话历史摘要]` |
+| `tools_schema` 工具定义 | `JSON.stringify(tools)` 的长度（工具 schema 本身也很贵） |
+| `tool_results` 工具结果 | `role=tool`（并由 `tool_calls[].id` 反查工具名做**工具归因**） |
+| `conversation` 对话正文 | 其余 user/assistant（含 `tool_calls` 参数 JSON） |
+
+- ⚠️ **构成是启发式估算**（全仓统一口径 chars/3.5），**总量一律用提供方报告的 `prompt_tokens`**；
+  页面把两者并排显示（含偏差 %），不要把构成当账单 —— 与 DSH `dsh-token-meter` 的纪律一致
+  （该插件同样只给 `systemTokens`/`toolsTokens`/`messageTokens` 三桶近似值，并明示"构成绝不呈现为总量"）；
+  估算对 CJK 与 JSON schema 会系统性偏低（实测一次真实请求：实际 31,597 vs 估算 26,862，约 −15%）
+- 判定顺序有意为之：`role=tool` 先判（工具输出里出现 marker 也算工具结果）→ 再按 marker 判注入类
+  （**先于** `role=system`，否则被 system 承载的压缩摘要永远归不进 `summary`）→ 最后按角色兜底
+- **存储**：`dashboard.db` 的 `token_breakdown` 表，**每轮请求一行**（含 `actual_prompt/output/cache_*`、
+  各分类合计 `items`、单条排行 `top`、工具归因 `tools`、`context_window`/`session_tokens`），
+  与 `metrics` 分开：不受指标白名单与 7 天窗口限制
+- **接口**：`GET /api/token-breakdown?days=&limit=&session=` → `{rows, latest, byDay, byTool, bySession, totals}`
+  （聚合在服务端做；`latest` 取**全局最近一次请求**，用于"最近一次请求占用窗口"卡片）
+- **图表**：环形图（最近一次构成占比）、分类堆叠趋势（按天）、逐轮 prompt 折线（可见"第几轮突然涨了"）、
+  单条消耗 Top、工具归因排行、会话/来源排行
+- **上下文窗口占用**用**实际 prompt / contextWindow**（不是仅会话正文的估算——`session.estimatedTokens()`
+  不含 system prompt 与工具 schema，会严重低估）；用量写入失败只 `console.warn`，绝不影响对话
+- ⚠️ **覆盖范围（已知限制，未实现的部分如实标注）**：本表只覆盖**走 ReAct 主循环**的请求 ——
+  chat / code / cron（含 pipeline 的 msg step）/ loop（在绑定会话里跑）/ `agent_fork` 子 Agent /
+  `skill_run` 子 Agent 都在内；而**压缩/蒸馏的 summarizer 调用**与 **vision 图片识别**目前**未纳入**
+  （它们只写旧的 `llm/token/{summarizer,vision}/*` 指标，见「指标页」），故 Token 页的合计**不等于全量**
+- ⚠️ **`source` 目前只区分 `cron` / `code` / `chat`**（沿用旧口径），因此 **loop / 子 Agent / skill 会被标成 `chat`**，
+  在「会话/来源排行」里混在一起；细化到 `loop`/`slave`/`skill`/`summarizer`/`vision` 待办
 
 ---
 
@@ -195,7 +233,7 @@ tinyclaw/
 │       ├── meta.json         # task / status / toolsUsed / agentId / masterSessionId / 起止时间
 │       └── result.md         # 最终结果全文（agent_trace 读取）
 ├── reports/                  # 日报存档(<type>/<date>.md,write_report 写入,Dashboard 展示)
-├── dashboard.db              # Dashboard 业务指标数据库(SQLite,db_write 写入)
+├── dashboard.db              # Dashboard 业务指标数据库(SQLite,db_write 写入;另含 Token 页的 token_breakdown 表)
 ├── news/                     # news MCP server 的新闻存档
 │   ├── YYYY-MM/
 │   │   └── YYYY-MM-DD.md     # 每日新闻存档（Markdown，fetch_and_store 写入）

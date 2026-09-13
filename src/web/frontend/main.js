@@ -279,7 +279,7 @@ function drawSparkline(id, data, color) {
 const app = createApp({
   setup() {
     // ── Hash 路由:刷新后恢复 tab 与日报状态（兼容所有手机浏览器）──────────
-    const VALID_PAGES = ['overview', 'metrics', 'notes', 'cron'];
+    const VALID_PAGES = ['overview', 'metrics', 'token', 'notes', 'cron'];
     function parseURL() {
       const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
@@ -930,6 +930,231 @@ const app = createApp({
     }
 
     // ── 日报页（已废弃，保留空占位避免引用报错） ─────────────────────────────
+    // ── Token 页：prompt 构成细分 ────────────────────────────────────────────
+    // 口径（对齐 DSH dsh-token-meter）：构成是**启发式估算**（chars/3.5，见
+    // src/memory/token-estimate.ts），总量一律用提供方报告的 prompt_tokens；
+    // 两者并排显示就是为了让偏差可见，不要拿构成当账单。
+    const TOKEN_COLORS = {
+      system:       '#4F7EF8',
+      instructions: '#AF87FF',
+      memory:       '#34C785',
+      summary:      '#FF9F0A',
+      tools_schema: '#0891B2',
+      tool_results: '#FF6961',
+      conversation: '#8B5CF6',
+    };
+    const TOKEN_LABELS = {
+      system: '系统提示',
+      instructions: '工作区指令',
+      memory: '记忆注入',
+      summary: '压缩摘要',
+      tools_schema: '工具定义',
+      tool_results: '工具结果',
+      conversation: '对话正文',
+    };
+    const TOKEN_ORDER = ['system', 'instructions', 'memory', 'summary', 'tools_schema', 'tool_results', 'conversation'];
+    function tokenColor(cat) { return TOKEN_COLORS[cat] || '#B0B8D4'; }
+    function tokenLabel(cat) { return TOKEN_LABELS[cat] || cat; }
+
+    const tokenDays = ref('7');
+    const tokenData = ref(null);
+    const tokenLatest = computed(() => (tokenData.value && tokenData.value.latest) || null);
+
+    function fmtNum(n) {
+      return Number(n || 0).toLocaleString('zh-CN');
+    }
+    function pctOf(a, b) {
+      const total = Number(b || 0);
+      if (!total) return '—';
+      return ((Number(a || 0) / total) * 100).toFixed(1) + '%';
+    }
+    function shortSession(id) {
+      if (!id) return '—';
+      return id.length > 24 ? '…' + id.slice(-22) : id;
+    }
+
+    const tokenStatCards = computed(() => {
+      const d = tokenData.value;
+      const t = (d && d.totals) || { rounds: 0, prompt: 0, output: 0, cacheRead: 0, cacheWrite: 0, estTotal: 0 };
+      const latest = tokenLatest.value;
+      const cacheRate = t.prompt > 0 ? (t.cacheRead / t.prompt) * 100 : 0;
+      const ctxPct = latest && latest.contextWindow && latest.prompt
+        ? (Number(latest.prompt) / latest.contextWindow) * 100
+        : null;
+      const estBias = t.prompt > 0 ? ((t.estTotal - t.prompt) / t.prompt) * 100 : null;
+      return [
+        {
+          key: 'rounds', label: '请求轮数', value: fmtNum(t.rounds),
+          sub1: `近 ${tokenDays.value} 日 · 每轮一行`,
+          sub2: d && d.bySession ? `${d.bySession.length} 个会话` : '—',
+          color: C.accent,
+        },
+        {
+          key: 'prompt', label: 'prompt tokens（实际）', value: fmtNum(t.prompt),
+          sub1: `估算构成合计 ${fmtNum(t.estTotal)}`,
+          sub2: estBias == null ? '—' : `估算偏差 ${estBias > 0 ? '+' : ''}${estBias.toFixed(1)}%`,
+          color: C.purple,
+        },
+        {
+          key: 'output', label: 'output tokens', value: fmtNum(t.output),
+          sub1: `缓存命中 ${cacheRate.toFixed(1)}%（read ${fmtNum(t.cacheRead)}）`,
+          sub2: `cache write ${fmtNum(t.cacheWrite)}`,
+          color: C.green,
+        },
+        {
+          key: 'ctx', label: '最近一次请求占用窗口', value: ctxPct == null ? '—' : ctxPct.toFixed(1) + '%',
+          sub1: latest && latest.contextWindow
+            ? `实际 prompt ${fmtNum(latest.prompt)} / 窗口 ${fmtNum(latest.contextWindow)}`
+            : '—',
+          sub2: latest
+            ? `第 ${latest.round + 1} 轮 · 会话正文估算 ${fmtNum(latest.sessionTokens || 0)} · ${relativeTime(latest.ts)}`
+            : '—',
+          color: C.orange,
+        },
+      ];
+    });
+
+    async function loadTokenPage() {
+      try {
+        const days = Number(tokenDays.value) || 7;
+        const res = await fetch(`/api/token-breakdown?days=${days}&limit=800`).then(r => r.json());
+        tokenData.value = res;
+        await nextTick();
+        renderTokenCharts();
+      } catch (e) {
+        console.warn('token page failed', e);
+      }
+    }
+
+    function renderTokenCharts() {
+      const d = tokenData.value;
+      if (!d) return;
+
+      // 1) 最近一次请求的构成（环形）
+      const latest = d.latest;
+      if (latest && latest.items.length) {
+        createOrUpdateChart('chart-token-donut', {
+          type: 'doughnut',
+          data: {
+            labels: latest.items.map(i => tokenLabel(i.category)),
+            datasets: [{
+              data: latest.items.map(i => i.tokens),
+              backgroundColor: latest.items.map(i => tokenColor(i.category)),
+              borderWidth: 0,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '58%',
+            plugins: {
+              legend: { display: true, position: 'right', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 }, color: C.t3 } },
+              tooltip: {
+                callbacks: {
+                  label: (it) => ` ${it.label}：${fmtNum(it.parsed)} (${pctOf(it.parsed, latest.estTotal)})`,
+                },
+              },
+            },
+          },
+        });
+      }
+
+      // 2) 分类堆叠趋势（按天）
+      const byDay = d.byDay || [];
+      if (byDay.length) {
+        const seen = new Set();
+        for (const day of byDay) for (const k of Object.keys(day.categories || {})) seen.add(k);
+        const cats = [...seen].sort((a, b) => {
+          const ia = TOKEN_ORDER.indexOf(a); const ib = TOKEN_ORDER.indexOf(b);
+          return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+        createOrUpdateChart('chart-token-byday', {
+          type: 'bar',
+          data: {
+            labels: byDay.map(x => x.day.slice(5)),
+            datasets: cats.map(c => ({
+              label: tokenLabel(c),
+              data: byDay.map(x => (x.categories || {})[c] || 0),
+              backgroundColor: tokenColor(c),
+              borderRadius: 3,
+              stack: 'token',
+            })),
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 }, color: C.t3 } },
+              tooltip: {
+                backgroundColor: '#fff', borderColor: C.border, borderWidth: 1,
+                titleColor: '#1C1C2E', bodyColor: '#636380', padding: 10,
+                callbacks: {
+                  title: (items) => (items.length ? String(items[0].label) : ''),
+                  label: (it) => ` ${it.dataset.label}：${fmtNum(it.parsed.y)}`,
+                },
+              },
+            },
+            scales: {
+              x: { stacked: true, grid: { display: false }, border: { color: C.border }, ticks: { color: C.t3 } },
+              y: { stacked: true, grid: { color: C.border, lineWidth: 0.8 }, border: { dash: [4, 4], color: 'transparent' }, ticks: { color: C.t3 } },
+            },
+          },
+        });
+      }
+
+      // 3) 逐轮 prompt tokens（按时间正序；虚线为同轮估算构成，用于看偏差）
+      const rows = [...(d.rows || [])].sort((a, b) => a.ts - b.ts);
+      if (rows.length) {
+        createOrUpdateChart('chart-token-rounds', {
+          type: 'line',
+          data: {
+            labels: rows.map(r => fmtTime(r.ts)),
+            datasets: [
+              {
+                label: '实际 prompt',
+                data: rows.map(r => r.prompt),
+                borderColor: C.accent,
+                backgroundColor: C.accent + '22',
+                fill: true,
+                tension: 0.25,
+                pointRadius: 2,
+              },
+              {
+                label: '估算构成',
+                data: rows.map(r => r.estTotal),
+                borderColor: C.orange,
+                borderDash: [4, 4],
+                fill: false,
+                tension: 0.25,
+                pointRadius: 0,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 }, color: C.t3 } },
+              tooltip: {
+                backgroundColor: '#fff', borderColor: C.border, borderWidth: 1,
+                titleColor: '#1C1C2E', bodyColor: '#636380', padding: 10,
+                callbacks: {
+                  title: (items) => (items.length ? String(items[0].label) : ''),
+                  label: (it) => ` ${it.dataset.label}：${fmtNum(it.parsed.y)}`,
+                },
+              },
+            },
+            scales: {
+              x: { grid: { display: false }, border: { color: C.border }, ticks: { color: C.t3, maxTicksLimit: 10, maxRotation: 0 } },
+              y: { grid: { color: C.border, lineWidth: 0.8 }, border: { dash: [4, 4], color: 'transparent' }, ticks: { color: C.t3 } },
+            },
+          },
+        });
+      }
+    }
+
     const reportTypes = ref([]);
     const reportDates = ref([]);
     const rType = ref('');
@@ -1147,6 +1372,10 @@ const app = createApp({
         );
         await renderMetricCards(mInited);
       }
+      if (newPage === 'token') {
+        await nextTick();
+        await loadTokenPage();
+      }
       if (newPage === 'notes') {
         if (!notesTree.value.length) await fetchNotesTree();
       }
@@ -1199,6 +1428,8 @@ const app = createApp({
         }
       } else if (_init.pg === 'cron') {
         // cron 页无特殊初始化
+      } else if (_init.pg === 'token') {
+        await loadTokenPage();
       } else {
         await drawOverviewCharts();
         drawSparklines();
@@ -1214,6 +1445,9 @@ const app = createApp({
         if (page.value === 'metrics' && metricKeys.value.length) {
           await renderMetricCards(true); // 增量
         }
+        if (page.value === 'token') {
+          await loadTokenPage();
+        }
       }, 30000);
 
       onUnmounted(() => {
@@ -1228,6 +1462,8 @@ const app = createApp({
       page, navTo, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, metricCards, mDays,
+      tokenDays, tokenData, tokenLatest, tokenStatCards, loadTokenPage,
+      fmtNum, pctOf, shortSession, tokenColor,
       expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime, fmtDuration,
       navigateToMetric, loadAllMetricCharts, toggleReport,

@@ -23,6 +23,7 @@
         <div class="nav-section-label">主要</div>
         <div class="nav-item" :class="{active: page==='overview'}" @click="page='overview'">概览</div>
         <div class="nav-item" :class="{active: page==='metrics'}"  @click="page='metrics'">指标</div>
+        <div class="nav-item" :class="{active: page==='token'}"    @click="page='token'">Token</div>
         <div class="nav-item" :class="{active: page==='notes'}"    @click="page='notes'">笔记</div>
       </div>
       <div class="nav-section" style="margin-top:16px">
@@ -155,6 +156,170 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token 页：prompt 构成细分 -->
+    <div v-show="page==='token'">
+      <div class="page-header">
+        <div class="page-title">
+          Token
+          <span class="page-title-sub">/ prompt 构成细分</span>
+        </div>
+        <div class="page-meta">
+          <select v-model="tokenDays" @change="loadTokenPage()" class="token-select">
+            <option value="1">今日</option>
+            <option value="7">近 7 日</option>
+            <option value="30">近 30 日</option>
+          </select>
+          <span class="token-note">构成 = 启发式估算(chars/3.5) · 总量 = 提供方报告值</span>
+        </div>
+      </div>
+
+      <!-- 汇总卡 -->
+      <div class="stat-grid">
+        <div class="stat-card" v-for="c in tokenStatCards" :key="c.key">
+          <div class="stat-card-top-bar" :style="{background: c.color}"></div>
+          <div class="stat-card-body">
+            <div class="stat-label">{{ c.label }}</div>
+            <div class="stat-value">{{ c.value }}</div>
+            <div class="stat-sub1">{{ c.sub1 }}</div>
+            <div class="stat-sub2">{{ c.sub2 }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 最近一次请求：构成环形图 + 明细 / 单条 Top -->
+      <div class="chart-row chart-row-2" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">最近一次请求构成</span>
+            <span class="card-sub" v-if="tokenLatest">
+              实际 prompt {{ fmtNum(tokenLatest.prompt) }} · 估算 {{ fmtNum(tokenLatest.estTotal) }}
+            </span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:190px">
+            <canvas id="chart-token-donut" style="width:100%;height:190px"></canvas>
+          </div>
+          <table class="cron-table" style="margin-top:6px" v-if="tokenLatest && tokenLatest.items.length">
+            <thead>
+              <tr><th>分类</th><th>tokens</th><th>占比</th><th>条数</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="it in tokenLatest.items" :key="it.category">
+                <td class="task-name">
+                  <span class="token-dot" :style="{background: tokenColor(it.category)}"></span>{{ it.label }}
+                </td>
+                <td class="token-num">{{ fmtNum(it.tokens) }}</td>
+                <td class="token-num">{{ pctOf(it.tokens, tokenLatest.estTotal) }}</td>
+                <td class="token-num">{{ it.count }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="empty-state" v-else>暂无数据（发起一次对话后出现）</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">单条消耗 Top</span>
+            <span class="card-sub">最近一次请求里最贵的几条消息</span>
+          </div>
+          <div class="card-body" style="padding-top:4px;max-height:330px;overflow-y:auto">
+            <table class="cron-table" v-if="tokenLatest && tokenLatest.top.length">
+              <thead>
+                <tr><th>分类</th><th>角色</th><th>tokens</th><th>内容</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(t, i) in tokenLatest.top" :key="i">
+                  <td class="task-name">
+                    <span class="token-dot" :style="{background: tokenColor(t.category)}"></span>{{ t.label }}
+                    <span class="token-tool" v-if="t.tool">{{ t.tool }}</span>
+                  </td>
+                  <td class="token-role">{{ t.role }}</td>
+                  <td class="token-num">{{ fmtNum(t.tokens) }}</td>
+                  <td class="token-preview" :title="t.preview">{{ t.preview || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="empty-state" v-else>暂无数据</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分类堆叠趋势 -->
+      <div class="chart-row chart-row-1" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">分类堆叠趋势</span>
+            <span class="card-sub">按天累计（估算 tokens）</span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:220px">
+            <canvas id="chart-token-byday" style="width:100%;height:220px"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- 逐轮 prompt -->
+      <div class="chart-row chart-row-1" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">逐轮 prompt tokens</span>
+            <span class="card-sub">每一次 LLM 请求（提供方报告值）· 看第几轮突然涨了</span>
+          </div>
+          <div class="chart-canvas-wrap" style="height:200px">
+            <canvas id="chart-token-rounds" style="width:100%;height:200px"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- 工具归因 + 会话排行 -->
+      <div class="chart-row chart-row-2">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">工具归因排行</span>
+            <span class="card-sub">工具结果累计 tokens（区间内）</span>
+          </div>
+          <div class="card-body" style="padding-top:4px;max-height:330px;overflow-y:auto">
+            <table class="cron-table" v-if="tokenData && tokenData.byTool.length">
+              <thead>
+                <tr><th>工具</th><th>tokens</th><th>占工具结果</th><th>调用</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="t in tokenData.byTool" :key="t.name">
+                  <td class="task-name">{{ t.name }}</td>
+                  <td class="token-num">{{ fmtNum(t.tokens) }}</td>
+                  <td class="token-num">{{ (t.pct * 100).toFixed(1) }}%</td>
+                  <td class="token-num">{{ t.calls }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="empty-state" v-else>暂无数据</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">会话 / 来源排行</span>
+            <span class="card-sub">区间内 prompt+output 最多的会话</span>
+          </div>
+          <div class="card-body" style="padding-top:4px;max-height:330px;overflow-y:auto">
+            <table class="cron-table" v-if="tokenData && tokenData.bySession.length">
+              <thead>
+                <tr><th>会话</th><th>来源</th><th>轮数</th><th>prompt</th><th>output</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in tokenData.bySession" :key="s.sessionId">
+                  <td class="task-name" :title="s.sessionId">{{ shortSession(s.sessionId) }}</td>
+                  <td>{{ s.source }}</td>
+                  <td class="token-num">{{ s.rounds }}</td>
+                  <td class="token-num">{{ fmtNum(s.prompt) }}</td>
+                  <td class="token-num">{{ fmtNum(s.output) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="empty-state" v-else>暂无数据</div>
           </div>
         </div>
       </div>

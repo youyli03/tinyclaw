@@ -290,6 +290,44 @@ body {
 .cron-table tr:nth-child(even) td { background: var(--card2); }
 .cron-table .task-name { color: var(--t1); font-weight: 500; }
 
+/* ── Token 页 ── */
+.token-select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--t2);
+}
+.token-note { font-size: 11px; color: var(--t3); margin-left: 10px; }
+.token-num { font-variant-numeric: tabular-nums; color: var(--t1); white-space: nowrap; }
+.token-role { font-size: 11px; color: var(--t3); }
+.token-preview {
+  color: var(--t3);
+  font-size: 12px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.token-tool {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--card2);
+  color: var(--t3);
+  font-size: 11px;
+}
+
 .status-badge {
   display: inline-block;
   padding: 2px 8px;

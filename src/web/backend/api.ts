@@ -14,7 +14,14 @@ import * as os from "node:os";
 import * as zlib from "node:zlib";
 import { execSync } from "node:child_process";
 import { sampleStats } from "./collector.js";
-import { queryMetrics, querySnapshots, listMetricKeys } from "./db.js";
+import {
+  queryMetrics,
+  querySnapshots,
+  listMetricKeys,
+  queryTokenBreakdown,
+  latestTokenBreakdown,
+  type TokenBreakdownRow,
+} from "./db.js";
 import { loadJobs, readLogs } from "../../cron/store.js";
 
 // ── Notes 工具 ────────────────────────────────────────────────────────────────
@@ -85,6 +92,233 @@ function countFiles(nodes: TreeNode[]): number {
     else if (node.children) n += countFiles(node.children);
   }
   return n;
+}
+
+// ── Token 构成聚合（/api/token-breakdown）──────────────────────────────────────
+
+interface TokenCategoryStatJson {
+  category: string;
+  label: string;
+  tokens: number;
+  chars: number;
+  count: number;
+}
+interface TokenToolStatJson {
+  name: string;
+  tokens: number;
+  calls: number;
+}
+
+/** 宽松解析 JSON 列（历史行可能缺字段；坏数据不能让整个接口 500） */
+function parseJsonArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 本地时区的 YYYY-MM-DD（按天聚合用；不能用 toISOString，那会串到 UTC 日期） */
+function localDay(tsSec: number): string {
+  const d = new Date(tsSec * 1000);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export interface TokenBreakdownPayload {
+  rows: Array<{
+    ts: number;
+    sessionId: string;
+    source: string;
+    agentId: string | null;
+    model: string | null;
+    round: number;
+    prompt: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    estTotal: number;
+    messageTokens: number;
+    contextWindow: number | null;
+    sessionTokens: number | null;
+    items: TokenCategoryStatJson[];
+    top: Array<{
+      category: string;
+      label: string;
+      role: string;
+      tool?: string;
+      preview: string;
+      tokens: number;
+    }>;
+    tools: TokenToolStatJson[];
+  }>;
+  latest: TokenBreakdownPayload["rows"][number] | null;
+  byDay: Array<{
+    day: string;
+    rounds: number;
+    prompt: number;
+    output: number;
+    cacheRead: number;
+    /** 分类名 → token 数（缺失分类按 0 处理） */
+    categories: Record<string, number>;
+  }>;
+  byTool: Array<{ name: string; tokens: number; calls: number; pct: number }>;
+  bySession: Array<{
+    sessionId: string;
+    source: string;
+    agentId: string | null;
+    model: string | null;
+    rounds: number;
+    prompt: number;
+    output: number;
+    cacheRead: number;
+    estTotal: number;
+    lastTs: number;
+    contextWindow: number | null;
+    sessionTokens: number | null;
+  }>;
+  totals: {
+    rounds: number;
+    prompt: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    estTotal: number;
+  };
+}
+
+/** 把 token_breakdown 行折叠成前端需要的形状（按天/按工具/按会话 + 总量） */
+export function buildTokenBreakdownPayload(
+  rawRows: TokenBreakdownRow[],
+  latest: TokenBreakdownRow | null
+): TokenBreakdownPayload {
+  const rows: TokenBreakdownPayload["rows"] = rawRows.map((r) => ({
+    ts: r.ts,
+    sessionId: r.session_id,
+    source: r.source,
+    agentId: r.agent_id,
+    model: r.model,
+    round: r.round,
+    prompt: r.actual_prompt ?? 0,
+    output: r.actual_output ?? 0,
+    cacheRead: r.cache_read ?? 0,
+    cacheWrite: r.cache_write ?? 0,
+    estTotal: r.est_total ?? 0,
+    messageTokens: r.message_tokens ?? 0,
+    contextWindow: r.context_window,
+    sessionTokens: r.session_tokens,
+    items: parseJsonArray<TokenCategoryStatJson>(r.items),
+    top: parseJsonArray<TokenBreakdownPayload["rows"][number]["top"][number]>(r.top),
+    tools: parseJsonArray<TokenToolStatJson>(r.tools),
+  }));
+
+  const latestRow = latest
+    ? (rows.find((r) => r.ts === latest.ts) ?? {
+        ts: latest.ts,
+        sessionId: latest.session_id,
+        source: latest.source,
+        agentId: latest.agent_id,
+        model: latest.model,
+        round: latest.round,
+        prompt: latest.actual_prompt ?? 0,
+        output: latest.actual_output ?? 0,
+        cacheRead: latest.cache_read ?? 0,
+        cacheWrite: latest.cache_write ?? 0,
+        estTotal: latest.est_total ?? 0,
+        messageTokens: latest.message_tokens ?? 0,
+        contextWindow: latest.context_window,
+        sessionTokens: latest.session_tokens,
+        items: parseJsonArray<TokenCategoryStatJson>(latest.items),
+        top: parseJsonArray<TokenBreakdownPayload["rows"][number]["top"][number]>(latest.top),
+        tools: parseJsonArray<TokenToolStatJson>(latest.tools),
+      })
+    : null;
+
+  // 按天聚合（分类用最新口径的 label 映射，缺失分类按 0）
+  const dayMap = new Map<string, TokenBreakdownPayload["byDay"][number]>();
+  for (const r of rows) {
+    const day = localDay(r.ts);
+    const cur = dayMap.get(day) ?? {
+      day,
+      rounds: 0,
+      prompt: 0,
+      output: 0,
+      cacheRead: 0,
+      categories: {},
+    };
+    cur.rounds += 1;
+    cur.prompt += r.prompt;
+    cur.output += r.output;
+    cur.cacheRead += r.cacheRead;
+    for (const it of r.items) {
+      cur.categories[it.category] = (cur.categories[it.category] ?? 0) + it.tokens;
+    }
+    dayMap.set(day, cur);
+  }
+  const byDay = [...dayMap.values()].sort((a, b) => a.day.localeCompare(b.day));
+
+  // 按工具排行（跨请求累计，热度用该类 token 占构成合计的比例表达）
+  const toolMap = new Map<string, TokenToolStatJson>();
+  let toolTotal = 0;
+  for (const r of rows) {
+    for (const t of r.tools) {
+      const cur = toolMap.get(t.name) ?? { name: t.name, tokens: 0, calls: 0 };
+      cur.tokens += t.tokens;
+      cur.calls += t.calls;
+      toolMap.set(t.name, cur);
+      toolTotal += t.tokens;
+    }
+  }
+  const byTool = [...toolMap.values()]
+    .sort((a, b) => b.tokens - a.tokens)
+    .map((t) => ({ ...t, pct: toolTotal > 0 ? t.tokens / toolTotal : 0 }));
+
+  // 按会话/来源排行
+  const sessMap = new Map<string, TokenBreakdownPayload["bySession"][number]>();
+  for (const r of rows) {
+    const cur = sessMap.get(r.sessionId) ?? {
+      sessionId: r.sessionId,
+      source: r.source,
+      agentId: r.agentId,
+      model: r.model,
+      rounds: 0,
+      prompt: 0,
+      output: 0,
+      cacheRead: 0,
+      estTotal: 0,
+      lastTs: 0,
+      contextWindow: r.contextWindow,
+      sessionTokens: r.sessionTokens,
+    };
+    cur.rounds += 1;
+    cur.prompt += r.prompt;
+    cur.output += r.output;
+    cur.cacheRead += r.cacheRead;
+    cur.estTotal += r.estTotal;
+    if (r.ts >= cur.lastTs) {
+      cur.lastTs = r.ts;
+      cur.contextWindow = r.contextWindow;
+      cur.sessionTokens = r.sessionTokens;
+    }
+    sessMap.set(r.sessionId, cur);
+  }
+  const bySession = [...sessMap.values()].sort((a, b) => b.prompt + b.output - (a.prompt + a.output));
+
+  const totals = rows.reduce(
+    (acc, r) => ({
+      rounds: acc.rounds + 1,
+      prompt: acc.prompt + r.prompt,
+      output: acc.output + r.output,
+      cacheRead: acc.cacheRead + r.cacheRead,
+      cacheWrite: acc.cacheWrite + r.cacheWrite,
+      estTotal: acc.estTotal + r.estTotal,
+    }),
+    { rounds: 0, prompt: 0, output: 0, cacheRead: 0, cacheWrite: 0, estTotal: 0 }
+  );
+
+  return { rows, latest: latestRow, byDay, byTool, bySession, totals };
 }
 
 // 当前请求引用(用于 json() 判断客户端是否支持 gzip)
@@ -181,6 +415,26 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     if (pathname === "/api/metric-keys") {
       const keys = listMetricKeys();
       json(res, { keys });
+      return true;
+    }
+
+    // GET /api/token-breakdown?days=7&limit=400&session=<id>
+    // Prompt 构成细分（每次 LLM 请求一行）+ 按天/按工具/按会话聚合
+    if (pathname === "/api/token-breakdown") {
+      const days = Math.min(Math.max(1, parseInt(url.searchParams.get("days") ?? "7", 10) || 7), 90);
+      const limit = Math.min(
+        Math.max(1, parseInt(url.searchParams.get("limit") ?? "400", 10) || 400),
+        5000
+      );
+      const sessionId = url.searchParams.get("session") ?? undefined;
+      const rows = queryTokenBreakdown({
+        days,
+        limit,
+        ...(sessionId ? { sessionId } : {}),
+      });
+      // latest 取**全局最近一次请求**（不受 days/session 过滤影响）：用于"当前上下文窗口占用"
+      const payload = buildTokenBreakdownPayload(rows, latestTokenBreakdown());
+      json(res, { days, ...payload });
       return true;
     }
 

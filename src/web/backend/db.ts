@@ -6,6 +6,7 @@
  *   metric_keys      — 已注册的指标白名单（/metric add 命令管理）
  *   metrics          — AI 通过 db_write tool 写入的业务时序数据
  *   system_snapshots — collector.ts 每 5 分钟自动采样的系统状态
+ *   token_breakdown  — 每一次 LLM 请求的 prompt 构成细分（Dashboard「Token」页，agent.ts 写入）
  */
 
 import * as path from "node:path";
@@ -58,6 +59,31 @@ function openDB(): Database {
       disk_used_gb  REAL,
       disk_total_gb REAL
     );
+
+    -- Prompt 构成细分：**每一次 LLM 请求一行**（Dashboard「Token」页）
+    -- 与 metrics 分开存：这里要保留每次请求的完整构成/排行，且不受指标白名单与 7 天窗口限制
+    CREATE TABLE IF NOT EXISTS token_breakdown (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts              INTEGER NOT NULL,
+      session_id      TEXT    NOT NULL,
+      source          TEXT    NOT NULL DEFAULT 'chat',
+      agent_id        TEXT,
+      model           TEXT,
+      round           INTEGER NOT NULL DEFAULT 0,
+      actual_prompt   INTEGER,
+      actual_output   INTEGER,
+      cache_read      INTEGER,
+      cache_write     INTEGER,
+      est_total       INTEGER,
+      message_tokens  INTEGER,
+      context_window  INTEGER,
+      session_tokens  INTEGER,
+      items           TEXT,
+      top             TEXT,
+      tools           TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_breakdown_ts ON token_breakdown(ts);
+    CREATE INDEX IF NOT EXISTS idx_token_breakdown_session ON token_breakdown(session_id, ts);
   `);
 
   // 写入内置指标白名单（幂等）
@@ -288,4 +314,97 @@ export function latestSnapshot(): SystemSnapshotRow | null {
   const db = openDB();
   const row = db.prepare("SELECT * FROM system_snapshots ORDER BY ts DESC LIMIT 1").get();
   return (row as SystemSnapshotRow | undefined) ?? null;
+}
+
+// ── token_breakdown（Prompt 构成细分，每次 LLM 请求一行）────────────────────────
+
+export interface TokenBreakdownRow {
+  id: number;
+  ts: number;
+  session_id: string;
+  source: string;
+  agent_id: string | null;
+  model: string | null;
+  round: number;
+  actual_prompt: number | null;
+  actual_output: number | null;
+  cache_read: number | null;
+  cache_write: number | null;
+  est_total: number | null;
+  message_tokens: number | null;
+  context_window: number | null;
+  session_tokens: number | null;
+  /** JSON：`TokenCategoryStat[]` */
+  items: string | null;
+  /** JSON：`TokenTopItem[]` */
+  top: string | null;
+  /** JSON：`TokenToolStat[]` */
+  tools: string | null;
+}
+
+/** 写入一次请求的构成（agent.ts 每轮调用；失败不影响主流程，调用方自行 try/catch） */
+export function insertTokenBreakdown(
+  row: Omit<TokenBreakdownRow, "id" | "ts"> & { ts?: number }
+): void {
+  const db = openDB();
+  db.prepare(
+    `
+    INSERT INTO token_breakdown
+      (ts, session_id, source, agent_id, model, round, actual_prompt, actual_output,
+       cache_read, cache_write, est_total, message_tokens, context_window, session_tokens,
+       items, top, tools)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `
+  ).run(
+    row.ts ?? Math.floor(Date.now() / 1000),
+    row.session_id,
+    row.source,
+    row.agent_id ?? null,
+    row.model ?? null,
+    row.round,
+    row.actual_prompt ?? null,
+    row.actual_output ?? null,
+    row.cache_read ?? null,
+    row.cache_write ?? null,
+    row.est_total ?? null,
+    row.message_tokens ?? null,
+    row.context_window ?? null,
+    row.session_tokens ?? null,
+    row.items ?? null,
+    row.top ?? null,
+    row.tools ?? null
+  );
+}
+
+/** 查询最近的构成行（按时间倒序；可选限定某个 session） */
+export function queryTokenBreakdown(opts: {
+  days?: number;
+  limit?: number;
+  sessionId?: string;
+}): TokenBreakdownRow[] {
+  const db = openDB();
+  const days = opts.days ?? 7;
+  const limit = Math.min(Math.max(1, opts.limit ?? 500), 5000);
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  if (opts.sessionId) {
+    return db
+      .prepare(
+        "SELECT * FROM token_breakdown WHERE ts >= ? AND session_id = ? ORDER BY ts DESC LIMIT ?"
+      )
+      .all(since, opts.sessionId, limit) as TokenBreakdownRow[];
+  }
+  return db
+    .prepare("SELECT * FROM token_breakdown WHERE ts >= ? ORDER BY ts DESC LIMIT ?")
+    .all(since, limit) as TokenBreakdownRow[];
+}
+
+/** 某个 session 最近一次请求的占用（用于「上下文窗口」卡片） */
+export function latestTokenBreakdown(sessionId?: string): TokenBreakdownRow | null {
+  const db = openDB();
+  const row = sessionId
+    ? db
+        .prepare("SELECT * FROM token_breakdown WHERE session_id = ? ORDER BY ts DESC LIMIT 1")
+        .get(sessionId)
+    : db.prepare("SELECT * FROM token_breakdown ORDER BY ts DESC LIMIT 1").get();
+  return (row as TokenBreakdownRow | undefined) ?? null;
 }

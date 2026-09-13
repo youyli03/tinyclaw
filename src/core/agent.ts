@@ -29,7 +29,8 @@ import { PlanAbortError } from "../core/session.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
-import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown } from "../web/backend/db.js";
+import { breakdownMessages } from "../memory/token-estimate.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isAbsolute, resolve as resolvePath } from "path";
@@ -1586,6 +1587,9 @@ async function runAgentInner(
 
     // ── LLM 调用（流式，支持 AbortSignal + 心跳）────────────────────────
     let response: ChatResult;
+    // 本次请求的完整消息：发出去的那一份，**同一个引用**也用于下面的构成统计
+    // （不能事后重新取，压缩/注入都可能改变结果）
+    const reqMessages = session.getMessagesForLLM();
     {
       // ── 并发限流：等待空闲 LLM slot（FIFO 排队）────────────────────────
       // 工具执行期间不占用 slot，仅在真正发起 LLM 请求时持有。
@@ -1603,7 +1607,7 @@ async function runAgentInner(
       let lastProgressPrint = 0;
       try {
         response = await client.streamChat(
-          session.getMessagesForLLM(),
+          reqMessages,
           (delta) => {
             bus.emit({ type: "turn:chunk", delta });
             opts.onChunk?.(delta);
@@ -1719,6 +1723,40 @@ async function runAgentInner(
       session.mode === "code" ? "code" : "chat",
       session.lastResponseAt
     );
+
+    // ── Prompt 构成细分（Dashboard「Token」页）：每一轮 LLM 请求写一行 ──────────
+    // 纪律（对齐 DSH dsh-token-meter）：构成是**启发式近似**，总量以提供方报告值为准；
+    // 失败静默（DB 写不进去绝不能影响对话）。
+    try {
+      const breakdown = breakdownMessages(reqMessages, tools);
+      const ctxWindow = llmRegistry.getContextWindow("daily", session.lastResponseAt);
+      insertTokenBreakdown({
+        session_id: session.sessionId,
+        source: session.sessionId.startsWith("cron:")
+          ? "cron"
+          : session.mode === "code"
+            ? "code"
+            : "chat",
+        agent_id: session.agentId,
+        model: String(client.model),
+        round,
+        actual_prompt: lastUsage.promptTokens,
+        actual_output: lastUsage.completionTokens,
+        cache_read: lastUsage.cacheReadTokens ?? 0,
+        cache_write: lastUsage.cacheCreationTokens ?? 0,
+        est_total: breakdown.estimatedTotal,
+        message_tokens: breakdown.messageTokens,
+        context_window: ctxWindow,
+        session_tokens: session.estimatedTokens(),
+        items: JSON.stringify(breakdown.items),
+        top: JSON.stringify(breakdown.top),
+        tools: JSON.stringify(breakdown.tools),
+      });
+    } catch (err) {
+      console.warn(
+        `${logPrefix} ⚠️ token 构成写入失败（不影响对话）：${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     // ── Code 模式：调用后 Token 预算检查（用实际 promptTokens，比估算更准确）──
     // 放在 LLM 调用后，此时 lastPromptTokens 已是本轮真实值
