@@ -424,6 +424,7 @@ async function main(): Promise<void> {
       const statusIcon = notif.status === "done" ? "✅" : notif.status === "error" ? "❌" : "⛔";
       const trace = slaveManager.status(notif.slaveId)?.tracePath;
       const content =
+        `<!-- subagent:result:${notif.slaveId} -->\n` +
         `<slave-results>\n` +
         `[slave:${notif.slaveId}] ${statusIcon} 后台任务已完成\n` +
         `任务：${notif.task}\n` +

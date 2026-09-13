@@ -197,6 +197,8 @@ async function runPipelineJob(
         // 绕过无人值守白名单与提权禁令（2026-09-11 修复）
         origin: "cron",
         slaveDepth: 1,
+        // 子 Agent 审批策略钉死为 never（对齐 DSH 委派语义）：不允许弹 MFA / 提权
+        approvalPolicy: "never",
         ...(notifyFn ? { onNotify: notifyFn } : {}),
       }),
     // cron pipeline 用 result_mode="wait" + agent_wait 汇总结果，inject 回调保持 no-op
@@ -295,6 +297,8 @@ async function runPipelineJob(
         // slaveDepth: 1 禁止 msg step 里的 LLM 调用 agent_fork，防止 Cron Pipeline 无限递归
         // Pipeline 中需要 fork 请改用 type:"tool", name:"agent_fork" 的 tool step 显式触发
         slaveDepth: 1,
+        // 无人值守场景同样钉死审批：不允许 MFA / 提权（与 slaveRunFn 一致）
+        approvalPolicy: "never",
         // cron 场景下 inject 模式的 slave 完成不额外推送用户（wait 模式 slave 本就不触发此回调）
         onSlaveComplete: async (_notif) => {
           /* no-op for cron pipeline: use result_mode="wait" + agent_wait instead */

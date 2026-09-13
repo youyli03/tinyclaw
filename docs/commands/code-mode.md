@@ -327,8 +327,14 @@ code / project 模式会把工作区指令（`AGENTS.md` / `CLAUDE.md` 及 local
 - **纯追加**：已发送的消息**永不改写**（前缀缓存安全）；旧基线一直留着，"取代"关系写在文本里
   （替换语为 DSH 原文：*"This complete workspace instruction baseline replaces all earlier workspace instruction baselines."*）
 - **变了只发 diff**：不会因为 AGENTS.md 改了就再塞一份 48 KB 的完整基线
-- **状态**：每 session 一份 `Map<cwd, {identity, state}>`（WeakMap）；status 只在身份对得上时才用于 diff，
-  所以**会话恢复 / 进程重启 → 自动走 `replacement-baseline`**（自愈）
+- **状态**：每 session 一份 `Map<cwd, {identity, state}>`（WeakMap）；status 只在身份对得上时才用于 diff
+- **状态丢失 ≠ 一定重发**：会话恢复 / 进程重启后内存状态没了，但只要**可见基线的身份与当前一致**
+  （从 marker 里读回 `identity`），就 `none`——把当前渲染**认领**为新基准、一条都不追加；此后文件再变只发 diff。
+  这正是**子 Agent 继承父会话基线**后的形态（子会话继承了那条注入消息，但自己没有任何内存状态）；
+  若不认领，下一次文件触碰会误判为"状态对不上"而重发一份完整基线
+- 只有**身份也对不上**（文件真变了 / 换了目录）才走 `replacement-baseline`
+- **子 Agent 继承不吃预算**：继承预算把工作区指令按 0 字符计（`slave-manager.ts` 的 `budgetedChars`），
+  指令仍随上下文继承，但不会把真实对话轮次挤掉（见 `docs/architecture/overview.md` 的「Agent Fork」节）
 - **压缩后自愈**：`_foldPreambleInjections()` 会把工作区指令注入**整批丢掉**（不是"每类留最新一条"——
   delta 是相对上一版基线的 diff，只留最后一条会丢掉中间变化），下一轮 run 发现"上下文里看不到基线"
   → 重新下发一份**当前完整基线**（对应 DSH：压缩会卷走基线，之后按可见面重新下发）

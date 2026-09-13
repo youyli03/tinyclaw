@@ -771,6 +771,16 @@ export interface AgentRunOptions {
    */
   slaveDepth?: number;
   /**
+   * 审批策略（对齐 DSH 的 `DelegatedPolicyOverrides.approvalPolicy = 'never'`）。
+   *
+   * `"never"` = 本次运行的**审批类请求一律确定性拒绝**：需要 MFA 的工具直接拒绝、
+   * `exec_shell({ elevate: true })` 直接拒绝，且不会向用户发起任何确认。
+   * 语义是"子 Agent 只能在委派时定下的作用域里干活"——子 Agent 不允许向上伸手要权限。
+   *
+   * 由 `slaveRunFn` 给所有 Slave 强制加上；cron / loop 的 slaveRunFn 同样加上（纵深防御）。
+   */
+  approvalPolicy?: "never";
+  /**
    * 跳过 runAgent 前置步骤（system prompt 重建、记忆搜索、压缩、添加用户消息），
    * 直接进入 ReAct 循环。用于 auto-fork continuation slave——session 已包含完整上下文。
    */
@@ -1337,16 +1347,15 @@ async function runAgentInner(
 
     // 2.4 工作区指令（AGENTS.md / CLAUDE.md 及 local 覆盖）：
     // 首次进入某个工作目录时注入一份 baseline（**user 角色**，不进 system prompt），
-    // 之后只在该 run 里 fs 触碰文件后才下发增量（见 runWorkspaceDeltaAfterTool）。
-    if (!isSlave) {
-      const _wsCwd = runToolCwd(session, isCodeMode);
-      const _wsPush = ensureWorkspaceInstructionsBaseline(session, _wsCwd);
-      if (_wsPush.files > 0) {
-        console.log(
-          `${logPrefix} 📄 workspace instructions: ${_wsPush.files} file(s), ${_wsPush.bytes} B, ` +
-            `${_wsPush.pushed ? "injected" : "unchanged"}`
-        );
-      }
+    // 之后只在该 run 里 fs 触碰文件后才下发增量（见下方 WORKSPACE_TOUCHING_TOOLS 钩子）。
+    // 子 Agent 也走这里（对齐 DSH：每个 agent 按自己的 cwd 组装）——
+    // 它若从父会话继承了同身份的基线，接线层会**认领而不重发**（见 workspace-prompt.ts 的 ①a）。
+    const _wsPush = ensureWorkspaceInstructionsBaseline(session, runToolCwd(session, isCodeMode));
+    if (_wsPush.files > 0) {
+      console.log(
+        `${logPrefix} 📄 workspace instructions: ${_wsPush.action}, ${_wsPush.files} file(s), ` +
+          `${_wsPush.bytes} B${_wsPush.pushed ? "" : "（无需变更）"}`
+      );
     }
 
     // 2.5 工具结果剪枝（参考 DSH dsh-compaction-tool-result-pruner）
@@ -1963,6 +1972,9 @@ async function runAgentInner(
                   runAgent(s, c, {
                     ...o,
                     slaveDepth: currentDepth + 1,
+                    // 子 Agent 的审批策略钉死为 never（对齐 DSH 委派语义）：
+                    // 它只能在委派时定下的作用域里干活，不能弹 MFA / 提权 / ask_user。
+                    approvalPolicy: "never",
                     ...(opts.onNotify ? { onNotify: opts.onNotify } : {}),
                   }),
               }
@@ -1979,6 +1991,7 @@ async function runAgentInner(
           ...(opts.sandboxExtraRwPaths ? { sandboxExtraRwPaths: opts.sandboxExtraRwPaths } : {}),
           ...(opts.sandboxSecretNames ? { sandboxSecretNames: opts.sandboxSecretNames } : {}),
           ...(opts.origin ? { origin: opts.origin } : {}),
+          ...(opts.approvalPolicy ? { approvalPolicy: opts.approvalPolicy } : {}),
         });
       } catch (err) {
         err0 = err;
@@ -2278,6 +2291,27 @@ async function runAgentInner(
         !session.mfaApprovedForThisRun &&
         !session.mfaPreApproved
       ) {
+        // 子 Agent（approvalPolicy="never"）不允许任何审批：确定性拒绝，连提示都不发。
+        // 对应 DSH 委派子 Agent 时的 approvalPolicy 钉死为 never。
+        if (opts.approvalPolicy === "never") {
+          const msg = "已拒绝：子 Agent 不允许发起审批（approvalPolicy=never），请在委派范围内完成";
+          auditToolCall({
+            event: "mfa",
+            origin: opts.origin,
+            agentId: session.agentId,
+            sessionId: session.sessionId,
+            tool: call.name,
+            decision: "deny",
+            reason: "子 Agent approvalPolicy=never",
+            args: mfaArgs,
+            ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
+            cfg: sandboxCfg,
+          });
+          bus.emit({ type: "mfa:denied" });
+          if (!textMode) session.addToolResultMessage(call.callId, msg);
+          else session.addSystemMessage(`[tool_result:${call.name}]\n${msg}`);
+          continue;
+        }
         await flushConcurrentBatch();
         bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, mfaArgs) });
         let mfaPassed = false;

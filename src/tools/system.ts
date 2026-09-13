@@ -110,6 +110,21 @@ export async function execShellImpl(args: Record<string, unknown>, ctx?: ToolCon
             : undefined);
 
   if (wantElevate && sandboxCfg.enabled) {
+    // 子 Agent（approvalPolicy="never"）不允许提权：确定性拒绝，不发起任何审批。
+    if (ctx?.approvalPolicy === "never") {
+      auditToolCall({
+        event: "policy",
+        origin: toolOrigin,
+        agentId: ctx.agentId ?? "default",
+        ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+        tool: "exec_shell",
+        decision: "deny",
+        reason: "子 Agent approvalPolicy=never，不允许提权",
+        args: { command },
+        cfg: sandboxCfg,
+      });
+      return "已拒绝：子 Agent 不允许提权（approvalPolicy=never），请在沙箱内用可行方式完成";
+    }
     const decision = await requestElevation({
       command,
       origin: toolOrigin,

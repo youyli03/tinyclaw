@@ -549,6 +549,8 @@ ${msg}`;
           ...(o as Parameters<typeof RunAgentFn>[2]),
           origin: "loop",
           slaveDepth: 1,
+          // 子 Agent 审批策略钉死为 never（对齐 DSH 委派语义）
+          approvalPolicy: "never",
           ...(notifyFn ? { onNotify: notifyFn } : {}),
         }),
       onSlaveComplete: async () => {

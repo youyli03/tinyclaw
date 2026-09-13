@@ -273,7 +273,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   ⚠️ 掩码使 `~/.ssh` 在沙箱内为空 → agent 的 shell 里 `ssh` / `git push` 会失败；
   需要时用 `exec_shell({ elevate: true })` 走**提权通道**（`src/sandbox/elevation.ts`）：
   按风险分级（E1 只读可免批 / E2 有副作用每次确认）、批准后签发**绑定命令哈希的一次性令牌**（默认 120s，换命令即失效）、
-  同命令 5 分钟内请求节流、**cron/loop 一律不许提权**、无交互通道即 fail-closed，且提权必须发一条用户可见提示 + 写审计。
+  同命令 5 分钟内请求节流、**cron/loop 一律不许提权**、**子 Agent（`approvalPolicy: "never"`）不许提权也不许发起任何审批**、无交互通道即 fail-closed，且提权必须发一条用户可见提示 + 写审计。
 - **沙箱可写范围默认最小：只有 workspace**。基础集 = `agents/<id>/workspace` + `/tmp`（code 模式另加项目目录 `ctx.cwd`）；
   **agent 目录下的其他部分**（`memory/` `cards/` `skills/` `notes/` `logs/` `MEM.md` `ACTIVE.md` `SYSTEM.md` `agent.toml`
   `access.toml` …）与运行时目录其他部分、`~/FinanceSkill` 等，都**必须显式声明或由 agent 主动提权**：
@@ -357,7 +357,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **本机 mtime 精度不可靠（实测）**：在 `/home/lyy/tinyclaw` 下对同一文件连续两次写入，
   `statSync(p,{bigint:true}).mtimeNs` **完全相同**（实测 `1789219717043616105` vs `1789219717043616105`），
   `mtimeMs` 亦然 → **任何"用 mtime 判断文件是否变了"的缓存都会漏掉更新**。
-  要用内容哈希（sha1/sha256）。参考实现：`src/instructions/workspace-prompt.ts` 的 `fingerprint()`。
+  要用内容哈希（sha1/sha256）。参考实现：`src/instructions/workspace-prompt.ts` 的 `baselineIdentity()`
+  （对每个指令文件的 `digest` 做 sha1），逐文件摘要由 `src/instructions/agents-md.ts` 的 `sha1()` 产出。
 - **Subagent 未修的剩余问题**：
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
   - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave

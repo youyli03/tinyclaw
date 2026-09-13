@@ -31,6 +31,13 @@ export interface ToolContext {
   /** 当前 Master Session（供 agent_fork 读取上下文快照） */
   masterSession?: Session;
   /**
+   * 审批策略（对齐 DSH `DelegatedPolicyOverrides.approvalPolicy`）。
+   * `"never"` = 本次运行的**任何**审批请求（MFA / 提权 / ask_user 类）一律确定性拒绝：
+   * 子 Agent 只能在委派时定下的作用域里干活，不能向上伸手要权限。
+   * 由 agent.ts 从 `AgentRunOptions.approvalPolicy` 透传下来。
+   */
+  approvalPolicy?: "never";
+  /**
    * runAgent 的引用（由 agent.ts 注入，避免 tools → agent.ts 的循环依赖）。
    * 供 agent_fork 工具传给 SlaveManager.fork()。
    */

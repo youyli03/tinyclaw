@@ -229,6 +229,15 @@ export function syncWorkspaceInstructions(
       recorded !== undefined &&
       recorded.identity === visible.identity;
 
+    // ①a 身份**完全一致**但本地没有状态（典型：子 Agent 继承了父会话的基线，
+    //     或压缩后又被恢复）→ 不追加任何消息，但要**认领状态**（把当前渲染记为基准），
+    //     否则下一次文件触碰会误判"状态对不上"而重发一份完整基线。
+    //     对应 DSH 的 keepVisibleBaseline：可见基线就是当前版本 → 不重发。
+    if (!hasUsableBase && visible !== undefined && visible.cwd === cwd && visible.identity === identity) {
+      st.scopes.set(cwd, { identity, state: toState(rendered.included) });
+      return NOTHING;
+    }
+
     // ① 没有任何可用的参照（首次 / 压缩后 / 会话恢复 / 换目录 / 旧基线身份对不上）→ 完整基线。
     //    旧基线仍可见时用替换语声明取代（DSH 的 replacePreviousBaseline）。
     if (!hasUsableBase) {

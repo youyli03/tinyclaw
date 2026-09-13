@@ -886,7 +886,11 @@ export class Session {
       m.role === "user" &&
       typeof m.content === "string" &&
       (m.content.startsWith("<!-- workspace-instructions:") ||
-        m.content.startsWith("<!-- injected:"))
+        m.content.startsWith("<!-- injected:") ||
+        // 子 Agent 结果回注（main.ts 的 onSlaveComplete → runAgent，会落成一条 user 消息）
+        m.content.startsWith("<!-- subagent:") ||
+        // 兼容历史会话：早期没有 marker，只靠 <slave-results> 包裹
+        m.content.startsWith("<slave-results>"))
     );
   }
 

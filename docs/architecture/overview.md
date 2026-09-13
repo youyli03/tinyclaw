@@ -417,6 +417,8 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 - **一次性令牌**：批准后签发 `{命令哈希, TTL}`（默认 120s），同一条命令不再重复询问；**换命令即失效**。
 - **节流**：同一条命令 5 分钟内最多请求 `maxRequestsPer5min` 次（默认 1），防止被拒后刷屏重试。
 - **无人值守禁止提权**（`allowInCron = false`）：cron / loop 里没人能审批。
+- **子 Agent 禁止提权**（`approvalPolicy: "never"`，见「Agent Fork」节）：Slave 只能在委派时定下的作用域里干活，
+  `elevate: true` 一律**确定性拒绝**（工具结果 `已拒绝：子 Agent 不允许提权（approvalPolicy=never）…`）+ 审计，连提示都不发。
 - **fail-closed**：没有可用交互通道时一律拒绝（"没人能批准" ≠ "自动批准"）。
 - **可见 + 可审计**：提权执行前发一条 `⚠️ 本次在沙箱外执行：<命令>`，并写审计（含等级、是否复用令牌）。
 - 白名单：只有 `allowedAgents` 里的 agent 能提权；总开关默认 **false**。
@@ -624,7 +626,14 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
     而检索内部含 embed 服务探活(5s 超时)与 sqlite 回退路径;超时即放弃召回并记日志,绝不拖住 Slave 开工
   - 继承为**结构化复制**(保留 `tool_calls` 与 `role:"tool"`),并同步写入 Slave 自己的 JSONL,使轨迹自包含
   - 继承时**剥掉** Master 消息上的 `_loopTaskRef`:该字段的语义是"最后一条此类消息由 `getMessagesForLLM()` 展开为该路径的文件内容",而 Slave 继承到的 ref 指向 **Master 的** loop 任务文件;保留会让 Slave 侧用它顶掉真正的注入载荷
-  - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session,触发新一轮 LLM 推理后回复用户
+  - **工作区指令不计入继承预算**:继承来的 `AGENTS.md` 注入(`src/instructions/`)在预算核算里按 **0 字符**计,
+    但仍随上下文一起继承(子 Agent 该看到父的仓库规矩)。否则项目模式下 48 KB 量级的基线会把真实对话轮次
+    全部挤掉("被指令饿死")——注入排在队尾,而裁剪只从队首丢轮
+  - **审批策略钉死 `never`**:Slave 的 `runAgent` 一律带 `approvalPolicy: "never"`(对齐 DSH 委派语义),
+    即不能弹 MFA、不能 `exec_shell({elevate: true})`、不能 `ask_user`,命中即确定性拒绝 + 审计;
+    cron / loop 的无人值守消息步骤同样钉死该策略
+  - `result_mode: "inject"`(默认):Slave 完成后自动将结果注入 Master session(注入消息带
+    `<!-- subagent:result:<slaveId> -->` marker,使"最后一条真实用户消息"的判定不会把它当成用户输入),触发新一轮 LLM 推理后回复用户
   - `result_mode: "wait"`:Slave 完成后静默,Master 需主动调用 `agent_wait(slave_id)` 获取结果;适合并行 fork 多个 Slave 后统一汇总
 - `agent_status` 工具:查询单个 Slave 进度(当前阶段 / 已用工具与调用次数 / 实时输出尾部 / 轨迹目录),或列出所有 Slave
 - `agent_wait` 工具:等待指定 Slave(或当前会话所有 Slave)完成并返回**结果全文**,支持 `timeout_secs`。

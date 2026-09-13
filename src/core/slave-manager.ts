@@ -326,12 +326,18 @@ function buildSlaveContext(
   // （即丢弃**更旧**的轮），直到落在预算内。等价于"只取最近、够预算就停"。
   let trimmed = all.slice(startIdx);
   let droppedRounds = 0;
-  let chars = trimmed.reduce((sum, m) => sum + approxMessageChars(m), 0);
+  // ⚠️ 工作区指令注入（AGENTS.md 那块，项目模式下可达 48 KB ≈ 14k token）**不计入继承预算**：
+  // 它排在队尾、裁剪循环只从队首丢轮，若计入就会把真实对话轮次全部挤掉（"被指令饿死"）。
+  // 它仍然随历史继承下去（子 Agent 该看到父的仓库规矩）；子会话侧靠身份 marker 复用、
+  // 不会再发一份（见 src/instructions/workspace-prompt.ts 的身份判等）。
+  const budgetedChars = (msgs: typeof trimmed): number =>
+    msgs.reduce((sum, m) => sum + (Session.isWorkspaceInstruction(m) ? 0 : approxMessageChars(m)), 0);
+  let chars = budgetedChars(trimmed);
   while (chars > budgetChars && trimmed.length > 1) {
     let nextUser = 1;
     while (nextUser < trimmed.length && trimmed[nextUser]!.role !== "user") nextUser++;
     if (nextUser >= trimmed.length) break; // 只剩最后一轮，再丢就没有上下文了
-    for (let i = 0; i < nextUser; i++) chars -= approxMessageChars(trimmed[i]!);
+    for (let i = 0; i < nextUser; i++) chars -= Session.isWorkspaceInstruction(trimmed[i]!) ? 0 : approxMessageChars(trimmed[i]!);
     trimmed = trimmed.slice(nextUser);
     droppedRounds++;
   }
