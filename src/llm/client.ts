@@ -447,6 +447,13 @@ export interface ChatResult {
   reasoningContent: string | undefined;
   /** 模型请求执行的工具调用列表（function calling 格式） */
   toolCalls?: ToolCallResult[];
+  /**
+   * 提供方结束原因（`stop` / `length` / `tool_calls` …）。
+   *
+   * 用来区分"模型正常收尾但正文为空"（思考退化）与"被输出长度上限截断"——
+   * 空回复守卫（`core/agent.ts`）据此选择纠偏提示，日志里也能一眼看出原因。
+   */
+  finishReason?: string;
   /** 本次请求消耗的 token 数 */
   usage: {
     promptTokens: number;
@@ -968,6 +975,7 @@ export class LLMClient {
     return {
       content: choice.message.content ?? "",
       reasoningContent: (choice.message as any)?.reasoning_content || undefined,
+      ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
@@ -1108,6 +1116,7 @@ export class LLMClient {
           let fullContent = "";
           let reasoningContent = "";
           let streamedContent = "";
+          let finishReason: string | undefined;
           let usage: ChatResult["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
           // 聚合流式 tool_calls delta（各 index 独立累积）
           const toolCallAcc: { id: string; name: string; arguments: string }[] = [];
@@ -1170,6 +1179,9 @@ export class LLMClient {
                   cacheCreationTokens: (chunk.usage as any)?.cache_creation_input_tokens ?? 0,
                 };
               }
+              // 结束原因（最后一个 chunk 携带）：用于区分"空正文"是长度截断还是模型自己收尾
+              const fr = chunk.choices?.[0]?.finish_reason;
+              if (fr) finishReason = fr;
             }
           } catch (streamErr) {
             // Socket closure during streaming: reset the undici connection pool so the next
@@ -1220,7 +1232,13 @@ export class LLMClient {
                   }))
               : undefined;
 
-          return { content: streamedContent, reasoningContent: reasoningContent, ...(toolCalls ? { toolCalls } : {}), usage };
+          return {
+            content: streamedContent,
+            reasoningContent: reasoningContent,
+            ...(toolCalls ? { toolCalls } : {}),
+            ...(finishReason ? { finishReason } : {}),
+            usage,
+          };
         },
         opts.signal,
         opts._retryHooks,

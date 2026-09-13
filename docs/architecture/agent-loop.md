@@ -162,6 +162,8 @@ runAgent(session, userContent, opts)
 │    │    └─ 其他错误  → throw
 │    │
 │    ├─ 情形 A：LLM 直接回复（无 tool_calls）
+│    │    ├─ [空回复守卫] content 为空？→ 见「空回复与思考退化」节
+│    │    │    → 注入纠偏提示（length / degenerate / silent 三态）+ 重试本轮一次
 │    │    messages.push({ role:"assistant", content: 回复 })
 │    │    finalContent = 回复，break 退出循环
 │    │
@@ -323,7 +325,6 @@ patterns = ["rm", "sudo", "chmod", "chown", "dd", "mv"]  # 命令级黑名单（
 后续所有高危工具调用直接跳过验证。每次 `runAgent()` 开始时重置为 `false`。
 
 ### 委派运行不审批（`approvalPolicy: "never"`）
-
 子 Agent（`agent_fork` → `slaveRunFn`）与 cron / loop 的无人值守消息步骤，其 `runAgent()`
 一律带 `AgentRunOptions.approvalPolicy = "never"`。命中 MFA 判定时**在发起任何提示之前**确定性拒绝：
 
@@ -387,8 +388,30 @@ runAgent() 恢复
 
 ---
 
-## 六、并发消息处理（软中断）
+### 空回复与思考退化（`llm/reasoning-guard.ts` + 空回复守卫）
 
+**实测事故（2026-09-13）**：prompt 已到 **340k+ token** 的长会话里，向 flash 级模型
+要"下载 PDF + 说明"时，它把输出预算全用在 `reasoning_content` 里，并退化成同一句短话的
+无限重复（`好。写。好。发送。好。…`），**最终 `content` 为空**（该轮 `completion_tokens`
+只有 1,422，远低于 `maxTokens=4096` → 不是长度截断，是模型自己以空正文收尾）。
+旧行为把"没有 tool_calls"直接当成最终回复 → `main.ts` 的兜底文案 `✅ 已完成` 顶上去，
+**用户没拿到任何回答却看到"已完成"**。
+
+处理（细节与门限见 `docs/architecture/retry.md` 的「空回复重试」）：
+
+1. **判定三态**：`finish_reason === "length"` → 长度截断；reasoning 重复退化
+   （同一 ≤24 字单元 ≥12 次，`detectReasoningRepetition()`）→ `degenerate`；其余 → `silent`；
+2. **纠偏重试一次**：注入英文纠偏提示（`emptyReplyNudge(kind)`）后 `continue` 重试本轮
+   （`emptyRetryPending` 保证每次 run 只救一次，不会死循环）；
+3. **点名日志**：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）`；
+4. **可观测**：计数写入指标 `llm/empty_reply`（`note` = 三态），Dashboard「指标」页可见；
+5. **诚实兜底**：重试仍为空时结果带 `emptyReplyKind`，`main.ts` 对 `degenerate` / `length`
+   发 `⚠️ 模型这轮没有产出正文（…），请再问一次或换个模型`；`✅ 已完成` 只留给
+   "工具已交付结果、模型确实没有补充"的情形。
+
+---
+
+## 六、并发消息处理（软中断）
 ### 触发条件
 
 新消息到达时 `session.running == true`，说明上一个 `runAgent()` 尚未结束。

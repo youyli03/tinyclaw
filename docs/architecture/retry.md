@@ -142,6 +142,30 @@ idle timeout (0 chunks)
 
 复用同一 `turnRequestId` 确保服务端识别为同一请求，不额外计费。
 
+### 空回复重试（`core/agent.ts` 的空回复守卫）
+
+**问题（2026-09-13 实测）**：prompt 已到 340k+ token 的长会话里，flash 级模型的
+`reasoning_content`（思考过程）会退化成同一句短话的无限重复
+（`好。写。好。发送。好。…`，实测同句出现上百次），**最终 `content` 为空**
+（本轮 `completion_tokens` 只有 1,422，远低于 `maxTokens=4096` → 不是被长度截断，
+是模型自己以空正文收尾）。旧行为把"没有 tool_calls"直接当作最终回复 → 用户只收到
+`main.ts` 的兜底文案 `✅ 已完成`，等于**没有任何回答还报成功**。
+
+**策略**：一轮 LLM 调用若 `content` 为空且没有 tool_calls，就**不能**当作最终回复：
+
+| 判定（`llm/reasoning-guard.ts`） | 纠偏提示（英文，注入后**重试本轮一次**） |
+|---|---|
+| `finish_reason === "length"` | 点明"输出被长度上限截断"，要求只给最终答案 |
+| reasoning 重复退化（同一短单元 ≥12 次） | 点明"思考在重复"，要求停止规划、直接给结果 |
+| 其余（模型确实没说话） | 要求直接给具体结果；若工具已交付，说明交付了什么 |
+
+- 每次 run 只救一次（`emptyRetryPending`），避免死循环
+- 日志点名原因：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）→ 注入纠偏提示并重试本轮`
+- 计数写入指标 `llm/empty_reply`（`note` = 三态之一），在 Dashboard「指标」页可见，便于统计发生率
+- 为区分三态，`ChatResult` 现在带 `finishReason`（流式从最后一个 chunk 取，非流式取 `choice.finish_reason`）
+- 重试仍为空 → 结果带 `emptyReplyKind`，`main.ts` 给出**诚实**兜底：退化/截断时发
+  `⚠️ 模型这轮没有产出正文（思考退化成了重复）…`，而不是 `✅ 已完成`（后者只留给"工具已交付、模型确实没补充"的情形）
+
 ---
 
 ## 五、WebSocket Responses API（Copilot 专用）

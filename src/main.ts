@@ -864,10 +864,22 @@ ${message}`;
 
     void runPromise
       .then(async (result) => {
-        // 工具执行完但 LLM 最终返回空 content 时（非中断），发送兜底消息
-        let toSend =
-          result.content ||
-          (result.toolsUsed.length > 0 && !session.abortRequested ? "✅ 已完成" : "");
+        // 工具执行完但 LLM 最终返回空 content 时（非中断）：
+        // - 空回复守卫判定为「思考退化 / 被长度截断」→ 诚实告知用户（不能再报「已完成」）
+        // - 其余情况（模型确实没说话，结果已由工具交付）→ 沿用「✅ 已完成」
+        let toSend = result.content;
+        if (!toSend) {
+          const kind = result.emptyReplyKind;
+          if (kind === "degenerate" || kind === "length") {
+            toSend =
+              kind === "length"
+                ? "⚠️ 模型这轮没有产出正文（输出被长度上限截断，思考过程吃满了预算），请再问一次或换个模型"
+                : "⚠️ 模型这轮没有产出正文（思考退化成了重复），请再问一次或换个模型";
+          } else {
+            toSend =
+              result.toolsUsed.length > 0 && !session.abortRequested ? "✅ 已完成" : "";
+          }
+        }
         if (!toSend) return;
 
         // 发给用户前预检本地媒体文件，失败则回传给 agent 重跑，用户不感知

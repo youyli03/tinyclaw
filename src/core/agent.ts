@@ -31,6 +31,7 @@ import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown, insertTokenUsageOnly } from "../web/backend/db.js";
 import { breakdownMessages, classifyTokenSource } from "../memory/token-estimate.js";
+import { detectReasoningRepetition, emptyReplyNudge } from "../llm/reasoning-guard.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isAbsolute, resolve as resolvePath } from "path";
@@ -857,6 +858,14 @@ export interface AgentRunResult {
   content: string;
   /** 本次运行调用了哪些工具 */
   toolsUsed: string[];
+  /**
+   * 空回复守卫的判定（仅当最终内容为空时出现）：
+   * - `length`：输出被长度上限截断
+   * - `degenerate`：reasoning 退化成重复（思考把预算烧完、正文为空）
+   * - `silent`：模型确实没有说话（工具已交付结果时属正常）
+   * 调用方据此决定兜底文案：前两者要给用户**诚实**的提示，而不是「✅ 已完成」。
+   */
+  emptyReplyKind?: "length" | "degenerate" | "silent";
 }
 
 /**
@@ -1466,6 +1475,10 @@ async function runAgentInner(
   let totalCacheCreationTokens = 0; // cache creation token 累计
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
+  // 空回复守卫：true = 已为"空正文"重试过一次（每次 run 只救一次，避免死循环）
+  let emptyRetryPending = false;
+  /** 空回复的性质（写入指标 / 交给 main.ts 决定兜底文案）：length=被长度截断，degenerate=思考退化，silent=模型就是没说话 */
+  let emptyReplyKind: "length" | "degenerate" | "silent" | undefined;
 
   // 轮次上限：0 = 无限制（用 Infinity 表示）；chat/cron 模式读取 maxChatToolRounds，code 模式读取 maxCodeToolRounds
   const configuredRounds = isCodeMode
@@ -1896,6 +1909,36 @@ async function runAgentInner(
           content = stripCanary(content);
         }
       }
+      // ── 空回复守卫（2026-09-13）──────────────────────────────────────────
+      // 模型**没有工具调用但正文为空**时不能当作最终回复：实测 flash 级模型在超长会话里
+      // 会把输出预算全用在思考里、甚至退化成同一句的无限重复（reasoning_content 里
+      // "好。写。好。发送。…"），content 为空 —— 旧行为直接收尾，用户只看到兜底「✅ 已完成」。
+      // 这里：记日志（含 finish_reason / 退化检测）+ 注入纠偏提示**重试本轮一次**。
+      if (!emptyRetryPending && !content.trim()) {
+        const reasoning = _parsed.reasoningContent ?? "";
+        const rep = detectReasoningRepetition(reasoning);
+        emptyReplyKind =
+          response.finishReason === "length" ? "length" : rep.degenerate ? "degenerate" : "silent";
+        console.warn(
+          `${logPrefix} ⚠️ 收到空回复（finish_reason=${response.finishReason ?? "?"}, ` +
+            `reasoning=${reasoning.length} 字符, 单元=${rep.units}/去重=${rep.uniqueUnits}` +
+            `${rep.degenerate ? `, **reasoning 重复退化**："${rep.repeatedLine}" ×${rep.repeats}` : ""}）` +
+            `→ 注入纠偏提示并重试本轮`
+        );
+        try {
+          const KEY = "empty_reply";
+          if (!isMetricKeyAllowed("llm", KEY)) {
+            addMetricKey("llm", KEY, "空回复次数（思考退化/长度截断）", "bar");
+          }
+          insertMetric({ category: "llm", key: KEY, value: 1, note: emptyReplyKind });
+        } catch {
+          /* 指标写入失败不影响主流程 */
+        }
+        emptyRetryPending = true;
+        session.addSystemMessage(emptyReplyNudge(emptyReplyKind));
+        continue;
+      }
+
       finalContent = content;
       session.addAssistantMessage(finalContent, _parsed.reasoningContent);
       bus.emit({ type: "turn:assistant", content, hasToolCalls: false });
@@ -2825,7 +2868,11 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
     },
   });
 
-  return { content: finalContent, toolsUsed };
+  return {
+    content: finalContent,
+    ...(emptyReplyKind ? { emptyReplyKind } : {}),
+    toolsUsed,
+  };
 }
 
 interface FinalizeContext {
@@ -2838,6 +2885,8 @@ interface FinalizeContext {
   logPrefix: string;
   toolsUsed: string[];
   finalContent: string;
+  /** 空回复守卫的判定结果（仅当内容为空时存在）：供 main.ts 选择诚实的兜底文案 */
+  emptyReplyKind?: "length" | "degenerate" | "silent";
   lastUsage: ChatResult["usage"];
   startMs: number;
   toolThrottler: ToolCallThrottler | null;
@@ -2875,6 +2924,7 @@ interface FinalizeContext {
     logPrefix,
     toolsUsed,
     finalContent,
+    ...(emptyReplyKind ? { emptyReplyKind } : {}),
     lastUsage,
     startMs,
     toolThrottler,
