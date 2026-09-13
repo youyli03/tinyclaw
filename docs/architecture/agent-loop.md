@@ -183,10 +183,12 @@ runAgent(session, userContent, opts)
 │           ├─ MFA 检查（见第五节）——判定与告警文案都用**剥离后**的 toolArgs
 │           │    toolNeedsMFA(name, toolArgs, cfg) == true
 │           │    && session.mfaApprovedForThisRun == false
-│           │    → 进行 MFA 验证（接口 A 或 B）
-│           │    ├─ 通过 → session.mfaApprovedForThisRun = true，继续执行
-│           │    ├─ 拒绝 → [tool_result:name] 操作被取消：用户拒绝，continue
-│           │    └─ 超时/异常 → [tool_result:name] 操作被取消：MFA 未通过，continue
+│           │    ├─ opts.approvalPolicy == "never"（子 Agent / 无人值守）
+│           │    │    → [tool_result:name] 已拒绝：子 Agent 不允许发起审批，continue（不弹提示）
+│           │    └─ 进行 MFA 验证（接口 A 或 B）
+│           │         ├─ 通过 → session.mfaApprovedForThisRun = true，继续执行
+│           │         ├─ 拒绝 → [tool_result:name] 操作被取消：用户拒绝，continue
+│           │         └─ 超时/异常 → [tool_result:name] 操作被取消：MFA 未通过，continue
 │           │
 │           └─ 执行工具
 │                purposeArbiter.onToolStart(name, purpose)   ← 记录候选，慢工具到点才展示
@@ -319,6 +321,19 @@ patterns = ["rm", "sudo", "chmod", "chown", "dd", "mv"]  # 命令级黑名单（
 
 同一次 `runAgent()` 调用内，MFA 一旦通过，`session.mfaApprovedForThisRun = true`，
 后续所有高危工具调用直接跳过验证。每次 `runAgent()` 开始时重置为 `false`。
+
+### 委派运行不审批（`approvalPolicy: "never"`）
+
+子 Agent（`agent_fork` → `slaveRunFn`）与 cron / loop 的无人值守消息步骤，其 `runAgent()`
+一律带 `AgentRunOptions.approvalPolicy = "never"`。命中 MFA 判定时**在发起任何提示之前**确定性拒绝：
+
+```
+→ [tool_result:name] 已拒绝：子 Agent 不允许发起审批（approvalPolicy=never），请在委派范围内完成
+→ bus.emit({ type: "mfa:denied" }) + 审计（reason: "子 Agent approvalPolicy=never"），不弹 MFA / 不发提示
+```
+
+同一策略经 `ToolContext.approvalPolicy` 传给工具层：`exec_shell({ elevate: true })` 也直接拒绝
+（见 `docs/architecture/overview.md` 的提权节）。语义是"子 Agent 只能在委派时定下的作用域里干活"。
 
 ### Interface A — 文字确认（`simple` 模式）
 
