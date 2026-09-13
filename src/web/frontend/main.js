@@ -299,6 +299,33 @@ const app = createApp({
     const _init = parseURL();
     const page = ref(_init.pg);
 
+    // ── 移动端抽屉式导航 ─────────────────────────────────────────────────────
+    // 手机端不再用底部 tab bar（新增 tab 会挤爆），改为顶栏 ☰ 打开侧边抽屉：
+    // 导航项仍然只有 index.html 里那一处，**以后加 tab 只需加一行 nav-item**。
+    const sidebarOpen = ref(false);
+    // 构建号（服务端注入 <html data-build>）：显示在侧边栏页脚，用来判断手机上跑的是不是新版本
+    const buildTag = ref(String(document.documentElement.dataset.build ?? "dev").slice(-6));
+    const PAGE_TITLES = {
+      overview: '概览', metrics: '指标', token: 'Token', notes: '笔记', cron: 'Cron 任务',
+    };
+    const pageTitle = computed(() => PAGE_TITLES[page.value] ?? 'tinyclaw');
+    function openSidebar() { sidebarOpen.value = true; }
+    function closeSidebar() { sidebarOpen.value = false; }
+    function toggleSidebar() { sidebarOpen.value = !sidebarOpen.value; }
+    /** 侧边栏/抽屉里点导航：切页 + 关抽屉（桌面端关不关都无感） */
+    function goPage(pg) {
+      page.value = pg;
+      closeSidebar();
+    }
+    // 抽屉打开时锁住页面滚动，关闭后恢复
+    watch(sidebarOpen, (open) => {
+      document.body.style.overflow = open ? 'hidden' : '';
+    });
+    // Esc 关闭抽屉（桌面端无副作用）
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && sidebarOpen.value) closeSidebar();
+    });
+
     // ── 时间 ────────────────────────────────────────────────────────────────
     const currentTime = ref('');
     const dateStr = ref('');
@@ -1274,8 +1301,42 @@ const app = createApp({
     const notesMobileView = ref('tree'); // 'tree' | 'preview'
     const pdfPages = ref([]); // [{canvas, pageNum}] for mobile PDF.js render
     const pdfProgress = ref({ cur: 0, total: 0 }); // 渲染进度
-    const isMobile = ref(window.innerWidth <= 768);
-    window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; });
+    // ⚠️ 移动端判定必须与 CSS 用**同一个**媒体查询：桌面端/手机端浏览器在
+    // `window.innerWidth` 与 `matchMedia` 上可能给出不同结果（已在安卓 Edge 上踩到：
+    // CSS 认为窄屏（顶栏样式生效）而 innerWidth > 768 → JS 把顶栏 v-if 掉了）。
+    const mqMobile = window.matchMedia("(max-width: 768px)");
+    const isMobile = ref(mqMobile.matches);
+
+    // ── 诊断横幅（?diag=1）：手机端排查"顶栏/抽屉不生效"这类问题 ────────────────
+    const diagEnabled = new URLSearchParams(location.search).has("diag");
+    const diag = ref(null);
+    function refreshDiag() {
+      if (!diagEnabled) return;
+      const vv = window.visualViewport;
+      diag.value = {
+        build: String(document.documentElement.dataset.build ?? "dev"),
+        w: window.innerWidth,
+        h: window.innerHeight,
+        dpr: window.devicePixelRatio,
+        vw: vv ? Math.round(vv.width) : "-",
+        vh: vv ? Math.round(vv.height) : "-",
+        isMobile: isMobile.value,
+        mq: mqMobile.matches,
+        topbar: !!document.querySelector(".mobile-topbar"),
+        ua: navigator.userAgent,
+      };
+    }
+    // 视口变化：以媒体查询的 change 事件为准（与 CSS 同步），resize 只作兜底刷新诊断
+    mqMobile.addEventListener("change", (e) => {
+      isMobile.value = e.matches;
+      refreshDiag();
+      if (!e.matches && sidebarOpen.value) closeSidebar();
+    });
+    window.addEventListener('resize', () => {
+      refreshDiag();
+      // 切回桌面宽度时收掉抽屉，避免残留遮罩挡住页面
+      if (!isMobile.value && sidebarOpen.value) closeSidebar();
+    });
     function notesMobileBack() {
       notesMobileView.value = 'tree';
       notesFullscreen.value = false;
@@ -1427,6 +1488,9 @@ const app = createApp({
       // overview 图表（初始化时总是绘制，v-show 不会销毁 canvas）
       await drawOverviewCharts();
       drawSparklines();
+      // 等 Vue 首次渲染完再采集诊断（要能查到顶栏是否真的进了 DOM）
+      await nextTick();
+      refreshDiag();
 
       // 指标页:只预取 key 列表，不绘图（display:none 时 canvas 尺寸为 0）
 
@@ -1475,6 +1539,7 @@ const app = createApp({
 
     return {
       page, navTo, currentTime, dateStr,
+      sidebarOpen, pageTitle, openSidebar, closeSidebar, toggleSidebar, goPage, buildTag, diag,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, metricCards, mDays,
       tokenDays, tokenData, tokenLatest, tokenBreakdown, tokenStatCards, loadTokenPage,

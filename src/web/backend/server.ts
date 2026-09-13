@@ -167,7 +167,9 @@ function serveIndexHtml(res: http.ServerResponse, req?: http.IncomingMessage): v
   const indexPath = path.join(FRONTEND_DIR, "index.html");
   let html = fs.readFileSync(indexPath, "utf-8");
   // 注入版本号，强制浏览器获取最新 JS/CSS（解决手机/PC 浏览器缓存问题）
+  // 同时把构建号写到 <html data-build>：界面右下角显示后 6 位，用来判断"手机上跑的是不是新版本"
   html = html
+    .replace(/<html([^>]*)>/, `<html$1 data-build="${BUILD_TS}">`)
     .replace(/\/main\.js"/g, `/main.js?v=${BUILD_TS}"`)
     .replace(/\/style\.css"/g, `/style.css?v=${BUILD_TS}"`);
   const idxHeaders: Record<string, string> = {

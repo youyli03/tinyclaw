@@ -13,22 +13,38 @@
 <div id="app">
 
   <!-- 左侧导航 -->
-  <aside id="sidebar">
+  <!-- 移动端顶栏：抽屉式导航入口（**由 JS 的 isMobile 决定是否渲染**，
+       不依赖 CSS 媒体查询 —— 避免级联/缓存导致手机上看不到） -->
+  <header class="mobile-topbar" v-if="isMobile">
+    <button class="topbar-btn" @click="toggleSidebar" aria-label="打开菜单">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+    <div class="topbar-title">{{ pageTitle }}</div>
+    <div class="topbar-right">{{ dateStr }}</div>
+  </header>
+  <div class="sidebar-backdrop" :class="{show: sidebarOpen}" @click="closeSidebar"></div>
+
+  <aside id="sidebar" :class="{'sidebar-open': sidebarOpen}">
     <div class="sidebar-logo">
-      <div class="logo-name">tinyclaw</div>
-      <div class="logo-sub">dashboard</div>
+      <div>
+        <div class="logo-name">tinyclaw</div>
+        <div class="logo-sub">dashboard</div>
+      </div>
+      <button class="sidebar-close" @click="closeSidebar" aria-label="关闭菜单">✕</button>
     </div>
     <nav class="sidebar-nav">
       <div class="nav-section">
         <div class="nav-section-label">主要</div>
-        <div class="nav-item" :class="{active: page==='overview'}" @click="page='overview'">概览</div>
-        <div class="nav-item" :class="{active: page==='metrics'}"  @click="page='metrics'">指标</div>
-        <div class="nav-item" :class="{active: page==='token'}"    @click="page='token'">Token</div>
-        <div class="nav-item" :class="{active: page==='notes'}"    @click="page='notes'">笔记</div>
+        <div class="nav-item" :class="{active: page==='overview'}" @click="goPage('overview')">概览</div>
+        <div class="nav-item" :class="{active: page==='metrics'}"  @click="goPage('metrics')">指标</div>
+        <div class="nav-item" :class="{active: page==='token'}"    @click="goPage('token')">Token</div>
+        <div class="nav-item" :class="{active: page==='notes'}"    @click="goPage('notes')">笔记</div>
       </div>
       <div class="nav-section" style="margin-top:16px">
         <div class="nav-section-label">系统</div>
-        <div class="nav-item" :class="{active: page==='cron'}"     @click="page='cron'">Cron 任务</div>
+        <div class="nav-item" :class="{active: page==='cron'}"     @click="goPage('cron')">Cron 任务</div>
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -37,12 +53,20 @@
         <div class="footer-status-text">系统在线</div>
       </div>
       <div class="footer-meta">{{ currentTime }}</div>
-      <div class="footer-meta">端口 4096</div>
+      <div class="footer-meta">端口 4096 · 构建 {{ buildTag }}</div>
     </div>
   </aside>
 
   <!-- 主内容区 -->
   <main id="main" :class="{'notes-main': page==='notes'}">
+
+    <!-- 诊断横幅：只在 ?diag=1 时渲染（手机端排查"顶栏不显示"这类问题用） -->
+    <div v-if="diag" class="diag-banner">
+      <div><b>构建</b> {{ diag.build }}</div>
+      <div><b>视口</b> {{ diag.w }}×{{ diag.h }} · dpr {{ diag.dpr }} · visualViewport {{ diag.vw }}×{{ diag.vh }}</div>
+      <div><b>isMobile</b> {{ diag.isMobile }} · matchMedia(≤768) {{ diag.mq }} · 顶栏在 DOM {{ diag.topbar }}</div>
+      <div><b>UA</b> {{ diag.ua }}</div>
+    </div>
 
     <!-- 概览页 -->
     <div v-show="page==='overview'">
@@ -504,26 +528,6 @@
     </div>
 
       </main>
-
-  <!-- 底部 Tab Bar（仅移动端显示） -->
-  <nav class="bottom-tabbar">
-    <div class="tab-item" :class="{active: page==='overview'}" @click="page='overview'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      概览
-    </div>
-    <div class="tab-item" :class="{active: page==='metrics'}" @click="page='metrics'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      指标
-    </div>
-    <div class="tab-item" :class="{active: page==='notes'}" @click="page='notes'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      笔记
-    </div>
-    <div class="tab-item" :class="{active: page==='cron'}" @click="page='cron'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      任务
-    </div>
-  </nav>
 </div>
 
 <script src="/vue.global.prod.js"></script>

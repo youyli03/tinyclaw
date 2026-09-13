@@ -25,6 +25,19 @@
 - **Token 页**:prompt 构成细分(见下)
 - **日报页**:展示 `write_report` 写入的 Markdown 日报存档,按 type+date 索引
 - **Cron 页**:可展开的任务卡片列表,显示最近运行状态与日志
+- **移动端（≤768px）**:导航是**抽屉式侧边栏** —— 顶栏固定显示 `☰` + 当前页标题，点 `☰` 从左侧滑出
+  与桌面端**同一份** `nav-item` 列表（`#sidebar` 变 `transform: translateX(-100%)`，`.sidebar-open` 滑入，
+  遮罩/导航项/Esc 关闭，抽屉内可滚动以容纳后续新增的 tab）。**加一个新页面只需改三处**：`VALID_PAGES` +
+  侧边栏 `nav-item` + 页面 div —— `tmp/check-mobile-nav-20260913.py` 会断言"每个 VALID_PAGES 都有导航项"防止漏加
+  - ⚠️ **顶栏用文档流占位，不要改回 `position: fixed`**：`#main` 自己是滚动容器（`height:100vh; overflow-y:auto`），
+    固定顶栏会被滚动内容穿过（安卓上表现为第一行卡片被顶栏"挡住"）。现在 `#app` 在移动端竖排
+    （顶栏 52px + `#main` 吃剩余高度 `height:auto; flex:1; min-height:0`），内容在 `#main` 自己的盒子里滚动
+  - ⚠️ **JS 与 CSS 必须用同一个断点**：`isMobile` 取自 `matchMedia("(max-width: 768px)")` 的 `matches`
+    （并监听其 `change`），**不要**改回 `window.innerWidth <= 768` —— 实测安卓 Edge 上两者会在某些时刻不一致，
+    于是 CSS 认为窄屏、JS 却把顶栏 `v-if` 掉了（顶栏消失、抽屉无从打开）
+  - 排查入口：侧边栏页脚显示**构建号**（服务端注入 `<html data-build>`，静态资源按它加 `?v=`），
+    用来判断手机加载的是不是新版本；带 `?diag=1` 打开会在页面顶部渲染诊断条
+    （构建号 / `innerWidth`×`innerHeight` / dpr / visualViewport / `isMobile` / `matchMedia` / 顶栏是否在 DOM / UA）
 
 #### Token 页(prompt 构成细分)
 

@@ -57,6 +57,10 @@ body {
 .sidebar-logo {
   padding: 24px 20px 16px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .sidebar-logo .logo-name {
   font-size: 18px;
@@ -437,21 +441,111 @@ body {
   .chart-row-2, .chart-row-2b { grid-template-columns: 1fr; }
 }
 
+/* ── 移动端顶栏 / 抽屉关闭按钮（**默认规则必须先于下面的媒体查询**，
+       否则同优先级的 `display: none` 会覆盖媒体查询里的 `display: flex`） ──
+   ⚠️ 顶栏用**文档流占位**而不是 `position: fixed`：#main 自己是滚动容器
+   （`height:100vh; overflow-y:auto`），固定顶栏会被滚动内容穿过（安卓上表现为
+   第一行卡片被顶栏"挡住"）。占位后 #main 只在剩余高度里滚动，内容不会被遮。 */
+.mobile-topbar {
+  display: flex; /* 默认即 flex：是否渲染由 HTML 的 v-if="isMobile" 决定，不靠媒体查询 */
+  flex-shrink: 0;
+  height: 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  z-index: 250;
+}
+.topbar-btn {
+  width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; cursor: pointer;
+  border-radius: 8px; color: var(--t1); padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.topbar-btn:active { background: var(--card2); }
+.topbar-btn svg { width: 22px; height: 22px; }
+.topbar-title { font-size: 16px; font-weight: 600; color: var(--t1); }
+.topbar-right { margin-left: auto; font-size: 11px; color: var(--t3); }
+
+.sidebar-close {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: none; border-radius: 8px;
+  background: var(--card2); color: var(--t3);
+  font-size: 14px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.sidebar-close:active { color: var(--accent); }
+.sidebar-backdrop { display: none; }
+
+/* ── 诊断横幅（?diag=1）── */
+.diag-banner {
+  background: #FFF7E6;
+  border: 1px solid #FFD591;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  color: #8A5A00;
+  font-size: 11px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+  flex-shrink: 0;
+}
+
 /* ── 移动端（≤768px）── */
 @media (max-width: 768px) {
   :root { --sidebar-w: 0px; }
 
   body { flex-direction: column; }
+  /* #app 才是「顶栏 + #main」的 flex 容器：竖排，让顶栏占位、主区吃剩余高度 */
+  #app { flex-direction: column; }
 
-  /* 隐藏左侧 sidebar，底部 tab bar 替代 */
-  #sidebar { display: none; }
+  /* 侧边栏变**抽屉**：默认移出屏幕，`.sidebar-open` 时滑入；遮罩点击关闭 */
+  #sidebar {
+    display: flex;
+    width: 264px;
+    max-width: 84vw;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    z-index: 300;
+    box-shadow: 0 0 28px rgba(24, 26, 48, 0.22);
+  }
+  #sidebar.sidebar-open { transform: translateX(0); }
+  /* 导航项可能变多 → 抽屉内可滚动（页脚固定在最下方） */
+  .sidebar-nav { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .nav-item { padding: 13px 20px; font-size: 15px; }
+  .sidebar-close { display: flex; }
+  .sidebar-backdrop {
+    display: block; /* 覆盖默认的 display:none —— 移动端才渲染遮罩 */
+    position: fixed;
+    inset: 0;
+    background: rgba(18, 20, 38, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 290;
+  }
+  .sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
 
-  /* 主内容区撑满，底部留出 tab bar 高度 */
+  /* 顶栏（☰ + 当前页标题） */
+  .mobile-topbar { display: flex; }
+
+  /* 主内容区撑满顶栏之下的剩余高度，并在**自己的容器内**滚动
+     （height:auto + flex:1 覆盖桌面的 height:100vh，不再需要给顶栏留 padding） */
   #main {
     margin-left: 0;
-    padding: 14px 14px 80px;
+    height: auto;
+    flex: 1;
+    min-height: 0;
+    padding: 14px 14px 32px;
     width: 100%;
   }
+  /* 笔记页同样是剩余高度内的内部分区滚动 */
+  #main.notes-main { height: auto; }
 
   /* 页头缩小 */
   .page-title { font-size: 18px; }
@@ -479,40 +573,11 @@ body {
   .card-header { padding: 12px 14px 0; }
   .card-body { padding: 10px 14px 14px; }
   .chart-canvas-wrap { padding: 4px 14px 14px; }
-}
 
-/* ── 底部 Tab Bar（移动端） ── */
-.bottom-tabbar {
-  display: none;
-}
-@media (max-width: 768px) {
-  .bottom-tabbar {
-    display: flex;
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    height: 60px;
-    background: var(--card);
-    border-top: 1px solid var(--border);
-    z-index: 200;
-    box-shadow: 0 -2px 12px rgba(79,126,248,0.08);
-  }
-  .tab-item {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    cursor: pointer;
-    color: var(--t3);
-    font-size: 10px;
-    font-weight: 500;
-    transition: color 0.15s;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .tab-item.active { color: var(--accent); }
-  .tab-item svg { width: 20px; height: 20px; stroke-width: 1.8; }
+  /* 宽表格（Token 排行等）允许横向滑动，别撑破布局 */
+  .card-body { overflow-x: auto; }
+  .cron-table { font-size: 12px; }
+  .token-preview { max-width: 160px; }
 }
 
 /* ── Cron 任务列表（可展开） ── */
