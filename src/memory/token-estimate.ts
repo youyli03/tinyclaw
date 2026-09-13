@@ -51,6 +51,62 @@ export function tokensToChars(tokens: number): number {
   return Math.max(0, Math.floor(tokens * 3.5));
 }
 
+// ── Token 消耗来源（Dashboard「Token」页的 source 维度）───────────────────────
+
+/**
+ * LLM 消耗来源。前六种是**走 ReAct 主循环**的请求（有 prompt 构成可拆），
+ * 后两种是**直连 LLM 的独立调用**（只有总量，没有消息构成）：
+ * - `summarizer`：压缩成摘要 / 蒸馏（`memory/summarizer.ts`）
+ * - `vision`：图片识别（`describeImageWithVisionFallback`）
+ */
+export type TokenSource =
+  | "chat"
+  | "code"
+  | "cron"
+  | "loop"
+  | "slave"
+  | "skill"
+  | "summarizer"
+  | "vision";
+
+/** 来源的中文标签（前端展示用；改这里即可） */
+export const TOKEN_SOURCE_LABELS: Record<TokenSource, string> = {
+  chat: "对话",
+  code: "Code 模式",
+  cron: "定时任务",
+  loop: "Loop 触发",
+  slave: "子 Agent",
+  skill: "Skill 子 Agent",
+  summarizer: "压缩/蒸馏",
+  vision: "图片识别",
+};
+
+/**
+ * 判定一次 LLM 调用属于哪个来源。
+ *
+ * 判定依据（顺序有意为之）：
+ *  - sessionId 前缀：`cron:`（含 pipeline 的 msg step）、`slave:`（agent_fork）、`skill:`（skill_run）
+ *  - `origin`：loop 触发**复用绑定会话的 id**（没有专属前缀），只能靠 `AgentRunOptions.origin === "loop"` 区分；
+ *    cron runner 也会传 `origin: "cron"`，与前缀双保险
+ *  - 都没有则按模式兜底：code 模式 → `code`，其余 → `chat`
+ *
+ * ⚠️ 顺序：前缀优先于 origin（cron 里 fork 出来的 `slave:` 会话应记成子 Agent，而不是 cron）。
+ */
+export function classifyTokenSource(args: {
+  sessionId: string;
+  mode?: "chat" | "code";
+  origin?: string;
+}): TokenSource {
+  const { sessionId, mode, origin } = args;
+  if (sessionId.startsWith("cron:")) return "cron";
+  if (sessionId.startsWith("slave:")) return "slave";
+  if (sessionId.startsWith("skill:")) return "skill";
+  if (origin === "loop") return "loop";
+  if (origin === "cron") return "cron";
+  if (mode === "code") return "code";
+  return "chat";
+}
+
 // ── Prompt 构成细分（Dashboard「Token」页用）──────────────────────────────────
 //
 // ⚠️ 纪律（对齐 DSH `dsh-token-meter`）：这里的数字是**近似构成**，不是计费数据。

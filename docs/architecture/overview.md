@@ -52,16 +52,19 @@
   与 `metrics` 分开：不受指标白名单与 7 天窗口限制
 - **接口**：`GET /api/token-breakdown?days=&limit=&session=` → `{rows, latest, byDay, byTool, bySession, totals}`
   （聚合在服务端做；`latest` 取**全局最近一次请求**，用于"最近一次请求占用窗口"卡片）
-- **图表**：环形图（最近一次构成占比）、分类堆叠趋势（按天）、逐轮 prompt 折线（可见"第几轮突然涨了"）、
-  单条消耗 Top、工具归因排行、会话/来源排行
+- **图表**：环形图（最近一次带构成的请求占比）、分类堆叠趋势（按天）、逐轮 prompt 折线（可见"第几轮突然涨了"，
+  压缩/视觉的调用也在曲线上、tooltip 标注来源）、单条消耗 Top、工具归因排行、
+  会话/来源排行（按 **(会话, 来源)** 分组——同一会话里的对话/压缩/视觉分别成行）
 - **上下文窗口占用**用**实际 prompt / contextWindow**（不是仅会话正文的估算——`session.estimatedTokens()`
   不含 system prompt 与工具 schema，会严重低估）；用量写入失败只 `console.warn`，绝不影响对话
-- ⚠️ **覆盖范围（已知限制，未实现的部分如实标注）**：本表只覆盖**走 ReAct 主循环**的请求 ——
-  chat / code / cron（含 pipeline 的 msg step）/ loop（在绑定会话里跑）/ `agent_fork` 子 Agent /
-  `skill_run` 子 Agent 都在内；而**压缩/蒸馏的 summarizer 调用**与 **vision 图片识别**目前**未纳入**
-  （它们只写旧的 `llm/token/{summarizer,vision}/*` 指标，见「指标页」），故 Token 页的合计**不等于全量**
-- ⚠️ **`source` 目前只区分 `cron` / `code` / `chat`**（沿用旧口径），因此 **loop / 子 Agent / skill 会被标成 `chat`**，
-  在「会话/来源排行」里混在一起；细化到 `loop`/`slave`/`skill`/`summarizer`/`vision` 待办
+- **覆盖范围（全量口径）**：走 ReAct 主循环的请求都记，并按 `classifyTokenSource()` 标注来源 ——
+  `chat`（QQ/CLI）/ `code` / `cron`（含 pipeline 的 msg step）/ `loop`（loop 触发复用绑定会话 id，
+  只能靠 `origin` 区分）/ `slave`（`agent_fork`）/ `skill`（`skill_run`）；判定顺序是
+  **sessionId 前缀（`cron:`/`slave:`/`skill:`）优先于 `origin`**——cron 里 fork 出来的 `slave:` 记成子 Agent
+- **压缩/蒸馏与图片识别也在内，但只有总量**：这两条是直连 LLM 的独立调用（各自构造内部请求，七分类对它们
+  没有意义），走 `insertTokenUsageOnly()` 记 `source=summarizer|vision` 的 prompt/output/cache，
+  构成列留空；因此 Token 页的合计**等于全量**，而环形图/单条 Top 只用**最近一次带构成的请求**
+  （接口的 `latestBreakdown`，避免压缩插在最新一行时图形空掉）
 
 ---
 

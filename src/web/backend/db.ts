@@ -408,3 +408,43 @@ export function latestTokenBreakdown(sessionId?: string): TokenBreakdownRow | nu
     : db.prepare("SELECT * FROM token_breakdown ORDER BY ts DESC LIMIT 1").get();
   return (row as TokenBreakdownRow | undefined) ?? null;
 }
+
+/**
+ * 只记总量的行。
+ *
+ * 用于**没有消息构成可拆**的直连调用：压缩/蒸馏（`summarizer`）与图片识别（`vision`）——
+ * 它们各自构造内部请求，`breakdownMessages()` 的七分类对它们没有意义，
+ * 但**消耗是真实的**，必须计入总量（否则 Token 页合计少算）。
+ */
+export function insertTokenUsageOnly(row: {
+  sessionId: string;
+  source: string;
+  agentId?: string | null;
+  model?: string | null;
+  round?: number;
+  prompt: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  ts?: number;
+}): void {
+  insertTokenBreakdown({
+    session_id: row.sessionId,
+    source: row.source,
+    agent_id: row.agentId ?? null,
+    model: row.model ?? null,
+    round: row.round ?? 0,
+    actual_prompt: row.prompt,
+    actual_output: row.output,
+    cache_read: row.cacheRead ?? 0,
+    cache_write: row.cacheWrite ?? 0,
+    est_total: null,
+    message_tokens: null,
+    context_window: null,
+    session_tokens: null,
+    items: "[]",
+    top: "[]",
+    tools: "[]",
+    ...(row.ts !== undefined ? { ts: row.ts } : {}),
+  });
+}

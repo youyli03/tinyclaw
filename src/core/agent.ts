@@ -29,8 +29,8 @@ import { PlanAbortError } from "../core/session.js";
 import { requireMFA } from "../auth/mfa.js";
 import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
-import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown } from "../web/backend/db.js";
-import { breakdownMessages } from "../memory/token-estimate.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown, insertTokenUsageOnly } from "../web/backend/db.js";
+import { breakdownMessages, classifyTokenSource } from "../memory/token-estimate.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isAbsolute, resolve as resolvePath } from "path";
@@ -1732,11 +1732,11 @@ async function runAgentInner(
       const ctxWindow = llmRegistry.getContextWindow("daily", session.lastResponseAt);
       insertTokenBreakdown({
         session_id: session.sessionId,
-        source: session.sessionId.startsWith("cron:")
-          ? "cron"
-          : session.mode === "code"
-            ? "code"
-            : "chat",
+        source: classifyTokenSource({
+          sessionId: session.sessionId,
+          mode: session.mode === "code" ? "code" : "chat",
+          ...(opts.origin ? { origin: opts.origin } : {}),
+        }),
         agent_id: session.agentId,
         model: String(client.model),
         round,
@@ -2790,6 +2790,18 @@ async function finalizeRun(ctx: FinalizeContext): Promise<AgentRunResult> {
           if (!isMetricKeyAllowed(LLM_CAT, e.key)) addMetricKey(LLM_CAT, e.key, e.desc, "bar");
           insertMetric({ category: LLM_CAT, key: e.key, value: e.value, note: "vision" });
         }
+        // 同步进 Token 页（只记总量：vision 是独立客户端、没有主循环那套消息构成）
+        const visModel = visionClient?.[0]?.model;
+        insertTokenUsageOnly({
+          sessionId: session.sessionId,
+          source: "vision",
+          agentId: session.agentId,
+          model: visModel ? String(visModel) : "vision",
+          prompt: totalVisionPromptTokens,
+          output: totalVisionCompletionTokens,
+          cacheRead: totalVisionCacheReadTokens,
+          cacheWrite: totalVisionCacheCreationTokens,
+        });
       }
     }
   } catch {

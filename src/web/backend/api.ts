@@ -155,6 +155,11 @@ export interface TokenBreakdownPayload {
     tools: TokenToolStatJson[];
   }>;
   latest: TokenBreakdownPayload["rows"][number] | null;
+  /**
+   * 最近一次**带 prompt 构成**的请求（跳过 summarizer / vision 这种只有总量的行）。
+   * 构成环形图与单条 Top 用它，避免压缩/视觉插在最新一行时图形空掉。
+   */
+  latestBreakdown: TokenBreakdownPayload["rows"][number] | null;
   byDay: Array<{
     day: string;
     rounds: number;
@@ -275,10 +280,12 @@ export function buildTokenBreakdownPayload(
     .sort((a, b) => b.tokens - a.tokens)
     .map((t) => ({ ...t, pct: toolTotal > 0 ? t.tokens / toolTotal : 0 }));
 
-  // 按会话/来源排行
+  // 按（会话, 来源）排行：同一会话里的主循环、压缩、视觉分别成行，
+  // 否则合并后 source 标签只能取其一，看不出是"这个会话的压缩"还是"这个会话的对话"
   const sessMap = new Map<string, TokenBreakdownPayload["bySession"][number]>();
   for (const r of rows) {
-    const cur = sessMap.get(r.sessionId) ?? {
+    const key = `${r.sessionId}\u0000${r.source}`;
+    const cur = sessMap.get(key) ?? {
       sessionId: r.sessionId,
       source: r.source,
       agentId: r.agentId,
@@ -302,7 +309,7 @@ export function buildTokenBreakdownPayload(
       cur.contextWindow = r.contextWindow;
       cur.sessionTokens = r.sessionTokens;
     }
-    sessMap.set(r.sessionId, cur);
+    sessMap.set(key, cur);
   }
   const bySession = [...sessMap.values()].sort((a, b) => b.prompt + b.output - (a.prompt + a.output));
 
@@ -318,7 +325,7 @@ export function buildTokenBreakdownPayload(
     { rounds: 0, prompt: 0, output: 0, cacheRead: 0, cacheWrite: 0, estTotal: 0 }
   );
 
-  return { rows, latest: latestRow, byDay, byTool, bySession, totals };
+  return { rows, latest: latestRow, latestBreakdown: rows.find((r) => r.items.length > 0) ?? null, byDay, byTool, bySession, totals };
 }
 
 // 当前请求引用(用于 json() 判断客户端是否支持 gzip)

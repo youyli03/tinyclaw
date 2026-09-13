@@ -3,7 +3,7 @@ import { loadConfig } from "../config/loader.js";
 import { persistSummary } from "./store.js";
 import type { ChatMessage, OpenAIToolCall, ChatResult } from "../llm/client.js";
 import type { AnyLLMClient } from "../llm/registry.js";
-import { insertMetric, isMetricKeyAllowed, addMetricKey } from "../web/backend/db.js";
+import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenUsageOnly } from "../web/backend/db.js";
 import { pathToProjectSlug, upsertMemSection } from "../tools/memory.js";
 import { agentManager } from "../core/agent-manager.js";
 import { readExistingCards, parseCardJson, saveCards, sortCardsByScore } from "./cards.js";
@@ -42,6 +42,17 @@ function recordSummarizerTokens(result: ChatResult, client: AnyLLMClient): void 
         if (!isMetricKeyAllowed(CAT, e.key)) addMetricKey(CAT, e.key, e.desc, "bar");
         insertMetric({ category: CAT, key: e.key, value: e.value, note: client.model });
       }
+      // 同步进 Token 页（压缩/蒸馏没有主循环那套消息构成，只记总量，
+      // 否则 Token 页的合计会少算这一块——长会话里它并不小）
+      insertTokenUsageOnly({
+        sessionId: "summarizer",
+        source: "summarizer",
+        model: client.model,
+        prompt: inputTok,
+        output: outputTok,
+        cacheRead: result.usage?.cacheReadTokens ?? 0,
+        cacheWrite: result.usage?.cacheCreationTokens ?? 0,
+      });
     }
   } catch {
     /* 写 db 失败不影响主流程 */

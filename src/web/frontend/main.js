@@ -953,12 +953,23 @@ const app = createApp({
       conversation: '对话正文',
     };
     const TOKEN_ORDER = ['system', 'instructions', 'memory', 'summary', 'tools_schema', 'tool_results', 'conversation'];
+    // 消耗来源的中文标签（与 src/memory/token-estimate.ts 的 TOKEN_SOURCE_LABELS 对应）
+    const TOKEN_SOURCE_LABELS = {
+      chat: '对话', code: 'Code 模式', cron: '定时任务', loop: 'Loop 触发',
+      slave: '子 Agent', skill: 'Skill 子 Agent', summarizer: '压缩/蒸馏', vision: '图片识别',
+    };
     function tokenColor(cat) { return TOKEN_COLORS[cat] || '#B0B8D4'; }
     function tokenLabel(cat) { return TOKEN_LABELS[cat] || cat; }
+    function tokenSourceLabel(src) { return TOKEN_SOURCE_LABELS[src] || src; }
 
     const tokenDays = ref('7');
     const tokenData = ref(null);
     const tokenLatest = computed(() => (tokenData.value && tokenData.value.latest) || null);
+    // 构成类图/表用它：跳过只有总量（无构成）的 summarizer/vision 行
+    const tokenBreakdown = computed(
+      () =>
+        (tokenData.value && (tokenData.value.latestBreakdown || tokenData.value.latest)) || null
+    );
 
     function fmtNum(n) {
       return Number(n || 0).toLocaleString('zh-CN');
@@ -1030,8 +1041,8 @@ const app = createApp({
       const d = tokenData.value;
       if (!d) return;
 
-      // 1) 最近一次请求的构成（环形）
-      const latest = d.latest;
+      // 1) 最近一次**带构成**的请求（环形）；只有总量（压缩/视觉）的行不参与
+      const latest = tokenBreakdown.value;
       if (latest && latest.items.length) {
         createOrUpdateChart('chart-token-donut', {
           type: 'doughnut',
@@ -1141,7 +1152,11 @@ const app = createApp({
                 backgroundColor: '#fff', borderColor: C.border, borderWidth: 1,
                 titleColor: '#1C1C2E', bodyColor: '#636380', padding: 10,
                 callbacks: {
-                  title: (items) => (items.length ? String(items[0].label) : ''),
+                  title: (items) => {
+                    if (!items.length) return '';
+                    const row = rows[items[0].dataIndex];
+                    return `${items[0].label} · ${row ? tokenSourceLabel(row.source) : ''}`;
+                  },
                   label: (it) => ` ${it.dataset.label}：${fmtNum(it.parsed.y)}`,
                 },
               },
@@ -1462,8 +1477,8 @@ const app = createApp({
       page, navTo, currentTime, dateStr,
       stats, statCards, cronJobs, cronActive, cronTotal,
       metricKeys, metricCards, mDays,
-      tokenDays, tokenData, tokenLatest, tokenStatCards, loadTokenPage,
-      fmtNum, pctOf, shortSession, tokenColor,
+      tokenDays, tokenData, tokenLatest, tokenBreakdown, tokenStatCards, loadTokenPage,
+      fmtNum, pctOf, shortSession, tokenColor, tokenSourceLabel,
       expandedReports,
       shortName, scheduleStr, statusText, statusClass, relativeTime, fmtTime, fmtDuration,
       navigateToMetric, loadAllMetricCharts, toggleReport,
