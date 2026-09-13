@@ -3,6 +3,8 @@
  *
  * GET /api/stats   — 实时系统状态（CPU/内存/磁盘，不过 DB）+ Cron 活跃数
  * GET /api/metrics — 历史时序数据（?category=&key=&days=）
+ * GET /api/metrics/batch — 多条曲线一次取回（?spec=cat/key:days,…&since=）
+ * GET /api/metrics/latest — **全部已注册指标**的最新值+序列（一条 SQL，替代前端 N 次串行请求）
  * GET /api/metric-keys — 所有可用的 category/key 列表
  * GET /api/cron    — Cron job 列表 + 最近 5 条日志
  */
@@ -17,6 +19,7 @@ import { sampleStats } from "./collector.js";
 import {
   queryMetrics,
   querySnapshots,
+  queryLatestMetrics,
   listMetricKeys,
   queryTokenBreakdown,
   latestTokenBreakdown,
@@ -415,6 +418,59 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         ...(todayOnly ? { todayOnly: true } : {}),
       });
       json(res, { category, key, rows });
+      return true;
+    }
+
+    // GET /api/metrics/latest?days=1&today=1
+    // 首屏/轮询的"所有指标最新值+sparkline"：一次请求替代 N 次串行 /api/metrics
+    if (pathname === "/api/metrics/latest") {
+      const days = Math.min(Math.max(1, parseInt(url.searchParams.get("days") ?? "1", 10) || 1), 90);
+      const todayOnly = url.searchParams.get("today") === "1";
+      const keys = queryLatestMetrics({ windowDays: days, ...(todayOnly ? { todayOnly: true } : {}) });
+      json(res, { days, todayOnly, keys });
+      return true;
+    }
+
+    // GET /api/metrics/batch?spec=llm/token/chat/input:7,electric/balance:1,system:1&since=<ts>
+    // 概览页把 15 条曲线合成一次请求（原来每条曲线一次往返，30s 轮询重复一遍）
+    if (pathname === "/api/metrics/batch") {
+      const spec = url.searchParams.get("spec") ?? "";
+      const sinceParam = url.searchParams.get("since");
+      const since = sinceParam ? parseInt(sinceParam, 10) : undefined;
+      const items = spec.split(",").map((s) => s.trim()).filter(Boolean);
+      if (items.length === 0) {
+        err(res, "缺少 spec 参数");
+        return true;
+      }
+      if (items.length > 64) {
+        err(res, "spec 项过多（上限 64）");
+        return true;
+      }
+      const series: Record<string, { category: string; key: string; rows: unknown[] }> = {};
+      for (const item of items) {
+        const colon = item.lastIndexOf(":");
+        const pathPart = colon > 0 ? item.slice(0, colon) : item;
+        const days = Math.min(Math.max(1, parseInt(colon > 0 ? item.slice(colon + 1) : "1", 10) || 1), 90);
+        if (pathPart === "system") {
+          series["system"] = {
+            category: "system",
+            key: "",
+            rows: querySnapshots(Math.min(days * 24, 168), since),
+          };
+          continue;
+        }
+        const slash = pathPart.indexOf("/");
+        if (slash < 0) continue;
+        const category = pathPart.slice(0, slash);
+        const key = pathPart.slice(slash + 1);
+        if (!category || !key) continue;
+        series[`${category}/${key}`] = {
+          category,
+          key,
+          rows: queryMetrics({ category, key, days, ...(since !== undefined ? { since } : {}) }),
+        };
+      }
+      json(res, { series });
       return true;
     }
 

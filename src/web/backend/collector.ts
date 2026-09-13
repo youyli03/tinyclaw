@@ -5,7 +5,6 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { execSync } from "node:child_process";
 import { insertSnapshot } from "./db.js";
 
 // ── CPU 采样（两次读取差值）────────────────────────────────────────────────────
@@ -73,7 +72,10 @@ function getMemInfo(): MemInfo {
   }
 }
 
-// ── 磁盘（读 /proc/mounts + statvfs 替代：用 df 输出）────────────────────────
+// ── 磁盘（statfs 系统调用，不再 fork `df`）──────────────────────────────────
+//
+// 原来是 `execSync("df -k /")`：每次 Dashboard 请求都 fork 一个进程（实测整个
+// /api/stats 要 500ms+）。`fs.statfsSync` 是同步系统调用，微秒级、零进程开销。
 
 interface DiskInfo {
   used_gb: number;
@@ -82,16 +84,12 @@ interface DiskInfo {
 
 function getDiskInfo(): DiskInfo {
   try {
-    const out = execSync("df -k /", { encoding: "utf-8", timeout: 3000 });
-    // Filesystem  1K-blocks  Used  Available  Use%  Mounted
-    const line = out.split("\n")[1] ?? "";
-    const parts = line.trim().split(/\s+/);
-    const total = parseInt(parts[1] ?? "0", 10);
-    const used = parseInt(parts[2] ?? "0", 10);
-    return {
-      used_gb: Math.round((used / 1024 / 1024) * 10) / 10,
-      total_gb: Math.round((total / 1024 / 1024) * 10) / 10,
-    };
+    const st = fs.statfsSync("/");
+    const totalBytes = st.blocks * st.bsize;
+    // 与 `df` 的 "Used" 口径一致：总块 − 全部空闲块（bfree），不是 bavail（非 root 可用）
+    const usedBytes = (st.blocks - st.bfree) * st.bsize;
+    const gb = (bytes: number): number => Math.round((bytes / 1024 / 1024 / 1024) * 10) / 10;
+    return { used_gb: gb(usedBytes), total_gb: gb(totalBytes) };
   } catch {
     return { used_gb: 0, total_gb: 0 };
   }
@@ -107,19 +105,47 @@ export interface SystemStats {
   disk_total_gb: number;
 }
 
+/**
+ * 采样缓存 TTL（毫秒）。
+ * CPU% 需要两次读数取差值（默认间隔 500ms），`/api/stats` 又是被**轮询**的接口：
+ * 多开几个标签页就会并发触发多次采样。缓存 + single-flight 让同一瞬间的请求共用一次采样。
+ * 5s 对"实时状态"完全够用（系统快照本来就是每 5 分钟入库一次）。
+ */
+const STATS_TTL_MS = 5000;
+let _statsCache: { at: number; stats: SystemStats } | null = null;
+let _statsInflight: Promise<SystemStats> | null = null;
+
+/** 丢弃缓存（采样器写快照前可用，保证入库的是新值） */
+export function invalidateStatsCache(): void {
+  _statsCache = null;
+}
+
 export async function sampleStats(): Promise<SystemStats> {
-  const [cpu, mem, disk] = await Promise.all([
-    getCpuPercent(),
-    Promise.resolve(getMemInfo()),
-    Promise.resolve(getDiskInfo()),
-  ]);
-  return {
-    cpu_percent: cpu,
-    mem_used_mb: mem.used_mb,
-    mem_total_mb: mem.total_mb,
-    disk_used_gb: disk.used_gb,
-    disk_total_gb: disk.total_gb,
-  };
+  const now = Date.now();
+  if (_statsCache && now - _statsCache.at < STATS_TTL_MS) return _statsCache.stats;
+  // single-flight：同一瞬间的并发请求共享同一次采样
+  if (_statsInflight) return _statsInflight;
+
+  _statsInflight = (async (): Promise<SystemStats> => {
+    const [cpu, mem, disk] = await Promise.all([
+      getCpuPercent(),
+      Promise.resolve(getMemInfo()),
+      Promise.resolve(getDiskInfo()),
+    ]);
+    const stats: SystemStats = {
+      cpu_percent: cpu,
+      mem_used_mb: mem.used_mb,
+      mem_total_mb: mem.total_mb,
+      disk_used_gb: disk.used_gb,
+      disk_total_gb: disk.total_gb,
+    };
+    _statsCache = { at: Date.now(), stats };
+    return stats;
+  })().finally(() => {
+    _statsInflight = null;
+  });
+
+  return _statsInflight;
 }
 
 // ── 定时采样器（每 5 分钟写 DB）──────────────────────────────────────────────
@@ -131,6 +157,8 @@ export function startCollector(): void {
 
   async function run() {
     try {
+      // 入库的是"当前状态快照"：绕开 /api/stats 的 5s 缓存，保证写进 DB 的是新采样
+      invalidateStatsCache();
       const stats = await sampleStats();
       insertSnapshot(stats);
     } catch (err) {

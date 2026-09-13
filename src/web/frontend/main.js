@@ -353,12 +353,23 @@ const app = createApp({
       // 从 metrics 里取最新电费/请求（如果有）
       const elecVal = latestMetricVal.value['electric/balance'] ?? '—';
       const deepseekVal = latestMetricVal.value['deepseek/balance'] ?? '—';
-      const llmTokenChat = latestMetricVal.value['llm/tokens_chat'] ?? 0;
-      const llmTokenCode = latestMetricVal.value['llm/tokens_code'] ?? 0;
-      const llmTokenCron = latestMetricVal.value['llm/tokens_cron'] ?? 0;
-      const llmTokenSumm = latestMetricVal.value['llm/tokens_summarizer'] ?? 0;
-      const llmTokenTotal = llmTokenChat + llmTokenCode + llmTokenCron + llmTokenSumm;
-      const llmTokenVal = llmTokenTotal > 0 ? llmTokenTotal : '—';
+      // ⚠️ token 指标的 key 是 `llm/token/<src>/<type>`，且每行是**每轮增量**：
+      // 今日用量 = 各 (来源 × 类型) 的窗口合计之和。曾经这里读的是不存在的
+      // `llm/tokens_chat`，导致概览页的 Token 卡片**永远不渲染**。
+      const tokenSrcs = ['chat', 'code', 'cron', 'summarizer', 'vision'];
+      const tokenTypes = ['input', 'output', 'cache'];
+      const tokenBySrc = {};
+      let llmTokenTotal = 0;
+      for (const src of tokenSrcs) {
+        let s = 0;
+        for (const t of tokenTypes) s += Number(latestMetricSum.value[`llm/token/${src}/${t}`] || 0);
+        tokenBySrc[src] = s;
+        llmTokenTotal += s;
+      }
+      const tokenBreakdown = tokenSrcs
+        .filter((src) => tokenBySrc[src] > 0)
+        .map((src) => `${src} ${Math.round(tokenBySrc[src]).toLocaleString()}`)
+        .join(' · ');
 
       return [
         {
@@ -375,15 +386,13 @@ const app = createApp({
           color: C.accent2, spark: latestSpark.value['deepseek/balance'] || [],
           metricKey: 'deepseek/balance',
         },
-        ...(llmTokenVal !== '—' && Number(llmTokenVal) > 0 ? [{
+        ...(llmTokenTotal > 0 ? [{
           key: 'llm_tokens', label: 'Token 用量',
-          value: (() => {
-            // 显示今日增量（最新值 - 今日最早值）
-            return llmTokenVal !== '—' ? '+' + Math.round(Number(llmTokenVal)).toLocaleString() : '—';
-          })(),
-          sub1: '今日 output tokens 增量', sub2: '点击查看趋势 →',
-          color: C.purple, spark: latestSpark.value['llm/tokens_chat'] || [],
-          metricKey: 'llm/tokens_chat',
+          value: '+' + Math.round(llmTokenTotal).toLocaleString(),
+          sub1: '今日 input+output+cache 合计',
+          sub2: tokenBreakdown || '点击查看趋势 →',
+          color: C.purple, spark: latestSpark.value['llm/token/chat/input'] || [],
+          metricKey: 'llm/token/chat/input',
         }] : []),
         {
           key: 'cpu', label: 'CPU',
@@ -424,6 +433,8 @@ const app = createApp({
     // 最新指标值（from DB）
     const latestMetricVal = ref({});
     const latestSpark = ref({});
+    // 窗口内合计（token 类指标是"每轮增量"，统计今日用量要累加，不是取最后一条）
+    const latestMetricSum = ref({});
 
     async function fetchStats() {
       try {
@@ -443,61 +454,86 @@ const app = createApp({
       } catch (e) { console.warn('fetchCron failed', e); }
     }
 
+    // 一次请求取回**所有**指标的最新值/序列/合计。
+    // 原实现是 /api/metric-keys + 逐 key 串行 /api/metrics（20 个 key = 21 次往返，
+    // 手机上数秒），服务端现在用一条 SQL 批量返回。
     async function fetchLatestMetrics() {
       try {
-        const keysData = await fetch('/api/metric-keys').then(r => r.json());
-        for (const { category, key } of (keysData.keys || [])) {
-          const data = await fetch(`/api/metrics?category=${category}&key=${key}&days=1&today=1`).then(r => r.json());
-          const rows = data.rows || [];
-          if (rows.length) {
-            const k = `${category}/${key}`;
-            latestMetricVal.value[k] = rows[rows.length - 1].value;
-            latestSpark.value[k] = rows.map(r => r.value);
-          }
+        const data = await fetch('/api/metrics/latest?days=1&today=1').then(r => r.json());
+        const vals = {}, sparks = {}, sums = {};
+        for (const e of (data.keys || [])) {
+          const k = `${e.category}/${e.key}`;
+          vals[k] = e.value;
+          sparks[k] = e.spark || [];
+          sums[k] = e.sum ?? 0;
         }
+        latestMetricVal.value = vals;
+        latestSpark.value = sparks;
+        latestMetricSum.value = sums;
       } catch (e) { console.warn('fetchLatestMetrics failed', e); }
     }
 
     // ── 图表绘制 ─────────────────────────────────────────────────────────────
     // 记录 overview 各图最后一条数据 ts(用于增量刷新)
     const overviewLastTs = {};
+    // 概览 token 柱状图的**行缓存**：增量轮询只拿到新增行，但按天聚合要全量，
+    // 所以把行累积在内存里（按 ts 去重），每次都能从缓存重画整张图。
+    const overviewLlmRows = {}; // `${src}/${type}` → rows[]
 
     async function drawOverviewCharts(incremental = false) {
-      // 并行拉取数据源
-      const sinceToken = incremental && overviewLastTs.llmToken != null ? '&since=' + overviewLastTs.llmToken : '';
-      const elecUrl    = '/api/metrics?category=electric&key=balance&days=1'  + (incremental && overviewLastTs.electric != null ? '&since=' + overviewLastTs.electric : '');
-      const deepseekUrl = '/api/metrics?category=deepseek&key=balance&days=1' + (incremental && overviewLastTs.deepseek != null ? '&since=' + overviewLastTs.deepseek : '');
-      const systemUrl  = '/api/metrics?category=system&days=1'                + (incremental && overviewLastTs.system   != null ? '&since=' + overviewLastTs.system   : '');
       const sources = ['chat', 'code', 'cron', 'summarizer'];
       const types   = ['input', 'output', 'cache'];
-      // 每个来源3个 key，共12个请求
-      const llmFetches = sources.flatMap(src =>
-        types.map(t => fetch(`/api/metrics?category=llm&key=${encodeURIComponent('token/'+src+'/'+t)}&days=7${sinceToken}`).then(r => r.json()).catch(() => ({ rows: [] })))
-      );
-      let elecData, deepseekData, systemData;
-      let llmRawData; // flat array: [chat/input, chat/output, chat/cache, code/input, ...]
+      // 一次请求取回 12 条 llm token 曲线 + 电费/DeepSeek 余额 + 系统快照（原来 15 次往返，
+      // 而且每 30s 轮询都要再来一轮；服务端在 /api/metrics/batch 里逐条查同一个 SQLite）
+      const spec = [
+        ...sources.flatMap(src => types.map(t => `llm/token/${src}/${t}:7`)),
+        'electric/balance:1', 'deepseek/balance:1', 'system:1',
+      ].join(',');
+      // 增量：取各组上次最后 ts 的**最小值**，保证没有一组会漏行（取最大值会丢数据）
+      const floors = incremental
+        ? [overviewLastTs.llmToken, overviewLastTs.electric, overviewLastTs.deepseek, overviewLastTs.system]
+            .filter(v => v != null)
+        : [];
+      const since = floors.length ? Math.min(...floors) : null;
+      const url = `/api/metrics/batch?spec=${encodeURIComponent(spec)}` + (since != null ? '&since=' + since : '');
+
+      let series;
       try {
-        [elecData, deepseekData, systemData, ...llmRawData] = await Promise.all([
-          fetch(elecUrl).then(r => r.json()),
-          fetch(deepseekUrl).then(r => r.json()),
-          fetch(systemUrl).then(r => r.json()),
-          ...llmFetches,
-        ]);
-      } catch (e) { console.warn('overview parallel fetch failed', e); return; }
-      // 重组: llmData[source][type] = { rows }
+        series = (await fetch(url).then(r => r.json())).series || {};
+      } catch (e) { console.warn('overview batch fetch failed', e); return; }
+      const rowsOf = (id) => series[id]?.rows || [];
+      const elecData = { rows: rowsOf('electric/balance') };
+      const deepseekData = { rows: rowsOf('deepseek/balance') };
+      const systemData = { rows: rowsOf('system') };
+      // 重组: llmData[source][type] = { rows }（行累积进缓存，供按天聚合重画）
       const llmData = {};
-      sources.forEach((src, si) => {
+      sources.forEach(src => {
         llmData[src] = {};
-        types.forEach((t, ti) => { llmData[src][t] = llmRawData[si * types.length + ti]; });
+        types.forEach(t => {
+          const id = `${src}/${t}`;
+          const incoming = rowsOf(`llm/token/${src}/${t}`);
+          if (!overviewLlmRows[id]) {
+            overviewLlmRows[id] = incoming.slice();
+          } else if (incoming.length) {
+            const seen = new Set(overviewLlmRows[id].map(r => r.ts));
+            let added = false;
+            for (const r of incoming) if (!seen.has(r.ts)) { overviewLlmRows[id].push(r); added = true; }
+            if (added) overviewLlmRows[id].sort((a, b) => a.ts - b.ts);
+          }
+          llmData[src][t] = { rows: overviewLlmRows[id] };
+        });
       });
 
       // 电费图(今日趋势)
       try {
         const rows = (elecData.rows || []);
+        const floor = overviewLastTs.electric ?? 0;
+        // 批量请求用的是各组 ts 的**最小值**，所以本组可能带回已画过的点 → 按各自的 floor 去重
+        const fresh = incremental ? rows.filter(r => r.ts > floor) : rows;
         if (rows.length) overviewLastTs.electric = rows[rows.length-1].ts;
         const chart = charts['chart-electric'];
-        if (incremental && chart && rows.length) {
-          for (const r of rows) chart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
+        if (incremental && chart && fresh.length) {
+          for (const r of fresh) chart.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
           chart.update('none');
         } else if (!incremental) {
           const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
@@ -519,10 +555,12 @@ const app = createApp({
       // DeepSeek 余额趋势
       try {
         const rows = (deepseekData.rows || []);
+        const floor = overviewLastTs.deepseek ?? 0;
+        const fresh = incremental ? rows.filter(r => r.ts > floor) : rows;
         if (rows.length) overviewLastTs.deepseek = rows[rows.length-1].ts;
         const chart2 = charts['chart-deepseek'];
-        if (incremental && chart2 && rows.length) {
-          for (const r of rows) chart2.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
+        if (incremental && chart2 && fresh.length) {
+          for (const r of fresh) chart2.data.datasets[0].data.push({ x: r.ts*1000, y: r.value });
           chart2.update('none');
         } else if (!incremental) {
           const points = rows.map(r => ({ x: r.ts * 1000, y: r.value }));
@@ -591,7 +629,9 @@ const app = createApp({
         });
         // 合并：保留 fullDays，同时加入超出7天的历史数据日期
         const displayDays = [...new Set([...allDays.filter(dk => !fullDays.includes(dk)), ...fullDays])].sort();
-        if (!incremental && displayDays.length) {
+        // 数据来自累积缓存 → **每次都能整张重画**（原来增量轮询时这段被 !incremental 挡住，
+        // 等于每 30s 抓回 12 条曲线又丢掉，柱状图一直不更新）
+        if (displayDays.length) {
           const tokenCanvas = document.getElementById('chart-llm-tokens');
           if (tokenCanvas) {
             const datasets = [];
@@ -626,10 +666,12 @@ const app = createApp({
       // 系统 CPU/内存
       try {
         const rows = systemData.rows || [];
+        const floor = overviewLastTs.system ?? 0;
+        const fresh = incremental ? rows.filter(r => r.ts > floor) : rows;
         if (rows.length) overviewLastTs.system = rows[rows.length-1].ts;
         const sysChart = charts['chart-system'];
-        if (incremental && sysChart && rows.length) {
-          for (const r of rows) {
+        if (incremental && sysChart && fresh.length) {
+          for (const r of fresh) {
             sysChart.data.datasets[0].data.push({ x: r.ts*1000, y: r.cpu_percent });
             sysChart.data.datasets[1].data.push({ x: r.ts*1000, y: Math.round(r.mem_used_mb / r.mem_total_mb * 100) });
           }
@@ -1227,6 +1269,25 @@ const app = createApp({
       } catch (e) { console.warn('fetchNotesTree failed', e); }
     }
 
+    /**
+     * 懒加载一个外部脚本（只加载一次）。
+     * 用途：marked.min.js（35KB raw / 11KB gzip）**只有笔记页渲染 Markdown 才用**，
+     * 原来在 index.html 里对所有页面无条件加载；现在按需加载，失败时回退 <pre>。
+     */
+    const loadedScripts = {};
+    function loadScriptOnce(src) {
+      if (loadedScripts[src]) return loadedScripts[src];
+      loadedScripts[src] = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve(true);
+        s.onerror = () => { loadedScripts[src] = null; reject(new Error('load failed: ' + src)); };
+        document.head.appendChild(s);
+      });
+      return loadedScripts[src];
+    }
+
     async function openNotesFile(filePath, fileName) {
       notesSelectedPath.value = filePath;
       notesSelectedName.value = fileName || filePath.split('/').pop();
@@ -1247,6 +1308,10 @@ const app = createApp({
         } else {
           const data = await fetch(`/api/notes/file?path=${encodeURIComponent(filePath)}`).then(r => r.json());
           const md = data.content || '';
+          // marked 懒加载：第一次打开 Markdown 笔记时才下（失败/超时就用 <pre> 原文兜底）
+          if (!window.marked) {
+            try { await loadScriptOnce('/marked.min.js'); } catch { /* 回退 <pre> */ }
+          }
           notesMarkdownHtml.value = window.marked ? window.marked.parse(md) : `<pre>${md}</pre>`;
         }
       } catch (e) {
@@ -1481,57 +1546,73 @@ const app = createApp({
     window.addEventListener('popstate', applyURL);
 
     // ── 初始化 & 轮询 ────────────────────────────────────────────────────────
-    onMounted(async () => {
-      await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
-      await nextTick();
 
-      // overview 图表（初始化时总是绘制，v-show 不会销毁 canvas）
-      await drawOverviewCharts();
-      drawSparklines();
-      // 等 Vue 首次渲染完再采集诊断（要能查到顶栏是否真的进了 DOM）
-      await nextTick();
-      refreshDiag();
-
-      // 指标页:只预取 key 列表，不绘图（display:none 时 canvas 尺寸为 0）
-
-      await fetchMetricKeys();
-      // 根据初始 hash 决定首屏（不再需要重复加载数据，只需跳到对应页面）
-      if (_init.pg === 'overview') {
-        // 已在上面渲染
-      } else if (_init.pg === 'metrics') {
-        await loadAllMetricCharts(); // display:block，可以安全绘图
-      } else if (_init.pg === 'notes') {
-        await fetchNotesTree();
-        if (_init.notesFile) {
-          await openNotesFile(_init.notesFile, _init.notesFile.split('/').pop());
-        }
-      } else if (_init.pg === 'cron') {
-        // cron 页无特殊初始化
-      } else if (_init.pg === 'token') {
+    /** 每 30s 的一次刷新：按当前页取数，再画该页的图 */
+    async function refreshTick() {
+      // 后台标签页不轮询：手机上省电/省流量（回到前台时立即补一次，见 visibilitychange）
+      if (document.hidden) return;
+      const pg = page.value;
+      if (pg === 'overview') {
+        await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
+        await drawOverviewCharts(true); // 增量刷新
+        drawSparklines();
+      } else if (pg === 'cron') {
+        await fetchCron();
+      } else if (pg === 'metrics' && metricKeys.value.length) {
+        await renderMetricCards(true); // 增量
+      } else if (pg === 'token') {
         await loadTokenPage();
-      } else {
+      }
+    }
+
+    /**
+     * 进入某页时按需拉数据（首次进入才拉；切回已加载过的页不重复请求）。
+     * 这样首屏只付"当前页"的代价，切页也快。
+     */
+    async function ensurePageLoaded(pg) {
+      if (pg === 'overview') {
+        // ⚠️ 概览图**必须在前台绘制**：canvas 在 display:none 容器里尺寸是 0，隐藏时画的就是废图
+        if (!stats.value) await fetchStats();
+        if (!cronJobs.value.length) await fetchCron();
+        if (!Object.keys(latestMetricVal.value).length) await fetchLatestMetrics();
         await drawOverviewCharts();
         drawSparklines();
+      } else if (pg === 'metrics') {
+        // 绘图依赖 key 列表（key 列表也决定卡片分组）
+        if (!metricKeys.value.length) await fetchMetricKeys();
+        await loadAllMetricCharts(); // display:block，可以安全绘图
+      } else if (pg === 'notes') {
+        if (!notesTree.value.length) await fetchNotesTree();
+        if (_init.notesFile && !notesSelectedPath.value) {
+          await openNotesFile(_init.notesFile, _init.notesFile.split('/').pop());
+        }
+      } else if (pg === 'cron') {
+        if (!cronJobs.value.length) await fetchCron();
+      } else if (pg === 'token') {
+        await loadTokenPage();
       }
+    }
 
-      // 每 30 秒刷新
-      const refreshTimer = setInterval(async () => {
-        await Promise.all([fetchStats(), fetchCron(), fetchLatestMetrics()]);
-        if (page.value === 'overview') {
-          await drawOverviewCharts(true); // 增量刷新
-          drawSparklines();
-        }
-        if (page.value === 'metrics' && metricKeys.value.length) {
-          await renderMetricCards(true); // 增量
-        }
-        if (page.value === 'token') {
-          await loadTokenPage();
-        }
-      }, 30000);
+    onMounted(async () => {
+      // 先采集一次诊断（此时顶栏应已在 DOM 里），再按当前页拉数据
+      await nextTick();
+      refreshDiag();
+      await ensurePageLoaded(_init.pg);
+
+      // 切页 / 浏览器前进后退都会改 page → 按需补该页数据
+      watch(page, (pg) => { void ensurePageLoaded(pg); });
+
+      // 每 30 秒刷新（后台标签页暂停，见 refreshTick）
+      const refreshTimer = setInterval(() => void refreshTick(), 30000);
+      const onVisibility = () => {
+        if (!document.hidden) void refreshTick();
+      };
+      document.addEventListener('visibilitychange', onVisibility);
 
       onUnmounted(() => {
         clearInterval(refreshTimer);
         clearInterval(timeTimer);
+        document.removeEventListener('visibilitychange', onVisibility);
         Object.values(charts).forEach(c => c.destroy());
         window.removeEventListener('popstate', applyURL);
       });

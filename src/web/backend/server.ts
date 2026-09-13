@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
 import * as zlib from "node:zlib";
+import { createHash } from "node:crypto";
 import { handleApi } from "./api.js";
 
 // 可压缩的文本类 MIME(前缀匹配)
@@ -36,6 +37,9 @@ function acceptsGzip(req: http.IncomingMessage): boolean {
 }
 // 内存缓存:对不变的 vendor / 版本化资源,压缩一次后复用 buffer,避免每次请求重复 gzip
 const gzipCache = new Map<string, Buffer>();
+
+// index.html 的"渲染后 HTML + gzip"缓存（按内容 sha1 失效，见 serveIndexHtml）
+let _indexCache: { digest: string; html: string; gzip: Buffer } | null = null;
 
 const FRONTEND_DIR = path.join(
   path.dirname(url.fileURLToPath(import.meta.url)),
@@ -165,26 +169,34 @@ function go() {
 
 function serveIndexHtml(res: http.ServerResponse, req?: http.IncomingMessage): void {
   const indexPath = path.join(FRONTEND_DIR, "index.html");
-  let html = fs.readFileSync(indexPath, "utf-8");
-  // 注入版本号，强制浏览器获取最新 JS/CSS（解决手机/PC 浏览器缓存问题）
-  // 同时把构建号写到 <html data-build>：界面右下角显示后 6 位，用来判断"手机上跑的是不是新版本"
-  html = html
-    .replace(/<html([^>]*)>/, `<html$1 data-build="${BUILD_TS}">`)
-    .replace(/\/main\.js"/g, `/main.js?v=${BUILD_TS}"`)
-    .replace(/\/style\.css"/g, `/style.css?v=${BUILD_TS}"`);
-  const idxHeaders: Record<string, string> = {
+  const raw = fs.readFileSync(indexPath, "utf-8");
+
+  // 渲染 + gzip 结果缓存：index.html 是 `no-store`（每次都要判版本），
+  // 但内容本身只在改前端时变。原来每个请求都做一遍 readFile + 3 次 replace + gzip，
+  // 现在只按内容 sha1 判断是否需要重算（读 27KB + 哈希 ≈ 0.1ms，gzip ≈ 2ms）。
+  const digest = createHash("sha1").update(raw).digest("hex");
+  if (!_indexCache || _indexCache.digest !== digest) {
+    // 注入版本号，强制浏览器获取最新 JS/CSS（解决手机/PC 浏览器缓存问题）
+    // 同时把构建号写到 <html data-build>：界面右下角显示后 6 位，用来判断"手机上跑的是不是新版本"
+    const html = raw
+      .replace(/<html([^>]*)>/, `<html$1 data-build="${BUILD_TS}">`)
+      .replace(/\/main\.js"/g, `/main.js?v=${BUILD_TS}"`)
+      .replace(/\/style\.css"/g, `/style.css?v=${BUILD_TS}"`);
+    _indexCache = { digest, html, gzip: zlib.gzipSync(html) };
+  }
+
+  const headers: Record<string, string> = {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
   };
   if (req && acceptsGzip(req)) {
-    const gz = zlib.gzipSync(html);
-    idxHeaders["Content-Encoding"] = "gzip";
-    idxHeaders["Vary"] = "Accept-Encoding";
-    res.writeHead(200, idxHeaders);
-    res.end(gz);
+    headers["Content-Encoding"] = "gzip";
+    headers["Vary"] = "Accept-Encoding";
+    res.writeHead(200, headers);
+    res.end(_indexCache.gzip);
   } else {
-    res.writeHead(200, idxHeaders);
-    res.end(html);
+    res.writeHead(200, headers);
+    res.end(_indexCache.html);
   }
 }
 

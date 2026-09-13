@@ -277,6 +277,83 @@ export function listMetricKeys(): Array<{ category: string; key: string; chart_t
   }));
 }
 
+/** 一条指标的"最新值 + 窗口内序列 + 窗口内合计" */
+export interface LatestMetricEntry {
+  category: string;
+  key: string;
+  chart_type: string;
+  /** 窗口内最后一条的值 */
+  value: number;
+  /** 最后一条的时间戳（Unix 秒） */
+  ts: number;
+  /** 窗口内所有值（按时间升序），用于 sparkline */
+  spark: number[];
+  /** 窗口内求和。token 类指标是**每轮增量**，求"今日用量"必须累加而不是取最后一条 */
+  sum: number;
+  /** 窗口内条数 */
+  count: number;
+}
+
+/**
+ * 一次性取回**全部已注册指标**在窗口内的序列（最新值 + sparkline + 合计）。
+ *
+ * 存在的理由：前端原来对每个 key 逐个请求（`/api/metric-keys` 1 次 + N 次 `/api/metrics`），
+ * 20 个 key 就是 21 次**串行**往返——本机 30ms，手机走公网要数秒，而且每 30s 轮询重复一遍。
+ * 这里用**一条 SQL** 取回窗口内所有 key 的行，在服务端分组。
+ *
+ * @param opts.windowDays 窗口天数（`todayOnly` 为 true 时忽略，改用本地自然日 0:00）
+ */
+export function queryLatestMetrics(opts: {
+  windowDays: number;
+  todayOnly?: boolean;
+}): LatestMetricEntry[] {
+  const db = openDB();
+  const since = opts.todayOnly
+    ? Math.floor(new Date().setHours(0, 0, 0, 0) / 1000)
+    : Math.floor(Date.now() / 1000) - opts.windowDays * 86400;
+  const rows = db
+    .prepare(
+      `SELECT m.category AS category, m.key AS key, m.ts AS ts, m.value AS value,
+              k.chart_type AS chart_type
+         FROM metrics m
+         JOIN metric_keys k ON k.category = m.category AND k.key = m.key
+        WHERE m.ts > ?
+        ORDER BY m.category ASC, m.key ASC, m.ts ASC`
+    )
+    .all(since) as Array<{
+    category: string;
+    key: string;
+    ts: number;
+    value: number;
+    chart_type: string;
+  }>;
+
+  const byKey = new Map<string, LatestMetricEntry>();
+  for (const r of rows) {
+    const id = `${r.category}/${r.key}`;
+    let e = byKey.get(id);
+    if (!e) {
+      e = {
+        category: r.category,
+        key: r.key,
+        chart_type: r.chart_type,
+        value: r.value,
+        ts: r.ts,
+        spark: [],
+        sum: 0,
+        count: 0,
+      };
+      byKey.set(id, e);
+    }
+    e.value = r.value;
+    e.ts = r.ts;
+    e.spark.push(r.value);
+    e.sum += r.value;
+    e.count += 1;
+  }
+  return [...byKey.values()];
+}
+
 // ── system_snapshots ──────────────────────────────────────────────────────────
 
 /** 写入系统快照（collector.ts 调用） */

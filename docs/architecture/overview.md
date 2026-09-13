@@ -39,6 +39,32 @@
     用来判断手机加载的是不是新版本；带 `?diag=1` 打开会在页面顶部渲染诊断条
     （构建号 / `innerWidth`×`innerHeight` / dpr / visualViewport / `isMobile` / `matchMedia` / 顶栏是否在 DOM / UA）
 
+#### 加载与轮询（首屏 4 个 API 请求）
+
+首屏（概览）只发 **4 个** API 请求：`/api/stats`、`/api/cron`、`/api/metrics/latest`、`/api/metrics/batch`。
+（优化前是 3 + 21 + 15 = 39 个：`metric-keys` + 逐 key 串行 20 次 + 每条曲线一次。）
+
+| 接口 | 作用 | 要点 |
+|---|---|---|
+| `GET /api/metrics/latest?days=1&today=1` | **全部已注册指标**的最新值 + 窗口序列 + 窗口合计 | 一条 SQL（`queryLatestMetrics()`）；替代"1 次 key 列表 + N 次串行 `/api/metrics`"（20 个 key 在手机上要数秒） |
+| `GET /api/metrics/batch?spec=cat/key:days,…&since=` | 多条曲线一次取回（概览 12 条 token 曲线 + 电费/余额/系统） | `since` 对所有项生效，前端传**各组 ts 的最小值**并各自按自己的 floor 去重；`system` 项特殊（走 `system_snapshots`）；spec 上限 64 项 |
+| `GET /api/stats` | CPU/内存/磁盘 + cron 计数 | 5s TTL 缓存 + single-flight（多个标签页并发只采样一次）；磁盘用 `fs.statfsSync`，**不再 fork `df`**（原来每次请求 500ms+） |
+
+- **轮询 30s**：`document.hidden` 时**不轮询**（手机省电/省流量），`visibilitychange` 回到前台立即补一次；
+  且**按当前页取数** —— 概览才拉 stats/cron/指标，笔记页不发任何轮询请求
+- **切页按需加载**：`ensurePageLoaded(pg)`（`watch(page)` 驱动），首次进入某页才拉该页数据
+- ⚠️ 概览图必须**在前台绘制**：canvas 在 `display:none` 的容器里尺寸为 0，隐藏时画的就是废图
+  （旧的初始化无条件先画一次概览图，非概览页首屏等于白画）
+- 概览 token 柱状图的**行累积缓存**（`overviewLlmRows`）：增量轮询只拿到新增行，但按天聚合要全量，
+  所以行按 ts 去重后累积在内存里，每次都能从缓存整张重画（旧代码增量时抓回 12 条曲线却因
+  `!incremental` 判断直接丢掉，柱状图一直不更新）
+- `index.html`（`no-store`）的**渲染 + gzip 结果按内容 sha1 缓存**，不再每请求重算
+- `marked.min.js`（35KB / gzip 11KB）**懒加载**：只有笔记页渲染 Markdown 时才 `loadScriptOnce()` 拉取，
+  失败回退 `<pre>` 原文；首屏 5 个静态资源里没有它
+- ⚠️ **概览 Token 卡片的 key 是 `llm/token/<src>/<type>`，且每行是"每轮增量"**：今日用量 = 各
+  (来源 × 类型) 的窗口**合计**（`sum`，不是最后一条）。曾经这里读不存在的 `llm/tokens_chat`，
+  卡片**永远不渲染**（页面只是少一张卡，没有任何报错）—— `tmp/probe-web-load-20260913.ts` 锁死这一点
+
 #### Token 页(prompt 构成细分)
 
 回答"钱花在哪一类"——把**每一次 LLM 请求**的 prompt 拆成七类（`src/memory/token-estimate.ts` 的

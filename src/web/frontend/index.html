@@ -533,7 +533,7 @@
 <script src="/vue.global.prod.js"></script>
 <script src="/chart.umd.min.js"></script>
 <script src="/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="/marked.min.js"></script>
+<!-- marked.min.js 故意不在此加载：只有笔记页渲染 Markdown 才用，由 main.js 的 loadScriptOnce() 懒加载 -->
 <script>
 // 笔记树节点递归组件
 const NotesTreeNode = {
