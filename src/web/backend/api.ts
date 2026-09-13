@@ -563,6 +563,9 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         const total = stat.size;
         const rangeHeader = req.headers.range;
         const fname = encodeURIComponent(nodePath.basename(abs));
+        // 手机端 PDF.js 会整份下载（实测 2.2MB）：no-store 等于每次打开都重下，
+        // 改成 5 分钟私有缓存，重复打开同一份笔记不再走流量。
+        const pdfCache = "private, max-age=300";
         if (rangeHeader) {
           const m = String(rangeHeader).match(/bytes=(\d*)-(\d*)/);
           const start = m && m[1] ? parseInt(m[1], 10) : 0;
@@ -575,7 +578,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
             "Content-Length": String(chunkLen),
             "Content-Disposition": `inline; filename="${fname}"`,
             "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store",
+            "Cache-Control": pdfCache,
           });
           fs.createReadStream(abs, { start, end }).pipe(res);
         } else {
@@ -585,7 +588,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
             "Content-Length": String(total),
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store",
+            "Cache-Control": pdfCache,
           });
           fs.createReadStream(abs).pipe(res);
         }

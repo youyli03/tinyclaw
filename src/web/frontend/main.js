@@ -1295,13 +1295,17 @@ const app = createApp({
       notesMarkdownHtml.value = '';
       notesPdfUrl.value = '';
       notesLoading.value = true;
-      // 全屏时关闭树
+      // 手机 PDF 走 renderPdfMobile（异步、自己管理 notesLoading）：
+      // 这里**不能**在 finally 里把它按下去，否则"还在下 pdfjs + 拉 PDF"的十几秒里
+      // preview 面板会掉进空状态（"点击左侧文件预览"），看起来就是"PDF 渲染坏了"。
+      let mobilePdfOwnsLoading = false;
       try {
         const ext = filePath.toLowerCase().split('.').pop();
         if (ext === 'pdf') {
           if (isMobile.value) {
             notesPdfUrl.value = '';
-            renderPdfMobile(filePath);
+            mobilePdfOwnsLoading = true;
+            void renderPdfMobile(filePath);
           } else {
             notesPdfUrl.value = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
           }
@@ -1317,7 +1321,7 @@ const app = createApp({
       } catch (e) {
         notesMarkdownHtml.value = '<p style="color:var(--red)">加载失败</p>';
       } finally {
-        notesLoading.value = false;
+        if (!mobilePdfOwnsLoading) notesLoading.value = false;
       }
       // 手机端切到预览视图
       notesMobileView.value = 'preview';
@@ -1366,6 +1370,8 @@ const app = createApp({
     const notesMobileView = ref('tree'); // 'tree' | 'preview'
     const pdfPages = ref([]); // [{canvas, pageNum}] for mobile PDF.js render
     const pdfProgress = ref({ cur: 0, total: 0 }); // 渲染进度
+    /** PDF 下载百分比（0-100）。手机上下 2MB 级 PDF 要十几秒，没有数字用户会以为坏了 */
+    const pdfLoadPct = ref(0);
     // ⚠️ 移动端判定必须与 CSS 用**同一个**媒体查询：桌面端/手机端浏览器在
     // `window.innerWidth` 与 `matchMedia` 上可能给出不同结果（已在安卓 Edge 上踩到：
     // CSS 认为窄屏（顶栏样式生效）而 innerWidth > 768 → JS 把顶栏 v-if 掉了）。
@@ -1408,21 +1414,34 @@ const app = createApp({
     }
 
     async function renderPdfMobile(filePath) {
-      pdfPages.value = [];
+      const url = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
+      // ⚠️ 第一步就必须把 pdfPages 置为 loading：模板的 v-else-if 链只有
+      //    `isMobile && pdfPages.length` 命中时才会渲染 PDF 容器，否则用户在
+      //    "下 pdfjs + 拉整个 PDF"的十几秒里看到的是"点击左侧文件预览"。
+      pdfPages.value = ['loading'];
       pdfProgress.value = { cur: 0, total: 0 };
+      pdfLoadPct.value = 0;
       notesLoading.value = true;
       try {
-        const url = `/api/notes/file?path=${encodeURIComponent(filePath)}`;
         const pdfjsLib = await import('/pdfjs/pdf.mjs');
         pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
-        const pdf = await pdfjsLib.getDocument(url).promise;
+        const pdf = await pdfjsLib.getDocument({
+          url,
+          // 下载进度（服务端带 Content-Length，pdf.js 会回调 loaded/total）
+          onProgress: (p) => {
+            if (p && p.total) pdfLoadPct.value = Math.min(99, Math.round((p.loaded / p.total) * 100));
+          },
+        }).promise;
+        pdfLoadPct.value = 100;
         notesLoading.value = false;
         const total = pdf.numPages;
         pdfProgress.value = { cur: 0, total };
-        pdfPages.value = ['loading'];
         await Vue.nextTick();
         const container = document.querySelector('.notes-pdf-mobile-pages');
-        if (!container) return;
+        if (!container) {
+          // 以前这里静默 return（页面既不显示错误也不显示内容）
+          throw new Error('预览容器未就绪');
+        }
         container.innerHTML = '';
 
         // 为每页创建占位 div
@@ -1438,16 +1457,24 @@ const app = createApp({
           placeholders.push(ph);
         }
 
+        // canvas 像素宽度 = **容器 CSS 宽度 × min(dpr,2)**。
+        // 原来直接用 scale=min(dpr,2)：手机上 dpr=3 → scale 2 → 612pt 的页面变成
+        // 1224×1584 px（约 7.7MB 一块 canvas），而实际只按 ~380px 宽显示 —— 画得慢、
+        // 内存大，Android 上更容易被浏览器节流/杀。按显示宽度算既清晰又省一半以上。
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        const cssWidth = container.clientWidth || window.innerWidth || 360;
+
         const rendered = new Set();
         const renderPage = async (pageNum, ph) => {
           if (rendered.has(pageNum)) return;
           rendered.add(pageNum);
           const page = await pdf.getPage(pageNum);
-          const scale = Math.min(window.devicePixelRatio || 2, 2);
+          const base = page.getViewport({ scale: 1 });
+          const scale = Math.max(0.5, (cssWidth / base.width) * pixelRatio);
           const vp = page.getViewport({ scale });
           const canvas = document.createElement('canvas');
-          canvas.width = vp.width;
-          canvas.height = vp.height;
+          canvas.width = Math.round(vp.width);
+          canvas.height = Math.round(vp.height);
           canvas.style.width = '100%';
           canvas.style.display = 'block';
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
@@ -1481,7 +1508,11 @@ const app = createApp({
       } catch (e) {
         notesLoading.value = false;
         pdfPages.value = [];
-        notesMarkdownHtml.value = '<p style="color:var(--red)">PDF 加载失败: ' + e.message + '</p>';
+        // 失败必须给出**出路**：手机浏览器自带 PDF 阅读器，点链接直接看原文件
+        notesMarkdownHtml.value =
+          '<p style="color:var(--red)">PDF 渲染失败: ' +
+          (e && e.message ? e.message : e) +
+          '</p><p><a href="' + url + '" target="_blank" rel="noopener">用系统阅读器打开 →</a></p>';
       }
     }
 
@@ -1582,10 +1613,14 @@ const app = createApp({
         if (!metricKeys.value.length) await fetchMetricKeys();
         await loadAllMetricCharts(); // display:block，可以安全绘图
       } else if (pg === 'notes') {
-        if (!notesTree.value.length) await fetchNotesTree();
-        if (_init.notesFile && !notesSelectedPath.value) {
-          await openNotesFile(_init.notesFile, _init.notesFile.split('/').pop());
-        }
+        // 深链（/notes?path=…）：**先开预览**再拉目录树。PDF 要下 pdfjs + 整份文件（手机十几秒），
+        // 串行等目录树会让用户先盯着"点击左侧文件预览"好几秒，像坏了一样。
+        const openP =
+          _init.notesFile && !notesSelectedPath.value
+            ? openNotesFile(_init.notesFile, _init.notesFile.split('/').pop())
+            : Promise.resolve();
+        const treeP = notesTree.value.length ? Promise.resolve() : fetchNotesTree();
+        await Promise.all([openP, treeP]);
       } else if (pg === 'cron') {
         if (!cronJobs.value.length) await fetchCron();
       } else if (pg === 'token') {
@@ -1630,7 +1665,7 @@ const app = createApp({
       navigateToMetric, loadAllMetricCharts, toggleReport,
       notesTree, notesSelectedPath, notesSelectedName, notesPath, notesMarkdownHtml,
       notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults, notesExpandedPaths,
-      notesMobileView, notesMobileBack, isMobile, pdfPages, pdfProgress,
+      notesMobileView, notesMobileBack, isMobile, pdfPages, pdfProgress, pdfLoadPct,
       fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch, openNotesFolder,
     };
   },

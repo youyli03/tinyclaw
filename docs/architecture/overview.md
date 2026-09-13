@@ -65,6 +65,31 @@
   (来源 × 类型) 的窗口**合计**（`sum`，不是最后一条）。曾经这里读不存在的 `llm/tokens_chat`，
   卡片**永远不渲染**（页面只是少一张卡，没有任何报错）—— `tmp/probe-web-load-20260913.ts` 锁死这一点
 
+#### 笔记页（Markdown / PDF）
+
+浏览 `~/.tinyclaw/notes/`（`/api/notes/tree` 拿目录树，`/api/notes/file?path=` 取内容；该接口**不鉴权**，见 §7.1）。
+Markdown 走 `marked`（懒加载，见上），PDF 分两条路：
+
+| 端 | 渲染方式 |
+|---|---|
+| 桌面（`!isMobile`） | 原生 `<iframe>` 直接嵌 `/api/notes/file?path=…` |
+| 手机（`isMobile`） | PDF.js（`/pdfjs/pdf.mjs` + `pdf.worker.mjs`）逐页画到 canvas，`IntersectionObserver` 懒渲染 |
+
+手机端三条不可回退的实现细节（`tmp/probe-notes-pdf-mobile-20260913.ts` 锁死）：
+
+- ⚠️ **`renderPdfMobile()` 第一步就置 `pdfPages = ['loading']`**，且 `openNotesFile()` 用
+  `mobilePdfOwnsLoading` **让出 `notesLoading` 的归属**。否则"下 pdfjs(658KB) + 整份 PDF（实测 2.2MB）"
+  这十几秒里，模板的 `v-else-if="isMobile && pdfPages.length"` 不成立 → 掉进 `v-else` 空状态
+  （**显示"点击左侧文件预览"**）—— 用户看到的就是"PDF 渲染坏了"（2026-09-13 的真实截图）。
+  现在这段显示 `加载中…` / `正在加载 PDF…` / 进度条，`notesLoading` 由 `renderPdfMobile` 自己收尾。
+- ⚠️ **canvas 像素宽度 = 容器 CSS 宽度 × `min(devicePixelRatio, 2)`**，不要写成裸 `scale = min(dpr,2)`：
+  手机上 dpr=3 时那是 612pt 页面 → 1224×1584 px（单块 canvas ≈ 7.7MB），而实际只按 ~380px 宽显示 ——
+  画得慢、内存大，安卓更容易被节流。按显示宽度算后实测 700×906（≈2.5MB）。
+- ⚠️ 失败必须给出路：catch 里渲染 `PDF 渲染失败: <原因>` + **"用系统阅读器打开 →"**（`target="_blank"` 指回
+  原文件 URL，走手机自带 PDF 阅读器）；容器拿不到时**抛错**而不是静默 `return`。
+- PDF 响应头是 `Cache-Control: private, max-age=300`（原来 `no-store` → 每次打开重下 2.2MB）；
+  `Accept-Ranges` + 206 分片照旧。
+
 #### Token 页(prompt 构成细分)
 
 回答"钱花在哪一类"——把**每一次 LLM 请求**的 prompt 拆成七类（`src/memory/token-estimate.ts` 的

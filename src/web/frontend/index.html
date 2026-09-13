@@ -463,13 +463,20 @@
               {{ notesFullscreen ? '⊠' : '⛶' }}
             </button>
           </div>
-          <div v-if="notesLoading" class="empty-state" style="padding:40px 0"><span class="loading"></span>加载中...</div>
+          <div v-if="notesLoading" class="empty-state" style="padding:40px 0">
+            <span class="loading"></span>加载中...<span v-if="pdfLoadPct > 0 && pdfLoadPct < 100"> {{ pdfLoadPct }}%</span>
+          </div>
           <!-- PC: 原生 iframe -->
           <div v-else-if="notesPdfUrl && !isMobile" class="notes-pdf-embed">
             <iframe :src="notesPdfUrl" frameborder="0" class="notes-pdf-iframe"></iframe>
           </div>
           <!-- 手机: PDF.js canvas 懒加载 -->
           <div v-else-if="isMobile && pdfPages.length" class="notes-pdf-mobile">
+            <!-- 还没拿到文档（下 pdfjs + 拉 PDF）：必须给可见反馈，
+                 否则 preview 面板会掉到"点击左侧文件预览"的空状态，看起来像 PDF 坏了 -->
+            <div v-if="pdfProgress.total === 0" class="empty-state" style="padding:30px 0">
+              <span class="loading"></span>正在加载 PDF…<span v-if="pdfLoadPct > 0"> {{ pdfLoadPct }}%</span>
+            </div>
             <!-- 进度条 -->
             <div v-if="pdfProgress.total > 0 && pdfProgress.cur < pdfProgress.total"
                  class="pdf-progress-bar">
