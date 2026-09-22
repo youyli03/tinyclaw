@@ -16,6 +16,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "./config/loader.js";
+import { CONFIG_PATH } from "./config/writer.js";
+import { promoteConfig, restoreLastGoodConfig, shouldRollbackConfig } from "./config/state.js";
+import { runOfflineHealthChecks, formatHealthReport, appendHealthLog } from "./health/config-health.js";
+import { probeDailyBackend, withLlmProbe } from "./health/llm-probe.js";
 import { llmRegistry } from "./llm/registry.js";
 import { initLLMConcurrency } from "./llm/concurrency.js";
 import { Session, type PlanApprovalResult } from "./core/session.js";
@@ -51,6 +55,7 @@ import "./tools/release-file.js";
 import "./tools/loop-exit.js";
 import "./tools/loop-control.js";
 import "./tools/code-project.js";
+import { getTool } from "./tools/registry.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 import { setActiveSessionsRef } from "./tools/restart.js";
@@ -1229,29 +1234,86 @@ ${message}`;
   process.on("SIGINT", () => void handleExit("SIGINT"));
   process.on("SIGTERM", () => void handleExit("SIGTERM"));
 
+  // ── 启动健康自检（改坏自动回退的判据）──
+  // 顺序很重要：**先自检、再提升 LKG** —— 否则会把一份坏配置记成"可用版本"。
+  try {
+    const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
+    const knownIds = agentManager.listAgentIds();
+    let health = runOfflineHealthChecks({
+      cfg,
+      rawText: raw,
+      knownAgent: (id) => knownIds.includes(id),
+      knownTool: (name) => getTool(name) !== undefined,
+    });
+    if (cfg.health.enabled && cfg.health.probeLlm) {
+      const probe = await probeDailyBackend(cfg.health.probeTimeoutMs);
+      health = withLlmProbe(health, probe);
+    }
+    appendHealthLog(health);
+    for (const line of formatHealthReport(health)) console.log(`[health] ${line}`);
+
+    if (health.rollbackWorthy && shouldRollbackConfig()) {
+      // 配置有确定性错误，且与"上一份可用配置"不同 → 回退，并请求立即重启（exit 75 不算崩溃）
+      const res = restoreLastGoodConfig("启动健康自检发现确定性配置错误");
+      if (res.ok) {
+        console.error(
+          "[tinyclaw] ⚠️ 配置健康检查失败，已回退到上一份可用配置并立即重启：" +
+            `${res.record?.fromHash.slice(0, 8)} → ${res.record?.toHash.slice(0, 8)}`
+        );
+        process.exit(75);
+      }
+      console.error(`[tinyclaw] 配置健康检查失败，且无法回退（${res.reason ?? "未知"}），继续带病运行`);
+    }
+
+    if (cfg.health.enabled) promoteConfig(raw);
+    else console.log("[tinyclaw] 健康自检已关闭（[health].enabled = false），未记录 LKG");
+  } catch (err) {
+    console.warn(`[tinyclaw] 健康自检/LKG 失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // ── 自动回退通知（supervisor 写入）──：不依赖 connector，先落日志 ──
+  const ROLLBACK_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_notify.json");
+  const ROLLBACK_STATE_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_state.json");
+  let rollbackNotice = "";
+  /** 是否发生了**代码**回退（git stash 那份；restart_tool 续接文案用它） */
+  let didRollback = false;
+  /** 是否发生了**配置**回退（保留 LKG 覆盖） */
+  let configRolledBack = false;
+  if (fs.existsSync(ROLLBACK_NOTIFY_FILE)) {
+    try {
+      const rn = JSON.parse(fs.readFileSync(ROLLBACK_NOTIFY_FILE, "utf-8")) as {
+        kind?: string;
+        originalHead?: string;
+        prevHead?: string;
+        fromHash?: string;
+        toHash?: string;
+        reason?: string;
+        rejectedPath?: string;
+        rollbackAt: string;
+      };
+      fs.unlinkSync(ROLLBACK_NOTIFY_FILE);
+      if (rn.kind === "config") {
+        configRolledBack = true;
+        rollbackNotice =
+          `⚠️ 配置自动回退（${rn.rollbackAt}）\n` +
+          `  从 ${rn.fromHash?.slice(0, 8) ?? "?"} 回退到上一份可用配置 ${rn.toHash?.slice(0, 8) ?? "?"}\n` +
+          `  原因：${rn.reason ?? "启动失败"}\n` +
+          (rn.rejectedPath ? `  坏配置留证：${rn.rejectedPath}\n` : "") +
+          `  请检查后重新编辑 ~/.tinyclaw/config.toml`;
+        console.warn(`[tinyclaw] ${rollbackNotice}`);
+      } else {
+        didRollback = true;
+        rollbackNotice =
+          `⚠️ 代码自动回退（${rn.rollbackAt}）：${rn.originalHead ?? "?"} → ${rn.prevHead ?? "?"}`;
+        console.warn(`[tinyclaw] ${rollbackNotice}`);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (connector) {
     console.log("[tinyclaw] Starting QQBot connector...");
-
-    // 检查 git 自动回退通知（由 supervisor 写入，main.ts 启动后发 QQ 消息）
-    const ROLLBACK_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_notify.json");
-    const ROLLBACK_STATE_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_state.json");
-    let didRollback = false;
-    if (fs.existsSync(ROLLBACK_NOTIFY_FILE)) {
-      try {
-        const rn = JSON.parse(fs.readFileSync(ROLLBACK_NOTIFY_FILE, "utf-8")) as {
-          originalHead: string;
-          prevHead: string;
-          rollbackAt: string;
-        };
-        fs.unlinkSync(ROLLBACK_NOTIFY_FILE);
-        didRollback = true;
-        console.log(
-          `[tinyclaw] ⚠️ git 自动回退: ${rn.originalHead} → ${rn.prevHead} at ${rn.rollbackAt}`
-        );
-      } catch {
-        /* ignore */
-      }
-    }
 
     // 检查重启通知 marker（由 /restart 命令或 restart_tool 写入，用于重启后发送通知）
     const RESTART_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".restart_notify.json");
@@ -1291,18 +1353,22 @@ ${message}`;
               if (codeSession) {
                 // 回填 tool_result：将 "⏳ 正在重启..." 更新为 "✅ 重启完成"，避免注入额外用户消息
                 if (marker.restartCallId) {
-                  const restartMsg = didRollback
-                    ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash）。继续执行之前的任务。"
-                    : "✅ 重启完成，继续执行之前的任务。";
+                  const restartMsg = configRolledBack
+                    ? `⚠️ 重启完成，但**配置已自动回退**（上一份可用配置已恢复）。\n${rollbackNotice}`
+                    : didRollback
+                      ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash）。继续执行之前的任务。"
+                      : "✅ 重启完成，继续执行之前的任务。";
                   codeSession.updateToolResult(marker.restartCallId, restartMsg);
                 }
                 void connector!
                   .send(
                     marker.peerId,
                     marker.msgType,
-                    didRollback
-                      ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash，可用 git stash pop 恢复）"
-                      : "✅ 重启完成，继续执行之前的任务。"
+                    configRolledBack
+                      ? `⚠️ 重启完成，但**配置已自动回退**：\n${rollbackNotice}`
+                      : didRollback
+                        ? "✅ 重启完成（已自动回退到上一个版本，原改动已 git stash，可用 git stash pop 恢复）"
+                        : "✅ 重启完成，继续执行之前的任务。"
                   )
                   .catch(() => {});
                 if (didRollback) {

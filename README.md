@@ -50,6 +50,16 @@ tinyclaw restart
 `config.toml.rejected-<时间戳>`,原文件一字不动 —— 因为 `config.toml` 写坏 = 服务起不来
 (`loadConfig()` fail-fast)。通过时先备份 `config.toml.bak-<时间戳>`(保留最近 5 份)再原子写入,权限 0600。
 
+**改坏了会自动回退**:服务每次成功启动都会把当前配置记为"上一份可用版本"(`config.toml.lkg`)。
+若配置改坏导致启动后 60s 内崩溃,supervisor 会把 `config.toml` 覆盖回那份可用版本并立即重启
+(坏配置留证 `.rejected-<时间戳>`,事件写 `.rollback_notify.json` 与 `logs/config-rollback.log`,每个守护
+周期最多自动回退一次)。判定"配置是否变过"用内容哈希而非 mtime,所以手改文件同样被兜住。
+
+**启动自检**:启动后跑一遍离线检查(目录可写、bwrap 可用性、IPC socket 路径长度…)并按 `[health].probeLlm`
+(默认开)发一次极小 LLM 请求验证 key/模型名。只有**确定性**配置错(401/403/404/模型名不存在)才触发回退,
+上游 5xx / 超时 / 限流只告警 —— 以免上游抽风把好配置回退掉。结果写 `logs/health-YYYY-MM-DD.jsonl`。
+查看:`tinyclaw config status`(可用版本/待确认/最近回退);手动自检:`tinyclaw config check`。
+
 **GitHub Copilot:**
 ```toml
 [providers.copilot]
@@ -289,6 +299,8 @@ tinyclaw completions install           # 安装 tab 补全
 ├── config.toml          # 配置(含密钥,不进仓库；写入前会校验,坏值拒写)
 ├── config.toml.bak-*    # 每次写入前的备份(保留最近 5 份)
 ├── config.toml.rejected-* # 被写前校验拒绝的内容留证(0600,不进 git)
+├── config.toml.lkg      # 上一份"被证实可用"的配置(启动成功后写入,改坏时自动回退用)
+├── .config-state.json   # 配置状态(current / lastGood / pending / 最近回退,0600)
 ├── mcp.toml             # MCP server 配置
 ├── memstores.toml       # 向量知识库配置(news 等)
 ├── dashboard.db         # Dashboard 指标数据库(SQLite)

@@ -1083,6 +1083,24 @@ const WebSchema = z.object({
 });
 export type WebConfig = z.infer<typeof WebSchema>;
 
+// ── 启动健康自检（改坏自动回退的判据） ─────────────────────────────────────────
+
+/**
+ * 启动后的健康自检与"改坏自动回退"开关。
+ *
+ * - `enabled`：关掉则既不跑自检也不回退（只保留写前校验）
+ * - `probeLlm`：是否发一次**极小**的 LLM 请求（1 个 token 就 abort）来验证 key/模型名；
+ *   只有**确定性**配置错（401/403/404/model not found）才触发回退，5xx/超时只告警
+ * - `probeTimeoutMs`：探测超时（按暂时性故障处理）
+ */
+const HealthSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    probeLlm: z.boolean().default(true),
+    probeTimeoutMs: z.number().int().positive().default(5_000),
+  })
+  .default({});
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -1101,6 +1119,7 @@ export const ConfigSchema = z.object({
   retry: RetryConfigSchema,
   voice: VoiceSchema,
   web: WebSchema.default({}),
+  health: HealthSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

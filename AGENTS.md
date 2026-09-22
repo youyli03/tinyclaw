@@ -67,8 +67,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | 路径 | 职责 |
 |---|---|
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
-| `src/main-supervisor.ts` | 进程守护、崩溃回滚 |
-| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) |
+| `src/main-supervisor.ts` | 进程守护：崩溃退避重启 + **配置 quick-fail 自动回退**（LKG 覆盖）+ 代码 git 回退 |
+| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
 | `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
 | `src/core/inbound-bus.ts` | 用户回复统一路由（MFA / Plan 审批 / ask_user 的 Waiter 队列） |

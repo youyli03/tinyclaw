@@ -16,7 +16,9 @@ import { spawnSync } from "node:child_process";
 import { parse } from "smol-toml";
 import { ConfigSchema } from "../../config/schema.js";
 import { CONFIG_PATH, patchTomlField, readRawConfig } from "../../config/writer.js";
-import { formatConfigDiags, type ConfigDiag } from "../../config/validate.js";
+import { formatConfigDiags, validateConfigText, type ConfigDiag } from "../../config/validate.js";
+import { configStatePaths, readConfigState, currentConfigDigest } from "../../config/state.js";
+import { runOfflineHealthChecks, formatHealthReport } from "../../health/config-health.js";
 import { agentManager } from "../../core/agent-manager.js";
 import { loadMemStoresConfig, loadMcpConfigDetailed } from "../../config/loader.js";
 import { formatDiagnostics, summarizeLoad } from "../../mcp/load-report.js";
@@ -384,6 +386,146 @@ async function cmdSet(args: string[]): Promise<void> {
   }
 }
 
+// ── status / check ────────────────────────────────────────────────────────────
+
+/** `config status`：配置自愈状态（LKG / pending / 最近回退 / 留证文件 / 健康日志） */
+async function cmdStatus(): Promise<void> {
+  const paths = configStatePaths();
+  const st = readConfigState();
+  const short = (h: string | undefined) => (h ? h.slice(0, 8) : "?");
+
+  section(`配置状态  ${dim(`(${paths.statePath})`)}`);
+  console.log(
+    `  当前配置   ${cyan(short(currentConfigDigest() ?? undefined))}  ${
+      st.current?.at !== undefined ? dim(st.current.at) : dim("(状态未记录)")
+    }`
+  );
+  if (st.lastGood === null) {
+    console.log(
+      `  可用版本   ${yellow("尚未记录")} ${dim("（启动成功一次后才会写入 config.toml.lkg）")}`
+    );
+  } else {
+    console.log(`  可用版本   ${green(short(st.lastGood.hash))}  ${dim(st.lastGood.at)}`);
+    console.log(`             ${dim(st.lastGood.backup)}`);
+  }
+  if (st.pending === null) {
+    console.log(`  待确认     ${dim("无")}`);
+  } else {
+    console.log(
+      `  待确认     ${yellow(short(st.pending.hash))} ${dim(`启动尝试 ${st.pending.bootAttempts} 次`)}`
+    );
+  }
+  if (st.lastRollback !== null) {
+    console.log(
+      `  ${yellow("最近回退")}   ${dim(st.lastRollback.at)}：${short(st.lastRollback.fromHash)} → ` +
+        `${short(st.lastRollback.toHash)}`
+    );
+    console.log(`             原因：${st.lastRollback.reason}`);
+    if (st.lastRollback.rejectedPath !== undefined) {
+      console.log(`             坏配置留证：${dim(st.lastRollback.rejectedPath)}`);
+    }
+  } else {
+    console.log(`  最近回退   ${dim("无")}`);
+  }
+
+  // 备份 / 留证文件（只列文件名，不打印内容 —— 里面可能含密钥）
+  const dir = paths.dir;
+  const listByPrefix = (suffix: string): string[] => {
+    try {
+      return fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith(`config.toml.${suffix}-`))
+        .sort()
+        .slice(-5);
+    } catch {
+      return [];
+    }
+  };
+  const backups = listByPrefix("bak");
+  const rejected = listByPrefix("rejected");
+  console.log(`  备份       ${dim(backups.length > 0 ? backups.join(", ") : "无")}`);
+  console.log(`  留证       ${rejected.length > 0 ? yellow(rejected.join(", ")) : dim("无")}`);
+
+  // 最近一次健康自检结论
+  const healthFiles = (() => {
+    try {
+      return fs
+        .readdirSync(path.join(dir, "logs"))
+        .filter((f) => f.startsWith("health-") && f.endsWith(".jsonl"))
+        .sort();
+    } catch {
+      return [];
+    }
+  })();
+  const lastHealth = healthFiles[healthFiles.length - 1];
+  if (lastHealth !== undefined) {
+    try {
+      const lines = fs
+        .readFileSync(path.join(dir, "logs", lastHealth), "utf-8")
+        .trim()
+        .split("\n");
+      const last = JSON.parse(lines[lines.length - 1] ?? "{}") as {
+        at?: string;
+        ok?: boolean;
+        checks?: Array<{ name: string; level: string }>;
+      };
+      const bad = (last.checks ?? []).filter((c) => c.level !== "ok");
+      console.log(
+        `  健康自检   ${last.ok ? green("通过") : red("有问题")} ${dim(last.at ?? "")}` +
+          (bad.length > 0 ? ` ${dim(bad.map((b) => b.name).join(", "))}` : "")
+      );
+    } catch {
+      /* 读不动就跳过 */
+    }
+  } else {
+    console.log(`  健康自检   ${dim("尚无记录（服务下次启动时写入 logs/health-*.jsonl）")}`);
+  }
+
+  console.log();
+  console.log(dim(`  回退日志：${paths.logPath}`));
+  console.log(dim("  提示：`tinyclaw config check` 可对当前文件跑一遍校验与离线自检。"));
+  console.log();
+}
+
+/** `config check`：对当前 config.toml 跑写前校验 + 离线健康检查（不回退、不改文件） */
+async function cmdCheck(): Promise<void> {
+  const rawText = readRawConfig();
+  const validation = validateConfigText(rawText, { knownAgent: isKnownAgent });
+
+  section("配置校验");
+  if (validation.diagnostics.length === 0) {
+    console.log(`  ${green("✓")} 语法与 schema 均通过，无诊断`);
+  } else {
+    for (const line of formatConfigDiags(validation.diagnostics)) {
+      const colored =
+        line.startsWith("- [error]")
+          ? red(line)
+          : line.startsWith("- [warn]")
+            ? yellow(line)
+            : line;
+      console.log(`  ${colored}`);
+    }
+  }
+
+  if (validation.config === undefined) {
+    console.log();
+    console.log(red("  ✗ 配置无法解析：离线自检已跳过（服务会用 fail-fast 拒绝启动）"));
+    console.log();
+    process.exitCode = 1;
+    return;
+  }
+
+  section("离线自检");
+  const health = runOfflineHealthChecks({
+    cfg: validation.config,
+    rawText,
+    knownAgent: isKnownAgent,
+  });
+  for (const line of formatHealthReport(health)) console.log(`  ${line}`);
+  console.log();
+  if (!health.ok) process.exitCode = 1;
+}
+
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
 /** 第二层：只列子命令 */
@@ -397,6 +539,8 @@ ${bold("子命令：")}
   ${cyan("edit")}              用 \$EDITOR 打开配置文件
   ${cyan("path")}              打印配置文件路径
   ${cyan("set")}               修改单个配置字段
+  ${cyan("status")}            配置自愈状态（可用版本 LKG / 待确认 / 最近回退 / 留证文件 / 健康日志）
+  ${cyan("check")}             对当前配置跑写前校验 + 离线自检（不改文件，出错返回码 1）
 
 ${dim("运行 tinyclaw config <sub> -h 查看子命令详细参数")}
 `);
@@ -466,9 +610,18 @@ ${bold("示例：")}
 
 // ── 命令入口 ──────────────────────────────────────────────────────────────────
 
-export const subcommands = ["show", "get", "edit", "path", "set", "help"] as const;
-export const description = "配置管理：查看 / 读取 / 编辑 / 修改配置字段";
-export const usage = "config <show|get|edit|path|set> [args]";
+export const subcommands = [
+  "show",
+  "get",
+  "edit",
+  "path",
+  "set",
+  "status",
+  "check",
+  "help",
+] as const;
+export const description = "配置管理：查看 / 读取 / 编辑 / 修改字段 / 自愈状态 / 校验自检";
+export const usage = "config <show|get|edit|path|set|status|check> [args]";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "show";
@@ -505,6 +658,10 @@ export async function run(args: string[]): Promise<void> {
         return;
       }
       return cmdSet(rest);
+    case "status":
+      return cmdStatus();
+    case "check":
+      return cmdCheck();
     case "--help":
     case "-h":
     case "help":

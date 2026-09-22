@@ -217,7 +217,7 @@ ttlDays        = 7                         # 临时区保留天数(0 = 不清理
 tinyclaw/
 ├── src/
 │   ├── main.ts               # 入口：加载配置 → 启动 QQBot → IPC server → Cron → 优雅退出
-│   ├── main-supervisor.ts    # 进程守护：crash 后退避重启 main.ts，最多 20 次
+│   ├── main-supervisor.ts    # 进程守护：crash 退避重启（≤20 次）+ 配置 quick-fail 自动回退 + 代码 git 回退
 │   ├── core/
 │   │   ├── agent.ts          # ReAct 主循环（think → tool_call → observe → respond）
 │   │   │                     # 支持 MFA 鉴权、__purpose 进度旁白、auto-fork、textMode 文本工具调用
@@ -343,6 +343,8 @@ tinyclaw/
 ├── config.toml               # 所有敏感配置（API key、Azure ID、QQ secret）
 ├── config.toml.bak-*         # 写入前自动备份（保留最近 5 份，0600）
 ├── config.toml.rejected-*    # 写前校验拒绝的内容留证（0600，submitter 不提交）
+├── config.toml.lkg           # last-known-good 配置副本（成功启动后写入，回退用）
+├── .config-state.json        # 配置状态：current / lastGood / pending / lastRollback（0600）
 ├── mcp.toml                  # MCP server 配置（独立文件）
 ├── .service_pid              # supervisor 进程 PID（tinyclaw restart 读取）
 ├── .github_token             # GitHub OAuth token（0600 权限，由 Device Flow 写入）
@@ -996,6 +998,8 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw config show` | 格式化显示配置（密钥脱敏） |
 | `tinyclaw config edit` | 用 `$EDITOR` 打开 config.toml |
 | `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string）；写入前校验整份配置，不过则拒写并留证 `config.toml.rejected-<ts>` |
+| `tinyclaw config status` | 配置自愈状态：当前配置哈希、可用版本（LKG）、待确认（含启动尝试次数）、最近一次自动回退、备份/留证文件、最近一次健康自检结论 |
+| `tinyclaw config check` | 对当前 `config.toml` 跑写前校验 + 离线健康检查（不改文件；有 error 时退出码 1，便于脚本/CI 使用） |
 | `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`${SECRET:NAME}` 引用缺失、`enabled=false`；env / headers 只列键名，值不回显） |
 | `tinyclaw mcp add / remove / enable / disable` | 增删 MCP server、改 `enabled` 开关。走 `config-writer`（写前全量校验 + `.bak-<ts>` 备份 + 原子写），运行中的服务由文件监听自动重载。`add` 用法：`--stdio <cmd> [--arg a]… [--env K=V]…` 或 `--sse <url> [--header K=V]…`，可加 `--desc` / `--disabled` |
 | `tinyclaw config status` | 配置自愈状态：当前配置哈希、可用版本（LKG）、待确认（含启动尝试次数）、最近一次自动回退、备份/留证文件、最近一次健康自检结论 |
@@ -1038,6 +1042,33 @@ tinyclaw mo<Tab>
 
 ⚠️ 诊断文本**绝不回显字段原值**：Zod issue 只用 `path` + `code`，语法错误消息会裁剪形似 token 的长串 ——
 否则 `apiKey` 写错类型时 Zod 的 `received` 会把密钥带进日志/CLI/工具返回。
+
+**配置自愈（改坏自动回退）**
+
+`loadConfig()` 是 fail-fast（解析/schema 不过就 `process.exit(1)`），所以配置写坏 = 服务起不来。
+回退链分三层，都在 `src/config/state.ts` + `src/main-supervisor.ts`：
+
+| 层 | 触发 | 动作 |
+|---|---|---|
+| LKG 提升 | `main.ts` 启动成功且自检通过后 | `promoteConfig()`：把当前 `config.toml` 记为 lastGood，并复制成 `config.toml.lkg`（0600），清空 pending |
+| quick-fail 回退 | 子进程**启动后 60s 内**退出（`QUICK_FAIL_MS`）且磁盘配置与 LKG **内容哈希不同** | `restoreLastGoodConfig()`：LKG 覆盖回 `config.toml`，坏配置留证 `config.toml.rejected-<ts>`，写 `.rollback_notify.json`（`kind:"config"`）+ `logs/config-rollback.log`，随后立即重启。**每个 supervisor 生命周期最多一次**，防循环 |
+| 代码 git 回退（兜底） | 连续崩溃 ≥5 次且非配置原因 | `git stash` + `git checkout HEAD~1 -- .`（**不移动 HEAD**，不再造成 detached HEAD），退避重启 |
+
+判定"配置变过"一律用 **sha1 内容哈希**，不用 mtime（本机 mtime 不可靠，见 §7.4）；因此**手改** `config.toml`
+（不经写入器）同样会被兜住。回退通知不依赖 QQ connector：日志与 `logs/config-rollback.log` 一定写。
+
+**启动健康自检**（`src/health/`）
+
+- `config-health.ts`：离线项（写前校验、运行时/日志/会话目录可写、`[sandbox]` 要沙箱时 bwrap 是否可用、
+  IPC socket 路径 ≤100 字节、记忆根目录）。不 import `llmRegistry`，CLI 也能用。
+- `llm-probe.ts`：唯一花 token 的项 —— 对 `daily` 后端发一次极小请求（收到首个 token 立即 abort）。
+  错误分流：**401/403/404/模型名不存在 → 确定性**（允许回退）；**5xx / 超时 / 429 / DNS 失败 → 暂时性**
+  （只告警，绝不回退）；认不出来一律按暂时性（保守）。
+- 顺序：**先自检、后提升 LKG**（否则会把坏配置记成"可用版本"）。若自检发现确定性错误**且**当前配置与 LKG
+  不同 → `restoreLastGoodConfig()` + `exit(75)`（主动重启，不计入崩溃次数）。若与 LKG 相同（说明是环境问题
+  而非这次改动）→ 只告警，继续运行，不再回退。
+- 配置开关：`[health].enabled`（默认 true，关掉则既不跑自检也不回退）、`[health].probeLlm`（默认 true）、
+  `[health].probeTimeoutMs`（默认 5000）。结果落 `logs/health-YYYY-MM-DD.jsonl`。
 
 ---
 

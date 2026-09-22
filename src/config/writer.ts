@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { atomicWriteText, backupFile, quarantineRejected, DEFAULT_BACKUP_KEEP } from "./safe-write.js";
+import { noteConfigWritten } from "./state.js";
 import {
   hasConfigErrors,
   validateConfigText,
@@ -64,6 +65,8 @@ export function writeConfigText(
   }
   const backupPath = backupFile(target, DEFAULT_BACKUP_KEEP);
   atomicWriteText(target, text);
+  // 记录状态（current + pending）：supervisor 靠"磁盘 vs LKG 的内容哈希"决定是否自动回退
+  noteConfigWritten(text, path.dirname(target));
   return { ok: true, backupPath, diagnostics: validation.diagnostics };
 }
 

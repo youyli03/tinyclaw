@@ -348,3 +348,13 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # maxTotalMb     = 2048                        # 临时区总占用上限(MB),超过后 release_file 拒绝新文件
 # keepMaxTotalMb = 5120                        # 常驻区总占用上限(MB)
 # ttlDays        = 7                           # 临时区文件保留天数(0 = 不清理;常驻区不受影响)
+
+# ── 启动健康自检与"改坏自动回退" ────────────────────────────────────────────────
+# 服务每次启动成功后会把当前 config.toml 记为"上一份可用版本"(config.toml.lkg)。
+# 若配置改坏导致启动后 60s 内崩溃(supervisor 的 quick-fail),或自检发现**确定性**配置错误
+# (401/403/404/模型名不存在),就会自动回退到那份可用版本并重启;坏配置留证 config.toml.rejected-<ts>。
+# 状态与历史:`tinyclaw config status`;手动自检:`tinyclaw config check`。
+[health]
+# enabled       = true    # 关掉则既不跑自检也不自动回退(写前校验仍然生效)
+# probeLlm      = true    # 启动时发一次极小 LLM 请求验证 key/模型名(收到首个 token 立即中断,约 1 token)
+# probeTimeoutMs = 5000   # 探测超时(超时按暂时性故障处理,只告警不回退)

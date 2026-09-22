@@ -33,6 +33,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import {
+  bumpBootAttempt,
+  restoreLastGoodConfig,
+  shouldRollbackConfig,
+} from "./config/state.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 const MAIN_SCRIPT = new URL("./main.ts", import.meta.url).pathname;
@@ -41,6 +46,11 @@ const RESTART_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
 const MAX_RESTARTS = 20;
 /** 连续崩溃达到此次数时，触发 git 自动回退（只回退一次） */
 const ROLLBACK_TRIGGER_COUNT = 5;
+/**
+ * quick-fail 窗口：子进程启动后这么短时间内退出，视为"起不来"（配置坏掉的典型表现是启动期就抛错）。
+ * 配置类崩溃**第 1 次**就回退，不必等 ROLLBACK_TRIGGER_COUNT 次退避（那要 ~107s）。
+ */
+const QUICK_FAIL_MS = 60_000;
 
 const ROLLBACK_STATE_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_state.json");
 const ROLLBACK_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_notify.json");
@@ -170,14 +180,24 @@ async function tryGitRollback(): Promise<{ ok: boolean; prevHead: string; curren
   return { ok: true, prevHead, currentHead };
 }
 
+/** 本进程生命周期内是否已执行过一次**配置**回退（只回退一次，防循环） */
+let hasRolledBackConfig = false;
+/** 上次拉起子进程的时间（quick-fail 判定用） */
+let lastSpawnAt = 0;
+
 function startChild(): void {
   if (shuttingDown) return;
 
+  lastSpawnAt = Date.now();
+  const attempts = bumpBootAttempt();
   child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     stdio: "inherit",
     env: { ...process.env },
     cwd: path.dirname(path.dirname(MAIN_SCRIPT)), // src/ → project root
   });
+  if (attempts > 1) {
+    console.warn(`[supervisor] 这是配置变更后的第 ${attempts} 次启动尝试`);
+  }
 
   child.on("exit", (code, signal) => {
     child = null;
@@ -198,6 +218,32 @@ function startChild(): void {
     console.error(
       `[supervisor] main.ts 异常退出（code=${code ?? "null"}, signal=${signal ?? "null"}）`
     );
+
+    // ── 配置类 quick-fail：启动后 60s 内退出，且磁盘配置与 LKG 不一致 → 立刻回退配置 ──
+    const quickFail = Date.now() - lastSpawnAt < QUICK_FAIL_MS;
+    if (quickFail && !hasRolledBackConfig && shouldRollbackConfig()) {
+      hasRolledBackConfig = true;
+      console.warn("[supervisor] 启动后迅速退出且配置与上一份可用版本不同，回退配置...");
+      const res = restoreLastGoodConfig(
+        `启动后 ${Math.round((Date.now() - lastSpawnAt) / 1000)}s 内退出（quick-fail）`
+      );
+      if (res.ok) {
+        console.log(
+          `[supervisor] 配置已回退：${res.record?.fromHash.slice(0, 8)} → ` +
+            `${res.record?.toHash.slice(0, 8)}，立即重启（坏配置已留证）`
+        );
+        restartCount = 0;
+        setTimeout(startChild, 500);
+        return;
+      }
+      console.error(`[supervisor] 配置回退失败：${res.reason ?? "未知原因"}，继续正常退避重启`);
+    }
+    if (quickFail && hasRolledBackConfig && shouldRollbackConfig()) {
+      console.error(
+        "[supervisor] 回退后配置仍与 LKG 不一致且继续快速退出 —— 可能是 LKG 本身有问题，" +
+          "不再自动回退（等人工介入 / safe mode）"
+      );
+    }
 
     if (restartCount >= MAX_RESTARTS) {
       console.error(`[supervisor] 已重启 ${MAX_RESTARTS} 次，放弃重启`);
