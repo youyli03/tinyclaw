@@ -41,6 +41,7 @@
         <div class="nav-item" :class="{active: page==='metrics'}"  @click="goPage('metrics')">指标</div>
         <div class="nav-item" :class="{active: page==='token'}"    @click="goPage('token')">Token</div>
         <div class="nav-item" :class="{active: page==='notes'}"    @click="goPage('notes')">笔记</div>
+        <div class="nav-item" :class="{active: page==='downloads'}" @click="goPage('downloads')">下载</div>
       </div>
       <div class="nav-section" style="margin-top:16px">
         <div class="nav-section-label">系统</div>
@@ -500,6 +501,81 @@
     </div>
 
 <!-- Cron 任务页 -->
+    <div v-show="page==='downloads'">
+      <div class="page-header">
+        <div class="page-title">下载 <span class="page-title-sub">/ 一次性命令取走</span></div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div style="font-size:13px;color:#5A6690;line-height:1.8">
+          文件分两个区：<b>临时区</b>（<code>~/.tinyclaw/downloads/</code>，按天自动清理）与
+          <b>常驻区</b>（<code>~/.tinyclaw/keep/</code>，按目录归类、不自动清理）。
+          选中文件点「生成命令」得到一条<b>一次性</b>下载命令（默认 10 分钟内、最多 3 次），
+          在任意机器上执行即可下载 —— 令牌走请求头，不进 URL。
+        </div>
+        <div v-if="!dlEnabled" class="empty-state" style="margin-top:12px">
+          下载功能未启用（config.toml 的 [web.downloads] enabled = true）
+        </div>
+        <div v-else-if="dlError" style="margin-top:12px;font-size:13px;color:#FF6961">{{ dlError }}</div>
+      </div>
+      <div v-if="dlEnabled" class="card" style="padding:0;margin-top:12px;overflow-x:auto">
+        <table class="cron-table" style="width:100%">
+          <thead>
+            <tr><th>文件</th><th style="width:90px">大小</th><th style="width:130px">时间</th><th style="width:160px">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="f in dlFiles" :key="f.name">
+              <td style="word-break:break-all">{{ f.name }}</td>
+              <td>{{ fmtBytes(f.size) }}</td>
+              <td>{{ fmtTime(mtimeSec(f)) }}</td>
+              <td>
+                <button @click="genDownloadCmd(f.name)" style="padding:5px 10px;margin-right:6px;border:1px solid #E8EEFF;border-radius:6px;background:#F0F4FF;color:#4F7EF8;font-size:12px;cursor:pointer">生成命令</button>
+                <button @click="deleteDownload(f.name)" style="padding:5px 10px;border:1px solid #FFE1E1;border-radius:6px;background:#FFF5F5;color:#FF6961;font-size:12px;cursor:pointer">删除</button>
+              </td>
+            </tr>
+            <tr v-if="!dlFiles.length"><td colspan="4" class="empty-state" style="padding:16px">暂无文件（agent 用 release_file 投放）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-if="dlEnabled && dlFiles.length" style="font-size:12px;color:#8892B0;margin-top:10px">
+        临时区已用 {{ fmtBytes(dlTotalBytes) }} / {{ dlMaxTotalMb }} MB · 单文件上限 {{ dlMaxFileMb }} MB · 保留 {{ dlTtlDays }} 天
+      </div>
+
+      <!-- 常驻区：按目录归类（复用笔记的树组件），永不自动清理；下载仍需每次生成一次性命令 -->
+      <div v-if="dlEnabled" class="card" style="padding:14px;margin-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:600">
+            常驻区 <span style="font-weight:400;color:#8892B0">/ 按目录归类，不自动清理</span>
+            <span v-if="dlKeepPath" style="font-weight:400;color:#4F7EF8">/ {{ dlKeepPath }}</span>
+          </div>
+          <div style="font-size:12px;color:#8892B0">已用 {{ fmtBytes(dlKeepTotalBytes) }} / {{ dlKeepMaxTotalMb }} MB</div>
+        </div>
+        <div style="max-height:340px;overflow-y:auto;border:1px solid #EEF2FF;border-radius:8px;padding:4px">
+          <div v-if="!dlKeepTree.length" class="empty-state" style="padding:16px">暂无常驻文件（agent 用 release_file(keep=true) 投放）</div>
+          <notes-tree-node
+            v-for="node in dlKeepTree"
+            :key="node.path"
+            :node="node"
+            :selected-path="dlKeepSelected"
+            :expanded-paths="dlKeepExpanded"
+            @open-file="selectKeepFile"
+            @open-dir="onKeepDirOpen"
+          ></notes-tree-node>
+        </div>
+        <div v-if="dlKeepSelected" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:13px;word-break:break-all">选中：<b>{{ dlKeepSelected }}</b></span>
+          <button @click="genDownloadCmd(dlKeepSelected, 'keep')" style="padding:6px 12px;border:1px solid #E8EEFF;border-radius:6px;background:#F0F4FF;color:#4F7EF8;font-size:12px;cursor:pointer">生成命令</button>
+          <button @click="deleteDownload(dlKeepSelected, 'keep')" style="padding:6px 12px;border:1px solid #FFE1E1;border-radius:6px;background:#FFF5F5;color:#FF6961;font-size:12px;cursor:pointer">删除</button>
+        </div>
+      </div>
+
+      <div v-if="dlCmd" class="card" style="padding:16px;margin-top:12px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">下载命令 · {{ dlCmdName }}</div>
+        <pre style="background:#0F172A;color:#E2E8F0;padding:12px;border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.6;margin:0 0 10px">{{ dlCmd }}</pre>
+        <button @click="copyDownloadCmd()" style="padding:7px 14px;border:none;border-radius:8px;background:#4F7EF8;color:#fff;font-size:13px;font-weight:600;cursor:pointer">{{ dlCopied ? '已复制' : '复制命令' }}</button>
+        <span style="font-size:12px;color:#8892B0;margin-left:10px">令牌 {{ dlLinkTtlSecs }}s 内有效 · 最多 {{ dlLinkMaxUses }} 次</span>
+      </div>
+    </div>
+
     <div v-show="page==='cron'">
       <div class="page-header">
         <div class="page-title">Cron 任务 <span class="page-title-sub">/ 全部</span></div>

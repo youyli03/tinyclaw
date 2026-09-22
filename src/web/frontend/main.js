@@ -290,7 +290,7 @@ function drawSparkline(id, data, color) {
 const app = createApp({
   setup() {
     // ── Hash 路由:刷新后恢复 tab 与日报状态（兼容所有手机浏览器）──────────
-    const VALID_PAGES = ['overview', 'metrics', 'token', 'notes', 'cron'];
+    const VALID_PAGES = ['overview', 'metrics', 'token', 'notes', 'cron', 'downloads'];
     function parseURL() {
       const parts = location.pathname.replace(/^\//, '').split('/');
       const pg = VALID_PAGES.includes(parts[0]) ? parts[0] : 'overview';
@@ -318,6 +318,7 @@ const app = createApp({
     const buildTag = ref(String(document.documentElement.dataset.build ?? "dev").slice(-6));
     const PAGE_TITLES = {
       overview: '概览', metrics: '指标', token: 'Token', notes: '笔记', cron: 'Cron 任务',
+      downloads: '下载',
     };
     const pageTitle = computed(() => PAGE_TITLES[page.value] ?? 'tinyclaw');
     function openSidebar() { sidebarOpen.value = true; }
@@ -1607,6 +1608,145 @@ const app = createApp({
       }
     }
 
+    // ── 下载页（release_file 投放 → 一次性 curl 命令）──────────────────────────
+    const dlFiles = ref([]);
+    const dlEnabled = ref(true);
+    const dlError = ref('');
+    const dlCmd = ref('');
+    const dlCmdName = ref('');
+    const dlCopied = ref(false);
+    const dlTotalBytes = ref(0);
+    const dlMaxFileMb = ref(0);
+    const dlMaxTotalMb = ref(0);
+    const dlTtlDays = ref(0);
+    const dlLinkTtlSecs = ref(0);
+    const dlLinkMaxUses = ref(0);
+    const dlKeepTree = ref([]);
+    const dlKeepSelected = ref('');
+    const dlKeepExpanded = ref(new Set());
+    const dlKeepTotalBytes = ref(0);
+    const dlKeepMaxTotalMb = ref(0);
+    const dlKeepPath = ref('');
+
+    /** 常驻区树里是否还存在该路径（列表刷新后校验选中态） */
+    function treeHasPath(nodes, p) {
+      for (const n of nodes) {
+        if (n.path === p) return true;
+        if (n.children && treeHasPath(n.children, p)) return true;
+      }
+      return false;
+    }
+
+    /** 点常驻区的文件：选中它（命令等用户点「生成命令」再生成） */
+    function selectKeepFile(path) {
+      dlKeepSelected.value = path;
+      dlCmd.value = ''; dlCmdName.value = ''; dlError.value = '';
+    }
+
+    /** 点常驻区的目录：只在标题上显示当前分类（展开/折叠由树组件自己管） */
+    function onKeepDirOpen(path) {
+      dlKeepPath.value = path;
+    }
+
+    function fmtBytes(n) {
+      const v = Number(n) || 0;
+      if (v < 1024) return v + ' B';
+      const u = ['KB', 'MB', 'GB', 'TB'];
+      let x = v / 1024, i = 0;
+      while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+      return (x >= 10 ? x.toFixed(0) : x.toFixed(1)) + ' ' + u[i];
+    }
+
+    /** 文件的 mtime（秒），给 fmtTime 用 */
+    function mtimeSec(f) {
+      return Math.floor((f && f.mtimeMs ? f.mtimeMs : 0) / 1000);
+    }
+
+    async function loadDownloads() {
+      dlError.value = '';
+      try {
+        const d = await fetch('/api/downloads').then(r => r.json());
+        dlEnabled.value = d.enabled !== false;
+        dlFiles.value = d.files || [];
+        dlTotalBytes.value = d.totalBytes || 0;
+        dlMaxFileMb.value = d.maxFileMb || 0;
+        dlMaxTotalMb.value = d.maxTotalMb || 0;
+        dlTtlDays.value = d.ttlDays || 0;
+        dlLinkTtlSecs.value = d.linkTtlSecs || 0;
+        dlLinkMaxUses.value = d.maxUses || 0;
+        const k = d.keep || {};
+        dlKeepTree.value = k.tree || [];
+        dlKeepTotalBytes.value = k.totalBytes || 0;
+        dlKeepMaxTotalMb.value = k.maxTotalMb || 0;
+        // 选中的常驻文件若已不存在（被删/改名），清掉选中态，免得对着空气点生成
+        if (dlKeepSelected.value && !treeHasPath(dlKeepTree.value, dlKeepSelected.value)) {
+          dlKeepSelected.value = '';
+        }
+      } catch (e) {
+        dlError.value = '加载失败：' + e;
+      }
+    }
+
+    /** 文件名包成 shell 安全形式（命令是要贴进终端的，别让空格/引号炸掉） */
+    function shellQuote(s) {
+      return "'" + String(s).replace(/'/g, "'\\''") + "'";
+    }
+
+    async function genDownloadCmd(name, zone) {
+      const z = zone === 'keep' ? 'keep' : 'temp';
+      dlError.value = ''; dlCmd.value = ''; dlCopied.value = false;
+      try {
+        const r = await fetch('/api/downloads/link?zone=' + z + '&name=' + encodeURIComponent(name), { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { dlError.value = d.error || ('生成失败 HTTP ' + r.status); return; }
+        // -o 用文件名本身：常驻区的 d.name 是 `分类/文件`，只取最后一段
+        const outName = String(d.name || name).split('/').pop();
+        // 令牌走请求头，不进 URL：URL 会进 Cloudflare/反代日志与浏览器历史
+        dlCmd.value = 'curl -fL -H "X-Download-Token: ' + d.token + '" -o ' +
+          shellQuote(outName) + ' ' + location.origin + '/dl';
+        dlCmdName.value = d.name || name;
+      } catch (e) {
+        dlError.value = '生成失败：' + e;
+      }
+    }
+
+    async function copyDownloadCmd() {
+      const text = dlCmd.value;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // 局域网 http 下 clipboard API 不可用：退回到选中 + execCommand
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch { /* 交给用户手动选中 */ }
+        document.body.removeChild(ta);
+      }
+      dlCopied.value = true;
+      setTimeout(() => { dlCopied.value = false; }, 1500);
+    }
+
+    async function deleteDownload(name, zone) {
+      const z = zone === 'keep' ? 'keep' : 'temp';
+      if (!confirm('删除 ' + name + ' ？')) return;
+      dlError.value = '';
+      try {
+        const r = await fetch('/api/downloads/delete?zone=' + z + '&name=' + encodeURIComponent(name), { method: 'POST' });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          dlError.value = d.error || ('删除失败 HTTP ' + r.status);
+          return;
+        }
+        if (dlCmdName.value === name) { dlCmd.value = ''; dlCmdName.value = ''; }
+        await loadDownloads();
+      } catch (e) {
+        dlError.value = '删除失败：' + e;
+      }
+    }
+
     /**
      * 进入某页时按需拉数据（首次进入才拉；切回已加载过的页不重复请求）。
      * 这样首屏只付"当前页"的代价，切页也快。
@@ -1636,6 +1776,8 @@ const app = createApp({
         if (!cronJobs.value.length) await fetchCron();
       } else if (pg === 'token') {
         await loadTokenPage();
+      } else if (pg === 'downloads') {
+        await loadDownloads();
       }
     }
 
@@ -1678,6 +1820,11 @@ const app = createApp({
       notesPdfUrl, notesLoading, notesFullscreen, notesQuery, notesSearchResults, notesExpandedPaths,
       notesMobileView, notesMobileBack, isMobile, pdfPages, pdfProgress, pdfLoadPct,
       fetchNotesTree, openNotesFile, onTreeDirOpen, onNotesSearch, clearNotesSearch, openNotesFolder,
+      dlFiles, dlEnabled, dlError, dlCmd, dlCmdName, dlCopied, dlTotalBytes,
+      dlMaxFileMb, dlMaxTotalMb, dlTtlDays, dlLinkTtlSecs, dlLinkMaxUses,
+      dlKeepTree, dlKeepSelected, dlKeepExpanded, dlKeepTotalBytes, dlKeepMaxTotalMb, dlKeepPath,
+      selectKeepFile, onKeepDirOpen,
+      loadDownloads, genDownloadCmd, copyDownloadCmd, deleteDownload, fmtBytes,
     };
   },
 });
