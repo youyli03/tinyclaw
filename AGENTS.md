@@ -496,6 +496,28 @@ refactor(mcp): agent-centric MCP access control via per-agent mcp.toml
 
 `src/core/tinyclaw-submitter.ts` 是**独立的定时备份调度器**（每 4h 自动提交 `~/.tinyclaw` 配置仓库，设计上无人值守），不属于"agent 提交行为"，不适用 §10.2。如需对其也加审批，须单独改该模块。其提交信息仍遵循 §10.1（全英文 Conventional Commits）。
 
+### 10.4 Commit timing and granularity
+
+**Commit when the task is done — never leave finished work uncommitted.** As soon as a task (or a
+self-contained milestone within it) is finished, prepare the commit: stage, run the §10.2
+self-check, show the user the file list + proposed message, and ask for approval (§10.2 still
+applies — asking is mandatory; leaving it uncommitted is not an option).
+
+**Keep every commit small — one commit, one concern:**
+
+- Aim for **≤ 5 files** per commit. If a change touches more, split it by concern (e.g. security
+  hardening / new feature / the docs that only make sense with it) instead of one "misc" commit.
+- When several concerns share a file, stage **hunks** (`git add -p`, or `git diff | git apply
+  --cached`) so each commit still carries only its own concern.
+- An intermediate commit must still build: `npm run typecheck` has to pass on the committed tree
+  (verify with `git stash push --keep-index` before committing).
+- Docs go in the same commit as the code they describe (§4) — never split code and its docs.
+- Do not mix a `fix` into a `feat` commit because they happened in the same session; separate
+  concerns earn separate commits (and separate Conventional Commit types).
+
+> Rationale: small single-concern commits are reviewable, bisectable and revertable; a 14-file
+> "everything I did today" commit is none of those.
+
 ---
 
 ## 11. 私有约束：`AGENTS.local.md`
