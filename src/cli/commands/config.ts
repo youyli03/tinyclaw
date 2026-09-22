@@ -16,6 +16,8 @@ import { spawnSync } from "node:child_process";
 import { parse } from "smol-toml";
 import { ConfigSchema } from "../../config/schema.js";
 import { CONFIG_PATH, patchTomlField, readRawConfig } from "../../config/writer.js";
+import { formatConfigDiags, type ConfigDiag } from "../../config/validate.js";
+import { agentManager } from "../../core/agent-manager.js";
 import { loadMemStoresConfig, loadMcpConfigDetailed } from "../../config/loader.js";
 import { formatDiagnostics, summarizeLoad } from "../../mcp/load-report.js";
 import { printTable, prompt, bold, dim, green, red, yellow, cyan, section } from "../ui.js";
@@ -27,6 +29,27 @@ import { getFieldType } from "../../config/schema-keys.js";
 function mask(s: string): string {
   if (s.length <= 8) return "***";
   return s.slice(0, 4) + "…" + s.slice(-4);
+}
+
+/** 判断 agentId 是否存在（校验 `selfAccess.grantedAgents` 之类的授权列表用） */
+function isKnownAgent(id: string): boolean {
+  try {
+    return agentManager.listAgentIds().includes(id);
+  } catch {
+    return true; // 读不到就当存在，避免误报
+  }
+}
+
+/** 写入被校验拒绝时的统一输出 */
+function reportWriteRejected(res: { diagnostics: ConfigDiag[]; rejectedPath: string }): void {
+  console.error(red("✗ 配置未通过校验，已拒绝写入（config.toml 未被改动）："));
+  for (const line of formatConfigDiags(res.diagnostics)) console.error(`  ${line}`);
+  console.error(dim(`  被拒内容已留证：${res.rejectedPath}`));
+}
+
+/** 写入成功但有提示（warn）时统一输出 */
+function reportWriteWarnings(res: { diagnostics: ConfigDiag[] }): void {
+  for (const line of formatConfigDiags(res.diagnostics)) console.log(yellow(`  ${line}`));
 }
 
 // ── 子命令 ────────────────────────────────────────────────────────────────────
@@ -310,9 +333,11 @@ async function cmdSet(args: string[]): Promise<void> {
 
     // 序列化为 TOML 数组格式
     const tomlArr = "[" + currentArr.map((v) => JSON.stringify(v)).join(", ") + "]";
-    patchTomlField(sectionPath, key, tomlArr);
+    const arrRes = patchTomlField(sectionPath, key, tomlArr, { knownAgent: isKnownAgent });
+    if (!arrRes.ok) return reportWriteRejected(arrRes);
     const verb = mode === "append" ? "追加" : "移除";
     console.log(`${green("✓")} ${verb} "${cyan(rawVal)}" → ${dotPath} = ${dim(tomlArr)}`);
+    reportWriteWarnings(arrRes);
     return;
   }
 
@@ -347,8 +372,10 @@ async function cmdSet(args: string[]): Promise<void> {
     tomlValue = JSON.stringify(rawVal);
   }
 
-  patchTomlField(sectionPath, key, tomlValue);
+  const setRes = patchTomlField(sectionPath, key, tomlValue, { knownAgent: isKnownAgent });
+  if (!setRes.ok) return reportWriteRejected(setRes);
   console.log(`${green("✓")} [${sectionPath.join(".")}] ${key} = ${cyan(tomlValue)}`);
+  for (const line of formatConfigDiags(setRes.diagnostics)) console.log(yellow(`  ${line}`));
 
   // 枚举类型成功后显示其他可选值
   if (fieldType.kind === "enum" && fieldType.values.length > 1) {

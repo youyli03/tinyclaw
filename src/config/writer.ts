@@ -8,6 +8,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { atomicWriteText, backupFile, quarantineRejected, DEFAULT_BACKUP_KEEP } from "./safe-write.js";
+import {
+  hasConfigErrors,
+  validateConfigText,
+  type ConfigDiag,
+  type ValidateOptions,
+} from "./validate.js";
 
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
 
@@ -16,27 +23,70 @@ export { CONFIG_PATH };
 /**
  * 读取 config.toml 原始内容（保留注释）。
  * 若文件不存在则抛出错误。
+ *
+ * @param filePath 仅供测试注入；默认 `~/.tinyclaw/config.toml`
  */
-export function readRawConfig(): string {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    throw new Error(`配置文件不存在：${CONFIG_PATH}`);
+export function readRawConfig(filePath: string = CONFIG_PATH): string {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`配置文件不存在：${filePath}`);
   }
-  return fs.readFileSync(CONFIG_PATH, "utf-8");
+  return fs.readFileSync(filePath, "utf-8");
+}
+
+/** 写入选项：校验选项 + 可注入目标路径（测试用） */
+export interface ConfigWriteOptions extends ValidateOptions {
+  filePath?: string;
+}
+
+/** 校验后写入 config.toml 的结果 */
+export type ConfigWriteResult =
+  | { ok: true; backupPath: string | null; diagnostics: ConfigDiag[] }
+  | { ok: false; diagnostics: ConfigDiag[]; rejectedPath: string };
+
+/**
+ * **所有 config.toml 写入的唯一入口**：先校验，再备份，再原子写。
+ *
+ * - 校验有 error → **不落盘**，把被拒文本留证到 `config.toml.rejected-<ts>`（0600）并返回诊断
+ * - 通过 → `.bak-<ts>` 备份（保留 5 份）+ `.tmp`/rename 原子写 + chmod 0600
+ *
+ * 为什么必须统一走这里：`config.toml` 写坏 = 服务再也起不来（`loadConfig()` fail-fast），
+ * 而历史上 `patchTomlField` 是裸写。
+ */
+export function writeConfigText(
+  text: string,
+  opts: ConfigWriteOptions = {}
+): ConfigWriteResult {
+  const target = opts.filePath ?? CONFIG_PATH;
+  const validation = validateConfigText(text, opts);
+  if (hasConfigErrors(validation.diagnostics)) {
+    const rejectedPath = quarantineRejected(target, text);
+    return { ok: false, diagnostics: validation.diagnostics, rejectedPath };
+  }
+  const backupPath = backupFile(target, DEFAULT_BACKUP_KEEP);
+  atomicWriteText(target, text);
+  return { ok: true, backupPath, diagnostics: validation.diagnostics };
 }
 
 /**
  * 在保留注释的前提下，更新 TOML 配置中指定 section 的一个字段并写回磁盘。
  *
- * 示例：patchTomlField(["llm", "backends", "daily"], "model", '"gpt-4o"')
+ * 示例：`patchTomlField(["llm", "backends", "daily"], "model", '"gpt-4o"')`
+ *
+ * ⚠️ 写入前会**校验整份文件**：校验不过就不写，返回 `ok:false`（调用方必须处理并告知用户）。
  *
  * @param sectionPath  TOML section 路径（如 ["llm", "backends", "daily"]）
  * @param key          字段名
  * @param rawValue     已格式化的 TOML 值（字符串须带引号，如 `'"gpt-4o"'`；数字直接传 `"1234"`）
  */
-export function patchTomlField(sectionPath: string[], key: string, rawValue: string): void {
-  const content = readRawConfig();
-  const patched = applyTomlPatch(content, sectionPath, key, rawValue);
-  fs.writeFileSync(CONFIG_PATH, patched, "utf-8");
+export function patchTomlField(
+  sectionPath: string[],
+  key: string,
+  rawValue: string,
+  opts: ConfigWriteOptions = {}
+): ConfigWriteResult {
+  const target = opts.filePath ?? CONFIG_PATH;
+  const patched = applyTomlPatch(readRawConfig(target), sectionPath, key, rawValue);
+  return writeConfigText(patched, opts);
 }
 
 /**

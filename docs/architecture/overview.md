@@ -341,6 +341,8 @@ tinyclaw/
 ```
 ~/.tinyclaw/
 ├── config.toml               # 所有敏感配置（API key、Azure ID、QQ secret）
+├── config.toml.bak-*         # 写入前自动备份（保留最近 5 份，0600）
+├── config.toml.rejected-*    # 写前校验拒绝的内容留证（0600，submitter 不提交）
 ├── mcp.toml                  # MCP server 配置（独立文件）
 ├── .service_pid              # supervisor 进程 PID（tinyclaw restart 读取）
 ├── .github_token             # GitHub OAuth token（0600 权限，由 Device Flow 写入）
@@ -993,9 +995,11 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw model set [backend]` | 交互式数字菜单选模型 → 写入 config.toml → 可选 restart |
 | `tinyclaw config show` | 格式化显示配置（密钥脱敏） |
 | `tinyclaw config edit` | 用 `$EDITOR` 打开 config.toml |
-| `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string） |
+| `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string）；写入前校验整份配置，不过则拒写并留证 `config.toml.rejected-<ts>` |
 | `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`${SECRET:NAME}` 引用缺失、`enabled=false`；env / headers 只列键名，值不回显） |
 | `tinyclaw mcp add / remove / enable / disable` | 增删 MCP server、改 `enabled` 开关。走 `config-writer`（写前全量校验 + `.bak-<ts>` 备份 + 原子写），运行中的服务由文件监听自动重载。`add` 用法：`--stdio <cmd> [--arg a]… [--env K=V]…` 或 `--sse <url> [--header K=V]…`，可加 `--desc` / `--disabled` |
+| `tinyclaw config status` | 配置自愈状态：当前配置哈希、可用版本（LKG）、待确认（含启动尝试次数）、最近一次自动回退、备份/留证文件、最近一次健康自检结论 |
+| `tinyclaw config check` | 对当前 `config.toml` 跑写前校验 + 离线健康检查（不改文件；有 error 时退出码 1，便于脚本/CI 使用） |
 | `tinyclaw auth github` | 重新执行 Device Flow OAuth |
 | `tinyclaw auth status` | 检查 token 有效性 |
 | `tinyclaw status` | 服务进程 + systemd 状态与运行时长 + 日志来源 + 配置摘要 + channel 状态 |
@@ -1019,6 +1023,21 @@ tinyclaw mo<Tab>
 ```
 
 补全覆盖层级：顶层命令 → 子命令 → backend 名（model set/list）→ shell 类型（completions install）
+
+**配置写入路径（唯一入口）**
+
+`config.toml` 的任何写入都收口在 `src/config/writer.ts` 的 `writeConfigText()` / `patchTomlField()`：
+
+1. **校验**（`src/config/validate.ts`）：TOML 语法 → `ConfigSchema.safeParse`（与 `loadConfig()` 同一份真相）
+   → 交叉引用检查（工具名拼写需注入 `knownTool`；`extraRwPaths` 绝对性与存在性；`$SECRET` 占位符在
+   `secrets.toml` 里存在；授权的 agentId 存在；后端引用的 provider 有凭证；**schema 不认的键**会被 Zod
+   静默 strip，这里以 warn 点出来）
+2. **有 error 就拒写**：内容不落盘，留证 `config.toml.rejected-<ts>`（0600），返回诊断给调用方
+3. **通过则备份 + 原子写**：`.bak-<ts>`（保留 5 份）+ `.tmp`/rename + chmod 0600
+   （备份/原子写/留证复用 `src/config/safe-write.ts`，`mcp.toml` 的写入器同用一套）
+
+⚠️ 诊断文本**绝不回显字段原值**：Zod issue 只用 `path` + `code`，语法错误消息会裁剪形似 token 的长串 ——
+否则 `apiKey` 写错类型时 Zod 的 `received` 会把密钥带进日志/CLI/工具返回。
 
 ---
 

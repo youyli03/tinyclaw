@@ -12,14 +12,11 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { mcpConfigPath, analyzeMcpTomlText } from "../config/loader.js";
+import { atomicWriteText, backupFile, DEFAULT_BACKUP_KEEP } from "../config/safe-write.js";
 
 /** server 名允许的字符（与 `sanitizeMcpName` 的口径兼容） */
 export const MCP_SERVER_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
-
-/** 备份保留份数 */
-const BACKUP_KEEP = 5;
 
 /** 一个 MCP server 的定义（写盘用） */
 export interface McpServerSpec {
@@ -175,43 +172,10 @@ export function readMcpTomlText(p: string = mcpConfigPath()): string {
   }
 }
 
-/** 备份文件命名 */
-function backupName(base: string, date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const stamp =
-    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
-    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-  return `${base}.bak-${stamp}`;
-}
-
-/** 备份 + 清理旧备份，返回备份路径（原文件不存在时返回 null） */
-function backupMcpToml(p: string): string | null {
-  if (!fs.existsSync(p)) return null;
-  const dir = path.dirname(p);
-  const base = path.basename(p);
-  let dest = path.join(dir, backupName(base, new Date()));
-  for (let n = 2; fs.existsSync(dest); n++) {
-    dest = path.join(dir, `${backupName(base, new Date())}-${n}`);
-  }
-  fs.copyFileSync(p, dest);
-  fs.chmodSync(dest, 0o600);
-
-  const backups = fs
-    .readdirSync(dir)
-    .filter((f) => f.startsWith(`${base}.bak-`))
-    .sort();
-  for (const old of backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP))) {
-    try {
-      fs.unlinkSync(path.join(dir, old));
-    } catch {
-      /* 清理失败不影响本次写入 */
-    }
-  }
-  return dest;
-}
-
 /**
  * 校验并原子写入 mcp.toml。
+ *
+ * 备份/原子写/权限都走 `config/safe-write.ts`（与 `config.toml` 同一套实现）。
  *
  * @throws 生成的文本未通过校验时抛错（坏内容永不落盘）
  */
@@ -226,16 +190,7 @@ export function writeMcpTomlText(
     );
   }
 
-  fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
-  const backupPath = backupMcpToml(p);
-
-  const tmp = `${p}.tmp`;
-  fs.writeFileSync(tmp, text, { encoding: "utf-8", mode: 0o600 });
-  fs.renameSync(tmp, p);
-  try {
-    fs.chmodSync(p, 0o600);
-  } catch {
-    /* 某些文件系统不支持 chmod，忽略 */
-  }
+  const backupPath = backupFile(p, DEFAULT_BACKUP_KEEP);
+  atomicWriteText(p, text);
   return { backupPath };
 }

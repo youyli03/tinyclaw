@@ -496,6 +496,7 @@ import { getAliases, resolveAlias, aliasForSymbol } from "../llm/aliases.js";
 import { getCopilotModels } from "../llm/copilot.js";
 import { fetchFreeModels } from "../llm/openrouter.js";
 import { patchTomlField } from "../config/writer.js";
+import { formatConfigDiags } from "../config/validate.js";
 
 const BACKEND_KEYWORDS: Record<string, "daily" | "code" | "summarizer" | "vision"> = {
   chat: "daily",
@@ -635,7 +636,8 @@ registerCommand({
 
     if (sub === "reset") {
       const def = resolveAlias("mimo")!;
-      patchTomlField(["llm", "backends", "daily"], "model", '"' + def + '"');
+      const w = patchTomlField(["llm", "backends", "daily"], "model", '"' + def + '"');
+      if (!w.ok) return `❌ 配置未通过校验，已拒绝写入：\n${formatConfigDiags(w.diagnostics).join("\n")}`;
       return performRestart(session, "chat 已恢复默认 " + def, true);
     }
 
@@ -678,7 +680,10 @@ registerCommand({
       }
     }
 
-    patchTomlField(["llm", "backends", backend], "model", '"' + symbol + '"');
+    const wRes = patchTomlField(["llm", "backends", backend], "model", '"' + symbol + '"');
+    if (!wRes.ok) {
+      return `❌ 配置未通过校验，已拒绝写入：\n${formatConfigDiags(wRes.diagnostics).join("\n")}`;
+    }
     const al = aliasForSymbol(symbol);
     const note = backendKw + " 模型已切到 `" + symbol + "`" + (al ? " (别名 " + al + ")" : "");
     const reply = await performRestart(session, note, true);

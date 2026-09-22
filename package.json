@@ -18,7 +18,8 @@
     "test:edit-file": "node --import tsx/esm tests/edit-file-core.test.ts",
     "test:mcp": "node --import tsx/esm tests/mcp-loader-diagnostics.test.ts && node --import tsx/esm tests/mcp-config-writer.test.ts && node --import tsx/esm tests/mcp-watcher.test.ts",
     "test:mcp-writer": "node --import tsx/esm tests/mcp-config-writer.test.ts",
-    "test:mcp-watcher": "node --import tsx/esm tests/mcp-watcher.test.ts"
+    "test:mcp-watcher": "node --import tsx/esm tests/mcp-watcher.test.ts",
+    "test:config": "node --import tsx/esm tests/config-validate.test.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

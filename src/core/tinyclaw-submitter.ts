@@ -67,6 +67,9 @@ const DENY_PATTERNS = [
   /\.pyc$/,
   /\/node_modules\//,
   /\.bak/,
+  /\.rejected-/,      // 被写前校验拒绝的配置留证（坏配置绝不进 git）
+  /\.lkg$/,           // last-known-good 配置副本（由 config/state.ts 维护）
+  /\.tmp$/,           // 原子写的中间态
   /PLAN\.md$/,
   /codedir$/,
   /codesubmode$/,

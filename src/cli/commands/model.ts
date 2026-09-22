@@ -13,6 +13,7 @@ import { loadConfig } from "../../config/loader.js";
 import { getCopilotModels } from "../../llm/copilot.js";
 import { fetchFreeModels } from "../../llm/openrouter.js";
 import { patchTomlField } from "../../config/writer.js";
+import { formatConfigDiags } from "../../config/validate.js";
 import {
   printTable,
   select,
@@ -519,7 +520,13 @@ async function cmdSet(args: string[]): Promise<void> {
     return;
   }
 
-  patchTomlField(["llm", "backends", backendName], "model", JSON.stringify(newSymbol));
+  const writeRes = patchTomlField(["llm", "backends", backendName], "model", JSON.stringify(newSymbol));
+  if (!writeRes.ok) {
+    console.error(red("✗ 配置未通过校验，已拒绝写入："));
+    for (const line of formatConfigDiags(writeRes.diagnostics)) console.error(`  ${line}`);
+    console.error(dim(`  被拒内容已留证：${writeRes.rejectedPath}`));
+    return;
+  }
   console.log(`\n${green("✓")} 已将 [${backendName}] 模型更新为 ${cyan(newSymbol)}`);
 
   const shouldRestart = await confirm("是否重启 tinyclaw 服务？");

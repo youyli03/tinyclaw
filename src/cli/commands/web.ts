@@ -18,6 +18,7 @@ import * as crypto from "node:crypto";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, green, red, cyan, yellow, section, closeRl } from "../ui.js";
 import { CONFIG_PATH, patchTomlField } from "../../config/writer.js";
+import { formatConfigDiags } from "../../config/validate.js";
 import { redactSecret } from "../../utils/redact.js";
 
 export const subcommands = ["info", "token", "help"] as const;
@@ -160,7 +161,13 @@ function cmdToken(args: string[]): void {
   const newToken = args[0]?.trim() || crypto.randomBytes(24).toString("hex");
 
   try {
-    patchTomlField(["web"], "token", JSON.stringify(newToken));
+    const wRes = patchTomlField(["web"], "token", JSON.stringify(newToken));
+    if (!wRes.ok) {
+      console.error(red("✗ 配置未通过校验，已拒绝写入："));
+      for (const line of formatConfigDiags(wRes.diagnostics)) console.error(`  ${line}`);
+      console.error(dim(`  被拒内容已留证：${wRes.rejectedPath}`));
+      return;
+    }
     section("Token 已更新");
     console.log(`  新 Token  ${bold(newToken)}`);
     console.log();

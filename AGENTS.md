@@ -68,6 +68,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 |---|---|
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
 | `src/main-supervisor.ts` | 进程守护、崩溃回滚 |
+| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
 | `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
 | `src/core/inbound-bus.ts` | 用户回复统一路由（MFA / Plan 审批 / ask_user 的 Waiter 队列） |
@@ -86,7 +87,6 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `src/commands/` | 斜杠命令注册表 + 内置命令 |
 | `src/ipc/` | Unix socket 协议（`protocol.ts` 是请求/响应类型的唯一真相） |
 | `src/mcp/client.ts` | MCP 懒加载管理器 |
-| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(保留注释的 TOML 补丁) |
 | `src/web/backend/` | Dashboard HTTP 服务 + SQLite + 采样 |
 | `src/utils/` | logger / redact / file-perm / tls |
 | `mcp-servers/` | 独立 MCP server（browser / news / notes / polymarket / sts2） |
@@ -172,6 +172,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 
 - `src/config/schema.ts` 是唯一真相。新增配置项 → 加 Zod 字段 + 默认值 + `config.example.toml` 注释 + 文档。
 - `src/config/writer.ts` 做的是**行级补丁**，只替换命中键的那一行；多行数组/多行字符串会被破坏。改动它时务必补测试。
+  所有 `config.toml` 写入都必须经 `writeConfigText()` / `patchTomlField()`：**写前校验**（`src/config/validate.ts`
+  的语法 / schema / 交叉引用）→ 不过则拒写并留证 `config.toml.rejected-<ts>` → 通过则 `.bak-<ts>` 备份 +
+  `.tmp`/rename 原子写 + 0600。备份/原子写/留证的共用实现在 `src/config/safe-write.ts`（`mcp.toml` 同用）。
 - 密钥读取只允许来自 `~/.tinyclaw/config.toml` / `secrets.toml`，永不硬编码，永不打日志（用 `utils/redact.ts`）。
 
 ### 工具

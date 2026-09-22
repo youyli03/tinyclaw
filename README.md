@@ -44,6 +44,12 @@ tinyclaw restart
 
 所有配置在 `~/.tinyclaw/config.toml`(不进仓库),模板见 [config.example.toml](config.example.toml)。
 
+**写入前会校验**:`tinyclaw config set/edit` 与 agent 的配置工具都会先跑一遍
+`src/config/validate.ts`(TOML 语法 → Zod schema → 交叉引用:工具名拼写、路径绝对/存在、
+`$SECRET` 占位符、后端 provider 有没有凭证)。**校验不过就拒写**,被拒内容留证
+`config.toml.rejected-<时间戳>`,原文件一字不动 —— 因为 `config.toml` 写坏 = 服务起不来
+(`loadConfig()` fail-fast)。通过时先备份 `config.toml.bak-<时间戳>`(保留最近 5 份)再原子写入,权限 0600。
+
 **GitHub Copilot:**
 ```toml
 [providers.copilot]
@@ -280,7 +286,9 @@ tinyclaw completions install           # 安装 tab 补全
 
 ```
 ~/.tinyclaw/
-├── config.toml          # 配置(含密钥,不进仓库)
+├── config.toml          # 配置(含密钥,不进仓库；写入前会校验,坏值拒写)
+├── config.toml.bak-*    # 每次写入前的备份(保留最近 5 份)
+├── config.toml.rejected-* # 被写前校验拒绝的内容留证(0600,不进 git)
 ├── mcp.toml             # MCP server 配置
 ├── memstores.toml       # 向量知识库配置(news 等)
 ├── dashboard.db         # Dashboard 指标数据库(SQLite)

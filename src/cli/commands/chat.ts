@@ -19,6 +19,7 @@ import { AgentManager } from "../../core/agent-manager.js";
 import type { LoopSessionConfig } from "../../core/agent-manager.js";
 import { agentManager } from "../../core/agent-manager.js";
 import { patchTomlField } from "../../config/writer.js";
+import { formatConfigDiags } from "../../config/validate.js";
 import type { SessionInfo } from "../../ipc/protocol.js";
 
 export const subcommands = ["list", "new", "loop", "-s", "--agent", "-a", "help"] as const;
@@ -411,9 +412,22 @@ async function runNewQQBot(args: string[]): Promise<void> {
     console.error(dim("  用法：tinyclaw chat new qqbot --app-id <id> --secret <secret>"));
     process.exit(1);
   }
-  patchTomlField(["channels", "qqbot"], "appId", JSON.stringify(appId));
-  patchTomlField(["channels", "qqbot"], "clientSecret", JSON.stringify(clientSecret));
+  const w1 = patchTomlField(["channels", "qqbot"], "appId", JSON.stringify(appId));
+  if (!w1.ok) {
+    console.error(red("✗ 配置未通过校验，已拒绝写入："));
+    for (const line of formatConfigDiags(w1.diagnostics)) console.error(`  ${line}`);
+    console.error(dim(`  被拒内容已留证：${w1.rejectedPath}`));
+    return;
+  }
+  const w2 = patchTomlField(["channels", "qqbot"], "clientSecret", JSON.stringify(clientSecret));
   console.log(green("✓ QQBot 已写入 config.toml"));
+  for (const line of formatConfigDiags([...w1.diagnostics, ...(w2.ok ? w2.diagnostics : [])])) {
+    console.log(yellow(`  ${line}`));
+  }
+  if (!w2.ok) {
+    console.error(red("✗ clientSecret 未写入（配置校验未通过）："));
+    for (const line of formatConfigDiags(w2.diagnostics)) console.error(`  ${line}`);
+  }
   console.log(dim(`  appId        = ${appId}`));
   console.log(dim(`  clientSecret = ${"*".repeat(4)}${clientSecret.slice(-4)}`));
   console.log(dim("  执行 tinyclaw restart 使配置生效"));
