@@ -19,7 +19,7 @@
 
 ### Dashboard(Web UI)
 
-- 访问方式:`tinyclaw web` 显示访问地址,内置 URL token 认证(cookie 持久化)
+- 访问方式:`tinyclaw web` 显示访问地址;鉴权见下方「鉴权」小节(2026-09 加固:token 不再进 URL)
 - **概览页**:今日系统/AI 请求趋势图,快速状态一览
 - **指标页**:按 category/key 分组的折线图/柱状图,由 `db_write` 工具写入 `dashboard.db`
 - **Token 页**:prompt 构成细分(见下)
@@ -35,9 +35,35 @@
   - ⚠️ **JS 与 CSS 必须用同一个断点**：`isMobile` 取自 `matchMedia("(max-width: 768px)")` 的 `matches`
     （并监听其 `change`），**不要**改回 `window.innerWidth <= 768` —— 实测安卓 Edge 上两者会在某些时刻不一致，
     于是 CSS 认为窄屏、JS 却把顶栏 `v-if` 掉了（顶栏消失、抽屉无从打开）
-  - 排查入口：侧边栏页脚显示**构建号**（服务端注入 `<html data-build>`，静态资源按它加 `?v=`），
+  - 排查入口：侧边栏页脚显示**构建号**（服务端注入 `<html data-build>`，值为前端内容
+    `index.html`+`main.js`+`style.css` 的 sha1 前 12 位，静态资源按它加 `?v=` ——
+    **内容没变则重启也不变号**，不会无谓刷掉浏览器缓存），
     用来判断手机加载的是不是新版本；带 `?diag=1` 打开会在页面顶部渲染诊断条
     （构建号 / `innerWidth`×`innerHeight` / dpr / visualViewport / `isMobile` / `matchMedia` / 顶栏是否在 DOM / UA）
+
+#### 鉴权（2026-09 加固）
+
+- **入口**：`token` 只从 **POST `/__login` 的表单体** 或 **`Authorization: Bearer <token>` / `X-Auth-Token` 头**读取；
+  **不再从 URL query 读取**（URL 会进 Cloudflare/反代访问日志、浏览器历史与 Referer）
+- **会话**：登录成功种 `dash_token` cookie，值是**随机 256bit 会话 id**（不是 token 本身）；
+  服务端内存 Map 保存「会话 id → 过期时间」，有活动即续期（TTL 7 天）。**进程重启全部会话失效**，
+  故 token 轮换后需重新登录。cookie 为 `HttpOnly; SameSite=Lax`，经反代 HTTPS 到达时追加 `Secure`
+- **比较**：token 先各自 sha256 再 `timingSafeEqual`（常量时间，不泄漏长度与前缀）
+- **限速**：登录失败按来源计数（单来源 8 次/10 分钟、全局 32 次 → 锁 15 分钟）；
+  **正确 token 一律放行**，所以攻击者无法用错误 token 把真实用户锁在门外。
+  来源标识在直连时用 socket 地址，仅当请求来自本机回环（cloudflared 跑在本机）才信任 `CF-Connecting-IP`
+- **保护范围**：除 `GET/POST /__login`、`GET/POST /__logout` 外**所有路径都要鉴权**（含静态资源）——
+  登录页是自包含 HTML（内联样式、无外部资源），因此不需要按扩展名放行，也**不再有 `/api/notes/file` 免鉴权白名单**
+- **响应头**：所有响应带 `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、
+  `X-Frame-Options: SAMEORIGIN`（用 SAMEORIGIN 而非 DENY，是为了笔记页的同源 PDF `<iframe>` 仍可用）
+- **不再发通配 CORS**：Dashboard 是同源应用，`Access-Control-Allow-Origin: *` 只会让任意网站在浏览器里读走数据接口
+- **跨站防护**：非安全方法用 `Sec-Fetch-Site: cross-site` 判定并拒绝（**不要**改回 Origin/Host 比对：
+  cloudflared 会把 Host 改写成回源地址 `127.0.0.1:4096`，比对必然失败 → 真实用户登录被 403）
+- ⚠️ **缓存头必须 `private`**：静态资源若用 `public`，Cloudflare 边缘会把该 200 缓存下来并**对未登录者公开**
+  （实测未登录 `GET /main.js` → `200 + cf-cache-status: HIT`）——鉴权只在**回源**生效，边缘缓存会绕过它；
+  数据接口一律 `private, no-store`
+- **退出**：`GET /__logout` 只渲染确认页（避免被跨站 link/img 触发登出），`POST /__logout` 清 cookie 并删会话
+- ⚠️ 令牌仍是**单因子静态凭证**：对外网暴露的域名建议在 Cloudflare Access 等边缘再加一层身份验证
 
 #### 加载与轮询（首屏 4 个 API 请求）
 
@@ -67,7 +93,7 @@
 
 #### 笔记页（Markdown / PDF）
 
-浏览 `~/.tinyclaw/notes/`（`/api/notes/tree` 拿目录树，`/api/notes/file?path=` 取内容；该接口**不鉴权**，见 §7.1）。
+浏览 `~/.tinyclaw/notes/`（`/api/notes/tree` 拿目录树，`/api/notes/file?path=` 取内容；两者都需登录，桌面端 PDF 走同源 iframe，会话 cookie 照常带上）。
 Markdown 走 `marked`（懒加载，见上），PDF 分两条路：
 
 | 端 | 渲染方式 |

@@ -1033,7 +1033,9 @@ const WebSchema = z.object({
   /** 监听端口,默认 4096 */
   port: z.number().int().positive().default(4096),
   /**
-   * 访问令牌（可选）。设置后访问 dashboard 需携带 ?token=xxx 或有效 cookie。
+   * 访问令牌（可选）。设置后需先 POST /__login 用该 token 登录（或脚本带
+   * Authorization: Bearer <token> 头），登录后凭 dash_token 会话 cookie 访问。
+   * token 不再从 URL query 读取（避免进入反代/浏览器日志）。
    * 不设置则不鉴权（仅内网使用时可不设）。
    * 推荐用 openssl rand -hex 24 生成。
    */

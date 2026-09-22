@@ -338,8 +338,9 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
   const body = JSON.stringify(data);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Cache-Control": "no-cache",
+    // 不再发通配 CORS：Dashboard 是同源应用，通配 CORS 只会让任意网站在浏览器里读走数据接口
+    // 缓存头用 private + no-store：数据接口绝不能被共享缓存（Cloudflare 边缘）缓存后公开
+    "Cache-Control": "private, no-store",
   };
   // 响应体较大且客户端支持时 gzip(小响应压缩收益低,跳过)
   const ae = _curReq?.headers["accept-encoding"];
@@ -577,7 +578,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
             "Accept-Ranges": "bytes",
             "Content-Length": String(chunkLen),
             "Content-Disposition": `inline; filename="${fname}"`,
-            "Access-Control-Allow-Origin": "*",
             "Cache-Control": pdfCache,
           });
           fs.createReadStream(abs, { start, end }).pipe(res);
@@ -587,7 +587,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
             "Content-Disposition": `inline; filename="${fname}"`,
             "Content-Length": String(total),
             "Accept-Ranges": "bytes",
-            "Access-Control-Allow-Origin": "*",
             "Cache-Control": pdfCache,
           });
           fs.createReadStream(abs).pipe(res);

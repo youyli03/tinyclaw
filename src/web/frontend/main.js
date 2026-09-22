@@ -3,6 +3,17 @@
    Vue 3 CDN，Chart.js CDN，原生 fetch
    ───────────────────────────────────────────────────────────────── */
 
+// 鉴权加固：会话过期后任何 API 都返回 401，统一刷新回登录页；
+// 否则页面只会静默地不再更新（每个 fetch 调用点各写一遍不值得）。
+(function () {
+  const rawFetch = window.fetch.bind(window);
+  window.fetch = async function (...args) {
+    const res = await rawFetch(...args);
+    if (res.status === 401) location.reload();
+    return res;
+  };
+})();
+
 const { createApp, ref, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 
 // ── 颜色常量 ─────────────────────────────────────────────────────────────────

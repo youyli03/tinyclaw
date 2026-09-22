@@ -7,6 +7,9 @@
  *   web info          显示当前访问地址（本地 IP + Wi-Fi IP + 端口 + token）
  *   web token         刷新 token（生成新随机 token 并写入配置）
  *   web token <value> 手动设置指定 token
+ *
+ * 注意:token **不再拼进访问 URL**（URL 会进 Cloudflare/反代访问日志、浏览器历史与 Referer）。
+ * 首次访问在登录框粘贴 token；脚本调用带 `Authorization: Bearer <token>` 头。
  */
 
 import * as os from "node:os";
@@ -22,7 +25,7 @@ export const description = "管理 Dashboard Web 访问（地址、token）";
 export const usage = `tinyclaw web <subcommand> [args]
 
 子命令:
-  info              显示所有可访问的 URL（本地 IP + Wi-Fi IP + 端口 + token）
+  info              显示所有可访问的 URL 与 Token（token 不再拼进 URL）
   token             生成新随机 token 并写入配置（重启后生效）
   token <value>     手动设置指定 token（重启后生效）
 
@@ -97,11 +100,12 @@ function getLocalIPs(): IfaceInfo[] {
   return result;
 }
 
-// ── 构造带 token 的 URL ───────────────────────────────────────────────────────
+// ── 构造访问地址 ──────────────────────────────────────────────────────────────
+// token **不再拼进 URL**：URL 会进 Cloudflare/反代访问日志、浏览器历史与 Referer。
+// 首次访问改为在登录框粘贴 token（脚本调用带 Authorization: Bearer 头）。
 
-function buildUrl(host: string, port: number, token?: string): string {
-  const base = `http://${host}:${port}/`;
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+function buildUrl(host: string, port: number): string {
+  return `http://${host}:${port}/`;
 }
 
 // ── 子命令: info ──────────────────────────────────────────────────────────────
@@ -120,22 +124,23 @@ function cmdInfo(): void {
   // 状态行
   console.log(`  状态   ${cfg.enabled ? green("已启用") : red("未启用")}`);
   console.log(`  端口   ${bold(String(cfg.port))}`);
+  // 完整 token 只在交互终端打印；重定向到文件/管道时保持脱敏，避免被顺手写进日志
+  const showToken = Boolean(cfg.token) && process.stdout.isTTY === true;
   if (cfg.token) {
-    // 状态行只显示脱敏 token(完整 token 在下方可访问地址的 URL 中)
-    console.log(`  Token  ${dim(redactSecret(cfg.token))}`);
+    console.log(`  Token  ${showToken ? bold(cfg.token) : dim(redactSecret(cfg.token))}`);
   } else {
     console.log(`  Token  ${yellow("未设置（无需认证）")}`);
   }
   console.log();
 
-  // 所有可访问 URL
+  // 所有可访问 URL（token 不再拼进 URL）
   const ifaces = getLocalIPs();
   if (!ifaces.length) {
     console.log(dim("  未检测到网络接口"));
   } else {
     console.log(bold("  可访问地址："));
     for (const iface of ifaces) {
-      const url = buildUrl(iface.address, cfg.port, cfg.token);
+      const url = buildUrl(iface.address, cfg.port);
       const tag = cyan(`[${iface.label} / ${iface.name}]`);
       console.log(`    ${tag.padEnd(30)}  ${bold(url)}`);
     }
@@ -143,8 +148,9 @@ function cmdInfo(): void {
 
   console.log();
   if (cfg.token) {
-    console.log(dim("  提示：首次访问带 ?token= 后浏览器自动保存 cookie，后续无需重复输入"));
-    console.log(dim("  使用 tinyclaw web token 可刷新 token（重启后生效）"));
+    console.log(dim("  登录：打开地址 → 在登录框粘贴 Token（不再需要 URL 带参数）"));
+    console.log(dim('  脚本：curl -H "Authorization: Bearer <token>" <地址>api/stats'));
+    console.log(dim("  使用 tinyclaw web token 可刷新 token（重启后生效，所有会话失效）"));
   }
 }
 
@@ -159,16 +165,16 @@ function cmdToken(args: string[]): void {
     console.log(`  新 Token  ${bold(newToken)}`);
     console.log();
     console.log(dim("  配置已写入 config.toml，重启 tinyclaw 后生效。"));
-    console.log(dim("  旧 token cookie 将自动失效，需用新 URL 重新访问。"));
+    console.log(dim("  重启后所有登录会话失效，用新 token 在登录框重新登录。"));
     console.log();
 
-    // 读取当前端口，打印新 URL
+    // 读取当前端口，打印新地址（token 不再拼进 URL）
     const cfg = readWebCfg();
     const ifaces = getLocalIPs();
     if (ifaces.length) {
       console.log(bold("  新访问地址："));
       for (const iface of ifaces) {
-        const url = buildUrl(iface.address, cfg.port, newToken);
+        const url = buildUrl(iface.address, cfg.port);
         const tag = cyan(`[${iface.label} / ${iface.name}]`);
         console.log(`    ${tag.padEnd(30)}  ${url}`);
       }
