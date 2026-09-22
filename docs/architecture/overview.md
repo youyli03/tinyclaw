@@ -345,6 +345,7 @@ tinyclaw/
 ├── config.toml.rejected-*    # 写前校验拒绝的内容留证（0600，submitter 不提交）
 ├── config.toml.lkg           # last-known-good 配置副本（成功启动后写入，回退用）
 ├── .config-state.json        # 配置状态：current / lastGood / pending / lastRollback（0600）
+├── .safe_config              # SAFE MODE 标记（存在 = 用最小配置启动）
 ├── mcp.toml                  # MCP server 配置（独立文件）
 ├── .service_pid              # supervisor 进程 PID（tinyclaw restart 读取）
 ├── .github_token             # GitHub OAuth token（0600 权限，由 Device Flow 写入）
@@ -1000,10 +1001,11 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string）；写入前校验整份配置，不过则拒写并留证 `config.toml.rejected-<ts>` |
 | `tinyclaw config status` | 配置自愈状态：当前配置哈希、可用版本（LKG）、待确认（含启动尝试次数）、最近一次自动回退、备份/留证文件、最近一次健康自检结论 |
 | `tinyclaw config check` | 对当前 `config.toml` 跑写前校验 + 离线健康检查（不改文件；有 error 时退出码 1，便于脚本/CI 使用） |
+| `tinyclaw config reload` | 校验 + 变更分级（hot/soft/restart）并说明如何生效。CLI 是独立进程，不能把改动热应用进正在跑的服务（服务自己的文件监听会应用） |
+| `tinyclaw config rollback --list \| --lkg \| --to <备份>` | 手动回退到 LKG 或某个 `config.toml.bak-*`（回退前先校验，坏版本不会被覆盖上去） |
+| `tinyclaw config safe-mode on\|off\|status` | SAFE MODE 开关（LKG 也起不来时用最小配置启动，只保留 `providers`/`llm`） |
 | `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`${SECRET:NAME}` 引用缺失、`enabled=false`；env / headers 只列键名，值不回显） |
 | `tinyclaw mcp add / remove / enable / disable` | 增删 MCP server、改 `enabled` 开关。走 `config-writer`（写前全量校验 + `.bak-<ts>` 备份 + 原子写），运行中的服务由文件监听自动重载。`add` 用法：`--stdio <cmd> [--arg a]… [--env K=V]…` 或 `--sse <url> [--header K=V]…`，可加 `--desc` / `--disabled` |
-| `tinyclaw config status` | 配置自愈状态：当前配置哈希、可用版本（LKG）、待确认（含启动尝试次数）、最近一次自动回退、备份/留证文件、最近一次健康自检结论 |
-| `tinyclaw config check` | 对当前 `config.toml` 跑写前校验 + 离线健康检查（不改文件；有 error 时退出码 1，便于脚本/CI 使用） |
 | `tinyclaw auth github` | 重新执行 Device Flow OAuth |
 | `tinyclaw auth status` | 检查 token 有效性 |
 | `tinyclaw status` | 服务进程 + systemd 状态与运行时长 + 日志来源 + 配置摘要 + channel 状态 |
@@ -1069,6 +1071,33 @@ tinyclaw mo<Tab>
   而非这次改动）→ 只告警，继续运行，不再回退。
 - 配置开关：`[health].enabled`（默认 true，关掉则既不跑自检也不回退）、`[health].probeLlm`（默认 true）、
   `[health].probeTimeoutMs`（默认 5000）。结果落 `logs/health-YYYY-MM-DD.jsonl`。
+
+**热重载与分级**（`src/config/reload-plan.ts` + `reload.ts` + `watcher.ts`）
+
+- `loadConfig()` 默认缓存整份配置；`invalidateConfigCache()` / `loadConfig({fresh:true})` 用于热重载。
+- 变更分级（`classifyConfigChange()`，纯函数）：
+  - `hot`：`retry` / `tools` / `agent` / `interactive` / `auth.mfa` / `sandbox` 策略类 / `selfAccess` —— 全仓约 94 处
+    `loadConfig()` 基本都是"用时现读"，换缓存即生效
+  - `soft`：`llm.backends` / `concurrency` / `memory.embedModel|enabled` —— 这些子系统在启动时初始化一次，
+    需要重新 init（`llmRegistry.init()` + `initLLMConcurrency()`）
+  - `restart`：`channels.*` / `voice.*` / `web.port` / `sandbox.enabled` / `sandbox.execShell` —— 进程级资源，
+    或一次工具调用内会被多处读取（热改会半新半旧）→ 走受控重启
+  - 原则：**证明不了"改动会立刻被读取点看到"就归 restart**（宁可不热，不假热）
+- 入口：agent 工具 `config_reload`（MFA）、CLI `tinyclaw config reload`、`config.toml` 文件监听
+  （`ContentWatcher`：内容哈希 + 父目录监听 + 800ms 去抖；连续 3 次重载失败自动停用监听）。
+  流程：**校验 → 分级 → 应用（hot/soft）或 markPending + waitIdle(≤10s) + exit(75)（restart）→ 健康自检 → 失败回退 LKG**。
+  CLI 是独立进程，只能分级与提示，不能把改动热应用进正在跑的服务（服务自己的监听会应用它）。
+- 子系统重 init 与受控重启由 main.ts 通过 `setConfigReloadHooks()` 注入，避免 tools → main 的反向依赖。
+
+**SAFE MODE（LKG 也坏时的最后一层）**（`src/config/safe-mode.ts`）
+
+- 开关是标记文件 `~/.tinyclaw/.safe_config`（或 `TINYCLAW_SAFE_CONFIG=1`），**不依赖 config.toml 本身**。
+- 命中时 `loadConfig()` 不再 fail-fast，改用 `buildSafeConfig()`：只保留 `providers` / `llm`（从坏文件里尽力捞），
+  其余段走 schema 默认值，并**显式收紧特权面**（`grantedAgents=[]`、`allowDelete=false`、`exemptMfa=false`、`wideWriteAccess=false`）。
+- 主进程在 SAFE MODE 下：不建任何 QQBot、不启动 cron/loop、不做健康自检、不提升 LKG、不装配置监听；
+  日志与 CLI 都明说"本次不是用你的 config.toml 启动的"。
+- 触发：supervisor 在"配置回退后仍 quick-fail"时自动打开并重启（每个 supervisor 生命周期一次）；
+  也可手动 `tinyclaw config safe-mode on|off|status`。手动回退用 `tinyclaw config rollback --list|--lkg|--to <备份>`。
 
 ---
 

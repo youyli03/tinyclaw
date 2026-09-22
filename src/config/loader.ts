@@ -17,6 +17,7 @@ import {
   type SecretsConfig,
 } from "./schema.js";
 import { ensureSecureFilePerm } from "../utils/file-perm.js";
+import { buildSafeConfig, isSafeModeEnabled } from "./safe-mode.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -28,12 +29,51 @@ const EXAMPLE_PATH = path.resolve(
 );
 
 let cached: Config | null = null;
+/** 本次进程是否因 SAFE MODE 才起得来（main.ts 据此跳过 channels/cron/loop 与 LKG 提升） */
+let safeModeActive = false;
+
+/** 本进程是否处于安全模式（`loadConfig()` 曾降级启动） */
+export function isSafeModeActive(): boolean {
+  return safeModeActive;
+}
+
+/**
+ * 配置不可用时的收尾：SAFE MODE 开着就用最小配置启动，否则维持 fail-fast。
+ *
+ * 为什么保留 fail-fast 作为默认：带病运行会让人以为"服务是好的"。只有明确开了安全模式
+ * （`~/.tinyclaw/.safe_config` 或 `TINYCLAW_SAFE_CONFIG=1`，通常由 supervisor 在"回退也没救"时打开）
+ * 才降级 —— 那时"能起来修"比"干净地死"更重要。
+ */
+function enterSafeModeOrDie(rawText: string, reason: string): Config {
+  if (!isSafeModeEnabled()) {
+    process.exit(1);
+  }
+  safeModeActive = true;
+  const safe = buildSafeConfig(rawText);
+  console.error(
+    `[tinyclaw] 🛟 SAFE MODE：配置不可用（${reason}），已用最小配置启动 —— ` +
+      `本次**不是用你的 config.toml** 跑的：只保留 providers / llm，未接 QQBot、未跑 cron/loop。\n` +
+      `  修好 ~/.tinyclaw/config.toml 后执行：tinyclaw config safe-mode off && tinyclaw restart`
+  );
+  return safe;
+}
+
+/**
+ * 丢弃配置缓存，下一次 `loadConfig()` 重新读盘。
+ * 热重载（`src/config/reload.ts`）在应用 `hot` 类变更时调用。
+ */
+export function invalidateConfigCache(): void {
+  cached = null;
+}
 
 /**
  * 加载并验证配置。首次调用读取磁盘，后续返回缓存。
  * 配置不合法时打印友好错误并退出进程（fail-fast）。
+ *
+ * @param opts.fresh 丢弃缓存强制重新读盘（等价于先 `invalidateConfigCache()`）
  */
-export function loadConfig(): Config {
+export function loadConfig(opts: { fresh?: boolean } = {}): Config {
+  if (opts.fresh === true) cached = null;
   if (cached) return cached;
 
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -53,22 +93,26 @@ export function loadConfig(): Config {
     process.exit(1);
   }
 
+  let content = "";
   let raw: unknown;
   try {
-    const content = fs.readFileSync(CONFIG_PATH, "utf-8");
+    content = fs.readFileSync(CONFIG_PATH, "utf-8");
     raw = parse(content);
   } catch (err) {
     console.error(`[tinyclaw] 配置文件解析失败（TOML 语法错误）：\n${err}`);
-    process.exit(1);
+    cached = enterSafeModeOrDie(content, `TOML 语法错误：${err instanceof Error ? err.message : err}`);
+    return cached;
   }
 
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
+    // 只用 path + code，避免把字段原值（可能是密钥）打进日志
     const issues = result.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+      .map((i) => `  - ${i.path.length > 0 ? i.path.join(".") : "(root)"}: ${i.code}`)
       .join("\n");
     console.error(`[tinyclaw] 配置验证失败：\n${issues}`);
-    process.exit(1);
+    cached = enterSafeModeOrDie(content, `schema 校验失败（${result.error.issues.length} 处）`);
+    return cached;
   }
 
   cached = result.data;

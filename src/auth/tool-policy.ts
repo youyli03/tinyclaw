@@ -92,6 +92,7 @@ const HARD_DENY_REACT_UNATTENDED = new Set([
   "mcp_server_remove",
   "mcp_server_set_enabled",
   "mcp_reload",
+  "config_reload",
 ]);
 
 /** 硬禁止工具的解释（拒绝文案用） */
@@ -109,6 +110,9 @@ const HARD_DENY_REASON: Record<string, string> = {
   mcp_server_set_enabled:
     "无人值守时禁止启停 MCP server（启用一个被禁用的 server 等于扩大可执行面）。请在有人值守的会话里操作。",
   mcp_reload: "无人值守时禁止重载 MCP 配置：重载本身无害，但它是上述改动生效的入口，统一在有人值守时进行。",
+  config_reload:
+    "无人值守时禁止热重载 config.toml：配置里含 MFA / 沙箱 / 无人值守白名单本身，模型在没人看着时改这些" +
+    "等于绕过监督。请在有人值守的会话里执行（会走 MFA 确认），或自己改文件后重启服务。",
 };
 
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {

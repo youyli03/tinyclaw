@@ -15,9 +15,16 @@ import * as os from "node:os";
 import { spawnSync } from "node:child_process";
 import { parse } from "smol-toml";
 import { ConfigSchema } from "../../config/schema.js";
-import { CONFIG_PATH, patchTomlField, readRawConfig } from "../../config/writer.js";
+import { CONFIG_PATH, patchTomlField, readRawConfig, writeConfigText } from "../../config/writer.js";
 import { formatConfigDiags, validateConfigText, type ConfigDiag } from "../../config/validate.js";
-import { configStatePaths, readConfigState, currentConfigDigest } from "../../config/state.js";
+import {
+  configStatePaths,
+  readConfigState,
+  currentConfigDigest,
+  noteConfigWritten,
+} from "../../config/state.js";
+import { isSafeModeEnabled, safeModeFlagPath, setSafeMode } from "../../config/safe-mode.js";
+import { reloadConfig } from "../../config/reload.js";
 import { runOfflineHealthChecks, formatHealthReport } from "../../health/config-health.js";
 import { agentManager } from "../../core/agent-manager.js";
 import { loadMemStoresConfig, loadMcpConfigDetailed } from "../../config/loader.js";
@@ -526,6 +533,155 @@ async function cmdCheck(): Promise<void> {
   if (!health.ok) process.exitCode = 1;
 }
 
+/** `config reload`：校验 + 分级 + 提示如何生效（CLI 是独立进程，不能把改动热应用进正在跑的服务） */
+async function cmdReload(): Promise<void> {
+  const res = await reloadConfig("cli", {
+    knownAgent: isKnownAgent,
+    // CLI 的工具注册表是空的，别拿它判"工具名不存在"
+  });
+  section("配置热重载");
+  for (const line of res.message.split("\n")) {
+    const colored =
+      line.startsWith("已拒绝") || line.startsWith("错误")
+        ? red(line)
+        : line.startsWith("⚠️")
+          ? yellow(line)
+          : line;
+    console.log(`  ${colored}`);
+  }
+  if (res.needsRestart) {
+    console.log();
+    console.log(dim("  需要重启才生效：tinyclaw restart（运行中的服务也会自行监听文件变更）"));
+  }
+  console.log();
+  if (!res.ok) process.exitCode = 1;
+}
+
+/** `config rollback`：把配置恢复到 LKG 或某个 `.bak-*` 备份 */
+async function cmdRollback(args: string[]): Promise<void> {
+  const paths = configStatePaths();
+  const dir = paths.dir;
+  const listBackups = (): string[] => {
+    try {
+      return fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith("config.toml.bak-"))
+        .sort()
+        .reverse();
+    } catch {
+      return [];
+    }
+  };
+
+  if (args.includes("--list") || args.length === 0) {
+    section("可回退的配置版本");
+    const lkgExists = fs.existsSync(paths.lkgPath);
+    console.log(
+      `  ${lkgExists ? green("✓") : dim("·")} ${cyan("--lkg")}            ` +
+        `${lkgExists ? paths.lkgPath : dim("（尚未记录：服务成功启动过一次才有）")}`
+    );
+    for (const b of listBackups()) {
+      console.log(`  ${cyan("--to")} ${b}`);
+    }
+    console.log();
+    console.log(dim("  用法：tinyclaw config rollback --lkg | --to <备份文件名>"));
+    console.log();
+    if (args.length === 0 && !lkgExists && listBackups().length === 0) {
+      console.error(red("  没有可回退的版本"));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const toIdx = args.indexOf("--to");
+  const useLkg = args.includes("--lkg");
+  let source: string;
+  let label: string;
+  if (toIdx >= 0) {
+    const name = args[toIdx + 1];
+    if (name === undefined) {
+      console.error(red("  ✗ --to 需要一个备份文件名（先 tinyclaw config rollback --list）"));
+      process.exitCode = 1;
+      return;
+    }
+    // 只允许仓库内的备份文件，避免变成"任意文件写入 config.toml"
+    if (!/^config\.toml\.bak-[\w.-]+$/.test(name)) {
+      console.error(red(`  ✗ 只接受 config.toml.bak-* 备份文件（收到 "${name}"）`));
+      process.exitCode = 1;
+      return;
+    }
+    source = path.join(dir, name);
+    label = name;
+  } else if (useLkg) {
+    source = paths.lkgPath;
+    label = "config.toml.lkg (LKG)";
+  } else {
+    console.error(red("  ✗ 用法：tinyclaw config rollback --lkg | --to <备份文件名> | --list"));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!fs.existsSync(source)) {
+    console.error(red(`  ✗ 源文件不存在：${source}`));
+    process.exitCode = 1;
+    return;
+  }
+  let text: string;
+  try {
+    text = fs.readFileSync(source, "utf-8");
+  } catch (err) {
+    console.error(red(`  ✗ 读取失败：${err instanceof Error ? err.message : String(err)}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  section("配置回退");
+  console.log(`  源：${dim(label)}`);
+  const res = writeConfigText(text, { knownAgent: isKnownAgent });
+  if (!res.ok) {
+    console.error(red("  ✗ 该版本未通过校验，未覆盖当前配置（免得越回越坏）："));
+    for (const line of formatConfigDiags(res.diagnostics)) console.error(`    ${line}`);
+    console.error(dim(`  被拒内容已留证：${res.rejectedPath}`));
+    process.exitCode = 1;
+    return;
+  }
+  noteConfigWritten(text, dir);
+  console.log(green(`  ✓ 已恢复（当前配置的旧版本已备份：${res.backupPath ?? "无"}）`));
+  console.log(dim("  生效：tinyclaw restart（运行中的服务也会监听文件变更自动热重载）"));
+  console.log();
+}
+
+/** `config safe-mode on|off`：LKG 也起不来时的最后手段 */
+async function cmdSafeMode(args: string[]): Promise<void> {
+  const action = args[0] ?? "status";
+  if (action === "status") {
+    const on = isSafeModeEnabled();
+    console.log();
+    console.log(`  SAFE MODE：${on ? yellow("已开启") : dim("关闭")}  ${dim(safeModeFlagPath())}`);
+    console.log(
+      dim("  开启后服务只用 providers / llm 段启动（不接 QQBot、不跑 cron/loop、不写 LKG），供你修配置。")
+    );
+    console.log();
+    return;
+  }
+  if (action !== "on" && action !== "off") {
+    console.error(red("  ✗ 用法：tinyclaw config safe-mode [on|off|status]"));
+    process.exitCode = 1;
+    return;
+  }
+  const ok = setSafeMode(action === "on");
+  if (!ok) {
+    console.error(red("  ✗ 写入标记文件失败"));
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    action === "on"
+      ? yellow("  ✓ SAFE MODE 已开启：执行 tinyclaw restart 后生效（服务会用最小配置启动）")
+      : green("  ✓ SAFE MODE 已关闭：执行 tinyclaw restart 后按 config.toml 启动")
+  );
+}
+
 // ── 帮助 ──────────────────────────────────────────────────────────────────────
 
 /** 第二层：只列子命令 */
@@ -541,6 +697,9 @@ ${bold("子命令：")}
   ${cyan("set")}               修改单个配置字段
   ${cyan("status")}            配置自愈状态（可用版本 LKG / 待确认 / 最近回退 / 留证文件 / 健康日志）
   ${cyan("check")}             对当前配置跑写前校验 + 离线自检（不改文件，出错返回码 1）
+  ${cyan("reload")}            校验 + 变更分级，提示 hot/soft/restart 与如何生效
+  ${cyan("rollback")}          回退到 LKG 或某个 .bak-* 备份（--list 看候选）
+  ${cyan("safe-mode")}         SAFE MODE 开关（LKG 也起不来时用最小配置启动）
 
 ${dim("运行 tinyclaw config <sub> -h 查看子命令详细参数")}
 `);
@@ -618,10 +777,13 @@ export const subcommands = [
   "set",
   "status",
   "check",
+  "reload",
+  "rollback",
+  "safe-mode",
   "help",
 ] as const;
-export const description = "配置管理：查看 / 读取 / 编辑 / 修改字段 / 自愈状态 / 校验自检";
-export const usage = "config <show|get|edit|path|set|status|check> [args]";
+export const description = "配置管理：查看/读取/编辑/改字段/自愈状态/校验/热重载/回退/安全模式";
+export const usage = "config <show|get|edit|path|set|status|check|reload|rollback|safe-mode> [args]";
 
 export async function run(args: string[]): Promise<void> {
   const sub = args[0] ?? "show";
@@ -662,6 +824,12 @@ export async function run(args: string[]): Promise<void> {
       return cmdStatus();
     case "check":
       return cmdCheck();
+    case "reload":
+      return cmdReload();
+    case "rollback":
+      return cmdRollback(rest);
+    case "safe-mode":
+      return cmdSafeMode(rest);
     case "--help":
     case "-h":
     case "help":

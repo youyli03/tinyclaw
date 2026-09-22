@@ -38,6 +38,7 @@ import {
   restoreLastGoodConfig,
   shouldRollbackConfig,
 } from "./config/state.js";
+import { setSafeMode } from "./config/safe-mode.js";
 
 const SERVICE_PID_FILE = path.join(os.homedir(), ".tinyclaw", ".service_pid");
 const MAIN_SCRIPT = new URL("./main.ts", import.meta.url).pathname;
@@ -51,6 +52,8 @@ const ROLLBACK_TRIGGER_COUNT = 5;
  * 配置类崩溃**第 1 次**就回退，不必等 ROLLBACK_TRIGGER_COUNT 次退避（那要 ~107s）。
  */
 const QUICK_FAIL_MS = 60_000;
+/** 同一份配置连续快速失败多少次才判定"这份配置起不来"（防把无关崩溃误判成配置问题） */
+const MIN_QUICK_FAIL_ATTEMPTS = 2;
 
 const ROLLBACK_STATE_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_state.json");
 const ROLLBACK_NOTIFY_FILE = path.join(os.homedir(), ".tinyclaw", ".rollback_notify.json");
@@ -182,14 +185,19 @@ async function tryGitRollback(): Promise<{ ok: boolean; prevHead: string; curren
 
 /** 本进程生命周期内是否已执行过一次**配置**回退（只回退一次，防循环） */
 let hasRolledBackConfig = false;
+/** 是否已因"回退也没救"而打开 SAFE MODE（只开一次，避免反复重启） */
+let hasEnteredSafeMode = false;
 /** 上次拉起子进程的时间（quick-fail 判定用） */
 let lastSpawnAt = 0;
+/** 当前这份配置是第几次启动尝试（`bumpBootAttempt()` 的返回值） */
+let bootAttempts = 0;
 
 function startChild(): void {
   if (shuttingDown) return;
 
   lastSpawnAt = Date.now();
   const attempts = bumpBootAttempt();
+  bootAttempts = attempts;
   child = spawn("node", ["--import", "tsx/esm", MAIN_SCRIPT], {
     stdio: "inherit",
     env: { ...process.env },
@@ -219,9 +227,11 @@ function startChild(): void {
       `[supervisor] main.ts 异常退出（code=${code ?? "null"}, signal=${signal ?? "null"}）`
     );
 
-    // ── 配置类 quick-fail：启动后 60s 内退出，且磁盘配置与 LKG 不一致 → 立刻回退配置 ──
+    // ── 配置类 quick-fail：启动后 60s 内退出，且磁盘配置与 LKG 不一致 → 回退配置 ──
+    // ⚠️ 要求**同一份配置连续两次**启动都快速失败：只崩一次可能是无关原因（OOM、手动 kill、代码 bug），
+    // 那次回退会把一份好配置换掉。多花一轮（默认 2s 退避）换取不误判。
     const quickFail = Date.now() - lastSpawnAt < QUICK_FAIL_MS;
-    if (quickFail && !hasRolledBackConfig && shouldRollbackConfig()) {
+    if (quickFail && !hasRolledBackConfig && shouldRollbackConfig() && bootAttempts >= MIN_QUICK_FAIL_ATTEMPTS) {
       hasRolledBackConfig = true;
       console.warn("[supervisor] 启动后迅速退出且配置与上一份可用版本不同，回退配置...");
       const res = restoreLastGoodConfig(
@@ -239,10 +249,20 @@ function startChild(): void {
       console.error(`[supervisor] 配置回退失败：${res.reason ?? "未知原因"}，继续正常退避重启`);
     }
     if (quickFail && hasRolledBackConfig && shouldRollbackConfig()) {
-      console.error(
-        "[supervisor] 回退后配置仍与 LKG 不一致且继续快速退出 —— 可能是 LKG 本身有问题，" +
-          "不再自动回退（等人工介入 / safe mode）"
-      );
+      // 回退过了还起不来 → LKG 本身有问题（密钥被轮换、盘满、路径被删…）
+      // 最后一层：打开 SAFE MODE（用最小配置启动），让服务能起来供人修，而不是无限崩溃
+      if (!hasEnteredSafeMode) {
+        hasEnteredSafeMode = true;
+        setSafeMode(true);
+        console.error(
+          "[supervisor] 回退后仍快速退出 —— 判定 LKG 也不可用，已打开 SAFE MODE（最小配置启动）并重启；" +
+            "修好后执行：tinyclaw config safe-mode off && tinyclaw restart"
+        );
+        restartCount = 0;
+        setTimeout(startChild, 500);
+        return;
+      }
+      console.error("[supervisor] SAFE MODE 下仍快速退出，停止自动干预（等人工介入）");
     }
 
     if (restartCount >= MAX_RESTARTS) {

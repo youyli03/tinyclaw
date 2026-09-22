@@ -1,20 +1,14 @@
 /**
  * McpWatcher — `~/.tinyclaw/mcp.toml` 变更监听
  *
- * 只在**主进程**装监听（与 `skills/watcher.ts` 同构）；cron worker 是独立进程，
- * 由主进程通过 IPC（`{ type: "mcp_changed" }`）通知它自己 `reload()`。
+ * 实现在通用的 `ContentWatcher`（`src/utils/content-watch.ts`）：**内容哈希判断变更**（不用 mtime）+
+ * 监听父目录（写入是 `.tmp` + rename，watch 文件会丢事件）+ 去抖。
  *
- * 两个刻意的设计：
- * - **用内容哈希判断"变了没有"，不用 mtime**：本机（RK3588 / SMB 共享）实测同一文件连续两次写入
- *   mtime 完全相同（见 `AGENTS.md` §7.4），靠 mtime 的缓存会漏掉更新。
- * - 监听**父目录**而不是文件本身：编辑器/写入器的"写临时文件再 rename"会替换 inode，
- *   直接 watch 文件会丢掉后续事件（`config-writer.ts` 正是这么写的）。
+ * 只在**主进程**装监听；cron worker 是独立进程，由主进程通过 IPC（`{ type: "mcp_changed" }`）通知它自行重载。
  */
 
-import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { mcpConfigPath } from "../config/loader.js";
+import { ContentWatcher, contentDigest, digestOfContent } from "../utils/content-watch.js";
 import { mcpManager } from "./client.js";
 
 /** 去抖窗口（ms）：一次保存可能触发多个 fs 事件 */
@@ -25,32 +19,22 @@ export function isMcpConfigFileName(name: string, base = "mcp.toml"): boolean {
   return name === base;
 }
 
-/** 内容哈希（空串也算稳定值） */
-export function mcpTomlDigest(text: string): string {
-  return crypto.createHash("sha1").update(text, "utf-8").digest("hex");
-}
-
-/** 文本 → 哈希；文件不存在（null）保持 null */
-export function digestOfContent(text: string | null): string | null {
-  return text === null ? null : mcpTomlDigest(text);
-}
-
-/** 读盘并算哈希；文件不存在返回 null */
-function digestOfFile(p: string): string | null {
-  try {
-    return mcpTomlDigest(fs.readFileSync(p, "utf-8"));
-  } catch {
-    return null;
-  }
-}
+/** 内容哈希（保留导出：mcp 侧的测试/工具直接用） */
+export const mcpTomlDigest = contentDigest;
+export { digestOfContent };
 
 class McpWatcher {
-  private watcher: fs.FSWatcher | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private lastDigest: string | null = null;
-  private starting = false;
+  private readonly inner: ContentWatcher;
   /** 变更回调（主进程用它通知 cron worker） */
-  private onChange: (() => void) | null = null;
+  private onChanged: (() => void) | null = null;
+
+  constructor() {
+    this.inner = new ContentWatcher({
+      targetPath: mcpConfigPath(),
+      debounceMs: DEBOUNCE_MS,
+      label: "mcp-watcher",
+    });
+  }
 
   /**
    * 启动监听（幂等）。
@@ -58,64 +42,25 @@ class McpWatcher {
    * @param onChange 本进程 reload 完成后的额外回调（如通知 cron worker）
    */
   async start(onChange?: () => void): Promise<void> {
-    if (this.watcher !== null || this.starting) return;
-    this.starting = true;
-    try {
-      this.onChange = onChange ?? null;
-      const target = mcpConfigPath();
-      const dir = path.dirname(target);
-      const base = path.basename(target);
-      this.lastDigest = digestOfFile(target);
-      if (!fs.existsSync(dir)) {
-        // ~/.tinyclaw 还不存在：没有可监听的目标，下次启动再装
-        return;
-      }
-      this.watcher = fs.watch(dir, (_event, filename) => {
-        const name = filename === null ? base : String(filename);
-        if (!isMcpConfigFileName(name, base)) return;
-        this.schedule();
-      });
-      // watcher 自身出错时不要让进程崩（fs.watch 在部分文件系统上会抛 error）
-      this.watcher.on("error", (err) => {
-        console.warn("[mcp-watcher] 监听失败，已停用文件监听：", err.message);
-        this.stop();
-      });
-      console.log(`[mcp-watcher] watching ${target}`);
-    } finally {
-      this.starting = false;
-    }
+    this.onChanged = onChange ?? null;
+    this.inner.start(() => {
+      void this.reloadNow();
+    });
   }
 
   /** 停止监听（幂等） */
   stop(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    if (this.watcher !== null) {
-      try {
-        this.watcher.close();
-      } catch {
-        /* ignore */
-      }
-      this.watcher = null;
-    }
+    this.inner.stop();
   }
 
-  /** 去抖后按内容哈希判断是否需要重载 */
-  private schedule(): void {
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.applyIfChanged();
-    }, DEBOUNCE_MS);
+  /** 供手动触发：内容真变了才重载 */
+  async applyIfChanged(): Promise<boolean> {
+    const changed = this.inner.applyIfChanged();
+    return changed;
   }
 
-  /** 供测试/手动触发：立即检查并重载 */
-  async applyIfChanged(target: string = mcpConfigPath()): Promise<boolean> {
-    const digest = digestOfFile(target);
-    if (digest === this.lastDigest) return false; // 内容没变（如 touch / 备份轮转）→ 不重载
-    this.lastDigest = digest;
+  /** 重载（由 watcher 回调触发） */
+  private async reloadNow(): Promise<void> {
     try {
       const summary = await mcpManager.reload("watch");
       console.log(`[mcp-watcher] ${summary}`);
@@ -123,11 +68,10 @@ class McpWatcher {
       console.warn("[mcp-watcher] 重载失败：", err instanceof Error ? err.message : err);
     }
     try {
-      this.onChange?.();
+      this.onChanged?.();
     } catch (err) {
       console.warn("[mcp-watcher] 通知 cron worker 失败：", err instanceof Error ? err.message : err);
     }
-    return true;
   }
 }
 

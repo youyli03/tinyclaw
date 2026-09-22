@@ -15,9 +15,11 @@ initGlobalLogger();
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig } from "./config/loader.js";
+import { loadConfig, isSafeModeActive } from "./config/loader.js";
 import { CONFIG_PATH } from "./config/writer.js";
 import { promoteConfig, restoreLastGoodConfig, shouldRollbackConfig } from "./config/state.js";
+import { setConfigReloadHooks, reloadConfig } from "./config/reload.js";
+import { configWatcher } from "./config/watcher.js";
 import { runOfflineHealthChecks, formatHealthReport, appendHealthLog } from "./health/config-health.js";
 import { probeDailyBackend, withLlmProbe } from "./health/llm-probe.js";
 import { llmRegistry } from "./llm/registry.js";
@@ -158,8 +160,15 @@ async function main(): Promise<void> {
   // 0. 清理 venv 环境污染 + 加载用户自定义环境变量
   stripVenvFromEnv();
   loadDotEnv();
-  // 1. 验证配置（fail-fast）
+  // 1. 验证配置（fail-fast；SAFE MODE 下降级为最小配置并置 safeMode=true）
   const cfg = loadConfig();
+  const safeMode = isSafeModeActive();
+  if (safeMode) {
+    console.error(
+      "[tinyclaw] 🛟 SAFE MODE 生效：本次不是用你的 config.toml 启动的（只保留 providers / llm，" +
+        "不接 QQBot、不跑 cron/loop、不监听配置变更）。修好后：tinyclaw config safe-mode off && tinyclaw restart"
+    );
+  }
   console.log("[tinyclaw] Config loaded");
 
   // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
@@ -183,7 +192,8 @@ async function main(): Promise<void> {
   void mcpWatcher.start(() => cronScheduler.notifyMcpChanged());
 
   // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
-  const qqbotsMap = cfg.channels.qqbots ?? {};
+  // SAFE MODE：不接任何 QQBot（配置不可信时不对外发声，只留 IPC/CLI 供修复）
+  const qqbotsMap = safeMode ? {} : (cfg.channels.qqbots ?? {});
   const connectorsMap = new Map<string, QQBotConnector>();
   const connectors: QQBotConnector[] = [];
   // 记录 sessionId → connector，用于 session_send 精确路由
@@ -1052,8 +1062,8 @@ ${message}`;
   const ipcServer = startIpcServer(sessions, connector, connectorsMap);
   console.log("[tinyclaw] IPC server listening");
 
-  // 5. 启动 Cron 调度器
-  await cronScheduler.start(connector);
+  // 5. 启动 Cron 调度器（SAFE MODE 下跳过）
+  if (!safeMode) await cronScheduler.start(connector);
 
   // 6. 启动 Loop Session 引擎
   // loopTick：将 TASK.md 内容作为用户消息，直接调 runAgent，走完整 agent 路径。
@@ -1182,11 +1192,16 @@ ${message}`;
   await loopRunner.start(loopTick);
 
   // 启动 loop 触发器管理器（新机制：bindTo 绑定任意 session）
-  loopTriggerManager.start({
-    getSession,
-    runAgent,
-    connectors: connectorsMap,
-  });
+  // SAFE MODE 下不启动自动执行器：配置不可信时不该让定时/loop 任务继续动真格
+  if (safeMode) {
+    console.error("[tinyclaw] 🛟 SAFE MODE：跳过 loop 触发器与 cron 调度器（只保留 IPC/CLI 供修复）");
+  } else {
+    loopTriggerManager.start({
+      getSession,
+      runAgent,
+      connectors: connectorsMap,
+    });
+  }
 
   // 7. 启动内置每日记忆维护调度器
   // 提前初始化 embed LLM，确保 QMD 使用正确的向量模型（避免 GGUF session 先于 rkllm 初始化）
@@ -1225,6 +1240,7 @@ ${message}`;
     tinyclawSubmitter.stop();
     stopNewsWatcher();
     mcpWatcher.stop();
+    configWatcher.stop();
     stopCollector();
     stopDashboard();
     if (connector) await connector.stop();
@@ -1236,39 +1252,48 @@ ${message}`;
 
   // ── 启动健康自检（改坏自动回退的判据）──
   // 顺序很重要：**先自检、再提升 LKG** —— 否则会把一份坏配置记成"可用版本"。
-  try {
-    const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-    const knownIds = agentManager.listAgentIds();
-    let health = runOfflineHealthChecks({
-      cfg,
-      rawText: raw,
-      knownAgent: (id) => knownIds.includes(id),
-      knownTool: (name) => getTool(name) !== undefined,
-    });
-    if (cfg.health.enabled && cfg.health.probeLlm) {
-      const probe = await probeDailyBackend(cfg.health.probeTimeoutMs);
-      health = withLlmProbe(health, probe);
-    }
-    appendHealthLog(health);
-    for (const line of formatHealthReport(health)) console.log(`[health] ${line}`);
-
-    if (health.rollbackWorthy && shouldRollbackConfig()) {
-      // 配置有确定性错误，且与"上一份可用配置"不同 → 回退，并请求立即重启（exit 75 不算崩溃）
-      const res = restoreLastGoodConfig("启动健康自检发现确定性配置错误");
-      if (res.ok) {
-        console.error(
-          "[tinyclaw] ⚠️ 配置健康检查失败，已回退到上一份可用配置并立即重启：" +
-            `${res.record?.fromHash.slice(0, 8)} → ${res.record?.toHash.slice(0, 8)}`
-        );
-        process.exit(75);
+  // SAFE MODE 下不做自检、不写 LKG、不装监听：此时跑的不是用户的 config.toml，写 LKG 会把线索引坏。
+  if (safeMode) {
+    console.error("[tinyclaw] 🛟 SAFE MODE：跳过健康自检 / LKG 提升 / config.toml 自动重载");
+  } else {
+    try {
+      const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
+      const knownIds = agentManager.listAgentIds();
+      let health = runOfflineHealthChecks({
+        cfg,
+        rawText: raw,
+        knownAgent: (id) => knownIds.includes(id),
+        knownTool: (name) => getTool(name) !== undefined,
+      });
+      if (cfg.health.enabled && cfg.health.probeLlm) {
+        const probe = await probeDailyBackend(cfg.health.probeTimeoutMs);
+        health = withLlmProbe(health, probe);
       }
-      console.error(`[tinyclaw] 配置健康检查失败，且无法回退（${res.reason ?? "未知"}），继续带病运行`);
-    }
+      appendHealthLog(health);
+      for (const line of formatHealthReport(health)) console.log(`[health] ${line}`);
 
-    if (cfg.health.enabled) promoteConfig(raw);
-    else console.log("[tinyclaw] 健康自检已关闭（[health].enabled = false），未记录 LKG");
-  } catch (err) {
-    console.warn(`[tinyclaw] 健康自检/LKG 失败：${err instanceof Error ? err.message : String(err)}`);
+      if (health.rollbackWorthy && shouldRollbackConfig()) {
+        // 配置有确定性错误，且与"上一份可用配置"不同 → 回退，并请求立即重启（exit 75 不算崩溃）
+        const res = restoreLastGoodConfig("启动健康自检发现确定性配置错误");
+        if (res.ok) {
+          console.error(
+            "[tinyclaw] ⚠️ 配置健康检查失败，已回退到上一份可用配置并立即重启：" +
+              `${res.record?.fromHash.slice(0, 8)} → ${res.record?.toHash.slice(0, 8)}`
+          );
+          process.exit(75);
+        }
+        console.error(
+          `[tinyclaw] 配置健康检查失败，且无法回退（${res.reason ?? "未知"}），继续带病运行`
+        );
+      }
+
+      if (cfg.health.enabled) promoteConfig(raw);
+      else console.log("[tinyclaw] 健康自检已关闭（[health].enabled = false），未记录 LKG");
+    } catch (err) {
+      console.warn(
+        `[tinyclaw] 健康自检/LKG 失败：${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // ── 自动回退通知（supervisor 写入）──：不依赖 connector，先落日志 ──
@@ -1310,6 +1335,37 @@ ${message}`;
     } catch {
       /* ignore */
     }
+  }
+
+  // ── 配置热重载能力注入 + config.toml 自动重载 ──
+  // 子系统重 init / 受控重启 / 等待空闲都只有 main.ts 有，注入后 agent 工具与文件监听共用同一条路径。
+  // SAFE MODE 下不装文件监听：此时 config.toml 是坏的，自动重载只会反复失败。
+  setConfigReloadHooks({
+    applySoft: async (after) => {
+      await llmRegistry.init();
+      initLLMConcurrency(after.concurrency.maxConcurrentLLMRequests);
+    },
+    waitIdle: async () => {
+      const idle = Promise.all(
+        [...sessions.values()].map((s) => s.waitIdle().catch(() => undefined))
+      ).then(() => undefined);
+      // 最多等 10s：配置变更不该因为一个长任务永远不落地
+      await Promise.race([idle, new Promise<void>((r) => setTimeout(r, 10_000))]);
+    },
+    requestRestart: (reason) => {
+      console.warn(`[tinyclaw] 配置热重载请求受控重启：${reason}`);
+      process.exit(75);
+    },
+  });
+  if (!safeMode) {
+    configWatcher.start(async () => {
+      const res = await reloadConfig("watch", {
+        knownTool: (name) => getTool(name) !== undefined,
+        knownAgent: (id) => agentManager.listAgentIds().includes(id),
+      });
+      console.log(`[config-watcher] ${res.message}`);
+      return res.ok;
+    });
   }
 
   if (connector) {

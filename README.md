@@ -60,6 +60,16 @@ tinyclaw restart
 上游 5xx / 超时 / 限流只告警 —— 以免上游抽风把好配置回退掉。结果写 `logs/health-YYYY-MM-DD.jsonl`。
 查看:`tinyclaw config status`(可用版本/待确认/最近回退);手动自检:`tinyclaw config check`。
 
+**热重载(改完不必重启)**:服务监听 `config.toml`(内容哈希判断,`touch` 不触发),变更按**分级**处理:
+`hot`(retry/tools/mfa/沙箱策略等"用时现读"的段)换缓存即生效;`soft`(LLM 后端/并发/记忆阈值)重新 init 子系统;
+`restart`(channels/voice/web.port/sandbox 开关)走受控重启 —— 证明不了会立即生效的段一律归 restart。
+手动触发:agent 工具 `config_reload`(MFA)或 `tinyclaw config reload`;`config_validate` 只读校验。
+
+**LKG 也坏时**:`tinyclaw config rollback --list / --lkg / --to <备份>` 可手动回退;
+若自动回退后仍起不来,supervisor 会打开 **SAFE MODE**(标记文件 `~/.tinyclaw/.safe_config`):
+用最小配置启动(只保留 `providers`/`llm`,不接 QQBot、不跑 cron/loop、不写 LKG、不带特权面),
+让服务能起来供你修;`tinyclaw config safe-mode on|off|status` 管理。
+
 **GitHub Copilot:**
 ```toml
 [providers.copilot]
@@ -182,6 +192,11 @@ tinyclaw chat loop trigger <sessionId>     # 立即触发一次 tick
 tinyclaw web                           # 显示 Dashboard 访问地址
 
 tinyclaw config show / edit            # 查看(脱敏)/ 编辑配置
+tinyclaw config status                 # 配置自愈状态(LKG/待确认/最近回退)
+tinyclaw config check                  # 校验 + 离线自检(出错返回码 1)
+tinyclaw config reload                 # 校验 + 变更分级(hot/soft/restart)
+tinyclaw config rollback --list        # 可回退版本;--lkg / --to <备份> 执行回退
+tinyclaw config safe-mode on|off       # LKG 也起不来时用最小配置启动
 tinyclaw mcp status                    # MCP server 配置载入结果(+ 载入诊断)
 tinyclaw mcp add <name> --stdio <cmd>  # 新增 server(另支持 --sse <url> / --arg / --env K=V / --desc)
 tinyclaw mcp remove <name>             # 删除 server(可写 enable / disable)
@@ -284,6 +299,8 @@ tinyclaw completions install           # 安装 tab 补全
 | `mcp_server_remove` | 删除某个 server 定义并热重载(**MFA**;工具一并注销) |
 | `mcp_server_set_enabled` | 设置某个 server 的 `enabled` 开关并热重载(**MFA**) |
 | `mcp_reload` | 重新读盘并热重载 MCP 配置(手改 `mcp.toml` 后用它立即生效,不必重启服务) |
+| `config_validate` | 只读:校验 `config.toml`(语法/schema/交叉引用)+ 离线自检 |
+| `config_reload` | 把磁盘上的 `config.toml` 热应用进运行中的进程(**MFA**;分级 hot/soft/restart,自检失败自动回退) |
 
 ### Code 模式专用
 
@@ -301,6 +318,7 @@ tinyclaw completions install           # 安装 tab 补全
 ├── config.toml.rejected-* # 被写前校验拒绝的内容留证(0600,不进 git)
 ├── config.toml.lkg      # 上一份"被证实可用"的配置(启动成功后写入,改坏时自动回退用)
 ├── .config-state.json   # 配置状态(current / lastGood / pending / 最近回退,0600)
+├── .safe_config         # SAFE MODE 标记(存在 = 用最小配置启动,只留 providers/llm)
 ├── mcp.toml             # MCP server 配置
 ├── memstores.toml       # 向量知识库配置(news 等)
 ├── dashboard.db         # Dashboard 指标数据库(SQLite)

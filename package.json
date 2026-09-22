@@ -21,7 +21,9 @@
     "test:mcp-watcher": "node --import tsx/esm tests/mcp-watcher.test.ts",
     "test:config": "node --import tsx/esm tests/config-validate.test.ts",
     "test:config-state": "node --import tsx/esm tests/config-state.test.ts",
-    "test:config-health": "node --import tsx/esm tests/config-health.test.ts"
+    "test:config-health": "node --import tsx/esm tests/config-health.test.ts",
+    "test:config-reload": "node --import tsx/esm tests/config-reload.test.ts",
+    "test:config-safe-mode": "node --import tsx/esm tests/config-safe-mode.test.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

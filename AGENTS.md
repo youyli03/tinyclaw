@@ -68,7 +68,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 |---|---|
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
 | `src/main-supervisor.ts` | 进程守护：崩溃退避重启 + **配置 quick-fail 自动回退**（LKG 覆盖）+ 代码 git 回退 |
-| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) |
+| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) · `reload-plan.ts`/`reload.ts`/`watcher.ts`(分级热重载) · `safe-mode.ts`(最小配置启动) |
+| `src/health/` | `config-health.ts`(离线自检，CLI 可复用) · `llm-probe.ts`(在线探测 + 错误分流) |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
 | `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
 | `src/core/inbound-bus.ts` | 用户回复统一路由（MFA / Plan 审批 / ask_user 的 Waiter 队列） |
@@ -176,6 +177,13 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   的语法 / schema / 交叉引用）→ 不过则拒写并留证 `config.toml.rejected-<ts>` → 通过则 `.bak-<ts>` 备份 +
   `.tmp`/rename 原子写 + 0600。备份/原子写/留证的共用实现在 `src/config/safe-write.ts`（`mcp.toml` 同用）。
 - 密钥读取只允许来自 `~/.tinyclaw/config.toml` / `secrets.toml`，永不硬编码，永不打日志（用 `utils/redact.ts`）。
+- **热重载分级**（`src/config/reload-plan.ts` + `reload.ts`）：`hot`（用时现读的段，换缓存）/ `soft`
+  （`llm.backends` / `concurrency` / `memory.embedModel|enabled`，需重新 init 子系统）/ `restart`
+  （`channels` / `voice` / `web.port` / `sandbox.enabled|execShell`，进程级资源或一次调用内多处读取）。
+  **证明不了"改动会立刻被读取点看到"就归 `restart`** —— 宁可不热，不假热。入口：agent 工具 `config_reload`、
+  CLI `tinyclaw config reload`、`config.toml` 监听（`ContentWatcher`，连续 3 次失败自动停用）。
+- **`loadConfig()` 默认缓存**：新增"用时现读"的配置读取点没问题；如果在**启动时取一次存字段**，
+  必须同时把它归入 `reload-plan.ts` 的 `soft`/`restart`，否则热重载对它无效。
 
 ### 工具
 
