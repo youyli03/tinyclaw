@@ -116,7 +116,13 @@ try {
   /* ignore */
 }
 
-/** 执行 git 回退：git stash + git checkout HEAD~1，返回是否成功 */
+/**
+ * 执行代码回退：`git stash` + `git checkout HEAD~1 -- .`
+ *
+ * ⚠️ 为什么不是 `git checkout HEAD~1`：那会让仓库进入 **detached HEAD**，之后任何提交都落在游离
+ * HEAD 上，仓库静默分叉。`checkout <rev> -- .` 只把上一个 commit 的文件内容取回工作区/索引，
+ * HEAD 不动、分支不动，语义就是"把代码退回上一个 commit"，坏改动仍安全躺在 stash 里。
+ */
 async function tryGitRollback(): Promise<{ ok: boolean; prevHead: string; currentHead: string }> {
   const cwd = path.dirname(path.dirname(MAIN_SCRIPT)); // project root
 
@@ -132,30 +138,35 @@ async function tryGitRollback(): Promise<{ ok: boolean; prevHead: string; curren
       p.on("error", (e) => resolve({ ok: false, out: e.message }));
     });
 
-  // 获取当前 HEAD commit hash
+  // 当前 HEAD commit hash（回退**不移动**它，只作为记录）
   const headRes = await execGit(["rev-parse", "--short", "HEAD"]);
   const currentHead = headRes.out.slice(0, 8);
 
-  // git stash
-  const stashRes = await execGit(["stash"]);
-  if (!stashRes.ok) {
-    console.warn(`[supervisor] git stash 失败: ${stashRes.out}`);
+  // 被取回的那个版本（HEAD~1）
+  const prevRes = await execGit(["rev-parse", "--short", "HEAD~1"]);
+  const prevHead = prevRes.out.slice(0, 8);
+  if (!prevRes.ok) {
+    console.error(`[supervisor] 取 HEAD~1 失败（仓库只有一个 commit？）：${prevRes.out}`);
+    return { ok: false, prevHead: "", currentHead };
   }
 
-  // git checkout HEAD~1（回退到上一个 commit）
-  const checkoutRes = await execGit(["checkout", "HEAD~1"]);
+  // 先把当前改动收进 stash（保留证据，且让 checkout 干净）
+  const stashRes = await execGit(["stash", "push", "-u", "-m", `supervisor-rollback-${Date.now()}`]);
+  if (!stashRes.ok) {
+    console.warn(`[supervisor] git stash 失败（继续尝试回退）: ${stashRes.out}`);
+  }
+
+  // 只取回文件内容，不动 HEAD
+  const checkoutRes = await execGit(["checkout", "HEAD~1", "--", "."]);
   if (!checkoutRes.ok) {
-    console.error(`[supervisor] git checkout HEAD~1 失败: ${checkoutRes.out}`);
-    // 尝试恢复 stash
+    console.error(`[supervisor] git checkout HEAD~1 -- . 失败: ${checkoutRes.out}`);
     await execGit(["stash", "pop"]);
     return { ok: false, prevHead: "", currentHead };
   }
 
-  // 获取回退后的 HEAD（即 HEAD~1）
-  const prevHeadRes = await execGit(["rev-parse", "--short", "HEAD"]);
-  const prevHead = prevHeadRes.out.slice(0, 8);
-
-  console.log(`[supervisor] 已回退: ${currentHead} → ${prevHead}（原改动已 git stash）`);
+  console.log(
+    `[supervisor] 已回退代码: 工作区取回 ${prevHead}（HEAD 仍为 ${currentHead}，未脱离分支；原改动在 stash 里）`
+  );
   return { ok: true, prevHead, currentHead };
 }
 
