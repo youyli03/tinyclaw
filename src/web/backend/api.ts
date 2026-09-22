@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import * as os from "node:os";
 import * as zlib from "node:zlib";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { sampleStats } from "./collector.js";
 import {
   queryMetrics,
@@ -606,39 +606,70 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         json(res, { results: [] });
         return true;
       }
-      const safeQ = q.replace(/"/g, "").replace(/'/g, "");
+      // 加固:查询词绝不拼进 shell。
+      // 旧实现把它插进 `find … -iname "*${safeQ}*"` 这类命令串，只删引号挡不住
+      // `$(…)` / 反引号 → 可达任意命令执行(还会绕过沙箱与审计)。现在一律走
+      // execFileSync 参数数组，查询词永远是**一个参数**，管道改在 JS 里做。
+      if (q.length > 120) {
+        err(res, "查询词过长（上限 120 字符）");
+        return true;
+      }
+      const runFind = (args: string[]): string[] => {
+        try {
+          return execFileSync("find", args, { encoding: "utf-8", timeout: 5000 })
+            .split("\n")
+            .filter(Boolean);
+        } catch {
+          return []; // find 无匹配时退出码为 1
+        }
+      };
       let results: Array<{ path: string; name: string; ext: string; type: string }> = [];
       try {
         // 搜文件夹名
-        let dirPaths: string[] = [];
-        try {
-          const dirOut = execSync(
-            `find "${NOTES_ROOT}" -mindepth 1 -maxdepth 6 -type d -not -name ".*" -iname "*${safeQ}*" | head -20`,
-            { encoding: "utf-8", timeout: 5000 }
-          ).trim();
-          dirPaths = dirOut ? dirOut.split("\n") : [];
-        } catch {
-          /* 无匹配 */
-        }
-        // 搜文件名
-        let nameOut = "";
-        try {
-          nameOut = execSync(
-            `find "${NOTES_ROOT}" -not -name '.*' -type f \( -name "*.md" -o -name "*.pdf" \) | grep -i "${safeQ}" | head -30`,
-            { encoding: "utf-8", timeout: 5000 }
-          ).trim();
-        } catch {
-          /* 无匹配 */
-        }
-        const namePaths = nameOut ? nameOut.split("\n") : [];
+        const dirPaths = runFind([
+          NOTES_ROOT,
+          "-mindepth",
+          "1",
+          "-maxdepth",
+          "6",
+          "-type",
+          "d",
+          "-not",
+          "-name",
+          ".*",
+          "-iname",
+          `*${q}*`,
+        ]).slice(0, 20);
+        // 搜文件名（大小写不敏感的字面量包含；旧实现走 grep 正则会误解释 . * 等字符）
+        const lowerQ = q.toLowerCase();
+        const namePaths = runFind([
+          NOTES_ROOT,
+          "-not",
+          "-name",
+          ".*",
+          "-type",
+          "f",
+          "(",
+          "-name",
+          "*.md",
+          "-o",
+          "-name",
+          "*.pdf",
+          ")",
+        ])
+          .filter((p) => p.toLowerCase().includes(lowerQ))
+          .slice(0, 30);
         // grep 内容(仅 md)
         let contentPaths: string[] = [];
         try {
-          const grepOut = execSync(
-            `grep -r -l -i --include="*.md" "${safeQ}" "${NOTES_ROOT}" 2>/dev/null | head -20`,
+          contentPaths = execFileSync(
+            "grep",
+            ["-r", "-l", "-i", "--include=*.md", "--", q, NOTES_ROOT],
             { encoding: "utf-8", timeout: 5000 }
-          ).trim();
-          contentPaths = grepOut ? grepOut.split("\n") : [];
+          )
+            .split("\n")
+            .filter(Boolean)
+            .slice(0, 20);
         } catch {
           /* 无匹配 */
         }
