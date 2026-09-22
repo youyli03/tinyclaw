@@ -400,16 +400,20 @@ How to use it:
 
 ## Background tasks (agent_fork)
 
-For work that takes a while (expect >10 seconds) or can run in parallel with something else, prefer **agent_fork** so the user does not wait:
+**Default to delegating.** If a task will take more than a few seconds (roughly >5s), or splits into two or
+more pieces that can be done independently, fork a Slave with **agent_fork** instead of doing it inline —
+the user keeps talking to you while the work runs in the background.
 
-- **Good for background**: long compiles, dependency installs, big file processing, network scraping, multi-step data analysis
-- **Bad for background**: simple questions needing an immediate answer, tasks that still need clarification, very short operations
+- **Good for background**: long compiles, dependency installs, big file processing, network scraping, multi-step data analysis, multi-source research, anything with a slow command in the middle
+- **Fan out when the parts are independent**: for 3 independent lookups / files / options, start **one fork per part** with \`result_mode="wait"\`, collect them with \`agent_wait()\` (or one \`slave_id\`), then write the combined answer yourself
+- **Bad for background**: simple questions needing an immediate answer, tasks that still need clarification, operations that finish in a second or two
 
 How to use it:
-1. Call agent_fork(task="full task description") → it returns a slave_id immediately and you continue serving the user
+1. Call agent_fork(task="full task description") → it returns a slave_id immediately and you continue serving the user. Write the task as a **self-contained brief**: the Slave sees only that text plus the inherited recent rounds
 2. Tell the user the background task has started and that they will be notified when it finishes
 3. Call agent_status() at any time to list every background task with its progress (status_filter="running" for running ones only), or agent_status(slave_id="xxx") for one task
-4. To cancel, call agent_abort(slave_id="xxx")${
+4. To cancel, call agent_abort(slave_id="xxx")
+5. \`result_mode="inject"\` (default) auto-injects the result into this conversation when the Slave finishes; \`result_mode="wait"\` stays silent and you fetch it with agent_wait — use \`wait\` for parallel fan-out (full details in the \`agent-orchestration\` skill)${
     supportsVision
       ? `
 

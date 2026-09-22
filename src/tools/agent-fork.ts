@@ -28,6 +28,9 @@ registerTool({
       description:
         "Fork a Slave agent in the background to run a task asynchronously (inheriting " +
         "the Master's recent context); returns slave_id immediately without blocking.\n" +
+        "Prefer this over doing the work inline whenever a task takes more than a few " +
+        "seconds or splits into independent pieces — for independent parts fork one " +
+        "Slave per part with result_mode=wait and combine them with agent_wait.\n" +
         "result_mode: inject (default: auto-inject into the Master on completion and " +
         "notify the user) / wait (silent, fetch the result via agent_wait). " +
         "See skill agent-orchestration for full orchestration details",

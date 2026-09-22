@@ -821,6 +821,10 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
   "已自动在后台创建 Sub-Agent"。chat / cron / loop 三条入口共用该阈值(`runAgent` 读 `config.agent.autoForkThresholdMs`),
   单次运行可用 `AgentRunOptions.autoForkThresholdMs` 覆盖。⚠️ 它只克隆上下文、**不携带 Master 手上的中间结论**
   (见 `AGENTS.md` §7.4),需要模型自己收尾的复杂任务建议置 `0`,改由模型显式 `agent_fork`
+- **委派口径**(常驻 prompt `## Background tasks (agent_fork)` 与 `agent_fork` 工具描述):预计 >5 秒、
+  或含 ≥2 个可独立完成的子任务时**默认 fork**;多份独立部分用 `result_mode="wait"` 并行 fan-out 后
+  `agent_wait()` 汇总。细节规范在**仓库内置技能** `skills/agent-orchestration/SKILL.md`
+  (触发短语「分叉/子 agent/子任务/并行任务/后台任务」,命中后模型 `read_file` 读取)
 - `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
   - `context_mode`:继承模式,默认取 `memory.slaveContextMode`
     - `task-only`:不继承历史(system prompt 里的 MEM.md / SKILLS.md 仍然在)。**背景自足时最省**
