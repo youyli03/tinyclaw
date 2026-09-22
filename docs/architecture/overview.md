@@ -1086,6 +1086,8 @@ tinyclaw mo<Tab>
 - 入口：agent 工具 `config_reload`（MFA）、CLI `tinyclaw config reload`、`config.toml` 文件监听
   （`ContentWatcher`：内容哈希 + 父目录监听 + 800ms 去抖；连续 3 次重载失败自动停用监听）。
   流程：**校验 → 分级 → 应用（hot/soft）或 markPending + waitIdle(≤10s) + exit(75)（restart）→ 健康自检 → 失败回退 LKG**。
+  ⚠️ **只有跑过在线探测的变更才会提升 LKG**：`hot` 类（例如改 `apiKey`）离线检查看不出问题，若把它记成"可用版本"，
+  真出问题时就没有回退目标了 —— 这类变更只保留 `pending`，等下次启动/显式 reload 验证后才提升。
   CLI 是独立进程，只能分级与提示，不能把改动热应用进正在跑的服务（服务自己的监听会应用它）。
 - 子系统重 init 与受控重启由 main.ts 通过 `setConfigReloadHooks()` 注入，避免 tools → main 的反向依赖。
 

@@ -186,7 +186,13 @@ export async function reloadConfig(
     return { ok: false, plan, message: lines.join("\n"), health };
   }
 
-  // 6. 健康 → 记为新的 LKG（CLI 是独立进程，无法代表运行中的服务，因此不写 LKG）
-  if (health.ok && trigger !== "cli") promoteConfig(rawText);
+  // 6. 只在**跑过在线探测**且健康时提升 LKG
+  //    ⚠️ hot 变更（如改 apiKey）离线检查看不出来：若这时把它提升为"可用版本"，回退就没目标了。
+  //    LKG 的语义是"最近一份端到端验证过的配置"，所以没探测过就只保留 pending，留给下次启动/显式 reload 验证。
+  if (health.ok && shouldProbe && trigger !== "cli") {
+    promoteConfig(rawText);
+  } else if (health.ok) {
+    lines.push("本次未做在线探测：LKG 保持为上一份已验证配置（下次启动或显式 reload 时会重新验证并提升）");
+  }
   return { ok: health.ok, plan, message: lines.join("\n"), health };
 }
