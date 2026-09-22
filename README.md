@@ -12,8 +12,9 @@
 - **跨 Session 通信**:`session_get / session_send` 实现不同 Agent session 之间消息互传
 - **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server;
   `mcp.toml` **载入诊断**直接暴露给 Agent 与 CLI(`tinyclaw mcp status`),语法/字段错误不再静默吞掉;
-  可**自管理**:agent 用 `mcp_server_add / remove / set_enabled / reload` 增删改(写前校验 + 备份 + 原子写 +
-  热重载),`env`/`headers` 支持 `${SECRET:NAME}` 引用 `secrets.toml`,密钥不落配置文件
+  可**自管理**:agent 用 `mcp_server_add / remove / set_enabled / reload`(或 CLI `tinyclaw mcp add/…`)增删改
+  (写前校验 + 备份 + 原子写),`env`/`headers` 支持 `${SECRET:NAME}` 引用 `secrets.toml`,密钥不落配置文件;
+  改完**自动热重载**(文件监听,内容哈希判断),无需重启服务
 - **MFA 鉴权**:高危工具支持 Azure AD number-matching 推送、TOTP 验证码、文字确认三种方式
 - **沙箱与审计**:`exec_shell` 可跑进 bubblewrap —— 密钥文件在沙箱内被掩码成空文件(内核强制,不是"检查后拒绝"),
   未绑定目录只读、可断网;需要宿主机能力时可用 `exec_shell({elevate:true})` **提权**(按风险分级 E1/E2、
@@ -152,6 +153,8 @@ tinyclaw web                           # 显示 Dashboard 访问地址
 
 tinyclaw config show / edit            # 查看(脱敏)/ 编辑配置
 tinyclaw mcp status                    # MCP server 配置载入结果(+ 载入诊断)
+tinyclaw mcp add <name> --stdio <cmd>  # 新增 server(另支持 --sse <url> / --arg / --env K=V / --desc)
+tinyclaw mcp remove <name>             # 删除 server(可写 enable / disable)
 tinyclaw auth github / mfa-setup       # GitHub 授权 / TOTP 绑定
 
 tinyclaw completions install           # 安装 tab 补全

@@ -299,6 +299,7 @@ tinyclaw/
 │   │   ├── load-report.ts    # 载入诊断的展示层（纯函数，工具 / CLI / 日志共用）
 │   │   ├── config-writer.ts  # mcp.toml 块级补丁 + 全量校验 + 原子写 + .bak 备份
 │   │   ├── secret-ref.ts     # `${SECRET:NAME}` 引用解析（连接时从 secrets.toml 取值）
+│   │   ├── watcher.ts        # mcp.toml 文件监听（内容哈希去抖 → reload → 通知 cron worker）
 │   │   └── meta-tools.ts     # 框架级 mcp_* 工具名单（白名单过滤 / 无人值守硬拒绝用）
 │   ├── connectors/
 │   │   ├── base.ts           # Connector 接口 + InboundMessage + QQ 事件类型
@@ -892,6 +893,11 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
   `unregisterTool()` 注销被删/被改 server 的工具 → 应用新配置 → 重新启用此前已启用的 server，
   返回一行摘要。不做引用计数（正在执行的调用可能报错，但错误可见、可重试）；工具快照每轮重取，
   新工具**下一轮**即可见
+- **自动重载**（`src/mcp/watcher.ts`，只在主进程装）：监听 `~/.tinyclaw` 目录（`config-writer` 是
+  "写 `.tmp` 再 rename"，直接 watch 文件会丢 inode 后的事件）→ 700ms 去抖 → **用 sha1 内容哈希判断是否真变了**
+  （本机 mtime 不可靠，见 `AGENTS.md` §7.4）→ `reload("watch")`。`.tmp` / `.bak-*` 不算变更。
+  主进程重载后通过 cron worker IPC `{ type: "mcp_changed" }` 通知**长驻 worker 子进程**自行重载
+  （它有独立的连接与工具注册表），与既有的 `skills_changed` 同构
 
 ---
 
@@ -978,7 +984,8 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw config show` | 格式化显示配置（密钥脱敏） |
 | `tinyclaw config edit` | 用 `$EDITOR` 打开 config.toml |
 | `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string） |
-| `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`enabled=false`；env / headers 只列键名，值不回显） |
+| `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`${SECRET:NAME}` 引用缺失、`enabled=false`；env / headers 只列键名，值不回显） |
+| `tinyclaw mcp add / remove / enable / disable` | 增删 MCP server、改 `enabled` 开关。走 `config-writer`（写前全量校验 + `.bak-<ts>` 备份 + 原子写），运行中的服务由文件监听自动重载。`add` 用法：`--stdio <cmd> [--arg a]… [--env K=V]…` 或 `--sse <url> [--header K=V]…`，可加 `--desc` / `--disabled` |
 | `tinyclaw auth github` | 重新执行 Device Flow OAuth |
 | `tinyclaw auth status` | 检查 token 有效性 |
 | `tinyclaw status` | 服务进程 + systemd 状态与运行时长 + 日志来源 + 配置摘要 + channel 状态 |

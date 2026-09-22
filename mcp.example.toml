@@ -3,8 +3,11 @@
 # 警告：mcp.toml 已加入 .gitignore，请勿提交含密钥的配置
 #
 # 改完自检：tinyclaw mcp status          （列出载入结果与诊断；env / headers 只显示键名）
-# 也可让 agent 用 mcp_server_add / mcp_server_remove / mcp_server_set_enabled / mcp_reload 管理
-#   —— 写前全量校验、自动备份 mcp.toml.bak-<ts>、原子落盘、写完立刻热重载（写工具需 MFA）
+# 改完自动生效：服务监听到 mcp.toml 变更会热重载（内容哈希判断，约 1s），无需重启
+#
+# 三种改法（等价，都走同一套"写前校验 + 备份 + 原子写"）：
+#   1. 手写本文件      2. 让 agent 用 mcp_server_add / mcp_server_remove / mcp_server_set_enabled / mcp_reload
+#   3. CLI：tinyclaw mcp add / remove / enable / disable
 #
 # 密钥不要写明文：env / headers 的值支持 ${SECRET:NAME} 引用（连接时从 ~/.tinyclaw/secrets.toml 读取）
 #   env = { MY_API_KEY = "${SECRET:MY_API_KEY}" }

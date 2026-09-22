@@ -107,11 +107,12 @@ description = "动态笔记知识库（Agent 隔离）"
 
 多 Agent 场景：为每个 Agent 单独注册一个 server 条目，`--agent-id` 传对应 Agent ID。
 
-### 两种写法（等价）
+### 三种写法（等价）
 
-1. **手写 `mcp.toml`**（上面这段）→ 改完执行 `tinyclaw mcp status` 确认载入无告警。
-2. **让 agent 加**：`mcp_server_add`（需 MFA 确认）—— 写前全量校验、自动备份 `mcp.toml.bak-<ts>`、原子落盘，
-   写完立刻热重载。
+1. **手写 `mcp.toml`**（上面这段）→ 改完执行 `tinyclaw mcp status` 确认载入无告警。运行中的服务会**自动重载**
+   （文件监听按内容哈希判断，约 1s；也可让 agent 调 `mcp_reload` 或 `tinyclaw restart`）。
+2. **让 agent 加**：`mcp_server_add`（需 MFA 确认）—— 写前全量校验、自动备份 `mcp.toml.bak-<ts>`、原子落盘。
+3. **CLI**：`tinyclaw mcp add / remove / enable / disable`（同样的校验与备份）。
 
 需要密钥时**不要**把明文写进 `mcp.toml`：
 

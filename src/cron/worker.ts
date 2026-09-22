@@ -69,6 +69,14 @@ async function main(): Promise<void> {
     } else if (msg.type === "skills_changed") {
       // 主进程 watcher 通知 skill 文件已变更，刷新本进程缓存
       skillRegistry.refresh(msg.agentId);
+    } else if (msg.type === "mcp_changed") {
+      // 主进程 watcher 通知 mcp.toml 已变更：本进程有自己的 MCP 连接与工具注册表，需自行重载
+      void mcpManager
+        .reload("watch")
+        .then((summary) => console.log(`[cron-worker] ${summary}`))
+        .catch((err) =>
+          console.warn("[cron-worker] MCP 重载失败：", err instanceof Error ? err.message : err)
+        );
     }
   });
 

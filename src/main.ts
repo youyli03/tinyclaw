@@ -39,6 +39,7 @@ import { startNewsWatcher, stopNewsWatcher } from "./memory/news-watcher.js";
 import { tinyclawSubmitter } from "./core/tinyclaw-submitter.js";
 import { skillWatcher } from "./skills/watcher.js";
 import { mcpManager } from "./mcp/client.js";
+import { mcpWatcher } from "./mcp/watcher.js";
 import type { SlaveNotification, SlaveState } from "./core/slave-manager.js";
 import { slaveManager } from "./core/slave-manager.js";
 import { InboundMessageBus, type InboundExtras } from "./core/inbound-bus.js";
@@ -172,6 +173,9 @@ async function main(): Promise<void> {
 
   // 启动 skill subsystem watcher（主进程；cron worker 通过 IPC 接收失效通知）
   void skillWatcher.start(agentManager.listAgentIds());
+
+  // 启动 mcp.toml watcher（内容哈希判断，不依赖 mtime）：改动后自动 reload 并通知 cron worker
+  void mcpWatcher.start(() => cronScheduler.notifyMcpChanged());
 
   // 3. 启动 QQBot（可选；若未配置则以纯 IPC 模式运行）
   const qqbotsMap = cfg.channels.qqbots ?? {};
@@ -1215,6 +1219,7 @@ ${message}`;
     memoryMaintenance.stop();
     tinyclawSubmitter.stop();
     stopNewsWatcher();
+    mcpWatcher.stop();
     stopCollector();
     stopDashboard();
     if (connector) await connector.stop();

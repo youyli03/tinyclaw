@@ -140,6 +140,13 @@ class CronScheduler {
     });
   }
 
+  /** 通知 cron worker：主进程已重载 MCP 配置，worker 需自行重载（它有自己的连接与工具表） */
+  notifyMcpChanged(): void {
+    if (this.worker?.connected) {
+      this.worker.send({ type: "mcp_changed" });
+    }
+  }
+
   stop(): void {
     for (const handle of this.timers.values()) {
       clearTimeout(handle as ReturnType<typeof setTimeout>);
