@@ -10,7 +10,8 @@
 - **Agent Fork**:后台启动 Slave agent 异步执行耗时任务;按**轮数**继承 Master 上下文(含工具调用与结果);`agent_wait` 汇总多 Slave 结果;子 agent 轨迹**全文归档**可用 `agent_trace` 检索
 - **进度旁白**:模型在关键节点给工具调用附一句面向用户的 `__purpose`(如「🔍 正在查你最近三个月的持仓」),只在**用户确实在等**时才展示;取代了旧的定时"仍在处理中"心跳
 - **跨 Session 通信**:`session_get / session_send` 实现不同 Agent session 之间消息互传
-- **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server
+- **MCP 支持**:懒加载,按需 enable/disable,内置 Browser / News / Notes / Polymarket 等 MCP server;
+  `mcp.toml` **载入诊断**直接暴露给 Agent 与启动日志,语法/字段错误不再静默吞掉
 - **MFA 鉴权**:高危工具支持 Azure AD number-matching 推送、TOTP 验证码、文字确认三种方式
 - **沙箱与审计**:`exec_shell` 可跑进 bubblewrap —— 密钥文件在沙箱内被掩码成空文件(内核强制,不是"检查后拒绝"),
   未绑定目录只读、可断网;需要宿主机能力时可用 `exec_shell({elevate:true})` **提权**(按风险分级 E1/E2、
@@ -240,7 +241,7 @@ tinyclaw completions install           # 安装 tab 补全
 |------|------|
 | `cron_add / list / remove` | 管理定时任务 |
 | `cron_enable / disable / run` | 启用 / 禁用 / 立即触发任务 |
-| `mcp_list_servers` | 列出所有 MCP server |
+| `mcp_list_servers` | 列出所有 MCP server,并附带 `mcp.toml` **载入诊断**(语法错/字段非法/无 server 段)与每个 server 最近一次连接失败 |
 | `mcp_enable_server` | 启用并加载 MCP server 工具 |
 | `mcp_disable_server` | 隐藏 MCP server 工具(底层连接保持) |
 

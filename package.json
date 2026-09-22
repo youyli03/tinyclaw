@@ -15,7 +15,8 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
-    "test:edit-file": "node --import tsx/esm tests/edit-file-core.test.ts"
+    "test:edit-file": "node --import tsx/esm tests/edit-file-core.test.ts",
+    "test:mcp": "node --import tsx/esm tests/mcp-loader-diagnostics.test.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

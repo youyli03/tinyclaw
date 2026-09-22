@@ -13,7 +13,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { registerTool, setToolVisibility, setMcpAgentFilter } from "../tools/registry.js";
-import { loadMcpConfig, loadConfig } from "../config/loader.js";
+import {
+  loadMcpConfigDetailed,
+  loadConfig,
+  type McpLoadDiagnostic,
+  type McpLoadReport,
+} from "../config/loader.js";
+import { summarizeLoad, type McpLoadTrigger } from "./load-report.js";
 import type { MCPConfig, MCPServerConfig } from "../config/schema.js";
 import { agentManager } from "../core/agent-manager.js";
 
@@ -27,6 +33,8 @@ interface MCPRuntime {
   connected: boolean;
   /** 最近一次连接失败的错误信息 */
   error?: string;
+  /** 最近一次连接失败的时间（ISO） */
+  errorAt?: string;
 }
 
 /** 供外部（mcp-manager.ts）使用的轻量状态对象 */
@@ -41,6 +49,8 @@ export interface MCPServerStatus {
   toolCount: number;
   /** 最近的连接错误（若有） */
   error?: string;
+  /** 最近一次连接失败的时间（ISO，若有） */
+  lastErrorAt?: string;
 }
 
 /** Sanitize server/tool name: 只保留字母数字下划线，截断到 32 字符 */
@@ -56,6 +66,14 @@ function mcpToolName(serverName: string, toolName: string): string {
 class MCPClientManager {
   private loadedConfig: MCPConfig = { servers: {} };
   private runtimes: Map<string, MCPRuntime> = new Map();
+  /** 最近一次载入的诊断（供 agent 工具 / CLI / 日志消费） */
+  private diagnostics: McpLoadDiagnostic[] = [];
+  /** 最近一次载入时间（ISO） */
+  private loadedAt: string | null = null;
+  /** 最近一次载入的触发来源 */
+  private loadTrigger: McpLoadTrigger = "startup";
+  /** mcp.toml 是否存在 */
+  private configFileExists = false;
 
   /**
    * 初始化：只加载配置，不连接任何 server。
@@ -63,18 +81,60 @@ class MCPClientManager {
    * 同时向 registry 注册 MCP 工具的 agent 过滤回调（解决循环依赖）。
    */
   async init(): Promise<void> {
-    this.loadedConfig = loadMcpConfig();
-    const entries = Object.entries(this.loadedConfig.servers);
-    for (const [name] of entries) {
-      this.runtimes.set(name, { toolNames: [], connected: false });
-    }
-    if (entries.length > 0) {
-      console.log(`[mcp] loaded config: ${entries.length} server(s) (lazy mode, none connected)`);
-    }
+    this.applyLoad(loadMcpConfigDetailed(), "startup");
     // 向 registry 注册过滤回调，供 getAllToolSpecs(agentId) 调用
     setMcpAgentFilter((toolName: string, agentId: string) =>
       this.isToolAllowedForAgent(toolName, agentId)
     );
+  }
+
+  /**
+   * 应用一次载入结果：更新配置快照、补齐 runtime 占位、记录诊断并打日志。
+   * 供 init()（首次载入）与 reload()（热重载）共用。
+   */
+  private applyLoad(report: McpLoadReport, trigger: McpLoadTrigger): void {
+    this.loadedConfig = report.config;
+    this.diagnostics = report.diagnostics;
+    this.loadedAt = new Date().toISOString();
+    this.loadTrigger = trigger;
+    this.configFileExists = report.fileExists;
+
+    const names = Object.keys(report.config.servers);
+    for (const name of names) {
+      if (!this.runtimes.has(name)) {
+        this.runtimes.set(name, { toolNames: [], connected: false });
+      }
+    }
+
+    const errors = report.diagnostics.filter((d) => d.level === "error");
+    if (names.length > 0 || errors.length > 0) {
+      console.log(
+        `[mcp] load (${trigger}): ${summarizeLoad(report.diagnostics, names.length)}` +
+          (names.length > 0 ? " (lazy mode, none connected)" : "")
+      );
+    }
+    for (const d of errors) {
+      const where = d.scope === "server" && d.server !== undefined ? `[servers.${d.server}] ` : "";
+      console.warn(`[mcp] ${where}${d.message}${d.hint !== undefined ? ` —— ${d.hint}` : ""}`);
+    }
+  }
+
+  /**
+   * 最近一次载入报告：诊断 + 时间 + 触发来源 + 文件是否存在。
+   * 消费方：`mcp_list_servers` 工具（agent 自查）、CLI `tinyclaw mcp status`。
+   */
+  getLoadReport(): {
+    loadedAt: string | null;
+    trigger: McpLoadTrigger;
+    diagnostics: McpLoadDiagnostic[];
+    fileExists: boolean;
+  } {
+    return {
+      loadedAt: this.loadedAt,
+      trigger: this.loadTrigger,
+      diagnostics: this.diagnostics,
+      fileExists: this.configFileExists,
+    };
   }
 
   /**
@@ -136,6 +196,7 @@ class MCPClientManager {
         };
         if (cfg.description !== undefined) status.description = cfg.description;
         if (rt.error !== undefined) status.error = rt.error;
+        if (rt.errorAt !== undefined) status.lastErrorAt = rt.errorAt;
         return status;
       });
   }
@@ -171,6 +232,7 @@ class MCPClientManager {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         rt.error = msg;
+        rt.errorAt = new Date().toISOString();
         return `错误：连接 MCP server "${name}" 失败：${msg}`;
       }
     }
@@ -181,6 +243,7 @@ class MCPClientManager {
     }
     rt.connected = true;
     delete rt.error;
+    delete rt.errorAt;
 
     // 构造工具文档（类似 Skill 文件内容）返回给 Agent
     return this.buildToolDocs(name, cfg, rt);

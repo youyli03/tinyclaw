@@ -861,6 +861,12 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 - Agent 通过 `mcp_list_servers` / `mcp_enable_server` / `mcp_disable_server` 按需懒加载
 - 工具命名规范：`mcp_{serverName}_{toolName}`（最长 64 字符）
 - `enabled` 字段控制 LLM 可见性；底层连接保持，disable 后可零延迟重 enable
+- **载入诊断**（`loadMcpConfigDetailed()`，`src/config/loader.ts`）：TOML 语法错误（整份配置按空处理）、
+  单条 `[servers.X]` 非法被跳过、无 `[servers.X]` 定义、文件不可读，都产出结构化诊断
+  （`level` / `code` / `scope` / `server` / `message` / `hint`），并由两处展示：
+  `mcp_list_servers` 返回体的告警段、启动日志 `[mcp] load (startup): …`。诊断文本只含 Zod 的 `path` + `code`，
+  **绝不输出 `issue.received`**（否则 env / headers 的值写错类型时会泄露 token）
+- 每个 server 的最近一次连接失败与时间（`MCPServerStatus.lastErrorAt`）同样由 `mcp_list_servers` 展示
 
 ---
 
@@ -958,7 +964,8 @@ tinyclaw completions install && source ~/.bashrc
 
 **扩展方式（注册新命令）：**
 
-在 `src/cli/index.ts` 的 `COMMANDS` 对象和 `SUBCOMMANDS` 表各加一行即可，Tab 补全自动生效。
+在 `src/cli/index.ts` 的 `COMMANDS` 对象加一行即可；子命令表由各命令模块 `export const subcommands`
+自动汇聚（`buildSubcommands()`），Tab 补全自动生效。
 
 **Tab 补全机制：**
 ```

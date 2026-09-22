@@ -9,6 +9,7 @@
 
 import { registerTool } from "./registry.js";
 import { mcpManager } from "../mcp/client.js";
+import { formatDiagnostics } from "../mcp/load-report.js";
 
 registerTool({
   spec: {
@@ -17,7 +18,9 @@ registerTool({
       name: "mcp_list_servers",
       description:
         "List all configured MCP servers (name, description, enabled state, connection " +
-        "state, tool count). Returns a lightweight catalog without per-tool schemas. " +
+        "state, tool count) together with the mcp.toml load report: any load error (bad TOML " +
+        "syntax, invalid [servers.X] entry, unreadable file) and each server's last connection " +
+        "error. Returns a lightweight catalog without per-tool schemas. " +
         "To use a server's tools, call this tool first to see the available servers, then " +
         "call mcp_enable_server to enable one.",
       parameters: {
@@ -30,15 +33,24 @@ registerTool({
   requiresMFA: false,
   execute: async (args, ctx) => {
     const servers = mcpManager.listServers(ctx?.agentId);
+    const report = mcpManager.getLoadReport();
+    const diagLines = formatDiagnostics(report.diagnostics, "all");
+    const footNote =
+      `> 配置载入：${report.loadedAt ?? "尚未载入"}（trigger=${report.trigger}，` +
+      `${report.fileExists ? "~/.tinyclaw/mcp.toml 存在" : "未配置 mcp.toml"}）`;
+
     if (servers.length === 0) {
-      return "当前没有你可访问的 MCP server。请联系管理员在 ~/.tinyclaw/mcp.toml 中配置，或检查 agents 白名单设置。";
+      const head = report.fileExists
+        ? "当前没有你可访问的 MCP server（可能被 agent 白名单排除，或配置全部载入失败）。"
+        : "当前没有你可访问的 MCP server：~/.tinyclaw/mcp.toml 不存在（未配置 MCP）。";
+      return [head, ...(diagLines.length > 0 ? ["", ...diagLines] : []), "", footNote].join("\n");
     }
     const lines = ["## MCP Servers\n"];
     for (const s of servers) {
       const status = s.connected
         ? `已连接（${s.toolCount} 个工具可用）`
         : s.error
-          ? `连接失败：${s.error}`
+          ? `连接失败${s.lastErrorAt !== undefined ? `（${s.lastErrorAt}）` : ""}：${s.error}`
           : s.enabled
             ? "未连接（可 enable）"
             : "已禁用（mcp.toml enabled=false）";
@@ -47,6 +59,8 @@ registerTool({
       lines.push(`状态：${status}`);
       lines.push("");
     }
+    if (diagLines.length > 0) lines.push(...diagLines, "");
+    lines.push(footNote, "");
     lines.push(
       "> 使用 `mcp_enable_server` 启用某个 server 以获取其工具文档并注册工具。\n" +
         "> 使用 `mcp_disable_server` 禁用已启用的 server（释放 token 空间，连接保持）。"

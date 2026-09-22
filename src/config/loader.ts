@@ -135,40 +135,220 @@ export function loadMemStoresConfig(): MemStoresConfig {
   return result.data;
 }
 
-/** 加载 ~/.tinyclaw/mcp.toml，文件不存在时返回空配置（非致命）。 */
-export function loadMcpConfig(): MCPConfig {
-  const mcpPath = path.join(os.homedir(), ".tinyclaw", "mcp.toml");
+// ── MCP 载入（含诊断）─────────────────────────────────────────────────────────
+
+/** 载入诊断的类别 */
+export type McpLoadDiagCode =
+  | "unreadable" // 文件读不到（权限等）
+  | "syntax" // TOML 语法错误 → 整份配置按空处理
+  | "schema" // 单个 [servers.X] 非法，已跳过 / servers 段结构非法
+  | "empty" // 文件合法但没有任何 [servers.X] 定义
+  | "disabled"; // enabled = false（不是错误，供 agent 知情）
+
+/** 一条 MCP 载入诊断 */
+export interface McpLoadDiagnostic {
+  level: "info" | "error";
+  code: McpLoadDiagCode;
+  scope: "file" | "server";
+  /** scope = "server" 时必填 */
+  server?: string;
+  /** 已裁剪的安全文本：**绝不含被校验字段的原值** */
+  message: string;
+  /** 修复建议 */
+  hint?: string;
+}
+
+/** loadMcpConfigDetailed 的返回 */
+export interface McpLoadReport {
+  config: MCPConfig;
+  diagnostics: McpLoadDiagnostic[];
+  /** mcp.toml 是否存在 */
+  fileExists: boolean;
+}
+
+/** mcp.toml 的绝对路径 */
+export function mcpConfigPath(): string {
+  return path.join(os.homedir(), ".tinyclaw", "mcp.toml");
+}
+
+/** 构造一条诊断（exactOptionalPropertyTypes 下按需展开可选字段） */
+function diag(
+  level: "info" | "error",
+  code: McpLoadDiagCode,
+  scope: "file" | "server",
+  message: string,
+  extra: { server?: string; hint?: string } = {}
+): McpLoadDiagnostic {
+  return {
+    level,
+    code,
+    scope,
+    message,
+    ...(extra.server !== undefined ? { server: extra.server } : {}),
+    ...(extra.hint !== undefined ? { hint: extra.hint } : {}),
+  };
+}
+
+/**
+ * 把 Zod issues 压成安全文本：**只用 path + code，不带任何值**。
+ *
+ * ⚠️ 绝不要改回 `JSON.stringify(issues)` 或输出 `issue.received`：env / headers 的值写错类型时，
+ * Zod 会把原值放进 `received`，而这段文本会经启动日志、`mcp_list_servers`、CLI 三处外泄 token。
+ */
+function describeIssues(
+  issues: readonly { path: readonly (string | number)[]; code: string }[]
+): string {
+  return issues
+    .map((i) => `${i.path.length > 0 ? i.path.join(".") : "(root)"}: ${i.code}`)
+    .join("; ");
+}
+
+/**
+ * 加载 ~/.tinyclaw/mcp.toml，同时返回诊断。
+ *
+ * 与旧行为的差别：**TOML 语法错误不再被伪装成"文件读取失败"**，而是给出 `code: "syntax"`
+ * 的 error 诊断 —— 调用方（agent 工具 / CLI / 日志）据此能告诉用户"整份配置都没生效"。
+ * 文件不存在时返回空配置且无诊断（未配置 MCP 属正常状态）。
+ *
+ * @param filePath 仅供测试注入；默认 `~/.tinyclaw/mcp.toml`
+ */
+export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLoadReport {
+  let text: string;
+  try {
+    text = fs.readFileSync(filePath, "utf-8");
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return { config: MCPConfigSchema.parse({}), diagnostics: [], fileExists: false };
+    }
+    return {
+      config: MCPConfigSchema.parse({}),
+      fileExists: true,
+      diagnostics: [
+        diag("error", "unreadable", "file", `无法读取 mcp.toml（${code ?? "未知错误"}）`, {
+          hint: `检查文件权限：chmod 600 ${filePath}`,
+        }),
+      ],
+    };
+  }
+
   let raw: unknown;
   try {
-    raw = parse(fs.readFileSync(mcpPath, "utf-8"));
+    raw = parse(text);
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn(`[tinyclaw] 无法读取 mcp.toml:${err}`);
-    }
-    return MCPConfigSchema.parse({});
+    return {
+      config: MCPConfigSchema.parse({}),
+      fileExists: true,
+      diagnostics: [
+        diag(
+          "error",
+          "syntax",
+          "file",
+          `mcp.toml TOML 语法错误，整份配置已按空处理：${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          {
+            hint: "修好语法后执行 tinyclaw mcp reload（或重启服务）；修复前所有 MCP server 都不可用",
+          }
+        ),
+      ],
+    };
   }
 
-  // 先尝试整体解析(快路径)
+  // 快路径：整份解析成功（含默认值填充）
   const result = MCPConfigSchema.safeParse(raw);
   if (result.success) {
-    return result.data;
+    const diagnostics: McpLoadDiagnostic[] = [];
+    const names = Object.keys(result.data.servers);
+    if (names.length === 0) {
+      diagnostics.push(
+        diag(
+          "info",
+          "empty",
+          "file",
+          "mcp.toml 里没有 [servers.<name>] 定义，未加载任何 MCP server",
+          { hint: "每个 server 写成一个 [servers.NAME] 块，字段参考 mcp.example.toml" }
+        )
+      );
+    }
+    for (const [name, srv] of Object.entries(result.data.servers)) {
+      if (srv.enabled === false) {
+        diagnostics.push(
+          diag(
+            "info",
+            "disabled",
+            "server",
+            `[servers.${name}] enabled = false（已配置但不可启用）`,
+            { server: name }
+          )
+        );
+      }
+    }
+    return { config: result.data, diagnostics, fileExists: true };
   }
 
-  // 整体解析失败 → 逐个 server 容错解析,避免单个错误配置使全部 MCP 失效
-  console.warn(`[tinyclaw] mcp.toml 包含无效 server 配置,尝试逐个加载:${result.error.message}`);
+  // 慢路径：逐个 server 容错解析，避免单个坏配置让全部 MCP 失效
+  const containers = raw as { servers?: unknown } | null;
+  const rawServers = containers?.servers;
+  if (
+    rawServers === undefined ||
+    rawServers === null ||
+    typeof rawServers !== "object" ||
+    Array.isArray(rawServers)
+  ) {
+    return {
+      config: MCPConfigSchema.parse({}),
+      fileExists: true,
+      diagnostics: [
+        diag(
+          "error",
+          "schema",
+          "file",
+          "mcp.toml 里没有可用的 [servers.<name>] 定义，未加载任何 MCP server",
+          { hint: "每个 server 写成一个 [servers.NAME] 块，字段参考 mcp.example.toml" }
+        ),
+      ],
+    };
+  }
+
   const servers: Record<string, MCPServerConfig> = {};
-  const rawServers = (raw as { servers?: Record<string, unknown> })?.servers ?? {};
-  for (const [name, cfg] of Object.entries(rawServers)) {
+  const diagnostics: McpLoadDiagnostic[] = [];
+  for (const [name, cfg] of Object.entries(rawServers as Record<string, unknown>)) {
     const sr = MCPServerSchema.safeParse(cfg);
     if (sr.success) {
       servers[name] = sr.data;
-    } else {
-      console.warn(
-        `[tinyclaw] mcp.toml [servers.${name}] 配置无效,已跳过:${JSON.stringify(sr.error.issues)}`
-      );
+      if (sr.data.enabled === false) {
+        diagnostics.push(
+          diag(
+            "info",
+            "disabled",
+            "server",
+            `[servers.${name}] enabled = false（已配置但不可启用）`,
+            { server: name }
+          )
+        );
+      }
+      continue;
     }
+    diagnostics.push(
+      diag(
+        "error",
+        "schema",
+        "server",
+        `[servers.${name}] 配置非法，已跳过：${describeIssues(sr.error.issues)}`,
+        {
+          server: name,
+          hint: '合法 transport 只有 "stdio"（需 command）与 "sse"（需 url）；字段名参考 mcp.example.toml',
+        }
+      )
+    );
   }
-  return { servers };
+  return { config: { servers }, diagnostics, fileExists: true };
+}
+
+/** 加载 ~/.tinyclaw/mcp.toml（只要配置，忽略诊断）。 */
+export function loadMcpConfig(): MCPConfig {
+  return loadMcpConfigDetailed().config;
 }
 
 /** 加载 ~/.tinyclaw/secrets.toml，文件不存在时返回空对象（非致命）。
