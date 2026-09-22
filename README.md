@@ -100,6 +100,25 @@ tenantId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 clientId = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
+**Dashboard(Web UI + 下载页):**
+```toml
+[web]
+enabled = true
+port    = 4096
+token   = "openssl rand -hex 24"   # 只从 POST /__login 表单或 Authorization 头读取,不再进 URL
+
+[web.downloads]
+enabled        = true              # agent 用 release_file 投放,用户在「下载」页生成一次性 curl 命令
+# dir            = "~/.tinyclaw/downloads"  # 临时区(平铺,按 ttlDays 清理)
+# keepDir        = "~/.tinyclaw/keep"       # 常驻区(可按子目录归类,永不自动清理)
+# linkTtlSecs    = 600             # 令牌有效期(秒)
+# maxUses        = 3               # 单个令牌最多下载次数(留 curl -C - 续传余量)
+# maxFileMb      = 512             # 单文件体积上限(MB)
+# maxTotalMb     = 2048            # 临时区总占用上限(MB)
+# keepMaxTotalMb = 5120            # 常驻区总占用上限(MB)
+# ttlDays        = 7               # 临时区保留天数(0 = 不清理)
+```
+
 ## CLI 速查
 
 ```bash
@@ -261,6 +280,8 @@ tinyclaw completions install           # 安装 tab 补全
 │       ├── meta.json          # 任务/状态/工具/起止时间
 │       └── result.md          # 最终结果全文
 ├── reports/             # 日报存档(<type>/<date>.md,供 Dashboard 展示)
+├── downloads/           # Dashboard 下载页·临时区(release_file 投放,按 ttlDays 清理)
+├── keep/                # Dashboard 下载页·常驻区(可按子目录归类,永不自动清理)
 └── news/                # News MCP 新闻存档(YYYY-MM/YYYY-MM-DD.md)
 ```
 

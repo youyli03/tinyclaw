@@ -116,6 +116,48 @@ Markdown 走 `marked`（懒加载，见上），PDF 分两条路：
 - PDF 响应头是 `Cache-Control: private, max-age=300`（原来 `no-store` → 每次打开重下 2.2MB）；
   `Accept-Ranges` + 206 分片照旧。
 
+#### 下载页（一次性令牌）
+
+回答“把文件交给用户”：agent 用 `release_file` 把文件**复制**进释放区，用户登录后在「下载」页选中文件
+生成一条一次性 `curl` 命令，在**任何机器**上执行即可下载。**两个区**：
+
+| 区 | 目录（可配） | 形态 | 清理 |
+|---|---|---|---|
+| 临时区 | `~/.tinyclaw/downloads/`（`dir`） | 平铺文件名 | 列表接口按 `ttlDays` 自动清理 |
+| 常驻区 | `~/.tinyclaw/keep/`（`keepDir`） | **可嵌套子目录归类**（`release_file(keep=true, name="分类/文件")`），前端复用笔记的树组件渲染 | **永不自动清理** |
+
+- **接口**：`GET /api/downloads`（返回临时区列表 + 常驻区目录树）/ `POST /api/downloads/link?name=&zone=temp|keep`
+  （签发令牌）/ `POST /api/downloads/delete?name=&zone=`（删除并作废令牌）—— 都要会话；
+  `GET /dl` 是**唯一免会话路径**，只认一次性令牌（`X-Download-Token` / `Authorization: Bearer <otp>` / `?t=`），
+  handler 内部 fail-closed
+- **令牌语义**：256bit 随机、只在内存（进程重启全失效）、**绑定文件指纹**（size+mtimeMs，文件被替换即作废）、
+  TTL（默认 600s）与最大次数（默认 3，留出 `curl -C -` 续传余量）；**只能下它绑定的那一个文件**。
+  常驻文件也是**每次下载各生成一条一次性命令**——常驻的是文件，不是链接
+- **生成的命令**：`curl -fL -H "X-Download-Token: <otp>" -o <文件名> https://<host>/dl`
+  —— 令牌走**请求头、不进 URL**（URL 会进 Cloudflare/反代日志与浏览器历史）
+- ⚠️ **缓存头必须 `private, no-store`**：下载对象一旦被 CF 边缘缓存，就会绕过令牌对所有人公开
+- **路径安全**：临时区只接受**文件名**；常驻区接受**相对路径**但逐段校验（拒绝绝对路径、`.`/`..`、
+  隐藏段、控制字符；段数与段长有上限），解析后 `realpath` 必须仍落在区内，且拒绝符号链接（含中间目录）。
+  校验函数 `downloads.normalizeKeepRel()` 由**投放侧与下载侧共用**，避免两侧口径不一致
+- **投放侧安全闸**：`release_file` 拒绝 `isRuntimeSecretPath()` 判定的密钥文件与符号链接，
+  并受单文件（`maxFileMb`）与各区总量（`maxTotalMb` / `keepMaxTotalMb`）上限约束；每次调用写审计
+- **树的安全**：常驻区遍历不跟随、也不展示符号链接；深度上限 6、条目上限 2000（防病态目录）
+
+配置（`~/.tinyclaw/config.toml`）：
+
+```toml
+[web.downloads]
+enabled        = true                      # 默认 false
+dir            = "~/.tinyclaw/downloads"   # 临时区目录
+keepDir        = "~/.tinyclaw/keep"        # 常驻区目录（可用子目录归类）
+linkTtlSecs    = 600                       # 一次性令牌有效期(秒)
+maxUses        = 3                         # 单个令牌最多下载次数
+maxFileMb      = 512                       # 单文件体积上限(MB)
+maxTotalMb     = 2048                      # 临时区总占用上限(MB)
+keepMaxTotalMb = 5120                      # 常驻区总占用上限(MB)
+ttlDays        = 7                         # 临时区保留天数(0 = 不清理；常驻区不受影响)
+```
+
 #### Token 页(prompt 构成细分)
 
 回答"钱花在哪一类"——把**每一次 LLM 请求**的 prompt 拆成七类（`src/memory/token-estimate.ts` 的
@@ -326,6 +368,8 @@ tinyclaw/
 │       ├── meta.json         # task / status / toolsUsed / agentId / masterSessionId / 起止时间
 │       └── result.md         # 最终结果全文（agent_trace 读取）
 ├── reports/                  # 日报存档(<type>/<date>.md,write_report 写入,Dashboard 展示)
+├── downloads/                # Dashboard 下载页·临时区(release_file 写入,按 ttlDays 清理)
+├── keep/                     # Dashboard 下载页·常驻区(release_file keep=true 写入,可按子目录归类,永不自动清理)
 ├── dashboard.db              # Dashboard 业务指标数据库(SQLite,db_write 写入;另含 Token 页的 token_breakdown 表)
 ├── news/                     # news MCP server 的新闻存档
 │   ├── YYYY-MM/

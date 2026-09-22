@@ -1027,6 +1027,31 @@ export type VoiceConfig = z.infer<typeof VoiceSchema>;
 
 // ── Web Dashboard ─────────────────────────────────────────────────────────────
 
+/**
+ * Dashboard 下载页（`release_file` 投放 → 用户在页面生成一次性 curl 命令取走）。
+ * 默认关闭；开启后 `/api/downloads*` 需会话，`/dl` 只认一次性下载令牌。
+ */
+const WebDownloadsSchema = z.object({
+  /** 是否启用下载页,默认 false */
+  enabled: z.boolean().default(false),
+  /** 临时区目录(支持 ~ 开头);缺省 ~/.tinyclaw/downloads */
+  dir: z.string().optional(),
+  /** 常驻区目录(支持 ~ 开头,可用子目录归类);缺省 ~/.tinyclaw/keep */
+  keepDir: z.string().optional(),
+  /** 一次性下载令牌有效期(秒),默认 600 */
+  linkTtlSecs: z.number().int().positive().default(600),
+  /** 单个令牌最多下载次数(留出 curl -C - 续传余量),默认 3 */
+  maxUses: z.number().int().positive().default(3),
+  /** 单文件体积上限(MB),默认 512 */
+  maxFileMb: z.number().int().positive().default(512),
+  /** 临时区总占用上限(MB),超过后 release_file 拒绝新文件,默认 2048 */
+  maxTotalMb: z.number().int().positive().default(2048),
+  /** 常驻区总占用上限(MB),默认 5120 */
+  keepMaxTotalMb: z.number().int().positive().default(5120),
+  /** 临时区文件保留天数(0 = 不清理;常驻区不受影响),默认 7 */
+  ttlDays: z.number().int().nonnegative().default(7),
+});
+
 const WebSchema = z.object({
   /** 是否启用 Dashboard HTTP 服务,默认 false */
   enabled: z.boolean().default(false),
@@ -1040,6 +1065,7 @@ const WebSchema = z.object({
    * 推荐用 openssl rand -hex 24 生成。
    */
   token: z.string().optional(),
+  downloads: WebDownloadsSchema.default({}),
 });
 export type WebConfig = z.infer<typeof WebSchema>;
 

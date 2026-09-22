@@ -320,3 +320,25 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # tokenTtlSecs       = 120       # 一次性令牌有效期(绑定命令哈希;换命令即失效)
 # maxRequestsPer5min = 1         # 同一条命令的提权请求节流(防模型被拒后刷屏)
 # allowInCron        = false     # cron/loop 等无人值守场景一律不许提权
+
+# ── Web Dashboard ────────────────────────────────────────────────────────────
+# 鉴权:token 只从 POST /__login 的表单体或 Authorization: Bearer 头读取(不再从 URL query,
+# 避免进反代日志/浏览器历史);登录后凭 dash_token 会话 cookie(随机 sid,7 天滑动,进程重启失效)。
+[web]
+# enabled = true                            # 总开关(默认 false)
+# port    = 4096                            # 监听端口
+# token   = "openssl rand -hex 24 生成"      # 不设置则不鉴权(仅内网可接受)
+
+# 下载页:agent 用 release_file 把文件放进释放目录,用户登录后在「下载」页生成一次性 curl 命令取走。
+# 两个区:临时区(flat,按 ttlDays 清理) 与 常驻区(可按子目录归类,永不自动清理)。
+# 令牌绑定文件指纹(大小+mtime)、有 TTL 与次数上限、只在内存(重启即失效);每次下载都是一次性令牌。
+[web.downloads]
+# enabled        = true                        # 默认 false
+# dir            = "~/.tinyclaw/downloads"     # 临时区目录
+# keepDir        = "~/.tinyclaw/keep"          # 常驻区目录(可用子目录归类,如 工具/打包/)
+# linkTtlSecs    = 600                         # 一次性令牌有效期(秒)
+# maxUses        = 3                           # 单个令牌最多下载次数(留 curl -C - 续传余量)
+# maxFileMb      = 512                         # 单文件体积上限(MB)
+# maxTotalMb     = 2048                        # 临时区总占用上限(MB),超过后 release_file 拒绝新文件
+# keepMaxTotalMb = 5120                        # 常驻区总占用上限(MB)
+# ttlDays        = 7                           # 临时区文件保留天数(0 = 不清理;常驻区不受影响)

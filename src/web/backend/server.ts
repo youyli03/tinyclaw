@@ -30,6 +30,13 @@ import * as path from "node:path";
 import * as url from "node:url";
 import * as zlib from "node:zlib";
 import { handleApi } from "./api.js";
+import {
+  DOWNLOAD_PATH,
+  handleDownloadRoute,
+  handleDownloadsApi,
+  resetDownloadTokens,
+  type DownloadsConfig,
+} from "./downloads.js";
 import { createLogger } from "../../utils/logger.js";
 
 const log = createLogger("dashboard");
@@ -659,7 +666,8 @@ let _server: http.Server | null = null;
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  token: string | undefined
+  token: string | undefined,
+  downloads: DownloadsConfig | undefined
 ): Promise<void> {
   if (req.method === "OPTIONS") {
     // 不再返回 Access-Control-Allow-Origin：Dashboard 是同源应用，不需要 CORS，
@@ -669,8 +677,21 @@ async function handleRequest(
     return;
   }
 
+  // /dl 免会话：它只认一次性下载令牌（downloads 模块内部 fail-closed）。
+  // 这是唯一绕过会话鉴权的路径，所以必须**精确匹配**，且只交给 downloads 模块处理。
+  if (new URL(req.url ?? "/", "http://localhost").pathname === DOWNLOAD_PATH) {
+    applySecurityHeaders(res);
+    if (!downloads?.enabled) {
+      replyJson(res, 404, { error: "下载功能未启用" });
+      return;
+    }
+    await handleDownloadRoute(req, res, downloads);
+    return;
+  }
 
   if (await handleAuth(req, res, token)) return;
+
+  if (downloads && (await handleDownloadsApi(req, res, downloads))) return;
 
   const handled = await handleApi(req, res);
   if (handled) return;
@@ -678,11 +699,11 @@ async function handleRequest(
   serveStatic(req, res);
 }
 
-export function startDashboard(port = 4096, token?: string): void {
+export function startDashboard(port = 4096, token?: string, downloads?: DownloadsConfig): void {
   if (_server) return;
 
   const server = http.createServer((req, res) => {
-    void handleRequest(req, res, token).catch((e: unknown) => {
+    void handleRequest(req, res, token, downloads).catch((e: unknown) => {
       log.error(`请求处理失败: ${String(e)}`);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
@@ -698,6 +719,11 @@ export function startDashboard(port = 4096, token?: string): void {
     if (!token) {
       log.warn("未配置 [web].token：Dashboard 无鉴权，任何能访问该端口的客户端都能读取全部数据");
     }
+    if (downloads?.enabled) {
+      log.info(
+        `下载页已启用（令牌 ${downloads.linkTtlSecs}s / 最多 ${downloads.maxUses} 次 / 单文件 ${downloads.maxFileMb}MB）`
+      );
+    }
   });
 
   server.on("error", (err) => {
@@ -710,6 +736,8 @@ export function startDashboard(port = 4096, token?: string): void {
 export function stopDashboard(): void {
   sessions.clear();
   failures.clear();
+
+  resetDownloadTokens();
   _server?.close();
   _server = null;
 }
