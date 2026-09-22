@@ -8,7 +8,7 @@
 import type { McpLoadDiagnostic } from "../config/loader.js";
 
 /** 载入触发来源 */
-export type McpLoadTrigger = "startup" | "reload" | "watch" | "cli";
+export type McpLoadTrigger = "startup" | "reload" | "watch" | "cli" | "tool";
 
 /** 汇总一行，如 `3 server(s), 1 error(s)` */
 export function summarizeLoad(diagnostics: McpLoadDiagnostic[], serverCount: number): string {

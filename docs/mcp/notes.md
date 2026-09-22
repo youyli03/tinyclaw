@@ -106,3 +106,18 @@ description = "动态笔记知识库（Agent 隔离）"
 ```
 
 多 Agent 场景：为每个 Agent 单独注册一个 server 条目，`--agent-id` 传对应 Agent ID。
+
+### 两种写法（等价）
+
+1. **手写 `mcp.toml`**（上面这段）→ 改完执行 `tinyclaw mcp status` 确认载入无告警。
+2. **让 agent 加**：`mcp_server_add`（需 MFA 确认）—— 写前全量校验、自动备份 `mcp.toml.bak-<ts>`、原子落盘，
+   写完立刻热重载。
+
+需要密钥时**不要**把明文写进 `mcp.toml`：
+
+```toml
+[servers.notes]
+env = { NOTES_TOKEN = "${SECRET:NOTES_TOKEN}" }   # 值在连接时从 ~/.tinyclaw/secrets.toml 读取
+```
+
+`${SECRET:NAME}` 引用缺失会在载入诊断里报 `code: secret`（`tinyclaw mcp status` / `mcp_list_servers` 都能看到）。

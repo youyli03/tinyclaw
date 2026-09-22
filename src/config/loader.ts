@@ -143,6 +143,7 @@ export type McpLoadDiagCode =
   | "syntax" // TOML 语法错误 → 整份配置按空处理
   | "schema" // 单个 [servers.X] 非法，已跳过 / servers 段结构非法
   | "empty" // 文件合法但没有任何 [servers.X] 定义
+  | "secret" // env / headers 里的 ${SECRET:NAME} 引用了 secrets.toml 中不存在的键
   | "disabled"; // enabled = false（不是错误，供 agent 知情）
 
 /** 一条 MCP 载入诊断 */
@@ -195,7 +196,7 @@ function diag(
  * ⚠️ 绝不要改回 `JSON.stringify(issues)` 或输出 `issue.received`：env / headers 的值写错类型时，
  * Zod 会把原值放进 `received`，而这段文本会经启动日志、`mcp_list_servers`、CLI 三处外泄 token。
  */
-function describeIssues(
+export function describeZodIssues(
   issues: readonly { path: readonly (string | number)[]; code: string }[]
 ): string {
   return issues
@@ -203,42 +204,25 @@ function describeIssues(
     .join("; ");
 }
 
-/**
- * 加载 ~/.tinyclaw/mcp.toml，同时返回诊断。
- *
- * 与旧行为的差别：**TOML 语法错误不再被伪装成"文件读取失败"**，而是给出 `code: "syntax"`
- * 的 error 诊断 —— 调用方（agent 工具 / CLI / 日志）据此能告诉用户"整份配置都没生效"。
- * 文件不存在时返回空配置且无诊断（未配置 MCP 属正常状态）。
- *
- * @param filePath 仅供测试注入；默认 `~/.tinyclaw/mcp.toml`
- */
-export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLoadReport {
-  let text: string;
-  try {
-    text = fs.readFileSync(filePath, "utf-8");
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return { config: MCPConfigSchema.parse({}), diagnostics: [], fileExists: false };
-    }
-    return {
-      config: MCPConfigSchema.parse({}),
-      fileExists: true,
-      diagnostics: [
-        diag("error", "unreadable", "file", `无法读取 mcp.toml（${code ?? "未知错误"}）`, {
-          hint: `检查文件权限：chmod 600 ${filePath}`,
-        }),
-      ],
-    };
-  }
+/** `analyzeMcpTomlText` 的结果（不含"文件是否存在"这一层） */
+export interface McpTomlAnalysis {
+  config: MCPConfig;
+  diagnostics: McpLoadDiagnostic[];
+}
 
+/**
+ * 解析 mcp.toml 的**文本**并给出诊断（纯函数，不碰文件系统）。
+ *
+ * 供 `loadMcpConfigDetailed()` 与写入器（`mcp/config-writer.ts` 的写前校验）共用：
+ * 只要这里有 error 诊断，就不该把这份文本当成"可用配置"（也不该落盘）。
+ */
+export function analyzeMcpTomlText(text: string): McpTomlAnalysis {
   let raw: unknown;
   try {
     raw = parse(text);
   } catch (err: unknown) {
     return {
       config: MCPConfigSchema.parse({}),
-      fileExists: true,
       diagnostics: [
         diag(
           "error",
@@ -284,7 +268,7 @@ export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLo
         );
       }
     }
-    return { config: result.data, diagnostics, fileExists: true };
+    return { config: result.data, diagnostics };
   }
 
   // 慢路径：逐个 server 容错解析，避免单个坏配置让全部 MCP 失效
@@ -298,7 +282,6 @@ export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLo
   ) {
     return {
       config: MCPConfigSchema.parse({}),
-      fileExists: true,
       diagnostics: [
         diag(
           "error",
@@ -335,7 +318,7 @@ export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLo
         "error",
         "schema",
         "server",
-        `[servers.${name}] 配置非法，已跳过：${describeIssues(sr.error.issues)}`,
+        `[servers.${name}] 配置非法，已跳过：${describeZodIssues(sr.error.issues)}`,
         {
           server: name,
           hint: '合法 transport 只有 "stdio"（需 command）与 "sse"（需 url）；字段名参考 mcp.example.toml',
@@ -343,7 +326,38 @@ export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLo
       )
     );
   }
-  return { config: { servers }, diagnostics, fileExists: true };
+  return { config: { servers }, diagnostics };
+}
+
+/**
+ * 加载 ~/.tinyclaw/mcp.toml，同时返回诊断。
+ *
+ * 与旧行为的差别：**TOML 语法错误不再被伪装成"文件读取失败"**，而是给出 `code: "syntax"`
+ * 的 error 诊断 —— 调用方（agent 工具 / CLI / 日志）据此能告诉用户"整份配置都没生效"。
+ * 文件不存在时返回空配置且无诊断（未配置 MCP 属正常状态）。
+ *
+ * @param filePath 仅供测试注入；默认 `~/.tinyclaw/mcp.toml`
+ */
+export function loadMcpConfigDetailed(filePath: string = mcpConfigPath()): McpLoadReport {
+  let text: string;
+  try {
+    text = fs.readFileSync(filePath, "utf-8");
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return { config: MCPConfigSchema.parse({}), diagnostics: [], fileExists: false };
+    }
+    return {
+      config: MCPConfigSchema.parse({}),
+      fileExists: true,
+      diagnostics: [
+        diag("error", "unreadable", "file", `无法读取 mcp.toml（${code ?? "未知错误"}）`, {
+          hint: `检查文件权限：chmod 600 ${filePath}`,
+        }),
+      ],
+    };
+  }
+  return { ...analyzeMcpTomlText(text), fileExists: true };
 }
 
 /** 加载 ~/.tinyclaw/mcp.toml（只要配置，忽略诊断）。 */

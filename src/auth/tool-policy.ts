@@ -86,7 +86,13 @@ export type ToolChannel = "react" | "steps";
  * 而写在 job 配置里的 `steps: [{type:"tool", name:"agent_fork"}]` 是**声明式**步骤
  * （如"股市日报"按市场 fan-out 多个 slave），属用户显式设计，允许。
  */
-const HARD_DENY_REACT_UNATTENDED = new Set(["agent_fork"]);
+const HARD_DENY_REACT_UNATTENDED = new Set([
+  "agent_fork",
+  "mcp_server_add",
+  "mcp_server_remove",
+  "mcp_server_set_enabled",
+  "mcp_reload",
+]);
 
 /** 硬禁止工具的解释（拒绝文案用） */
 const HARD_DENY_REASON: Record<string, string> = {
@@ -95,6 +101,14 @@ const HARD_DENY_REASON: Record<string, string> = {
     "（独立 session / 上下文 / 预算）。如果确实需要 fork 做 fan-out，请把它写成 job 配置里的" +
     "声明式步骤（steps: [{type:\"tool\", name:\"agent_fork\", args:{...}}]）—— 那样是用户写死的意图，" +
     "允许执行。",
+  mcp_server_add:
+    "无人值守时禁止新增 MCP server：新 server 的 command 是任意可执行程序，等于在没人看着时扩大" +
+    "可执行面。请在有人值守的会话里让 agent 调用它（会走 MFA 确认），或自己编辑 ~/.tinyclaw/mcp.toml。",
+  mcp_server_remove:
+    "无人值守时禁止删除 MCP server 配置（会静默改变其它任务可用的工具集）。请在有人值守的会话里操作。",
+  mcp_server_set_enabled:
+    "无人值守时禁止启停 MCP server（启用一个被禁用的 server 等于扩大可执行面）。请在有人值守的会话里操作。",
+  mcp_reload: "无人值守时禁止重载 MCP 配置：重载本身无害，但它是上述改动生效的入口，统一在有人值守时进行。",
 };
 
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {

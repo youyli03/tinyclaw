@@ -63,6 +63,7 @@ import "../tools/cron.js";
 import "../tools/skill-creator.js";
 import "../tools/skill-run.js";
 import "../tools/mcp-manager.js";
+import "../tools/mcp-admin.js";
 import { mcpManager } from "../mcp/client.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";

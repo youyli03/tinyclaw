@@ -11,8 +11,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { registerTool, setToolVisibility, setMcpAgentFilter } from "../tools/registry.js";
+import { SSEClientTransport, type SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
+import { registerTool, setToolVisibility, setMcpAgentFilter, unregisterTool } from "../tools/registry.js";
 import {
   loadMcpConfigDetailed,
   loadConfig,
@@ -20,6 +20,7 @@ import {
   type McpLoadReport,
 } from "../config/loader.js";
 import { summarizeLoad, type McpLoadTrigger } from "./load-report.js";
+import { checkSecretRefs, resolveSecretRefs } from "./secret-ref.js";
 import type { MCPConfig, MCPServerConfig } from "../config/schema.js";
 import { agentManager } from "../core/agent-manager.js";
 
@@ -54,13 +55,29 @@ export interface MCPServerStatus {
 }
 
 /** Sanitize server/tool name: 只保留字母数字下划线，截断到 32 字符 */
-function sanitizeName(s: string): string {
+export function sanitizeMcpName(s: string): string {
   return s.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 32);
 }
 
 /** 构造 MCP 工具的注册名 */
 function mcpToolName(serverName: string, toolName: string): string {
-  return `mcp_${sanitizeName(serverName)}_${sanitizeName(toolName)}`.slice(0, 64);
+  return `mcp_${sanitizeMcpName(serverName)}_${sanitizeMcpName(toolName)}`.slice(0, 64);
+}
+
+/**
+ * eventsource 的 fetch 钩子：把 `[servers.X].headers` 加到 SSE 建连请求上。
+ *
+ * SDK 只在提供 `authProvider` 时才自动带 Authorization；普通自定义 header（Bearer token、
+ * 内网网关标识等）必须自己注入这个钩子 —— `requestInit` 只作用于建连之后的 POST。
+ */
+function buildEventSourceFetch(
+  headers: Record<string, string>
+): NonNullable<NonNullable<SSEClientTransportOptions["eventSourceInit"]>["fetch"]> {
+  return (input, init) =>
+    fetch(input, {
+      ...(init as RequestInit | undefined),
+      headers: { ...headers, ...((init?.headers as Record<string, string> | undefined) ?? {}) },
+    });
 }
 
 class MCPClientManager {
@@ -94,7 +111,9 @@ class MCPClientManager {
    */
   private applyLoad(report: McpLoadReport, trigger: McpLoadTrigger): void {
     this.loadedConfig = report.config;
-    this.diagnostics = report.diagnostics;
+    // 载入期额外检查 ${SECRET:NAME} 引用是否都能在 secrets.toml 里找到
+    // （写配置时**不做**这项检查：先写引用、后补 secret 是合理顺序）
+    this.diagnostics = [...report.diagnostics, ...checkSecretRefs(report.config)];
     this.loadedAt = new Date().toISOString();
     this.loadTrigger = trigger;
     this.configFileExists = report.fileExists;
@@ -138,6 +157,75 @@ class MCPClientManager {
   }
 
   /**
+   * 热重载 `mcp.toml`：重新读盘 → 关闭/注销被删或被改的 server → 应用新配置 →
+   * 重新启用此前已启用的 server（仍存在且 `enabled != false`）。
+   *
+   * 返回一行人类可读摘要（agent 工具 / CLI / 日志共用）。
+   * ⚠️ 不做引用计数：正在执行的 MCP 调用可能因 close 失败而报错，但错误是可见的（可重试）。
+   */
+  async reload(trigger: McpLoadTrigger = "reload"): Promise<string> {
+    const before = this.loadedConfig.servers;
+    const report = loadMcpConfigDetailed();
+    const after = report.config.servers;
+
+    const added: string[] = [];
+    const changed: string[] = [];
+    const removed: string[] = [];
+    for (const [name, cfg] of Object.entries(after)) {
+      const prev = before[name];
+      if (prev === undefined) added.push(name);
+      else if (JSON.stringify(prev) !== JSON.stringify(cfg)) changed.push(name);
+    }
+    for (const name of Object.keys(before)) {
+      if (after[name] === undefined) removed.push(name);
+    }
+
+    const wasEnabled: string[] = [];
+    for (const [name, rt] of this.runtimes) {
+      if (rt.connected) wasEnabled.push(name);
+    }
+
+    for (const name of [...removed, ...changed]) await this.dropServer(name);
+    this.applyLoad(report, trigger);
+
+    const failures: string[] = [];
+    for (const name of wasEnabled) {
+      const cfg = after[name];
+      if (cfg === undefined || cfg.enabled === false) continue;
+      const res = await this.enableServer(name);
+      if (res.startsWith("错误")) failures.push(`${name}（${res}）`);
+    }
+
+    const parts: string[] = [`${Object.keys(after).length} server(s)`];
+    if (added.length > 0) parts.push(`新增 ${added.join(", ")}`);
+    if (removed.length > 0) parts.push(`移除 ${removed.join(", ")}`);
+    if (changed.length > 0) parts.push(`变更 ${changed.join(", ")}`);
+    if (wasEnabled.length > 0) parts.push(`重新启用 ${wasEnabled.join(", ")}`);
+    if (failures.length > 0) parts.push(`重连失败 ${failures.join("; ")}`);
+    const errors = this.diagnostics.filter((d) => d.level === "error").length;
+    if (errors > 0) parts.push(`${errors} 个载入错误（见 mcp_list_servers）`);
+    return `已重载 mcp.toml（trigger=${trigger}）：${parts.join("、")}`;
+  }
+
+  /** 关闭连接 + 注销该 server 注册过的工具（reload / 删除共用） */
+  private async dropServer(name: string): Promise<void> {
+    const rt = this.runtimes.get(name);
+    if (rt === undefined) return;
+    if (rt.client) {
+      try {
+        await rt.client.close();
+      } catch (err) {
+        console.warn(
+          `[mcp] reload: 关闭 server '${name}' 失败`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+    for (const toolName of rt.toolNames) unregisterTool(toolName);
+    this.runtimes.delete(name);
+  }
+
+  /**
    * 判断某个 MCP server 是否对指定 agent 可见。
    * 读取 agent 目录下的 mcp.toml（~/.tinyclaw/agents/<agentId>/mcp.toml）：
    * - 文件不存在 → 所有 server 可用（向后兼容）
@@ -169,7 +257,7 @@ class MCPClientManager {
     // 工具尚未注册（server 未连接），尝试从工具名前缀匹配 server
     // mcp_<sanitizedServerName>_ 前缀匹配
     for (const serverName of Object.keys(this.loadedConfig.servers)) {
-      const prefix = `mcp_${sanitizeName(serverName)}_`;
+      const prefix = `mcp_${sanitizeMcpName(serverName)}_`;
       if (toolName.startsWith(prefix)) {
         return this.isAllowedForAgent(serverName, agentId);
       }
@@ -338,17 +426,48 @@ class MCPClientManager {
 
     let transport;
     if (cfg.transport === "stdio") {
+      // env 值支持 ${SECRET:NAME} 引用：真正的值从 secrets.toml 取，mcp.toml 里只留引用名
+      let env = cfg.env;
+      if (env !== undefined) {
+        const resolved = resolveSecretRefs(env);
+        if (resolved.missing.length > 0) {
+          console.warn(
+            `[mcp] server '${name}': secrets.toml 里缺少 ${resolved.missing.join(", ")}，` +
+              "对应 env 键不会注入（该 server 可能因此连不上）"
+          );
+        }
+        env = resolved.values;
+      }
       transport = new StdioClientTransport({
         command: cfg.command,
         args: cfg.args,
-        ...(cfg.env !== undefined
-          ? { env: { ...(process.env as Record<string, string>), ...cfg.env } }
+        ...(env !== undefined
+          ? { env: { ...(process.env as Record<string, string>), ...env } }
           : {}),
       });
     } else {
-      // sse
+      // sse：headers 同样支持 ${SECRET:NAME} 引用
       const url = new URL(cfg.url);
-      transport = new SSEClientTransport(url);
+      let headers = cfg.headers;
+      if (headers !== undefined) {
+        const resolved = resolveSecretRefs(headers);
+        if (resolved.missing.length > 0) {
+          console.warn(
+            `[mcp] server '${name}': secrets.toml 里缺少 ${resolved.missing.join(", ")}，` +
+              "对应 header 不会发送（该 server 可能因此连不上）"
+          );
+        }
+        headers = resolved.values;
+      }
+      transport = new SSEClientTransport(
+        url,
+        headers !== undefined
+          ? {
+              requestInit: { headers },
+              eventSourceInit: { fetch: buildEventSourceFetch(headers) },
+            }
+          : undefined
+      );
     }
 
     await client.connect(transport);

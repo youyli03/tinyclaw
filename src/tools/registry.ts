@@ -3,6 +3,7 @@ import type { Session } from "../core/session.js";
 import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
 import { sanitizeToolResult } from "./sanitize.js";
 import type { ActivityEntry } from "../ipc/server.js";
+import { MCP_META_TOOLS, MCP_ADMIN_TOOLS } from "../mcp/meta-tools.js";
 
 /** 跨 session 通信：单个 session 的信息（由 sessionGetFn 返回） */
 export interface SessionInfo {
@@ -205,12 +206,14 @@ export function getAllToolSpecs(agentId?: string): ChatCompletionTool[] {
       if (t.hidden) return false;
       const name = t.spec.function.name;
       if (agentId) {
-        // MCP 工具：走 mcp.toml agent 白名单
-        if (_mcpAgentFilter && name.startsWith("mcp_")) {
+        const isMcp = name.startsWith("mcp_");
+        const isMeta = MCP_META_TOOLS.has(name);
+        // MCP 工具（非框架 meta 工具）：走 mcp.toml agent 白名单
+        if (isMcp && !isMeta && _mcpAgentFilter) {
           return _mcpAgentFilter(name, agentId);
         }
-        // 内置工具：走 tools.toml 黑/白名单
-        if (_builtinAgentFilter && !name.startsWith("mcp_")) {
+        // 内置工具 + MCP 管理类 meta 工具：走 tools.toml 黑/白名单
+        if (_builtinAgentFilter && (!isMcp || MCP_ADMIN_TOOLS.has(name))) {
           return _builtinAgentFilter(name, agentId);
         }
       }

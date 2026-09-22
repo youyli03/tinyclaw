@@ -271,7 +271,8 @@ tinyclaw/
 │   │   ├── path-guard.ts     # 路径安全检查(防止越权访问)
 │   │   ├── sanitize.ts       # 工具结果清理与截断
 │   │   ├── cron.ts           # cron_add / cron_list / cron_remove / cron_enable / cron_disable / cron_run
-│   │   └── mcp-manager.ts    # mcp_list_servers / mcp_enable_server / mcp_disable_server
+│   │   └── mcp-manager.ts    # mcp_list_servers / mcp_enable_server / mcp_disable_server（+ 载入诊断）
+│   │   └── mcp-admin.ts      # mcp_server_add / mcp_server_remove / mcp_server_set_enabled / mcp_reload（写 mcp.toml，MFA）
 │   ├── code/                 # Code 模式（/code 斜杠命令）
 │   │   ├── index.ts          # 副作用入口，import 触发命令注册
 │   │   ├── commands.ts       # /code /chat /plan /auto /new 命令实现
@@ -294,7 +295,11 @@ tinyclaw/
 │   │   ├── client.ts         # CLI 端：连接 socket，流式打印 delta
 │   │   └── protocol.ts       # 消息类型定义（Request / Response）
 │   ├── mcp/                  # MCP client 管理器（懒加载）
-│   │   └── client.ts         # MCPManager：读配置 → 按需连接 → 注册/隐藏工具
+│   │   ├── client.ts         # MCPManager：读配置 → 按需连接 → 注册/隐藏工具 → reload()
+│   │   ├── load-report.ts    # 载入诊断的展示层（纯函数，工具 / CLI / 日志共用）
+│   │   ├── config-writer.ts  # mcp.toml 块级补丁 + 全量校验 + 原子写 + .bak 备份
+│   │   ├── secret-ref.ts     # `${SECRET:NAME}` 引用解析（连接时从 secrets.toml 取值）
+│   │   └── meta-tools.ts     # 框架级 mcp_* 工具名单（白名单过滤 / 无人值守硬拒绝用）
 │   ├── connectors/
 │   │   ├── base.ts           # Connector 接口 + InboundMessage + QQ 事件类型
 │   │   ├── utils/
@@ -574,7 +579,9 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 只读（`read_file`/`search_store`/`self_*`/`cron_list`/`mcp_list_servers`/`session_get`）、记忆写入、
 报告类工具、`exec_shell`（沙箱内）与子 agent 系列（`agent_fork`/`agent_wait`/`agent_status`/`agent_trace`/`agent_abort`）。
 **不含**破坏性（`delete_file`/`self_runtime_delete`）、特权（`restart_tool`/`cron_add`/`cron_remove`/`mcp_enable_server`…）
-与出网（`read_url`/`web_search`/`http_request`）。
+与出网（`read_url`/`web_search`/`http_request`）。**MCP 自管理工具**（`mcp_server_add`/`mcp_server_remove`/
+`mcp_server_set_enabled`/`mcp_reload`）更进一步：它们在 ReAct 通道**硬拒绝**（`HARD_DENY_REACT_UNATTENDED`，
+写进 `allowedTools` 也不放行）—— 新增 server 的 `command` 是任意可执行程序，不能在没人看着时扩大可执行面。
 
 #### 两个通道：声明式 `steps` vs 模型驱动 `react`
 
@@ -868,6 +875,23 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
   （另在 `config show` 的 MCP 段打印）。诊断文本只含 Zod 的 `path` + `code`，
   **绝不输出 `issue.received`**（否则 env / headers 的值写错类型时会泄露 token）
 - 每个 server 的最近一次连接失败与时间（`MCPServerStatus.lastErrorAt`）同样由 `mcp_list_servers` 展示
+- **自管理（写 `mcp.toml`）**：agent 侧四个工具 —— `mcp_server_add`（新增/覆盖）、`mcp_server_remove`、
+  `mcp_server_set_enabled`、`mcp_reload`（热重载）。三个写工具 `requiresMFA: true`，且走
+  `src/mcp/config-writer.ts`：**块级文本补丁**（保留注释与未知键）→ **写前全量校验**（不通过即拒写）
+  → **备份 `mcp.toml.bak-<ts>`（保留 5 份）** → **原子写**（`.tmp` + rename，权限 0600）
+- **`mcp.toml` 仍是密钥文件**：`path-guard` 继续拒绝通用文件工具（`read_file`/`write_file`/`self_runtime_*`）
+  读写它；上面的专用工具属"被认可的接口"（同 `memory_*`/`write_report`），因此不需要 `elevate` 或放宽白名单
+- **`${SECRET:NAME}` 引用**（`src/mcp/secret-ref.ts`）：`env` / `headers` 的值可以是引用，真正的值在**连接
+  server 时**从 `~/.tinyclaw/secrets.toml` 读取 —— mcp.toml 与会话历史里只留键名。**只在整值就是引用时解析**
+  （不做字符串插值，避免误伤普通文本；`Authorization = "${SECRET:X}"` 的 X 里要存整段 `Bearer …`）。
+  非引用值原样透传（兼容手写明文）。引用缺失会在载入期产出 `code: "secret"` 的 error 诊断
+  （写配置时**不**做这项检查，先写引用后补 secret 是合理顺序）
+- **SSE `headers` 已真正下发**：`requestInit.headers` 供后续 POST，
+  `eventSourceInit.fetch` 注入建连请求（SDK 只在提供 `authProvider` 时才自动带 Authorization）
+- **`reload()` 语义**：重新读盘 → 按规范化深比较得出 added/changed/removed → 关闭连接并
+  `unregisterTool()` 注销被删/被改 server 的工具 → 应用新配置 → 重新启用此前已启用的 server，
+  返回一行摘要。不做引用计数（正在执行的调用可能报错，但错误可见、可重试）；工具快照每轮重取，
+  新工具**下一轮**即可见
 
 ---
 

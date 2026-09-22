@@ -1,6 +1,13 @@
 # tinyclaw MCP 服务器配置
 # 复制到 ~/.tinyclaw/mcp.toml 后编辑使用
 # 警告：mcp.toml 已加入 .gitignore，请勿提交含密钥的配置
+#
+# 改完自检：tinyclaw mcp status          （列出载入结果与诊断；env / headers 只显示键名）
+# 也可让 agent 用 mcp_server_add / mcp_server_remove / mcp_server_set_enabled / mcp_reload 管理
+#   —— 写前全量校验、自动备份 mcp.toml.bak-<ts>、原子落盘、写完立刻热重载（写工具需 MFA）
+#
+# 密钥不要写明文：env / headers 的值支持 ${SECRET:NAME} 引用（连接时从 ~/.tinyclaw/secrets.toml 读取）
+#   env = { MY_API_KEY = "${SECRET:MY_API_KEY}" }
 
 # ── 每个 [servers.NAME] 定义一个 MCP server ───────────────────────────────────
 # enabled = false 可快速禁用而不删除配置（默认 true）
@@ -36,11 +43,12 @@
 # transport = "stdio"
 # command = "/usr/local/bin/my-mcp-server"
 # args = ["--port", "3001"]
-# env = { MY_API_KEY = "secret", LOG_LEVEL = "info" }
+# env = { MY_API_KEY = "${SECRET:MY_API_KEY}", LOG_LEVEL = "info" }  # 密钥走引用，非密钥可明文
 
 # ── sse 示例：远程 HTTP/SSE MCP server ──────────────────────────────────────────
 # [servers.remote-api]
 # enabled = false
 # transport = "sse"
 # url = "http://localhost:3000/sse"
-# headers = { Authorization = "Bearer your-token-here" }
+# headers = { Authorization = "${SECRET:REMOTE_AUTH}" }   # 整值引用；secrets.toml 里存 "Bearer xxx"
+#   ↑ ${SECRET:NAME} 只在"整个值就是引用"时解析（不做字符串插值），所以带前缀的值请整体放进 secret
