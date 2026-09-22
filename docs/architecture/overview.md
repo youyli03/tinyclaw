@@ -815,6 +815,12 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 ### Agent Fork(Master-Slave)
 
+- **自动 fork**(`agent.autoForkThresholdMs`,默认 120000 = 2 分钟,**0 = 关闭**):ReAct 循环里每批工具执行完检查一次,
+  本轮累计运行超阈值、且是交互式 Master(非 code 模式 / 非 Slave / `slaveDepth === 0` / 提供了 `onSlaveComplete`)时,
+  调 `slaveManager.forkContinuation()` 克隆 Master 全量上下文起一个 continuation Slave,**Master 当前轮直接结束**并回一句
+  "已自动在后台创建 Sub-Agent"。chat / cron / loop 三条入口共用该阈值(`runAgent` 读 `config.agent.autoForkThresholdMs`),
+  单次运行可用 `AgentRunOptions.autoForkThresholdMs` 覆盖。⚠️ 它只克隆上下文、**不携带 Master 手上的中间结论**
+  (见 `AGENTS.md` §7.4),需要模型自己收尾的复杂任务建议置 `0`,改由模型显式 `agent_fork`
 - `agent_fork` 工具:在后台启动 Slave agent,异步执行耗时任务
   - `context_mode`:继承模式,默认取 `memory.slaveContextMode`
     - `task-only`:不继承历史(system prompt 里的 MEM.md / SKILLS.md 仍然在)。**背景自足时最省**
@@ -1089,6 +1095,9 @@ toolPurpose      = true    # 是否启用（关掉则完全不注入、不展示
 purposeMaxUnits  = 10      # 长度上限：CJK 按字、拉丁串按词；emoji 不计
 purposeHoldMs    = 4000    # 工具跑超过该时长才算"用户在等"；0 = 一开始就展示
 purposeMinGapMs  = 3000    # 两次展示的最小间隔
+
+# 自动 fork（见「Agent Fork」节）：0 = 关闭
+autoForkThresholdMs = 120000   # 毫秒；ReAct 轮次超时后把剩余任务交给 continuation Slave
 ```
 
 ---

@@ -181,8 +181,6 @@ setBuiltinAgentFilter((toolName: string, agentId: string): boolean => {
 const MAX_TOOL_ROUNDS = 0;
 /** Slave 最大嵌套深度：0=Master，1=一级Slave，不允许 Slave 再 fork */
 const MAX_SLAVE_DEPTH = 1;
-/** 超过此时长（ms）且仍在执行工具时，自动 fork 为 Slave 继续执行 */
-const AUTO_FORK_THRESHOLD_MS = 120_000;
 /** Code 模式：context window 用量超过此比例时，通知用户已接近上限（触发压缩的阈值更低，为 75%） */
 const CODE_CONTEXT_WARN_THRESHOLD = 0.9;
 /**
@@ -802,7 +800,7 @@ export interface AgentRunOptions {
   skipAddUserMessage?: boolean;
   /**
    * 自动 fork 的时间阈值（毫秒）。超过该时间后，每批工具执行完毕即触发 auto-fork。
-   * 默认 120_000（2 分钟）。设为 0 可禁用 auto-fork。
+   * 未设置时取 `config.agent.autoForkThresholdMs`（默认 120_000 = 2 分钟）；**0 = 禁用**。
    */
   autoForkThresholdMs?: number;
   /**
@@ -2617,7 +2615,7 @@ async function runAgentInner(
     // ── Auto-fork 检查：超过阈值时将剩余任务交给 Slave 继续执行 ──────────
     // Code 模式是有状态的交互会话（工作区、plan 子模式等），不应 auto-fork
     {
-      const threshold = opts.autoForkThresholdMs ?? AUTO_FORK_THRESHOLD_MS;
+      const threshold = opts.autoForkThresholdMs ?? loadConfig().agent.autoForkThresholdMs;
       if (
         threshold > 0 &&
         !isSlave &&

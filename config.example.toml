@@ -172,6 +172,12 @@ backend        = "copilot"   # 底层执行方式
 # purposeMaxUnits  = 10     # 长度上限：CJK 按字、连续拉丁串按词计；emoji 不计，超出按图形簇截断
 # purposeHoldMs    = 4000   # 工具运行超过该时长才算"用户在等"（快工具静默）；0 = 一开始就展示
 # purposeMinGapMs  = 3000   # 两次展示之间的最小间隔
+#
+# 自动 fork（chat / cron / loop 共用）：ReAct 轮次运行超过该阈值后，把剩余任务交给
+# continuation Slave 在后台继续，Master 当前轮直接结束。
+# ⚠️ continuation Slave 只继承上下文，**不继承 Master 手上的中间结论**；需要模型自己收尾的
+# 复杂任务建议设为 0（关闭），改由模型显式调用 agent_fork。
+# autoForkThresholdMs = 120000   # 毫秒；0 = 关闭自动 fork（默认 120000 = 2 分钟）
 
 # ── 重试策略 ───────────────────────────────────────────────────────────────────
 # 控制 LLM API 调用（流式 + 非流式）及 Copilot token/模型列表请求的重试行为。

@@ -992,6 +992,20 @@ const AgentSchema = z
      */
     purposeMinGapMs: z.number().int().min(0).default(3000),
     /**
+     * 自动 fork 的触发阈值（毫秒，默认 120000 = 2 分钟）。**0 = 关闭自动 fork**。
+     *
+     * ReAct 循环里每批工具执行完毕后检查一次：本轮累计运行超过该阈值、且是交互式 Master
+     * （非 code 模式 / 非 Slave / `slaveDepth === 0` / 提供了 `onSlaveComplete`）时，
+     * 把剩余任务交给 continuation Slave 在后台继续，Master 当前轮**直接结束**。
+     *
+     * 应用范围：chat、cron、loop 三条入口共用该阈值（`runAgent` 内部读取）；
+     * 单次运行仍可用 `AgentRunOptions.autoForkThresholdMs` 覆盖。
+     *
+     * 注意：continuation Slave 继承的是上下文，**不继承 Master 手上的中间结论**
+     * （见 AGENTS.md §7.4），所以复杂任务建议设为 0，由模型显式 `agent_fork` 并自己收尾。
+     */
+    autoForkThresholdMs: z.number().int().min(0).default(120_000),
+    /**
      * 按 LLM provider 配置的 response hook 文本。
      * 键为 provider 名称(如 "copilot"、"openai"、"openrouter"),值为追加到 system prompt 末尾的指令。
      * 每次构建 system prompt 时,若当前后端 provider 匹配,自动 append 对应文本。

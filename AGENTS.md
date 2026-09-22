@@ -385,7 +385,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   （对每个指令文件的 `digest` 做 sha1），逐文件摘要由 `src/instructions/agents-md.ts` 的 `sha1()` 产出。
 - **Subagent 未修的剩余问题**：
   - `agent_wait()` 不传 `slave_id` 时按 `masterSessionId` 捞回该 master **24h 内全部** Slave（无 scope / 时间 / 分页过滤，`slave-manager.ts` 的 `waitForByMaster`）
-  - auto-fork 触发时（`agent.ts` 超 `AUTO_FORK_THRESHOLD_MS`）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
+  - auto-fork 触发时（`agent.ts` 读 `agent.autoForkThresholdMs`，默认 120000ms，0 = 关闭）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
   - `tools/skill-run.ts` 的 skill 临时 session 在**失败路径不清理** JSONL（`deleteJsonl` 只在成功分支），且 300s 超时用的是 `Promise.race`，**不取消**后台仍在跑的 Slave
   - **子 Agent 拿不到声明式密钥**：按任务声明的密钥（`sandbox/secrets-filter.ts` 方案 B）目前只有 cron job / loop trigger 能声明，`agent_fork` 与 `skill_run` 的子 Agent **无处声明、也不继承父的声明** → 它们在沙箱里 `exec_shell` 读 `~/.tinyclaw/secrets.toml` 一律是**空文件**。要让子 Agent 用密钥，需给 `agent_fork` 加 `secrets: [...]`（按任务声明 + 审计），暂未做
 

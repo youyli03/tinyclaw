@@ -123,6 +123,20 @@ enabled        = true              # agent 用 release_file 投放,用户在「�
 # ttlDays        = 7               # 临时区保留天数(0 = 不清理)
 ```
 
+**Subagent(后台子 Agent)与自动 fork:**
+
+chat 模式下模型默认把「预计几秒以上、或可拆成多个独立部分」的活派给后台子 Agent(`agent_fork`),
+多份独立部分并行 fork 后用 `agent_wait()` 汇总;上下文继承预算与模式见 `[memory]` 的
+`slaveContextRatio` / `slaveContextMode` / `slaveRecall`。
+
+```toml
+[agent]
+autoForkThresholdMs = 0   # 自动 fork:轮次超过该毫秒数就把剩余任务转后台;0 = 关闭(默认 120000 = 2 分钟)
+```
+
+> 自动 fork 出来的 continuation Slave 只继承上下文,**不携带 Master 手上的中间结论**;
+> 需要模型自己收尾的复杂任务建议设 `0`,改由模型显式 `agent_fork`。
+
 ## CLI 速查
 
 ```bash
