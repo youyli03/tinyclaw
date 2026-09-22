@@ -231,6 +231,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `send_report` | 将 Markdown/mermaid/python 渲染为图片立即推送给用户 |
 | `notify_user` | 立即发送纯文本通知(不等任务结束) |
 | `write_report` | 将日报写入本地文件供 Dashboard 展示 |
+| `release_file` | 将文件投放到 Dashboard 下载页(默认临时区;`keep=true` 投到常驻区并按目录归类),用户用一次性 curl 命令取走 |
 | `db_write` | 将业务指标数据写入 Dashboard 数据库(折线图/柱状图) |
 
 ### Cron 与 MCP

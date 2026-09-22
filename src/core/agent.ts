@@ -67,6 +67,7 @@ import { mcpManager } from "../mcp/client.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
 import "../tools/send-report.js";
+import "../tools/release-file.js";
 import "../tools/render-diagram.js";
 import "../tools/search-store.js";
 import "../tools/search-newsnow.js";

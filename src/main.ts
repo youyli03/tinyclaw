@@ -46,6 +46,7 @@ import { parseCommand, executeCommand } from "./commands/registry.js";
 import "./commands/builtin.js";
 import "./tools/db-write.js";
 import "./tools/write-report.js";
+import "./tools/release-file.js";
 import "./tools/loop-exit.js";
 import "./tools/loop-control.js";
 import "./tools/code-project.js";

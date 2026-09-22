@@ -281,8 +281,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   cron job / loop trigger 用**各自的** `writablePaths`（经 `ToolContext.sandboxExtraRwPaths` /
   `AgentRunOptions.sandboxExtraRwPaths` 传到 `buildSandboxPlan`），chat / cli 用 `fs_grant`。
   声明**文件**时会自动放开其 SQLite 边车（`-wal`/`-shm`/`-journal`），否则 WAL 模式会 `attempt to write a readonly database`。
-  ⚠️ 例外：**专用工具不受此限** —— `memory_*` / `write_report` / `create_skill` / `self_runtime_*` 直接写它们的
-  专属文件（不经 `checkWritePath`），属于"被认可的接口"而不是任意写入；只有 `write_file` / `edit_file` / `delete_file`
+  ⚠️ 例外：**专用工具不受此限** —— `memory_*` / `write_report` / `release_file` / `create_skill` / `self_runtime_*`
+  直接写它们的专属文件（不经 `checkWritePath`），属于"被认可的接口"而不是任意写入；
+  `release_file` 另有自己的闸：拒绝 `isRuntimeSecretPath()` 判定的密钥文件与符号链接，并受
+  `[web.downloads]` 的单文件/目录总量上限约束。只有 `write_file` / `edit_file` / `delete_file`
   三个通用工具走 `checkWritePath` 的白名单。
   密钥掩码的例外走 `[sandbox].readableSecretPaths`（默认空）；按任务的密钥声明见下条。
 - **两条提权路径，别混**（`AGENTS.md` 之外见 `docs/architecture/overview.md` 沙箱节）：
