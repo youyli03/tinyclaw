@@ -257,6 +257,7 @@ tinyclaw/
 │   │   ├── send-report.ts    # send_report(Markdown/mermaid/python → 图片,主动推送给用户)
 │   │   ├── notify.ts         # notify_user(不等 run 结束即推送消息)
 │   │   ├── write-report.ts   # write_report(日报写入 ~/.tinyclaw/reports/<type>/<date>.md)
+│   │   ├── release-file.ts   # release_file(投放到下载页:临时区或 keep=true 的常驻区 ~/.tinyclaw/keep/,后者按目录归类)
 │   │   ├── db-write.ts       # db_write(业务指标写入 dashboard.db,Dashboard 折线图展示)
 │   │   ├── search-store.ts   # search_store(向量语义搜索本地知识库,如 news)
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search

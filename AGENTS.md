@@ -509,8 +509,11 @@ applies — asking is mandatory; leaving it uncommitted is not an option).
   hardening / new feature / the docs that only make sense with it) instead of one "misc" commit.
 - When several concerns share a file, stage **hunks** (`git add -p`, or `git diff | git apply
   --cached`) so each commit still carries only its own concern.
-- An intermediate commit must still build: `npm run typecheck` has to pass on the committed tree
-  (verify with `git stash push --keep-index` before committing).
+- An intermediate commit must still build: `npm run typecheck` has to pass on the committed tree.
+  Verify by **materialising that tree** (write exactly the files the commit will contain, run
+  typecheck, then commit). Do **not** verify with `git stash push -u --keep-index` + `stash pop`:
+  a conflicting pop silently writes conflict markers into the working tree and `-q` hides it
+  (this actually happened on 2026-09-22 and needed a stash recovery to undo).
 - Docs go in the same commit as the code they describe (§4) — never split code and its docs.
 - Do not mix a `fix` into a `feat` commit because they happened in the same session; separate
   concerns earn separate commits (and separate Conventional Commit types).
