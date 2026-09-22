@@ -16,7 +16,8 @@ import { spawnSync } from "node:child_process";
 import { parse } from "smol-toml";
 import { ConfigSchema } from "../../config/schema.js";
 import { CONFIG_PATH, patchTomlField, readRawConfig } from "../../config/writer.js";
-import { loadMemStoresConfig, loadMcpConfig } from "../../config/loader.js";
+import { loadMemStoresConfig, loadMcpConfigDetailed } from "../../config/loader.js";
+import { formatDiagnostics, summarizeLoad } from "../../mcp/load-report.js";
 import { printTable, prompt, bold, dim, green, red, yellow, cyan, section } from "../ui.js";
 import { renderConfig } from "../../config/schema-display.js";
 import { getFieldType } from "../../config/schema-keys.js";
@@ -72,33 +73,37 @@ async function cmdShow(): Promise<void> {
   if (!fs.existsSync(mcpTomlPath)) {
     console.log(`  ${dim("(mcp.toml 不存在,无 MCP server 配置)")}`);
   } else {
-    try {
-      const mcpCfg = loadMcpConfig();
-      const servers = Object.entries(mcpCfg.servers);
-      if (servers.length === 0) {
-        console.log(`  ${dim("(无 server 定义)")}`);
-      } else {
-        const rows = servers.map(([name, srv]) => {
-          const tag = srv.enabled !== false ? green("enabled") : dim("disabled");
-          const transport = srv.transport;
-          const endpoint =
-            srv.transport === "stdio"
-              ? dim(`${srv.command} ${srv.args?.join(" ") ?? ""}`.trim().slice(0, 60))
-              : dim(srv.url ?? "");
-          return [cyan(name), `[${tag}]`, transport, endpoint];
-        });
-        printTable(["Name", "Status", "Transport", "Command / URL"], rows);
-        if (servers.some(([, s]) => s.description)) {
-          console.log();
-          for (const [name, srv] of servers) {
-            if (srv.description) {
-              console.log(`  ${cyan(name)}: ${dim(srv.description.slice(0, 80))}`);
-            }
+    const report = loadMcpConfigDetailed();
+    const servers = Object.entries(report.config.servers);
+    console.log(`  ${dim("载入结果：")}${summarizeLoad(report.diagnostics, servers.length)}`);
+    const mcpDiagLines = formatDiagnostics(report.diagnostics, "all");
+    if (mcpDiagLines.length > 0) {
+      console.log();
+      for (const line of mcpDiagLines) {
+        console.log(`  ${line.startsWith("- [error]") ? red(line) : yellow(line)}`);
+      }
+    }
+    if (servers.length === 0) {
+      console.log(`  ${dim("(无 server 定义)")}`);
+    } else {
+      const rows = servers.map(([name, srv]) => {
+        const tag = srv.enabled !== false ? green("enabled") : dim("disabled");
+        const transport = srv.transport;
+        const endpoint =
+          srv.transport === "stdio"
+            ? dim(`${srv.command} ${srv.args?.join(" ") ?? ""}`.trim().slice(0, 60))
+            : dim(srv.url ?? "");
+        return [cyan(name), `[${tag}]`, transport, endpoint];
+      });
+      printTable(["Name", "Status", "Transport", "Command / URL"], rows);
+      if (servers.some(([, s]) => s.description)) {
+        console.log();
+        for (const [name, srv] of servers) {
+          if (srv.description) {
+            console.log(`  ${cyan(name)}: ${dim(srv.description.slice(0, 80))}`);
           }
         }
       }
-    } catch (e) {
-      console.log(`  ${red(`读取 mcp.toml 失败:${e}`)}`);
     }
   }
   console.log();

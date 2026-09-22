@@ -863,8 +863,9 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 - `enabled` 字段控制 LLM 可见性；底层连接保持，disable 后可零延迟重 enable
 - **载入诊断**（`loadMcpConfigDetailed()`，`src/config/loader.ts`）：TOML 语法错误（整份配置按空处理）、
   单条 `[servers.X]` 非法被跳过、无 `[servers.X]` 定义、文件不可读，都产出结构化诊断
-  （`level` / `code` / `scope` / `server` / `message` / `hint`），并由两处展示：
-  `mcp_list_servers` 返回体的告警段、启动日志 `[mcp] load (startup): …`。诊断文本只含 Zod 的 `path` + `code`，
+  （`level` / `code` / `scope` / `server` / `message` / `hint`），并由三处展示：
+  `mcp_list_servers` 返回体的告警段、启动日志 `[mcp] load (startup): …`、CLI `tinyclaw mcp status`
+  （另在 `config show` 的 MCP 段打印）。诊断文本只含 Zod 的 `path` + `code`，
   **绝不输出 `issue.received`**（否则 env / headers 的值写错类型时会泄露 token）
 - 每个 server 的最近一次连接失败与时间（`MCPServerStatus.lastErrorAt`）同样由 `mcp_list_servers` 展示
 
@@ -953,6 +954,7 @@ tinyclaw completions install && source ~/.bashrc
 | `tinyclaw config show` | 格式化显示配置（密钥脱敏） |
 | `tinyclaw config edit` | 用 `$EDITOR` 打开 config.toml |
 | `tinyclaw config set <key> <val>` | dotted path 修改字段（自动推断 bool/int/string） |
+| `tinyclaw mcp status` | 显示 `~/.tinyclaw/mcp.toml` 的**载入结果与诊断**（TOML 语法错、单条 server 非法、无 `[servers.*]` 定义、`enabled=false`；env / headers 只列键名，值不回显） |
 | `tinyclaw auth github` | 重新执行 Device Flow OAuth |
 | `tinyclaw auth status` | 检查 token 有效性 |
 | `tinyclaw status` | 服务进程 + systemd 状态与运行时长 + 日志来源 + 配置摘要 + channel 状态 |

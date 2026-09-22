@@ -124,6 +124,12 @@ import {
   usage as synchroUsage,
   subcommands as synchroSubs,
 } from "./commands/synchro.js";
+import {
+  run as mcpRun,
+  description as mcpDesc,
+  usage as mcpUsage,
+  subcommands as mcpSubs,
+} from "./commands/mcp.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
@@ -147,6 +153,7 @@ interface CommandModule {
 const COMMANDS: Record<string, CommandModule> = {
   model: { description: modelDesc, usage: modelUsage, run: modelRun, subcommands: modelSubs },
   config: { description: configDesc, usage: configUsage, run: configRun, subcommands: configSubs },
+  mcp: { description: mcpDesc, usage: mcpUsage, run: mcpRun, subcommands: mcpSubs },
   auth: { description: authDesc, usage: authUsage, run: authRun, subcommands: authSubs },
   status: { description: statusDesc, usage: statusUsage, run: statusRun },
   restart: { description: restartDesc, usage: restartUsage, run: restartRun },
