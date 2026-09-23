@@ -317,16 +317,21 @@ tinyclaw completions install           # 安装 tab 补全
 
 | 工具 | 说明 |
 |------|------|
-| `job_start` | 后台启动一个进程/命令,立即返回 job id(`detach=true` ≈ `&`/`nohup`,服务重启后继续跑;`secrets:[...]` 按任务声明密钥;`timeout_secs` 超时自终止) |
+| `job_start` | 后台启动一个进程/命令,立即返回 job id(`detach=true` = 独立 systemd unit,能活过 `systemctl restart`;`secrets:[...]` 按任务声明密钥;`timeout_secs` 超时自终止) |
 | `job_list` / `job_status` | 列出/查看自己的 job(状态、pid、退出码、字节数、备注) |
 | `job_output` | **增量**读输出(自上次读取以来),日志落盘,重启后仍可读 |
-| `job_kill` | 杀整个进程组(子进程一并终止),默认 SIGTERM |
+| `job_kill` | 杀整个进程组(systemd 载体时停整个 unit),默认 SIGTERM |
 | `env_list` | 列出本 agent 的环境变量**键名**(永不回值),含全局 `~/.tinyclaw/env` 的键 |
 | `env_set` | 写一个变量到 `~/.tinyclaw/agents/<id>/env`(0600);**密钥类键名需 MFA 审批**,普通变量不打扰(审批提示与审计里值打码,只见键名) |
 | `env_delete` | 删除一个变量(密钥类同样要审批) |
 
 env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<id>/env` < job 的 `env` 参数。
-值支持 `${SECRET:NAME}` 引用式(注入子进程前才解析);**值只通过 spawn 的 env 传递、不拼命令行 → `ps -ef` 看不到**。
+值支持 `${SECRET:NAME}` 引用式(注入子进程前才解析);**值只通过进程环境传递、不拼命令行 → `ps -ef` 看不到**。
+
+| 存活语义 | 行为 |
+|---|---|
+| 默认(非 detached) | 随服务退出:服务退出/重启时被收掉;下次启动若发现**残留进程**也会按契约收掉(不会变成孤儿) |
+| `detach=true` | 放进**独立的 systemd transient unit**(独立 cgroup),因此能活过 `systemctl --user restart tinyclaw`;重启后 `job_status` 直接查 unit 探活,靠启动器写的 `rc` 文件补记退出码。无 `systemd-run` 的环境回落到 `setsid`+`unref`(只活过前台重启,活不过 `systemctl restart`) |
 
 ### Code 模式专用
 
@@ -345,7 +350,7 @@ env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<i
 ├── config.toml.lkg      # 上一份"被证实可用"的配置(启动成功后写入,改坏时自动回退用)
 ├── .config-state.json   # 配置状态(current / lastGood / pending / 最近回退,0600)
 ├── .safe_config         # SAFE MODE 标记(存在 = 用最小配置启动,只留 providers/llm)
-├── jobs/                # 后台 job:每 job 一个目录(meta.json + stdout.log + stderr.log,0600)
+├── jobs/                # 后台 job:每 job 一个目录(meta.json + stdout.log + stderr.log,0600;detached 另有 run.sh/rc/started) 
 ├── mcp.toml             # MCP server 配置
 ├── memstores.toml       # 向量知识库配置(news 等)
 ├── dashboard.db         # Dashboard 指标数据库(SQLite)

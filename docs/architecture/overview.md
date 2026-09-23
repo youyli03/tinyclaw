@@ -230,7 +230,8 @@ tinyclaw/
 │   │   ├── agent.ts          # ReAct 主循环（think → tool_call → observe → respond）
 │   │   │                     # 支持 MFA 鉴权、__purpose 进度旁白、auto-fork、textMode 文本工具调用
 │   │   ├── purpose-arbiter.ts # __purpose 展示仲裁（取代旧心跳：按工具真实耗时决定说不说）
-│   │   ├── job-manager.ts    # 后台 Job：进程组 spawn / 增量日志 / detach / 超时 / 并发上限 / 重启标记
+│   │   ├── job-manager.ts    # 后台 Job：进程组 spawn / 增量日志 / detach / 超时 / 并发上限 / 重启收敛
+│   │   ├── systemd-run.ts    # detached job 的 systemd transient unit 载体（独立 cgroup + 0600 env 文件）
 │   │   ├── session.ts        # messages[] + JSONL 持久化 + 并发控制 + 压缩（chat/code 两路）
 │   │   ├── router.ts         # 意图路由（扩展点，当前直通）
 │   │   ├── agent-manager.ts  # Agent 工作区管理（创建/查找/路径/repair）+ session loop 配置读写
@@ -939,10 +940,24 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
   group leader，`process.kill(-pid, sig)` 连子进程一起杀 —— 与 `exec_shell` 同款）
 - **持久化**：`~/.tinyclaw/jobs/<id>/{meta.json,stdout.log,stderr.log}`（0600 / 目录 0700）。
   `meta.json` 只记 **env 键名**、密钥名、pid、退出码、字节数、备注 —— **绝不落值**。
-  服务重启后：非 detached 的 running → `interrupted`；detached 的用 `kill(pid,0)` 探活，
-  活着就保留 running 并注明"可能仍在运行"（仍可用 pid `job_kill`）
-- **两种存活语义**：默认随服务退出（`shutdownJobManager()` 杀组）；`detach: true` 用
-  `detached + unref + stdio 直接落文件`，相当于 `&`/`nohup`，服务重启后继续跑、日志同一路径
+  systemd 载体另有 `run.sh`（0700 启动器）、`started`（起来过的标记）、`rc`（退出码，重启后补记用）
+  与临时的 `env`（0600，启动时即删）
+- **两种存活语义**：默认随服务退出（`shutdownJobManager()` 杀组）；`detach: true` 则放进**独立的
+  systemd transient unit**（`systemd-run --user --wait --collect --unit=tinyclaw-job-<id>`，
+  见 `core/systemd-run.ts`）—— 独立 cgroup 才能活过 `systemctl --user restart tinyclaw`
+  （systemd 默认 `KillMode=control-group` 是**按 cgroup** 杀进程，`setsid`/`unref` 换不掉 cgroup）。
+  `--wait` 让 job 的退出码作为子进程退出码回到我们手里，`--collect` 让 unit 用完自动回收；
+  `systemd-run` 不可用时回落到 `setsid`+`unref` 的普通 detach（只活过前台重启）。
+  取证：`tmp/probe-cgroup-detach-20260923.sh`、`tmp/probe-systemd-run-20260923.sh`、`tmp/probe-detach-survive-20260923.sh`
+- **systemd 载体的 env 注入**：`systemd-run` 的 `--setenv` / `--property=Environment=` 会把明文写进
+  unit 属性（同 UID 一条 `systemctl show` 就能读到），而且 transient service **不继承调用方的 env**。
+  所以 env 走 job 目录下 **0600 的 `env` 文件**：启动器 `run.sh`（0700）`source` 它、**立刻删除**，
+  再把程序与参数以 **argv** 交给 `exec`（命令本身照旧可见，值不进 argv / 不进 unit 属性）。
+  `jobs/<id>/env` 也在沙箱掩码列表里（`sandbox/bwrap.ts` 的 `maskTargets()`）
+- **重启后的收敛**（`initJobManager()` + `getJob()` 的读盘刷新）：systemd 载体的 job 用
+  `systemctl show` 探活 —— 还在跑就保留 `running`（这正是 detach 的意义），已结束就按启动器写的
+  `jobs/<id>/rc` 补记 `succeeded`/`failed` 与退出码；**非 detached 的残留进程**（服务被 SIGKILL、
+  崩溃路径没跑到清理时会出现）按"随服务退出"的契约**当场收掉**，不留没人认领的孤儿
 - **env 分层**（低 → 高）：`process.env`（启动时已注入 `~/.tinyclaw/env`）< `agents/<id>/env` < job 的 `env`。
   值支持 `${SECRET:NAME}`（spawn 前解析，复用 `mcp/secret-ref.ts` 的解析器）。
   **只通过 spawn 的 env 传递、绝不拼进命令行 → `ps -ef` 看不到值**。

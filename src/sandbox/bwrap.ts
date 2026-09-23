@@ -128,6 +128,15 @@ export function maskTargets(cfg: SandboxConfig): { masked: string[]; skipped: st
   } catch {
     /* 还没有 agent 目录 */
   }
+  // detached job 的 env 文件（systemd 载体用；启动器 source 后立即删除，这里再兜一层）
+  try {
+    const jobsRoot = path.join(root, "jobs");
+    for (const entry of fs.readdirSync(jobsRoot, { withFileTypes: true })) {
+      if (entry.isDirectory()) candidates.push(path.join(jobsRoot, entry.name, "env"));
+    }
+  } catch {
+    /* 还没有 job 目录 */
+  }
 
   for (const p of candidates) {
     const abs = path.resolve(p);

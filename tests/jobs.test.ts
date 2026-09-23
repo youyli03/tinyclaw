@@ -9,7 +9,11 @@
  * - job 生命周期：启动 → 增量读输出（游标）→ 状态收敛；kill 进程组；超时
  * - **只落键名不落值**：meta.json / 返回文本里不得出现注入的密钥值
  * - 工具面：`env_set` 的条件 MFA（密钥类键名才审批）与 `redactArgs`（明文值不进 MFA 提示/审计）
- * - detached / 非 detached 在"服务重启"后的标记逻辑
+ * - detached / 非 detached 在"服务重启"后的收敛（`resolveStaleJob`，含 systemd 载体的探活与补记退出码）
+ * - systemd 载体：unit 名、0600 env 文件的转义与还原、启动器脚本（真 bash 跑一遍）、probeUnit
+ *
+ * 想在"没有 systemd 的机器"上把普通 detach 分支也跑一遍：`XDG_RUNTIME_DIR= npm run test:jobs`
+ * （detach 相关断言会自动切到普通 detach 分支）。
  */
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -32,11 +36,20 @@ import {
   getJob,
   jobsRoot,
   killJob,
-  markStaleJob,
   readJobOutput,
+  resolveStaleJob,
   startJob,
   type JobMeta,
 } from "../src/core/job-manager.js";
+import {
+  jobUnitName,
+  probeUnit,
+  shellQuote,
+  systemdRunAvailable,
+  writeJobEnvFile,
+  writeJobLauncher,
+} from "../src/core/systemd-run.js";
+import { spawnSync } from "node:child_process";
 
 let passed = 0;
 let failed = 0;
@@ -236,7 +249,24 @@ await test("detach:标记 detached，日志落盘且 job 目录存在", async ()
   assert.equal(res.meta.detached, true);
   assert.equal(fs.existsSync(path.join(jobsRoot(), res.meta.id, "meta.json")), true);
   assert.equal(fs.existsSync(path.join(jobsRoot(), res.meta.id, "stdout.log")), true);
+
+  if (systemdRunAvailable()) {
+    // 有 systemd 时必须走独立 unit（否则活不过 systemctl restart），且 env 文件已被启动器删掉
+    assert.match(res.meta.systemdUnit ?? "", /^tinyclaw-job-/);
+    assert.equal(probeUnit(res.meta.systemdUnit ?? "").active, true, "systemd unit 应在运行");
+    assert.equal(
+      fs.existsSync(path.join(jobsRoot(), res.meta.id, "env")),
+      false,
+      "env 文件应已被启动器删掉"
+    );
+  } else {
+    assert.equal(res.meta.systemdUnit, undefined, "无 systemd-run 时走普通 detach");
+  }
+
   killJob(res.meta.id, "SIGKILL");
+  const converged = await waitFor(() => getJob(res.meta.id)?.status !== "running", 10_000);
+  assert.equal(converged, true, "kill 后应很快收敛");
+  assert.equal(getJob(res.meta.id)?.status, "killed");
 });
 
 await test("readJobOutput:不存在的 job 给出明确错误", () => {
@@ -259,23 +289,157 @@ const baseMeta = (over: Partial<JobMeta>): JobMeta => ({
   ...over,
 });
 
-await test("markStaleJob:非 detached → interrupted", () => {
-  const m = markStaleJob(baseMeta({}), () => true);
-  assert.equal(m.status, "interrupted");
-  assert.match(m.note ?? "", /服务重启/);
-  assert.ok(m.endedAt);
+await test("resolveStaleJob:非 detached + 残留进程还活着 → 收掉它并标 interrupted", () => {
+  const r = resolveStaleJob(baseMeta({ pid: 4242 }), { kind: "plain", alive: true });
+  assert.equal(r.meta.status, "interrupted");
+  assert.equal(r.killOrphan, true, "非 detached 的残留进程必须按「随服务退出」的约定收掉");
+  assert.match(r.meta.note ?? "", /4242/);
+  assert.ok(r.meta.endedAt);
 });
 
-await test("markStaleJob:detached 且进程还在 → 保留 running 并注明可能仍在", () => {
-  const m = markStaleJob(baseMeta({ detached: true, pid: 4242 }), () => true);
-  assert.equal(m.status, "running");
-  assert.match(m.note ?? "", /4242/);
+await test("resolveStaleJob:非 detached + 进程已死 → interrupted，不动手", () => {
+  const r = resolveStaleJob(baseMeta({}), { kind: "plain", alive: false });
+  assert.equal(r.meta.status, "interrupted");
+  assert.equal(r.killOrphan, false);
+  assert.match(r.meta.note ?? "", /服务重启/);
 });
 
-await test("markStaleJob:detached 但进程已死 → interrupted", () => {
-  const m = markStaleJob(baseMeta({ detached: true, pid: 4242 }), () => false);
-  assert.equal(m.status, "interrupted");
-  assert.match(m.note ?? "", /已不存在/);
+await test("resolveStaleJob:普通 detached + 进程还在 → 保留 running 并点名 pid", () => {
+  const r = resolveStaleJob(baseMeta({ detached: true, pid: 4242 }), {
+    kind: "plain",
+    alive: true,
+  });
+  assert.equal(r.meta.status, "running");
+  assert.equal(r.killOrphan, false);
+  assert.match(r.meta.note ?? "", /4242/);
+});
+
+await test("resolveStaleJob:普通 detached + 进程已死 → interrupted", () => {
+  const r = resolveStaleJob(baseMeta({ detached: true, pid: 4242 }), {
+    kind: "plain",
+    alive: false,
+  });
+  assert.equal(r.meta.status, "interrupted");
+  assert.match(r.meta.note ?? "", /已不存在/);
+});
+
+await test("resolveStaleJob:systemd unit 还在跑 → 保留 running（这才是 detach 的意义）", () => {
+  const r = resolveStaleJob(baseMeta({ detached: true, systemdUnit: "tinyclaw-job-abc" }), {
+    kind: "systemd",
+    active: true,
+    exitCode: null,
+  });
+  assert.equal(r.meta.status, "running");
+  assert.equal(r.killOrphan, false);
+  assert.match(r.meta.note ?? "", /tinyclaw-job-abc/);
+});
+
+await test("resolveStaleJob:systemd unit 已结束且有退出码 → 补记 succeeded / failed", () => {
+  const ok = resolveStaleJob(baseMeta({ detached: true, systemdUnit: "u" }), {
+    kind: "systemd",
+    active: false,
+    exitCode: 0,
+  });
+  assert.equal(ok.meta.status, "succeeded");
+  assert.equal(ok.meta.exitCode, 0);
+
+  const bad = resolveStaleJob(baseMeta({ detached: true, systemdUnit: "u" }), {
+    kind: "systemd",
+    active: false,
+    exitCode: 7,
+  });
+  assert.equal(bad.meta.status, "failed");
+  assert.equal(bad.meta.exitCode, 7);
+});
+
+await test("resolveStaleJob:systemd unit 查不到、也没有退出码 → interrupted", () => {
+  const r = resolveStaleJob(baseMeta({ detached: true, systemdUnit: "gone" }), {
+    kind: "systemd",
+    active: false,
+    exitCode: null,
+  });
+  assert.equal(r.meta.status, "interrupted");
+  assert.equal(r.killOrphan, false);
+});
+
+// ── systemd 载体（detached job 的独立 cgroup） ─────────────────────────
+
+await test("jobUnitName:id → 合法 unit 名", () => {
+  assert.equal(jobUnitName("job_1a2b3c4d"), "tinyclaw-job-1a2b3c4d");
+  assert.equal(jobUnitName("job_a/b c"), "tinyclaw-job-a-b-c");
+  assert.match(jobUnitName("job_x"), /^[A-Za-z0-9:_.-]+$/);
+});
+
+await test("writeJobEnvFile:0600、跳过非法键名、值能被真正的 bash 原样还原", () => {
+  const dir = path.join(tmpRoot, "envtest");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, "env");
+  const nasty = `a'b"c$d\`e f\ng`; // 单引号 / 双引号 / $ / 反引号 / 空格 / 换行
+  const written = writeJobEnvFile(file, { NORMAL: "x", "1BAD": "y", NASTY: nasty, EMPTY: "" });
+  assert.equal(written, 3, "非法键名 1BAD 应被跳过");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+
+  const probe = path.join(dir, "probe.sh");
+  fs.writeFileSync(
+    probe,
+    'set -a\n. "$1"\nprintf "%s\\n" "$NORMAL"\nprintf "%s" "$NASTY" | base64 -w0\nprintf "\\n[%s]" "$EMPTY"\n'
+  );
+  const r = spawnSync("bash", [probe, file], { encoding: "utf-8" });
+  assert.equal(r.status, 0, r.stderr ?? "");
+  const lines = (r.stdout ?? "").split("\n");
+  assert.equal(lines[0], "x");
+  assert.equal(
+    lines[1],
+    Buffer.from(nasty, "utf-8").toString("base64"),
+    "特殊字符的值必须逐字节还原"
+  );
+  assert.equal(lines[2], "[]");
+});
+
+await test("writeJobLauncher:source env → 删 env → cd → 跑 argv → 写 rc，输出落日志", () => {
+  const dir = path.join(tmpRoot, "launchtest");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeJobEnvFile(path.join(dir, "env"), { FROM_ENV: "hello", __JOB_CWD: tmpRoot });
+  const launcher = writeJobLauncher(dir);
+  assert.equal(fs.statSync(launcher).mode & 0o777, 0o700);
+
+  const r = spawnSync(
+    "bash",
+    [launcher, "bash", "-c", "echo got=$FROM_ENV; echo err-here >&2; pwd; exit 5"],
+    { encoding: "utf-8" }
+  );
+  assert.equal(r.status, 5);
+  assert.equal(fs.readFileSync(path.join(dir, "rc"), "utf-8").trim(), "5");
+  assert.equal(fs.existsSync(path.join(dir, "started")), true);
+  assert.equal(fs.existsSync(path.join(dir, "env")), false, "env 文件必须在启动时被删掉");
+  const out = fs.readFileSync(path.join(dir, "stdout.log"), "utf-8");
+  assert.match(out, /got=hello/, "启动器要把 env 文件里的变量交给 job");
+  assert.match(out, new RegExp(tmpRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "cd 到 __JOB_CWD");
+  assert.match(fs.readFileSync(path.join(dir, "stderr.log"), "utf-8"), /err-here/);
+  assert.equal(fs.statSync(path.join(dir, "stdout.log")).mode & 0o777, 0o600);
+});
+
+await test("writeJobLauncher:env 文件缺失时显式报错退出（不静默空跑）", () => {
+  const dir = path.join(tmpRoot, "launchtest-missing-env");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const launcher = writeJobLauncher(dir);
+  const r = spawnSync("bash", [launcher, "bash", "-c", "echo should-not-run"], {
+    encoding: "utf-8",
+  });
+  assert.equal(r.status, 127);
+  assert.match(r.stderr ?? "", /env 文件缺失/);
+  assert.equal(fs.readFileSync(path.join(dir, "rc"), "utf-8").trim(), "127");
+  assert.equal(fs.existsSync(path.join(dir, "stdout.log")), false, "不该真的跑命令");
+});
+
+await test("probeUnit:不存在的 unit → notFound，且不抛错", () => {
+  const p = probeUnit(`tinyclaw-job-nope-${Date.now()}`);
+  assert.equal(p.active, false);
+  assert.equal(p.notFound, true);
+});
+
+await test("systemdRunAvailable:返回布尔值（不抛错）", () => {
+  assert.equal(typeof systemdRunAvailable(), "boolean");
 });
 
 // ── 工具面：条件 MFA 与"值不进提示/审计" ──────────────────────────────
@@ -325,4 +489,6 @@ try {
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+// 显式退出：被 kill 的子进程可能留下未关闭的管道句柄（Node 不认为它 ref 着事件循环），
+// 只靠"事件循环自然结束"会让脚本偶发地卡在收尾。
+process.exit(failed > 0 ? 1 : 0);
