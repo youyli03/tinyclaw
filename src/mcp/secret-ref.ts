@@ -28,7 +28,7 @@ export function secretRefName(value: string): string | null {
 }
 
 /** secrets.toml 里一个 key 的取值（兼容对象格式与历史裸字符串格式） */
-function secretValue(secrets: SecretsConfig, name: string): string | undefined {
+export function secretValue(secrets: SecretsConfig, name: string): string | undefined {
   const entry = secrets[name];
   if (entry === undefined) return undefined;
   if (typeof entry === "string") return entry;
@@ -80,17 +80,12 @@ export function resolveSecretRefs(
  * 只在**读配置**时用；**写配置时不要用**（先加引用、后补 secret 是合理顺序，
  * 否则 `writeMcpTomlText` 会因为一个尚未存在的 secret 拒绝落盘）。
  */
-export function checkSecretRefs(
-  config: MCPConfig,
-  secrets?: SecretsConfig
-): McpLoadDiagnostic[] {
+export function checkSecretRefs(config: MCPConfig, secrets?: SecretsConfig): McpLoadDiagnostic[] {
   const table = secrets ?? loadSecretsConfig();
   const diagnostics: McpLoadDiagnostic[] = [];
   for (const [name, srv] of Object.entries(config.servers)) {
     const fields: Array<[string, Record<string, string> | undefined]> =
-      srv.transport === "stdio"
-        ? [["env", srv.env]]
-        : [["headers", srv.headers]];
+      srv.transport === "stdio" ? [["env", srv.env]] : [["headers", srv.headers]];
     for (const [field, values] of fields) {
       for (const [key, raw] of Object.entries(values ?? {})) {
         const ref = secretRefName(raw);

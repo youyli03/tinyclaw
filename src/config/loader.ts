@@ -18,6 +18,7 @@ import {
 } from "./schema.js";
 import { ensureSecureFilePerm } from "../utils/file-perm.js";
 import { buildSafeConfig, isSafeModeEnabled } from "./safe-mode.js";
+import { resolveProviderSecretPlaceholders } from "./secret-placeholders.js";
 
 // ~/.tinyclaw/config.toml
 const CONFIG_PATH = path.join(os.homedir(), ".tinyclaw", "config.toml");
@@ -70,12 +71,47 @@ export function invalidateConfigCache(): void {
  * 加载并验证配置。首次调用读取磁盘，后续返回缓存。
  * 配置不合法时打印友好错误并退出进程（fail-fast）。
  *
+ * 返回值里的 provider 凭据已经把 `$NAME` 占位符解成 secrets.toml 的真值
+ * （只解析白名单字段，见 `config/secret-placeholders.ts`）。
+ *
  * @param opts.fresh 丢弃缓存强制重新读盘（等价于先 `invalidateConfigCache()`）
  */
 export function loadConfig(opts: { fresh?: boolean } = {}): Config {
   if (opts.fresh === true) cached = null;
   if (cached) return cached;
 
+  // ⚠️ 必须**先**落缓存再解析凭据占位符：解析要读 secrets.toml，而 `loadSecretsConfig()`
+  // 内部会为权限守卫再调一次 `loadConfig()` —— 那时缓存为空就会无限递归。
+  cached = loadConfigRaw();
+
+  const secrets = readSecretsForPlaceholders();
+  const resolved = resolveProviderSecretPlaceholders(cached, secrets);
+  if (resolved.missing.length > 0) {
+    console.warn(
+      `[tinyclaw] provider 凭据引用了 secrets.toml 中不存在的键：${resolved.missing.join(", ")}` +
+        `（已按字面量使用，相关后端调用会失败）`
+    );
+  }
+  cached = resolved.config;
+  return cached;
+}
+
+/** 读 secrets.toml 供占位符解析用；任何异常都降级为空表（宁可凭据解析不出来，也不要启动失败） */
+function readSecretsForPlaceholders(): SecretsConfig {
+  try {
+    return loadSecretsConfig();
+  } catch (err) {
+    console.warn(
+      `[tinyclaw] 读取 secrets.toml 失败（凭据占位符按字面量处理）：${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return {};
+  }
+}
+
+/** 读盘 + 校验（原 `loadConfig()` 的实现）：只负责产出"占位符尚未解析"的配置 */
+function loadConfigRaw(): Config {
   if (!fs.existsSync(CONFIG_PATH)) {
     fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
     if (fs.existsSync(EXAMPLE_PATH)) {
@@ -100,7 +136,10 @@ export function loadConfig(opts: { fresh?: boolean } = {}): Config {
     raw = parse(content);
   } catch (err) {
     console.error(`[tinyclaw] 配置文件解析失败（TOML 语法错误）：\n${err}`);
-    cached = enterSafeModeOrDie(content, `TOML 语法错误：${err instanceof Error ? err.message : err}`);
+    cached = enterSafeModeOrDie(
+      content,
+      `TOML 语法错误：${err instanceof Error ? err.message : err}`
+    );
     return cached;
   }
 

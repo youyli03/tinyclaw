@@ -50,6 +50,17 @@ tinyclaw restart
 `config.toml.rejected-<时间戳>`,原文件一字不动 —— 因为 `config.toml` 写坏 = 服务起不来
 (`loadConfig()` fail-fast)。通过时先备份 `config.toml.bak-<时间戳>`(保留最近 5 份)再原子写入,权限 0600。
 
+**provider 凭据可以只写名字**:`providers.*.apiKey` 与 `providers.copilot.githubToken` 支持 `$NAME`
+占位符,`loadConfig()` 启动时从 `~/.tinyclaw/secrets.toml` 解出真值(明文就不必落在 `config.toml` 里):
+
+```toml
+[providers.openrouter]
+apiKey = "$OPENROUTER_API_KEY"     # → secrets.toml 的 [OPENROUTER_API_KEY] value
+```
+只有**这几个白名单字段**会解析(`$PATH` 这类字面量不会被误改);缺键时保留字面量 + 启动告警
+(`tinyclaw config check` 也会提示),`tinyclaw config reload` 后重新读 secrets.toml。
+agent 侧另有 `http_request` 的 header `$NAME`、job/agent env 的 `${SECRET:NAME}`、qqbot 的 `clientSecret`。
+
 **改坏了会自动回退**:服务每次成功启动都会把当前配置记为"上一份可用版本"(`config.toml.lkg`)。
 若配置改坏导致启动后 60s 内崩溃,supervisor 会把 `config.toml` 覆盖回那份可用版本并立即重启
 (坏配置留证 `.rejected-<时间戳>`,事件写 `.rollback_notify.json` 与 `logs/config-rollback.log`,每个守护

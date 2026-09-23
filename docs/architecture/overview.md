@@ -1097,6 +1097,14 @@ tinyclaw mo<Tab>
 
 **配置写入路径（唯一入口）**
 
+> **provider 凭据的 `$NAME` 占位符**：`loadConfig()` 在通过 schema 校验后调用
+> `config/secret-placeholders.ts` 的 `resolveProviderSecretPlaceholders()`，把
+> **白名单字段**（`providers.{openai,openrouter,deepseek,mimo,google}.apiKey` 与
+> `providers.copilot.githubToken`）里形如 `$NAME` 的整值引用解成 `secrets.toml` 的真值。
+> 刻意**不做**全字符串替换（`$PATH`、传给脚本的 `$HOME` 这类字面量到处都是）；缺键时保留字面量并告警
+> （启动期抛错会把服务带走）。⚠️ 实现上必须**先把原始配置放进 `loadConfig()` 的缓存再解析** ——
+> `loadSecretsConfig()` 内部会为权限守卫回调 `loadConfig()`，缓存为空会无限递归。
+
 `config.toml` 的任何写入都收口在 `src/config/writer.ts` 的 `writeConfigText()` / `patchTomlField()`：
 
 1. **校验**（`src/config/validate.ts`）：TOML 语法 → `ConfigSchema.safeParse`（与 `loadConfig()` 同一份真相）

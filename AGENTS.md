@@ -179,6 +179,12 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   的语法 / schema / 交叉引用）→ 不过则拒写并留证 `config.toml.rejected-<ts>` → 通过则 `.bak-<ts>` 备份 +
   `.tmp`/rename 原子写 + 0600。备份/原子写/留证的共用实现在 `src/config/safe-write.ts`（`mcp.toml` 同用）。
 - 密钥读取只允许来自 `~/.tinyclaw/config.toml` / `secrets.toml`，永不硬编码，永不打日志（用 `utils/redact.ts`）。
+- **provider 凭据的 `$NAME` 占位符**（`config/secret-placeholders.ts`）：`providers.*.apiKey` 与
+  `providers.copilot.githubToken` 可以只写 `$NAME`，由 `loadConfig()` 从 `secrets.toml` 解出真值。
+  **只解析这份白名单**（`PLACEHOLDER_FIELD_PATHS`）—— 别做"全字符串替换"，`$PATH` 之类字面量会被静默改掉；
+  缺键时保留字面量 + 告警，不要在启动期抛错。⚠️ 解析发生在 `loadConfig()` 里，而 `loadSecretsConfig()`
+  会回调 `loadConfig()`：**必须先把原始配置写入缓存再解析**，否则无限递归（`AGENTS.local.md` 的
+  `config.toml` 明文 apiKey 仍在，属兼容路径，不是必须迁移）。
 - **热重载分级**（`src/config/reload-plan.ts` + `reload.ts`）：`hot`（用时现读的段，换缓存）/ `soft`
   （`llm.backends` / `concurrency` / `memory.embedModel|enabled`，需重新 init 子系统）/ `restart`
   （`channels` / `voice` / `web.port` / `sandbox.enabled|execShell`，进程级资源或一次调用内多处读取）。
