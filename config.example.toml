@@ -367,3 +367,14 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 [tools.selfManagement]
 # agents = ["default"]          # 默认值
 # agents = ["default", "onlychat"]
+
+# ── 密钥（secrets.toml）的按 agent 授权 ────────────────────────────────────────
+# secrets.toml 里的密钥名是可猜的(DEEPSEEK_API_KEY / GITHUB_TOKEN / QQBOT_* …),而下面这些入口都是
+# "按名字取密钥":job_start 的 env 里 ${SECRET:NAME}、job_start(secrets:[...])、exec_shell 的声明式
+# secrets、http_request 的 header $NAME。所以默认只允许 default agent 读,其他 agent 一律拒绝
+# (拒绝理由会写进审计流)。env_list 也只对授权 agent 显示 secrets.toml 的键名(永不显示值)。
+# "*" = 放开给所有 agent;空数组 = 谁都不给(连 default 也不给)。
+[secrets]
+# agents = ["default"]          # 默认值
+# agents = ["default", "onlychat"]
+# agents = ["*"]

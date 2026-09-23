@@ -1,5 +1,6 @@
 import { registerTool } from "./registry.js";
 import { loadSecretsConfig, loadConfig } from "../config/loader.js";
+import { canReadSecrets, secretsDeniedReason } from "../auth/secrets-access.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -174,7 +175,7 @@ registerTool({
             description:
               "Request headers as key-value pairs (optional). Values may reference " +
               "secrets.toml credentials with the `$SECRET_NAME` placeholder, " +
-              "e.g. { \"Authorization\": \"$TB_TOKEN\" }",
+              'e.g. { "Authorization": "$TB_TOKEN" }',
             additionalProperties: { type: "string" },
           },
           body: {
@@ -188,7 +189,7 @@ registerTool({
       },
     },
   },
-  async execute(args): Promise<string> {
+  async execute(args, ctx): Promise<string> {
     const method = String(args["method"] ?? "GET").toUpperCase();
     const url = String(args["url"] ?? "");
     const rawHeaders = (args["headers"] ?? {}) as Record<string, string>;
@@ -200,6 +201,14 @@ registerTool({
     }
     if (method !== "GET" && method !== "POST") {
       return `错误：不支持的 HTTP 方法 "${method}"，仅支持 GET / POST`;
+    }
+
+    // 密钥按 agent 授权（`[secrets].agents`）：header 里的 $NAME 会读 secrets.toml，名字可猜
+    const usesSecretPlaceholder = Object.values(rawHeaders).some((v) =>
+      /\$[A-Z][A-Z0-9_]*/.test(String(v))
+    );
+    if (usesSecretPlaceholder && !canReadSecrets(ctx?.agentId)) {
+      return secretsDeniedReason("http_request header 里的 $NAME 占位符", ctx?.agentId);
     }
 
     // 解析目标 hostname，用于 secrets 域名白名单校验

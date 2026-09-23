@@ -82,11 +82,18 @@ agent 侧另有 `http_request` 的 header `$NAME`、job/agent env 的 `${SECRET:
 **agent 能改什么**:`config_set`(**MFA**)只允许改白名单字段 —— 模型/单后端参数(`llm.backends.*`)、模型别名
 (`llm.aliases.*`)、轮次与截断上限(`tools.max*`)、重试节奏(`retry.*`)、交互提醒(`interactive.*`);
 **管着 agent 自己的规则一律拒改**:`auth.*`(MFA)、`sandbox.*`(沙箱与无人值守白名单)、`selfAccess.*`(自指权限)、
-`[health]`(回退阈值)、`channels.*`/`web.*`、`providers.*`(密钥)、`memory.*`、`tools.http_request.*`(SSRF)、
-`llm.premiumAllowlist.*`(配额)。另外**会改运行配置的**"自我管理"工具(`config_set`/`config_reload`/`config_validate`
-与写 `mcp.toml` 的 `mcp_server_add`/`mcp_server_remove`/`mcp_server_set_enabled`/`mcp_reload`)**默认只绑定
-`default` agent**(纯开关类的 `mcp_list_servers`/`mcp_enable_server`/`mcp_disable_server` 不绑),其他 agent 要放开需显式写
+`secrets.*`(密钥授权)、`[health]`(回退阈值)、`channels.*`/`web.*`、`providers.*`(密钥)、`memory.*`、
+`tools.http_request.*`(SSRF)、`llm.premiumAllowlist.*`(配额)。另外**会改运行配置的**"自我管理"工具
+(`config_set`/`config_reload`/`config_validate` 与写 `mcp.toml` 的 `mcp_server_add`/`mcp_server_remove`/
+`mcp_server_set_enabled`/`mcp_reload`)**默认只绑定 `default` agent**(纯开关类的 `mcp_list_servers`/
+`mcp_enable_server`/`mcp_disable_server` 不绑),其他 agent 要放开需显式写
 `[tools.selfManagement] agents = ["default", "<agentId>"]`。
+
+**密钥只给 default**:`secrets.toml` 的键名是可猜的,而 `${SECRET:NAME}`(job env)、`job_start(secrets:[...])`、
+`exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是"按名字取密钥" —— 所以默认只有
+`default` agent 能读:其他 agent 调这些入口会被**拒绝**(理由进审计流),`env_list` 也不给它显示键名。
+放开写 `[secrets] agents = ["default", "<agentId>"]`(`["*"]` = 全部,`[]` = 谁都不给);没有 agent 上下文的
+调用(CLI、cron 无绑定)视为放行。
 
 **LKG 也坏时**:`tinyclaw config rollback --list / --lkg / --to <备份>` 可手动回退;若自动回退后仍起不来,supervisor 会打开 **SAFE MODE**(标记文件 `~/.tinyclaw/.safe_config`):
 用最小配置启动(只保留 `providers`/`llm`,不接 QQBot、不跑 cron/loop、不写 LKG、不带特权面),
@@ -335,7 +342,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `job_list` / `job_status` | 列出/查看自己的 job(状态、pid、退出码、字节数、备注) |
 | `job_output` | **增量**读输出(自上次读取以来),日志落盘,重启后仍可读 |
 | `job_kill` | 杀整个进程组(systemd 载体时停整个 unit),默认 SIGTERM |
-| `env_list` | 列出本 agent 的环境变量**键名**(永不回值),含全局 `~/.tinyclaw/env` 的键 |
+| `env_list` | 列出本 agent 的环境变量**键名**(永不回值),含全局 `~/.tinyclaw/env` 的键;被授权的 agent 还能看到 `secrets.toml` 的键名(值同样不回) |
 | `env_set` | 写一个变量到 `~/.tinyclaw/agents/<id>/env`(0600);**密钥类键名需 MFA 审批**,普通变量不打扰(审批提示与审计里值打码,只见键名) |
 | `env_delete` | 删除一个变量(密钥类同样要审批) |
 

@@ -230,6 +230,15 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   并注意**按 agent 的 `tools.toml`** 会决定模型看不看得到这些工具（`allowlist` 里没列的看不到）。
 - **agent 环境变量**（`config/agent-env.ts` + `tools/env-admin.ts`）：文件 `~/.tinyclaw/agents/<id>/env`（0600，
   沙箱掩码）；分层 `process.env` < agent env < 单次覆盖；**没有** `env_get`，值永不回给模型。
+  ⚠️ 这套 env **只注入 job**（`job_start`）；`exec_shell` 不叠加 agent env（实测），它只有 `process.env` +
+  按任务声明的 secrets 文件。
+- **密钥（`secrets.toml`）的按 agent 授权**（`auth/secrets-access.ts` + `[secrets].agents`）：密钥名可猜
+  （`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*`），而 `${SECRET:NAME}`（job env）、`job_start(secrets:[...])`、
+  `exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是**按名字取密钥** —— 这四条入口
+  **必须**先过 `canReadSecrets(agentId)`（默认只给 `default`；`"*"` = 全部、`[]` = 谁都不给；
+  **无 agent 上下文视为放行**，否则 CLI/cron 被误伤）。`env_list` 只对授权 agent 显示 secrets 键名。
+  新增"能按名字取密钥"的入口时，必须同样过这道闸 + 写审计；`secrets.` 也已进 `config/settable-paths.ts`
+  的拒绝列表（模型不能给自己发密钥）。
 
 ### 错误处理
 
@@ -350,10 +359,12 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **无人值守的密钥按任务声明**（方案 B，`sandbox/secrets-filter.ts`）：job / loop 配置 `secrets: ["NAME"]` →
   运行时物化一个只含这些 key 的临时文件并 bind 回 `~/.tinyclaw/secrets.toml`（脚本零改动），用后即删、物化写审计；
   未声明 = 脚本读到空文件。全局例外 `[sandbox].readableSecretPaths` 仍在，但优先用按任务声明。
+  ⚠️ 物化前还要过 `[secrets].agents` 授权（见 §6）：未被授权的 agent 的声明**不物化**（沙箱内保持空掩码）+ 审计 deny。
 - **读路径已加密钥边界，但仍无工作区白名单**：`read_file`（`system.ts`）与 `read_image` 经 `checkReadPath()`
   拒绝**密钥**（`~/.tinyclaw/{config,secrets,mcp}.toml`、`auth/**`、`*.key`、`*token*`）与 `.ssh`/`.git`，
   但除此之外仍只 `path.resolve` 就直读 → 仍可读任意其他绝对路径（如 `~/.bash_history`）。
-- **自指权限（`[selfAccess].grantedAgents`）是本仓库唯一"按 agent 放开"的授权口**：被授权的 agent 拿到 `~/.tinyclaw` 全树（含 `self_runtime_delete` 真删、通用文件工具免越界确认、免 MFA）。密钥例外由 `path-guard.ts` 的 `isRuntimeSecretPath()` 统一裁决——**新增任何读写/删除入口都必须调用它**（写作走 `checkWritePath`、读作走 `checkReadPath`），否则就把"密钥除外"这个承诺打破了。
+- **自指权限（`[selfAccess].grantedAgents`）**：被授权的 agent 拿到 `~/.tinyclaw` 全树（含 `self_runtime_delete` 真删、通用文件工具免越界确认、免 MFA）。密钥例外由 `path-guard.ts` 的 `isRuntimeSecretPath()` 统一裁决——**新增任何读写/删除入口都必须调用它**（写作走 `checkWritePath`、读作走 `checkReadPath`），否则就把"密钥除外"这个承诺打破了。
+  另有两个**按 agent 放开**的授权口，别混：`[tools.selfManagement].agents`（改运行配置的工具）与 `[secrets].agents`（按名字取密钥）。
 - **`exec_shell` 的工具层守卫仍然很薄**：只拦"写危险系统路径"（17 个 `/etc/*` 前缀）。真正兜住它的是沙箱边界层；
   沙箱关着的时候，shell 能读 `secrets.toml` / `config.toml` / `~/.ssh`（`tmp/sandbox-gap-probe.sh` 有取证）。
 - **`path-guard` 不解析符号链接**（`path-guard.ts` 无 `realpathSync`），workspace 内软链可逃逸。

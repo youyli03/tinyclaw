@@ -26,6 +26,7 @@
     "test:config-safe-mode": "node --import tsx/esm tests/config-safe-mode.test.ts",
     "test:config-settable": "node --import tsx/esm tests/config-settable.test.ts",
     "test:config-secrets": "node --import tsx/esm tests/config-secret-placeholders.test.ts",
+    "test:secrets": "node --import tsx/esm tests/secrets-access.test.ts",
     "test:jobs": "node --import tsx/esm tests/jobs.test.ts"
   },
   "dependencies": {

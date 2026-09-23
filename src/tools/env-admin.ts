@@ -25,10 +25,21 @@ import {
   setAgentEnvVar,
   writeAgentEnv,
 } from "../config/agent-env.js";
+import { loadSecretsConfig } from "../config/loader.js";
+import { canReadSecrets, secretKeyNames, secretsDeniedReason } from "../auth/secrets-access.js";
 import { auditToolCall } from "../auth/tool-policy.js";
 
 /** 值长度上限（环境变量不该塞大块内容） */
 const MAX_VALUE_CHARS = 4 * 1024;
+
+/** secrets.toml 的键名清单（读不到就空表；只取名字，永不取值） */
+function availableSecretNames(): string[] {
+  try {
+    return secretKeyNames(loadSecretsConfig());
+  } catch {
+    return [];
+  }
+}
 
 /** 全局 `~/.tinyclaw/env` 的键名（只看键，不看值） */
 function globalEnvKeys(): string[] {
@@ -79,7 +90,24 @@ registerTool({
       "",
       `全局 ~/.tinyclaw/env 的键（${global.length} 个，值不显示）：${
         global.length > 0 ? global.map((k) => `\`${k}\``).join(", ") : "（无）"
-      }`,
+      }`
+    );
+    // secrets.toml 的键名：只对 [secrets].agents 授权的 agent 可见（名字可猜，所以这层也要按 agent 收敛）
+    if (canReadSecrets(ctx?.agentId)) {
+      const names = availableSecretNames();
+      lines.push(
+        "",
+        `secrets.toml 的键（${names.length} 个，值不显示；job 里可用 \`\${SECRET:NAME}\` 引用）：${
+          names.length > 0 ? names.map((k) => `\`${k}\``).join(", ") : "（无）"
+        }`
+      );
+    } else {
+      lines.push(
+        "",
+        "> 当前 agent 未被授权读 secrets.toml（`[secrets].agents`），其中键名不显示。"
+      );
+    }
+    lines.push(
       "",
       "> 优先级：process.env（含全局 env）< 该 agent 的 env < 单次调用显式传入的 env。",
       "> 值不会通过工具返回；后台 job 直接继承这些变量。"
@@ -129,6 +157,10 @@ registerTool({
 
     if (!ENV_KEY_RE.test(key)) {
       return `已拒绝：环境变量名 "${key}" 非法（须匹配 [A-Za-z_][A-Za-z0-9_]*，长度 ≤64）。`;
+    }
+    // 引用式值读的是 secrets.toml：未被授权的 agent 不许把它写进自己的 env（否则等于给自己开后门）
+    if (isSecretRefValue(value) && !canReadSecrets(ctx?.agentId)) {
+      return secretsDeniedReason("env_set 里的 ${SECRET:NAME} 引用式值", ctx?.agentId);
     }
     if (value.length > MAX_VALUE_CHARS) {
       return `已拒绝：值过长（${value.length} > ${MAX_VALUE_CHARS} 字符）。`;

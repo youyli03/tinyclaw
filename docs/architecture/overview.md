@@ -1127,7 +1127,7 @@ tinyclaw mo<Tab>
 
 | 允许 | 拒绝（附原因） |
 |---|---|
-| `llm.backends.<role>.{model,maxTokens,timeoutMs,maxContextWindow,supportsVision,supportsToolCalls,disableThinking,reasoningEffort,thinkingBudget}`、`llm.aliases.*`、`tools.{maxCodeToolRounds,maxChatToolRounds,maxToolResultChars,maxToolCallArgChars}`、`retry.*`、`interactive.*` | `auth.*`（MFA 防线）、`sandbox.*`（沙箱与无人值守白名单）、`selfAccess.*`（特权面）、`health.*`（防呆阈值）、`channels.*`/`web.*`、`providers.*`（apiKey 就是密钥）、`memory.*`（可能触发索引重建/删除）、`submitter.*`、`agent.*`（responseHooks 属注入面）、`tools.http_request.*`（SSRF 开关）、`llm.premiumAllowlist.*`（成本控制） |
+| `llm.backends.<role>.{model,maxTokens,timeoutMs,maxContextWindow,supportsVision,supportsToolCalls,disableThinking,reasoningEffort,thinkingBudget}`、`llm.aliases.*`、`tools.{maxCodeToolRounds,maxChatToolRounds,maxToolResultChars,maxToolCallArgChars}`、`retry.*`、`interactive.*` | `auth.*`（MFA 防线）、`sandbox.*`（沙箱与无人值守白名单）、`selfAccess.*`（特权面）、`secrets.*`（密钥授权列表）、`health.*`（防呆阈值）、`channels.*`/`web.*`、`providers.*`（apiKey 就是密钥）、`memory.*`（可能触发索引重建/删除）、`submitter.*`、`agent.*`（responseHooks 属注入面）、`tools.http_request.*`（SSRF 开关）、`llm.premiumAllowlist.*`（成本控制） |
 
 **"自我管理"工具的按 agent 绑定**（`src/tools/agent-binding.ts` + `[tools.selfManagement].agents`）
 
@@ -1140,6 +1140,26 @@ tinyclaw mo<Tab>
 里**再校验一次** `ctx.agentId` —— cron/loop 的**声明式步骤**按名字直接 `executeTool`，绕过可见性过滤，执行层必须
 自己兜住。放开方式：`config.toml` 写 `[tools.selfManagement] agents = ["default", "onlychat"]`（`["*"]` = 全部，
 `[]` = 谁都不给）。
+
+**密钥（`secrets.toml`）的按 agent 授权**（`src/auth/secrets-access.ts` + `[secrets].agents`）
+
+密钥名是可猜的（`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*` …），而下面这些入口都是**按名字取密钥**，
+所以默认只允许 `default` 读，其他 agent 一律拒绝（拒绝理由写审计流）：
+
+| 入口 | 未授权时的行为 |
+|---|---|
+| `job_start` 的 `env` 里 `${SECRET:NAME}` | **拒绝启动**（`已拒绝：… [secrets].agents …`）+ 审计 deny |
+| `job_start(secrets: [...])` | 同上（拒绝启动，不物化过滤文件） |
+| `exec_shell` 的声明式 `secrets`（cron/loop `sandboxSecretNames`） | 不物化 → 沙箱内 `secrets.toml` 保持空掩码 + 审计 deny（声明式步骤不因它整条失败） |
+| `http_request` header 里的 `$NAME` | 拒绝该请求 |
+| `env_list` 里的键名清单 | 不显示 secrets 键名（只显示"未被授权"） |
+| `env_set` 写 `${SECRET:NAME}` 引用式值 | 拒绝（否则等于给自己开后门） |
+
+放开方式：`config.toml` 写 `[secrets] agents = ["default", "onlychat"]`（`["*"]` = 全部，`[]` = 谁都不给）。
+**没有 agent 上下文的调用**（CLI、cron 无绑定场景）视为放行，否则 CLI 与定时任务会被误伤 —— 与
+`[tools.selfManagement].agents` 同款口径。框架自己用密钥的路径（provider 的 `$NAME`、MCP server 的
+`${SECRET:NAME}`、qqbot 的 `clientSecret`）不经过这层，不受影响。
+⚠️ `secrets.` 已在 `config/settable-paths.ts` 的拒绝列表里 —— `config_set` 不能改它（否则模型能给自己发密钥）。
 
 **配置自愈（改坏自动回退）**
 

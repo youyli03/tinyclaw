@@ -153,9 +153,7 @@ const BackendRoleSchema = z.object({
    * none/minimal/low/medium/high/xhigh/max。想彻底关闭思考用 disableThinking。
    * 该值只是后端**默认档位**;用户在会话里可用 `/think` 临时覆盖。
    */
-  reasoningEffort: z
-    .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
-    .optional(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   /** 模型支持的最大 thinking token 预算。
    *  仅在 agent 通过 ChatOptions.enableThinking 显式开启时才发送 thinking 参数。
    *  例如 4000 = 模型最多用 4000 token 做内部推理。
@@ -386,7 +384,18 @@ const SandboxSchema = z
     /** `inheritEnv = false` 时仍透传的环境变量（缺省值够跑 bash/python/git） */
     envAllowlist: z
       .array(z.string())
-      .default(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TZ", "TMPDIR", "TERM"]),
+      .default([
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TMPDIR",
+        "TERM",
+      ]),
 
     /** 审计流：所有工具调用的决策记录，追加写、agent 不可改 */
     audit: z
@@ -419,7 +428,8 @@ const SandboxSchema = z
 
     /** 无人值守路径（cron / loop）的策略 */
     unattended: z
-      .object({        /**
+      .object({
+        /**
          * `allowlist` = 只允许 allowedTools 里的工具（默认）；
          * `all` = 放行全部（等于旧行为）；`deny` = 除明确安全工具外全部拒绝
          */
@@ -429,51 +439,49 @@ const SandboxSchema = z
          * 注意：`agent_fork` 在**声明式步骤**（cron/loop 的 `steps`）里可用，但在无人值守的
          * **ReAct 循环**里被硬禁止（`HARD_DENY_REACT_UNATTENDED`），写进白名单也不会在 ReAct 通道生效。
          */
-        allowedTools: z
-          .array(z.string())
-          .default([
-            // 读与计算
-            "read_file",
-            "read_image",
-            "grep",
-            "glob",
-            "self_status",
-            "self_runtime_scan",
-            "self_runtime_read",
-            "search_store",
-            // 只读自省（不含 cron_add/remove/enable/disable 这类改动调度状态的）
-            "cron_list",
-            "mcp_list_servers",
-            "session_get",
-            "memory_read_mem",
-            "memory_write_mem",
-            "memory_read_active",
-            "memory_write_active",
-            "memory_append",
-            "memory_append_card",
-            "memory_append_feedback",
-            "memory_search",
-            // 写（限 workspace / 运行时目录，仍受 path-guard 约束）
-            "write_file",
-            "edit_file",
-            "write_report",
-            "db_write",
-            "render_diagram",
-            "send_report",
-            "notify_user",
-            // 执行与子 Agent（exec_shell 在沙箱开启时进 bwrap）
-            "exec_shell",
-            "skill_run",
-            "create_skill",
-            // agent_fork：**声明式 steps 通道允许**（job 配置里写死的 fan-out），
-            // 但无人值守的 **ReAct 通道硬禁止**（见 auth/tool-policy.ts 的 HARD_DENY_REACT_UNATTENDED）
-            "agent_fork",
-            "agent_wait",
-            "agent_status",
-            "agent_trace",
-            "agent_abort",
-            "loop_exit",
-          ]),
+        allowedTools: z.array(z.string()).default([
+          // 读与计算
+          "read_file",
+          "read_image",
+          "grep",
+          "glob",
+          "self_status",
+          "self_runtime_scan",
+          "self_runtime_read",
+          "search_store",
+          // 只读自省（不含 cron_add/remove/enable/disable 这类改动调度状态的）
+          "cron_list",
+          "mcp_list_servers",
+          "session_get",
+          "memory_read_mem",
+          "memory_write_mem",
+          "memory_read_active",
+          "memory_write_active",
+          "memory_append",
+          "memory_append_card",
+          "memory_append_feedback",
+          "memory_search",
+          // 写（限 workspace / 运行时目录，仍受 path-guard 约束）
+          "write_file",
+          "edit_file",
+          "write_report",
+          "db_write",
+          "render_diagram",
+          "send_report",
+          "notify_user",
+          // 执行与子 Agent（exec_shell 在沙箱开启时进 bwrap）
+          "exec_shell",
+          "skill_run",
+          "create_skill",
+          // agent_fork：**声明式 steps 通道允许**（job 配置里写死的 fan-out），
+          // 但无人值守的 **ReAct 通道硬禁止**（见 auth/tool-policy.ts 的 HARD_DENY_REACT_UNATTENDED）
+          "agent_fork",
+          "agent_wait",
+          "agent_status",
+          "agent_trace",
+          "agent_abort",
+          "loop_exit",
+        ]),
         /**
          * 无人值守且 MFA 无法送达（job 未绑定输出目标 / loop 无回调）时的兜底：
          * `deny` = 拒绝该工具调用（默认，符合"无人值守最严"）；`allow` = 放行（旧行为）
@@ -1113,6 +1121,24 @@ const HealthSchema = z
   })
   .default({});
 
+// ── 密钥（secrets.toml）的按 agent 授权 ────────────────────────────────────────
+
+/**
+ * `[secrets]`：谁能读 `~/.tinyclaw/secrets.toml` 里的密钥。
+ *
+ * 为什么需要它：`${SECRET:NAME}`（job env）、`job_start(secrets:[...])`、`http_request` 的 header `$NAME`
+ * 都是**按名字**取密钥，而名字是可猜的（`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*` …）——
+ * 不给授权就等于"任何能看到这些工具的 agent 都能读全部密钥"。
+ *
+ * 默认只给 `default`（管家角色）：`["*"]` = 放开给所有 agent；`[]` = 谁都不给。
+ * 与 `[tools.selfManagement].agents` 同款口径；没有 agent 上下文的调用（CLI / cron 无绑定）视为放行。
+ */
+const SecretsSchema = z
+  .object({
+    agents: z.array(z.string()).default(["default"]),
+  })
+  .default({});
+
 // ── 根配置 ────────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -1127,6 +1153,7 @@ export const ConfigSchema = z.object({
   interactive: InteractiveSchema.default({}),
   selfAccess: SelfAccessSchema,
   sandbox: SandboxSchema,
+  secrets: SecretsSchema,
   tools: ToolsSchema,
   retry: RetryConfigSchema,
   voice: VoiceSchema,
@@ -1135,6 +1162,7 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type SecretsPolicyConfig = z.infer<typeof SecretsSchema>;
 export type QQBotConfig = z.infer<typeof QQBotSchema>;
 export type MFAConfig = z.infer<typeof MFASchema>;
 

@@ -18,6 +18,7 @@ const DENIED_PREFIXES: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "auth.", why: "MFA 与提示完整性防线，不能让被管的对象自己改" },
   { prefix: "sandbox.", why: "沙箱与无人值守白名单是管着 agent 的规则" },
   { prefix: "selfAccess.", why: "自指运行权限（整树可写/免 MFA/真删）是特权面" },
+  { prefix: "secrets.", why: "密钥按 agent 的授权列表——让模型改它等于让它给自己发密钥" },
   { prefix: "health.", why: "健康自检与自动回退阈值是防呆机制" },
   { prefix: "channels.", why: "connector 凭据与对外发声渠道" },
   { prefix: "web.", why: "Dashboard 端口与 token" },

@@ -30,8 +30,9 @@ import { buildJobEnvBase } from "../config/agent-env.js";
 import { atomicWriteText } from "../config/safe-write.js";
 import { buildSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
 import { cleanupFilteredSecrets, materializeFilteredSecrets } from "../sandbox/secrets-filter.js";
-import { resolveSecretRefs } from "../mcp/secret-ref.js";
+import { resolveSecretRefs, isSecretRef } from "../mcp/secret-ref.js";
 import { auditToolCall } from "../auth/tool-policy.js";
+import { canReadSecrets, secretsDeniedReason } from "../auth/secrets-access.js";
 import {
   cleanupUnit,
   jobUnitName,
@@ -225,6 +226,28 @@ export async function startJob(opts: StartJobOptions): Promise<StartJobResult> {
 
   // ── env 组装：process.env（含 ~/.tinyclaw/env） < agents/<id>/env < 显式 env ──
   const built = buildJobEnvBase(process.env, agentId, opts.env);
+
+  // ── 密钥授权（`[secrets].agents`）：名字可猜，所以引用/声明都要先过这道闸 ──
+  const hasSecretRefs = Object.values(built.env).some((v) => isSecretRef(v));
+  const wantsSecrets = (opts.secrets?.length ?? 0) > 0;
+  if ((hasSecretRefs || wantsSecrets) && !canReadSecrets(agentId)) {
+    const reason = secretsDeniedReason(
+      wantsSecrets ? "job_start 的 secrets 声明" : "job_start 的 ${SECRET:NAME} 引用",
+      agentId
+    );
+    auditToolCall({
+      event: "policy",
+      origin: opts.origin,
+      agentId: agentId ?? "default",
+      ...(sessionId ? { sessionId } : {}),
+      tool: "job_start",
+      decision: "deny",
+      reason: "未授权读 secrets.toml（[secrets].agents）",
+      args: { secretRefs: hasSecretRefs, secretNames: opts.secrets ?? [] },
+    });
+    return { ok: false, reason };
+  }
+
   const resolved = resolveSecretRefs(built.env);
   if (resolved.missing.length > 0) {
     console.warn(`[jobs] ${id}: secrets.toml 缺少 ${resolved.missing.join(", ")}，对应 env 未注入`);

@@ -7,6 +7,7 @@ import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
 import { buildSandboxPlan, describeSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
 import { materializeFilteredSecrets, cleanupFilteredSecrets } from "../sandbox/secrets-filter.js";
+import { canReadSecrets } from "../auth/secrets-access.js";
 import { announceElevation, requestElevation } from "../sandbox/elevation.js";
 import { auditToolCall } from "../auth/tool-policy.js";
 import type { RunOrigin } from "../security/audit.js";
@@ -56,7 +57,10 @@ function formatExecOutput(stdout: string, stderr: string): string {
  * **共用同一条执行路径**（沙箱 / 提权 / 超时 / 审计 / 密钥掩码），
  * 而不是自己再 spawn 一个子进程、绕开沙箱边界层。
  */
-export async function execShellImpl(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
+export async function execShellImpl(
+  args: Record<string, unknown>,
+  ctx?: ToolContext
+): Promise<string> {
   const command = String(args["command"] ?? "");
   if (!command) return "错误：缺少 command 参数";
   const parsedTimeoutSec = parseExecTimeoutSec(args["timeout_sec"]);
@@ -176,15 +180,32 @@ export async function execShellImpl(args: Record<string, unknown>, ctx?: ToolCon
         ...(ctx?.masterSession?.listWriteGrants?.() ?? []),
       ];
       // 按任务声明的密钥过滤（方案 B）：脚本零改动，但只看得见自己声明的 key
-      filteredSecrets = ctx?.sandboxSecretNames?.length
-        ? materializeFilteredSecrets({
-            names: ctx.sandboxSecretNames,
-            label: ctx.sessionId ?? "adhoc",
-            origin: toolOrigin,
-            agentId: ctx?.agentId ?? "default",
-            ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
-          })
-        : null;
+      // ⚠️ 先过 `[secrets].agents` 授权：声明式 secrets 也是"按名字取密钥"，不能绕过这层
+      const declaredSecrets = ctx?.sandboxSecretNames ?? [];
+      if (declaredSecrets.length > 0 && !canReadSecrets(ctx?.agentId)) {
+        console.warn(
+          `[sandbox] agent "${ctx?.agentId ?? "?"}" 未被授权读 secrets.toml，声明的 ${declaredSecrets.join(", ")} 不物化（沙箱内为空文件）`
+        );
+        auditToolCall({
+          event: "policy",
+          origin: toolOrigin,
+          agentId: ctx?.agentId ?? "default",
+          ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+          tool: "exec_shell",
+          decision: "deny",
+          reason: "未授权读 secrets.toml（[secrets].agents），声明的 secrets 未物化",
+          args: { secretNames: declaredSecrets },
+          cfg: sandboxCfg,
+        });
+      } else if (declaredSecrets.length > 0) {
+        filteredSecrets = materializeFilteredSecrets({
+          names: declaredSecrets,
+          label: ctx?.sessionId ?? "adhoc",
+          origin: toolOrigin,
+          agentId: ctx?.agentId ?? "default",
+          ...(ctx?.sessionId ? { sessionId: ctx.sessionId } : {}),
+        });
+      }
       const plan = buildSandboxPlan({
         command,
         agentId: ctx?.agentId ?? "default",
