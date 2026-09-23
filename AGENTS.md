@@ -216,6 +216,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   **不要**用 `--setenv` / `--property=Environment=`（会把明文写进 unit 属性）。
   重启收敛逻辑集中在 `resolveStaleJob()`（纯函数）：systemd 载体探活、非 detached 的残留进程
   **必须收掉**（否则变成没人认领的孤儿），别绕过它自己写一套。
+  **模型引导同源**：内置 prompt 里有一节 `## Background jobs (job_start)`（`agent.ts`，英文）说明
+  "进程类长任务用 job_start、LLM 类长任务才 agent_fork" —— 改 job 的行为/默认值时要同步改它，
+  并注意**按 agent 的 `tools.toml`** 会决定模型看不看得到这些工具（`allowlist` 里没列的看不到）。
 - **agent 环境变量**（`config/agent-env.ts` + `tools/env-admin.ts`）：文件 `~/.tinyclaw/agents/<id>/env`（0600，
   沙箱掩码）；分层 `process.env` < agent env < 单次覆盖；**没有** `env_get`，值永不回给模型。
 

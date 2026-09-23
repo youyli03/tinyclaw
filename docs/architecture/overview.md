@@ -935,6 +935,12 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 > **Job ≠ Sub-Agent**：`agent_fork` 后台跑的是**另一个 LLM agent**（自己的会话与工具循环）；Job 跑的是**进程/命令**。
 
+- **模型怎么知道用它**：工具本身以 OpenAI function spec 暴露（`job_start` 的 description 写明 env 分层、
+  `${SECRET:NAME}`、`detach`、`secrets: [...]`；参数含 `command` / `env` / `secrets` / `timeout_secs` / `detach`），
+  内置 system prompt 另有一节 `## Background jobs (job_start)`（`agent.ts`），明确"进程类长任务用 job_start、
+  LLM 类长任务才 agent_fork"，并把 `exec_shell` 的 60s 超时建议改指向它。
+  可见性还受**按 agent 的 `tools.toml`** 约束：没有该文件的 agent（如 `default`）能看到全部工具，
+  `allowlist` 模式（如 `onlychat`）看不到未列入的工具 —— 想让某个受限 agent 用 job/env，把工具名加进它的 `tools.toml`
 - **工具面**：`job_start`（`detach` / `env` / `secrets` / `timeout_secs`）、`job_list`、`job_status`、
   `job_output`（**按字节游标增量读**）、`job_kill`（杀整个进程组：`spawn(detached: true)` 让 shell 成为
   group leader，`process.kill(-pid, sig)` 连子进程一起杀 —— 与 `exec_shell` 同款）

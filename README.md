@@ -328,6 +328,10 @@ tinyclaw completions install           # 安装 tab 补全
 env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<id>/env` < job 的 `env` 参数。
 值支持 `${SECRET:NAME}` 引用式(注入子进程前才解析);**值只通过进程环境传递、不拼命令行 → `ps -ef` 看不到**。
 
+模型的用法来自工具自带的 description,以及内置 system prompt 里的 `## Background jobs (job_start)` 一节
+(进程类长任务用它、LLM 类长任务才 `agent_fork`)。注意工具可见性还受**按 agent 的 `tools.toml`** 约束:
+只有 `allowlist` 里列了这些工具的 agent 才看得到(默认 agent 没有 `tools.toml` = 全部可见)。
+
 | 存活语义 | 行为 |
 |---|---|
 | 默认(非 detached) | 随服务退出:服务退出/重启时被收掉;下次启动若发现**残留进程**也会按契约收掉(不会变成孤儿) |
