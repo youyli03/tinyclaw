@@ -23,8 +23,14 @@ export interface ReloadPlan {
   reason: string;
 }
 
-/** 需要"重新 init 子系统"的段（provider 客户端 / 限流器 / 记忆阈值） */
-const SOFT_PREFIXES = ["llm.", "concurrency.", "memory.embedModel", "memory.enabled"];
+/**
+ * 需要"重新 init 子系统"的段（provider 客户端 / 限流器 / 记忆阈值）。
+ *
+ * `providers.` 必须在里面：LLM 客户端在构造时把 `apiKey` 固化进实例
+ * （`llm/registry.ts` 的 `new LLMClient({ apiKey })`），只换配置缓存不会换掉它们 ——
+ * 按 hot 处理等于"改了 key 却不生效"。归 soft 才会走 `applySoft` 重新 init 后端。
+ */
+const SOFT_PREFIXES = ["llm.", "providers.", "concurrency.", "memory.embedModel", "memory.enabled"];
 
 /** 必须重启的段（进程级资源或进程内一致性） */
 const RESTART_PREFIXES = [
@@ -81,7 +87,9 @@ export function diffConfigSections(before: Config, after: Config): string[] {
 }
 
 function matches(path: string, prefixes: readonly string[]): boolean {
-  return prefixes.some((p) => (p.endsWith(".") ? path.startsWith(p) : path === p || path.startsWith(`${p}.`)));
+  return prefixes.some((p) =>
+    p.endsWith(".") ? path.startsWith(p) : path === p || path.startsWith(`${p}.`)
+  );
 }
 
 /**

@@ -99,6 +99,14 @@ test("分级:LLM 后端 / 并发 / 记忆阈值 → soft", () => {
   assert.equal(plan.sections.includes("llm.backends.daily.model"), true);
 });
 
+test("分级:provider 凭据变更 → soft（客户端构造时固化了 apiKey，必须重新 init 后端）", () => {
+  const a = cfg();
+  const b = cfg({ providers: { deepseek: { apiKey: "sk-rotated" } } });
+  const plan = classifyConfigChange(a, b);
+  assert.equal(plan.cls, "soft", `实际 ${plan.cls}`);
+  assert.equal(plan.sections.includes("providers.deepseek.apiKey"), true);
+});
+
 test("分级:channels / voice / web.port / sandbox 开关 → restart", () => {
   const cases: Array<Record<string, unknown>> = [
     { channels: { qqbots: { main: { appId: "1", clientSecret: "s" } } } },

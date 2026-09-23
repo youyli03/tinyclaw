@@ -58,7 +58,10 @@ tinyclaw restart
 apiKey = "$OPENROUTER_API_KEY"     # → secrets.toml 的 [OPENROUTER_API_KEY] value
 ```
 只有**这几个白名单字段**会解析(`$PATH` 这类字面量不会被误改);缺键时保留字面量 + 启动告警
-(`tinyclaw config check` 也会提示),`tinyclaw config reload` 后重新读 secrets.toml。
+(`tinyclaw config check` 也会提示)。改 provider 凭据后走 `tinyclaw config reload`(providers 属 soft 级,
+会重新 init LLM 后端 —— 客户端在构造时就固化了 apiKey,只换缓存没用);
+但**只改 `secrets.toml`、`config.toml` 没动**时 `config reload` 不会做任何事(它按 config.toml 内容哈希判断),
+这种情况要 `tinyclaw restart`。
 agent 侧另有 `http_request` 的 header `$NAME`、job/agent env 的 `${SECRET:NAME}`、qqbot 的 `clientSecret`。
 
 **改坏了会自动回退**:服务每次成功启动都会把当前配置记为"上一份可用版本"(`config.toml.lkg`)。

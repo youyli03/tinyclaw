@@ -1174,8 +1174,9 @@ tinyclaw mo<Tab>
 - 变更分级（`classifyConfigChange()`，纯函数）：
   - `hot`：`retry` / `tools` / `agent` / `interactive` / `auth.mfa` / `sandbox` 策略类 / `selfAccess` —— 全仓约 94 处
     `loadConfig()` 基本都是"用时现读"，换缓存即生效
-  - `soft`：`llm.backends` / `concurrency` / `memory.embedModel|enabled` —— 这些子系统在启动时初始化一次，
-    需要重新 init（`llmRegistry.init()` + `initLLMConcurrency()`）
+  - `soft`：`llm.backends` / `providers.*` / `concurrency` / `memory.embedModel|enabled` —— 这些子系统在启动时初始化一次，
+    需要重新 init（`llmRegistry.init()` + `initLLMConcurrency()`）。⚠️ `providers.` 必须在 soft：LLM 客户端在构造时
+    就把 `apiKey` 固化进实例（`new LLMClient({ apiKey })`），只换缓存不会换掉它们 —— 按 hot 处理等于"改了 key 却不生效"
   - `restart`：`channels.*` / `voice.*` / `web.port` / `sandbox.enabled` / `sandbox.execShell` —— 进程级资源，
     或一次工具调用内会被多处读取（热改会半新半旧）→ 走受控重启
   - 原则：**证明不了"改动会立刻被读取点看到"就归 restart**（宁可不热，不假热）

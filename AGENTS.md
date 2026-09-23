@@ -186,7 +186,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   会回调 `loadConfig()`：**必须先把原始配置写入缓存再解析**，否则无限递归（`AGENTS.local.md` 的
   `config.toml` 明文 apiKey 仍在，属兼容路径，不是必须迁移）。
 - **热重载分级**（`src/config/reload-plan.ts` + `reload.ts`）：`hot`（用时现读的段，换缓存）/ `soft`
-  （`llm.backends` / `concurrency` / `memory.embedModel|enabled`，需重新 init 子系统）/ `restart`
+  （`llm.backends` / `providers.*` / `concurrency` / `memory.embedModel|enabled`，需重新 init 子系统）/ `restart`
   （`channels` / `voice` / `web.port` / `sandbox.enabled|execShell`，进程级资源或一次调用内多处读取）。
   **证明不了"改动会立刻被读取点看到"就归 `restart`** —— 宁可不热，不假热。入口：agent 工具 `config_reload`、
   CLI `tinyclaw config reload`、`config.toml` 监听（`ContentWatcher`，连续 3 次失败自动停用）。
