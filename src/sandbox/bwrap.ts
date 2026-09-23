@@ -119,6 +119,15 @@ export function maskTargets(cfg: SandboxConfig): { masked: string[]; skipped: st
   } catch {
     /* 目录不可读时忽略 */
   }
+  // 每个 agent 自己的 env 文件（值通过 spawn 的 env 注入，文件本身在沙箱内不该可读）
+  try {
+    const agentsRoot = path.join(root, "agents");
+    for (const entry of fs.readdirSync(agentsRoot, { withFileTypes: true })) {
+      if (entry.isDirectory()) candidates.push(path.join(agentsRoot, entry.name, "env"));
+    }
+  } catch {
+    /* 还没有 agent 目录 */
+  }
 
   for (const p of candidates) {
     const abs = path.resolve(p);

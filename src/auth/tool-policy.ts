@@ -94,6 +94,7 @@ const HARD_DENY_REACT_UNATTENDED = new Set([
   "mcp_reload",
   "config_reload",
   "config_set",
+  "job_start",
 ]);
 
 /** 硬禁止工具的解释（拒绝文案用） */
@@ -117,6 +118,9 @@ const HARD_DENY_REASON: Record<string, string> = {
   config_set:
     "无人值守时禁止让模型改 config.toml（哪怕是安全段的白名单字段）：无人看着时不该由模型改自己的运行配置。" +
     "请在有人值守的会话里让它执行（会走 MFA 确认）。",
+  job_start:
+    "无人值守时禁止启动后台 job：后台进程会活过这一轮（detach 甚至活过服务重启），等于把执行挪到监督窗口之外。" +
+    "确需长任务请用 cron job 的声明式 steps（exec_shell）或把它写成 job 配置里的声明式步骤。",
 };
 
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {

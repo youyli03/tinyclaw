@@ -311,6 +311,23 @@ tinyclaw completions install           # 安装 tab 补全
 | `config_reload` | 把磁盘上的 `config.toml` 热应用进运行中的进程(**MFA**;分级 hot/soft/restart,自检失败自动回退) |
 | `config_set` | 改**一个**配置字段并热应用(**MFA**)。只允许白名单字段:模型/单后端参数、模型别名、轮次与截断上限、重试节奏、交互提醒;`auth`/`sandbox`/`selfAccess`/`health`/`channels`/`web`/`providers`/`memory` 等一律拒(写前校验+备份+原子写,失败自动回退) |
 
+### 后台 Job 与环境变量
+
+> **Job ≠ Sub-Agent**:`agent_fork` 后台跑的是**另一个 LLM agent**;Job 跑的是**进程/命令**,适合长编译、批量下载、爬取、训练、监听。
+
+| 工具 | 说明 |
+|------|------|
+| `job_start` | 后台启动一个进程/命令,立即返回 job id(`detach=true` ≈ `&`/`nohup`,服务重启后继续跑;`secrets:[...]` 按任务声明密钥;`timeout_secs` 超时自终止) |
+| `job_list` / `job_status` | 列出/查看自己的 job(状态、pid、退出码、字节数、备注) |
+| `job_output` | **增量**读输出(自上次读取以来),日志落盘,重启后仍可读 |
+| `job_kill` | 杀整个进程组(子进程一并终止),默认 SIGTERM |
+| `env_list` | 列出本 agent 的环境变量**键名**(永不回值),含全局 `~/.tinyclaw/env` 的键 |
+| `env_set` | 写一个变量到 `~/.tinyclaw/agents/<id>/env`(0600);**密钥类键名需 MFA 审批**,普通变量不打扰(审批提示与审计里值打码,只见键名) |
+| `env_delete` | 删除一个变量(密钥类同样要审批) |
+
+env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<id>/env` < job 的 `env` 参数。
+值支持 `${SECRET:NAME}` 引用式(注入子进程前才解析);**值只通过 spawn 的 env 传递、不拼命令行 → `ps -ef` 看不到**。
+
 ### Code 模式专用
 
 | 工具 | 说明 |
@@ -328,9 +345,11 @@ tinyclaw completions install           # 安装 tab 补全
 ├── config.toml.lkg      # 上一份"被证实可用"的配置(启动成功后写入,改坏时自动回退用)
 ├── .config-state.json   # 配置状态(current / lastGood / pending / 最近回退,0600)
 ├── .safe_config         # SAFE MODE 标记(存在 = 用最小配置启动,只留 providers/llm)
+├── jobs/                # 后台 job:每 job 一个目录(meta.json + stdout.log + stderr.log,0600)
 ├── mcp.toml             # MCP server 配置
 ├── memstores.toml       # 向量知识库配置(news 等)
 ├── dashboard.db         # Dashboard 指标数据库(SQLite)
+├── agents/<id>/env      # 该 agent 自己的环境变量(KEY=VALUE,0600,沙箱内被掩码)
 ├── agents/default/      # 默认 Agent 工作区
 │   ├── SYSTEM.md        # 系统提示
 │   ├── MEM.md           # 持久记忆

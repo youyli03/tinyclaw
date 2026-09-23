@@ -20,6 +20,7 @@ import { CONFIG_PATH } from "./config/writer.js";
 import { promoteConfig, restoreLastGoodConfig, shouldRollbackConfig } from "./config/state.js";
 import { setConfigReloadHooks, reloadConfig } from "./config/reload.js";
 import { configWatcher } from "./config/watcher.js";
+import { initJobManager, shutdownJobManager } from "./core/job-manager.js";
 import { runOfflineHealthChecks, formatHealthReport, appendHealthLog } from "./health/config-health.js";
 import { probeDailyBackend, withLlmProbe } from "./health/llm-probe.js";
 import { llmRegistry } from "./llm/registry.js";
@@ -184,6 +185,9 @@ async function main(): Promise<void> {
   // 初始化 Agent 工作区（确保 default agent 存在）
   agentManager.ensureDefault();
   console.log("[tinyclaw] Agent workspace ready");
+
+  // 后台 job 管理器：把上次残留的 running job 标记掉（detached 的保留并注明可能仍在跑）
+  initJobManager();
 
   // 启动 skill subsystem watcher（主进程；cron worker 通过 IPC 接收失效通知）
   void skillWatcher.start(agentManager.listAgentIds());
@@ -1241,6 +1245,7 @@ ${message}`;
     stopNewsWatcher();
     mcpWatcher.stop();
     configWatcher.stop();
+    await shutdownJobManager();
     stopCollector();
     stopDashboard();
     if (connector) await connector.stop();

@@ -230,6 +230,7 @@ tinyclaw/
 │   │   ├── agent.ts          # ReAct 主循环（think → tool_call → observe → respond）
 │   │   │                     # 支持 MFA 鉴权、__purpose 进度旁白、auto-fork、textMode 文本工具调用
 │   │   ├── purpose-arbiter.ts # __purpose 展示仲裁（取代旧心跳：按工具真实耗时决定说不说）
+│   │   ├── job-manager.ts    # 后台 Job：进程组 spawn / 增量日志 / detach / 超时 / 并发上限 / 重启标记
 │   │   ├── session.ts        # messages[] + JSONL 持久化 + 并发控制 + 压缩（chat/code 两路）
 │   │   ├── router.ts         # 意图路由（扩展点，当前直通）
 │   │   ├── agent-manager.ts  # Agent 工作区管理（创建/查找/路径/repair）+ session loop 配置读写
@@ -355,6 +356,7 @@ tinyclaw/
 ├── config.toml.lkg           # last-known-good 配置副本（成功启动后写入，回退用）
 ├── .config-state.json        # 配置状态：current / lastGood / pending / lastRollback（0600）
 ├── .safe_config              # SAFE MODE 标记（存在 = 用最小配置启动）
+├── jobs/                     # 后台 job：<id>/{meta.json,stdout.log,stderr.log}（0600/0700）
 ├── mcp.toml                  # MCP server 配置（独立文件）
 ├── .service_pid              # supervisor 进程 PID（tinyclaw restart 读取）
 ├── .github_token             # GitHub OAuth token（0600 权限，由 Device Flow 写入）
@@ -362,6 +364,7 @@ tinyclaw/
 │   ├── msal-cache.json       # MSAL token 缓存（自动维护）
 │   └── totp.key              # TOTP 共享密钥（auth mfa-setup 生成，0600 权限）
 ├── agents/                   # Agent 工作区（每个 Agent 独立）
+│   ├── env                   # 该 agent 自己的环境变量（KEY=VALUE，0600，沙箱内被掩码）
 │   ├── default/
 │   │   ├── agent.toml        # 元数据（id、createdAt、bindings）
 │   │   ├── SYSTEM.md         # Agent 系统提示（可选）
@@ -598,6 +601,7 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 `mcp_server_set_enabled`/`mcp_reload`）与**配置自管理工具**（`config_reload`/`config_set`）更进一步：它们在
 ReAct 通道**硬拒绝**（`HARD_DENY_REACT_UNATTENDED`，写进 `allowedTools` 也不放行）—— 新增 server 的 `command`
 是任意可执行程序，配置里又装着 MFA / 沙箱 / 无人值守白名单本身，都不能在没人看着时改。
+`job_start` 同样硬拒绝：后台进程会**活过这一轮**（`detach` 甚至活过服务重启），等于把执行挪到监督窗口之外。
 
 #### 两个通道：声明式 `steps` vs 模型驱动 `react`
 
@@ -926,8 +930,38 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 
 ---
 
-## Connector 接口（`src/connectors/base.ts`）
+## 后台 Job（`src/core/job-manager.ts`）
 
+> **Job ≠ Sub-Agent**：`agent_fork` 后台跑的是**另一个 LLM agent**（自己的会话与工具循环）；Job 跑的是**进程/命令**。
+
+- **工具面**：`job_start`（`detach` / `env` / `secrets` / `timeout_secs`）、`job_list`、`job_status`、
+  `job_output`（**按字节游标增量读**）、`job_kill`（杀整个进程组：`spawn(detached: true)` 让 shell 成为
+  group leader，`process.kill(-pid, sig)` 连子进程一起杀 —— 与 `exec_shell` 同款）
+- **持久化**：`~/.tinyclaw/jobs/<id>/{meta.json,stdout.log,stderr.log}`（0600 / 目录 0700）。
+  `meta.json` 只记 **env 键名**、密钥名、pid、退出码、字节数、备注 —— **绝不落值**。
+  服务重启后：非 detached 的 running → `interrupted`；detached 的用 `kill(pid,0)` 探活，
+  活着就保留 running 并注明"可能仍在运行"（仍可用 pid `job_kill`）
+- **两种存活语义**：默认随服务退出（`shutdownJobManager()` 杀组）；`detach: true` 用
+  `detached + unref + stdio 直接落文件`，相当于 `&`/`nohup`，服务重启后继续跑、日志同一路径
+- **env 分层**（低 → 高）：`process.env`（启动时已注入 `~/.tinyclaw/env`）< `agents/<id>/env` < job 的 `env`。
+  值支持 `${SECRET:NAME}`（spawn 前解析，复用 `mcp/secret-ref.ts` 的解析器）。
+  **只通过 spawn 的 env 传递、绝不拼进命令行 → `ps -ef` 看不到值**。
+  ⚠️ 诚实的边界：同 UID 的进程仍可读 `/proc/<pid>/environ`；要求更高时用引用式或 job 的 `secrets: [...]`
+- **沙箱**：跟随 `[sandbox]`（与 `exec_shell` 同口径，复用 `buildSandboxPlan`）；
+  `secrets: [...]` 复用方案 B 的物化器（脚本照旧读 `~/.tinyclaw/secrets.toml`）。
+  每个 agent 的 `env` 文件也在沙箱掩码列表里（值靠 env 注入，文件本身不该可读）
+- **上限**：非 detached 走管道，每路输出最多落盘 8 MB（超出继续 drain，避免子进程被管道阻塞）；
+  `detach: true` 的 stdio 直接落日志文件、不经过本进程，**不设上限**。
+  并发上限 8/agent、32/进程（后台 job 不需要 MFA，用硬上限防"跑飞"）
+- **agent 环境变量**（`config/agent-env.ts` + `tools/env-admin.ts`）：`env_list` / `env_set` / `env_delete`
+  管 `~/.tinyclaw/agents/<id>/env`（0600，沙箱内被掩码）。**刻意没有 `env_get`** —— 值永不回给模型。
+  `env_set` / `env_delete` 用**条件 MFA**（`ToolDef.requiresMFAFor`）：密钥类键名（或 `secret: true`）才要审批；
+  `env_set` 的 `value` 另经 `ToolDef.redactArgs` 打码，**MFA 提示与审计里只看得到键名**（值不落日志、不进用户消息）
+- **隔离与无人值守**：job 记发起它的 `agentId`，只有它能 `job_output` / `job_kill`（无 agent 上下文的
+  CLI/cron 不受限）；`job_start` 在无人值守 ReAct 通道**硬拒绝**（后台进程会活过监督窗口），
+  声明式 `steps` 仍可用
+
+## Connector 接口（`src/connectors/base.ts`）
 ```typescript
 export interface Attachment {
   contentType: string

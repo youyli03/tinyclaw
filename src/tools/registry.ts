@@ -143,6 +143,20 @@ export interface ToolDef {
   spec: ChatCompletionTool;
   /** 是否需要 MFA 确认，默认 false */
   requiresMFA: boolean;
+  /**
+   * 按**参数**决定是否需要 MFA（与 `requiresMFA` 取或）。
+   *
+   * 用于"同一工具，危险参数才要审批"的场景：例如 `env_set` 写 `LOG_LEVEL` 不必打扰，
+   * 但写 `OPENAI_API_KEY` 必须审批 —— 静态的 `requiresMFA` 表达不了这个区别。
+   */
+  requiresMFAFor?: (args: Record<string, unknown>, ctx?: ToolContext) => boolean;
+  /**
+   * 把**不该出现在 MFA 提示与审计里的**参数替换掉（返回新对象，不要改原参数）。
+   *
+   * 用于"参数里带明文密钥"的工具：`env_set` 的 `value` 可能是明文 token，而 MFA 提示会发给用户、
+   * 审计会落盘 —— 两处都只能看到键名。默认不脱敏（返回原参数）。
+   */
+  redactArgs?: (args: Record<string, unknown>) => Record<string, unknown>;
   /** 工具执行函数，参数为 JSON 字符串化的 arguments */
   execute: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
   /** 是否对 LLM 隐藏（不出现在 getAllToolSpecs() 返回值中），默认 false */

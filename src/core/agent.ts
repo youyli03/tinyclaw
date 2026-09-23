@@ -65,6 +65,8 @@ import "../tools/skill-run.js";
 import "../tools/mcp-manager.js";
 import "../tools/mcp-admin.js";
 import "../tools/config-admin.js";
+import "../tools/env-admin.js";
+import "../tools/jobs.js";
 import { mcpManager } from "../mcp/client.js";
 import "../tools/agent-fork.js";
 import "../tools/notify.js";
@@ -2339,6 +2341,9 @@ async function runAgentInner(
       const sandboxCfg = loadConfig().sandbox;
       const policyStripped = stripReservedArgs(call.args as Record<string, unknown>);
       const policyArgs = policyStripped.args;
+      // 审计与 MFA 提示只看到"脱敏后"的参数：带明文密钥的参数（如 env_set 的 value）
+      // 不能进用户消息、也不能落进审计流；判定逻辑仍用原始参数。
+      const displayArgs = toolDef?.redactArgs ? toolDef.redactArgs(policyArgs) : policyArgs;
       const policyDecision = enforceUnattendedTool({
         toolName: call.name,
         origin: opts.origin,
@@ -2357,7 +2362,7 @@ async function runAgentInner(
           tool: call.name,
           decision: "deny",
           reason: "无人值守白名单外",
-          args: policyArgs,
+          args: displayArgs,
           ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
           cfg: sandboxCfg,
         });
@@ -2377,7 +2382,12 @@ async function runAgentInner(
         selfAccessCfg.exemptMfa &&
         argsAreWithinOwnScope(mfaArgs, { agentId: session.agentId, masterSession: session });
       if (
-        (toolNeedsMFA(call.name, mfaArgs, mfaCfg) || getTool(call.name)?.requiresMFA) &&
+        (toolNeedsMFA(call.name, mfaArgs, mfaCfg) ||
+          toolDef?.requiresMFA ||
+          toolDef?.requiresMFAFor?.(mfaArgs, {
+            agentId: session.agentId,
+            sessionId: session.sessionId,
+          }) === true) &&
         !selfAccessExempt &&
         !session.mfaApprovedForThisRun &&
         !session.mfaPreApproved
@@ -2394,7 +2404,7 @@ async function runAgentInner(
             tool: call.name,
             decision: "deny",
             reason: "子 Agent approvalPolicy=never",
-            args: mfaArgs,
+            args: displayArgs,
             ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
             cfg: sandboxCfg,
           });
@@ -2404,7 +2414,7 @@ async function runAgentInner(
           continue;
         }
         await flushConcurrentBatch();
-        bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, mfaArgs) });
+        bus.emit({ type: "mfa:prompt", message: describeToolCall(call.name, displayArgs) });
         let mfaPassed = false;
         let mfaFailOpen = false;
         try {
@@ -2414,7 +2424,7 @@ async function runAgentInner(
             mfaPassed = true;
           } else if (mfaCfg?.interface === "totp") {
             if (opts.onMFARequest) {
-              const desc = describeToolCall(call.name, mfaArgs);
+              const desc = describeToolCall(call.name, displayArgs);
               const secretPath = mfaCfg.totpSecretPath;
               mfaPassed = await opts.onMFARequest(
                 `⚠️ 即将执行：${desc}\n请打开 Authenticator App，将当前 6 位验证码回复给我（30 秒内有效）`,
@@ -2426,7 +2436,7 @@ async function runAgentInner(
               mfaFailOpen = true;
             }
           } else if (opts.onMFARequest) {
-            const desc = describeToolCall(call.name, mfaArgs);
+            const desc = describeToolCall(call.name, displayArgs);
             mfaPassed = await opts.onMFARequest(`⚠️ 即将执行：${desc}\n请回复 确认 / 取消`);
             if (!mfaPassed) opts.onMFAPrompt?.("✗ MFA 被拒绝，操作已取消");
           } else {
@@ -2459,7 +2469,7 @@ async function runAgentInner(
               tool: call.name,
               decision: "deny",
               reason: "无交互回调且 unattended.mfaFallback=deny",
-              args: mfaArgs,
+              args: displayArgs,
               ...(policyStripped.purpose ? { purpose: policyStripped.purpose } : {}),
               cfg: sandboxCfg,
             });

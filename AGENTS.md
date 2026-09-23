@@ -68,8 +68,9 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 |---|---|
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
 | `src/main-supervisor.ts` | 进程守护：崩溃退避重启 + **配置 quick-fail 自动回退**（LKG 覆盖）+ 代码 git 回退 |
-| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `settable-paths.ts`(`config_set` 字段白名单) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) · `reload-plan.ts`/`reload.ts`/`watcher.ts`(分级热重载) · `safe-mode.ts`(最小配置启动) |
+| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `settable-paths.ts`(`config_set` 字段白名单) · `agent-env.ts`(agent 环境变量) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) · `reload-plan.ts`/`reload.ts`/`watcher.ts`(分级热重载) · `safe-mode.ts`(最小配置启动) |
 | `src/health/` | `config-health.ts`(离线自检，CLI 可复用) · `llm-probe.ts`(在线探测 + 错误分流) |
+| `src/core/job-manager.ts` | **后台 Job**：进程组 spawn / 增量日志 / detach / 超时 / 并发上限 / 重启标记 |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
 | `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
 | `src/core/inbound-bus.ts` | 用户回复统一路由（MFA / Plan 审批 / ask_user 的 Waiter 队列） |
@@ -201,6 +202,15 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **`config_set` 只能改白名单字段**（`config/settable-paths.ts`）：模型/单后端参数、模型别名、轮次与截断上限、
   重试节奏、交互提醒。**管着 agent 的规则一律拒**（auth/sandbox/selfAccess/health/channels/web/providers/
   memory/submitter/agent/tools.http_request/llm.premiumAllowlist）—— 放行等于让模型拆自己的护栏。
+- **条件 MFA**（`ToolDef.requiresMFAFor`）：同一工具"危险参数才审批"用它（参考 `env_set`：密钥类键名才要审批），
+  不要为这种情况拆成两个工具；判定与静态 `requiresMFA` 取或（`agent.ts` 的 MFA 块）。
+  参数里带**明文密钥**时同时给 `ToolDef.redactArgs`（参考 `env_set`：`value` 换成 `***`）—— MFA 提示会发给用户、
+  审计会落盘，两处都只允许看到键名。
+- **后台 Job**（`core/job-manager.ts` + `tools/jobs.ts`）：Job 跑**进程**，Sub-Agent 跑**LLM**，两者别混。
+  新增 job 相关入口时保持三条不变式：① 日志/meta 只落 **env 键名**不落值；② 值只通过 spawn 的 env 传递、
+  **绝不拼命令行**（`ps -ef` 不可见）；③ `job_start` 类工具加入 `HARD_DENY_REACT_UNATTENDED`。
+- **agent 环境变量**（`config/agent-env.ts` + `tools/env-admin.ts`）：文件 `~/.tinyclaw/agents/<id>/env`（0600，
+  沙箱掩码）；分层 `process.env` < agent env < 单次覆盖；**没有** `env_get`，值永不回给模型。
 
 ### 错误处理
 
@@ -283,8 +293,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   - `channel: "steps"` = job / loop 配置里**声明式写死**的 tool 步骤（用户显式设计，可审计）→ 按白名单放行，**`agent_fork` 允许**
     （`~/.tinyclaw/cron/jobs/` 里 `2quff5jh`、`hs5xjebl` 两个股市日报就是这样按市场 fan-out 的）
   - `channel: "react"` = ReAct 循环里**模型临场挑选**的工具 → 命中 `HARD_DENY_REACT_UNATTENDED` 的一律拒绝
-    （目前有 `agent_fork`、MCP 自管理四件套 `mcp_server_add/remove/set_enabled`/`mcp_reload`、以及
-    `config_reload`/`config_set`），且**不受 `allowedTools` / `mode=all` 影响**
+    （目前有 `agent_fork`、MCP 自管理四件套 `mcp_server_add/remove/set_enabled`/`mcp_reload`、
+    `config_reload`/`config_set`、以及 `job_start`），且**不受 `allowedTools` / `mode=all` 影响**
   新增"无人值守能调工具"的入口时，必须显式选择通道：声明式步骤传 `channel: "steps"`，模型驱动传 `"react"`（默认）。
 - **MFA 兜底已改为 fail-closed**：无人值守（cron/loop）且无交互回调时按 `[sandbox.unattended].mfaFallback`
   处理，默认 `deny`（历史行为是 `mfaPassed = true` 静默放行）。交互式运行（chat/cli）无回调时仍按旧行为放行，
