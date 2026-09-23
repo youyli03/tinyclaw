@@ -11,9 +11,11 @@
  */
 
 import { registerTool, getTool } from "./registry.js";
+import { guardSelfManagement } from "./agent-binding.js";
 import { agentManager } from "../core/agent-manager.js";
-import { readRawConfig } from "../config/writer.js";
+import { readRawConfig, patchTomlField } from "../config/writer.js";
 import { validateConfigText, formatConfigDiags } from "../config/validate.js";
+import { isConfigSetPathAllowed } from "../config/settable-paths.js";
 import { runOfflineHealthChecks, formatHealthReport } from "../health/config-health.js";
 import { reloadConfig } from "../config/reload.js";
 
@@ -40,16 +42,21 @@ registerTool({
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
-  execute: async () => {
+  execute: async (_args, toolCtx) => {
+    const denied = guardSelfManagement("config_validate", toolCtx?.agentId);
+    if (denied !== null) return denied;
     const rawText = readRawConfig();
-    const ctx = runtimeContext();
-    const validation = validateConfigText(rawText, ctx);
+    const vctx = runtimeContext();
+    const validation = validateConfigText(rawText, vctx);
     const lines = ["## 配置校验", ...formatConfigDiags(validation.diagnostics)];
     if (validation.config === undefined) {
       lines.push("", "❌ 配置无法解析：服务重启时会 fail-fast 拒绝启动");
       return lines.join("\n");
     }
-    lines.push("", ...formatHealthReport(runOfflineHealthChecks({ cfg: validation.config, rawText, ...ctx })));
+    lines.push(
+      "",
+      ...formatHealthReport(runOfflineHealthChecks({ cfg: validation.config, rawText, ...vctx }))
+    );
     return lines.join("\n");
   },
 });
@@ -71,8 +78,102 @@ registerTool({
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
-  execute: async () => {
+  execute: async (_args, toolCtx) => {
+    const denied = guardSelfManagement("config_reload", toolCtx?.agentId);
+    if (denied !== null) return denied;
     const res = await reloadConfig("tool", runtimeContext());
     return res.message;
+  },
+});
+
+// ── config_set：模型可以自己调的"安全段" ──────────────────────────────────────
+
+/** 把字符串值推断成 TOML 字面量（与 `tinyclaw config set` 同口径） */
+function toTomlLiteral(raw: string): string {
+  const v = raw.trim();
+  if (v === "true" || v === "false") return v;
+  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  if (v.startsWith("[") && v.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(v) as unknown[];
+      return "[" + parsed.map((x) => JSON.stringify(x)).join(", ") + "]";
+    } catch {
+      return JSON.stringify(raw);
+    }
+  }
+  return JSON.stringify(raw);
+}
+
+registerTool({
+  requiresMFA: true,
+  spec: {
+    type: "function",
+    function: {
+      name: "config_set",
+      description:
+        "Set ONE config field in ~/.tinyclaw/config.toml and hot-reload it, so the change takes effect " +
+        "without a restart. Only a small allow-list of fields is writable: model and per-backend " +
+        "parameters (llm.backends.<daily|code|summarizer|vision>.*), model aliases (llm.aliases.*), " +
+        "round/truncation limits (tools.max*ToolRounds / maxToolResultChars / maxToolCallArgChars), " +
+        "retry pacing (retry.*) and interactive reminder timing (interactive.*). Everything that guards " +
+        "the agent itself is refused: auth, sandbox, selfAccess, health, channels, web, providers, " +
+        "memory, submitter, agent, tools.http_request, llm.premiumAllowlist. The write is validated as a " +
+        "whole (a bad value is rejected and nothing is written), backed up, written atomically with 0600 " +
+        "permissions, and reverted automatically if the post-change health check fails.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              "Dotted config path, e.g. llm.backends.daily.model, llm.aliases.fast, " +
+              "tools.maxChatToolRounds, retry.maxAttempts, interactive.maxReminds",
+          },
+          value: {
+            type: "string",
+            description:
+              "New value as text: true/false, a number, a JSON array, or a plain string " +
+              '(e.g. "deepseek/deepseek-reasoner"). Type is inferred like `tinyclaw config set`.',
+          },
+        },
+        required: ["path", "value"],
+      },
+    },
+  },
+  execute: async (args, toolCtx) => {
+    const denied = guardSelfManagement("config_set", toolCtx?.agentId);
+    if (denied !== null) return denied;
+
+    const path = String(args["path"] ?? "").trim();
+    const value = args["value"] === undefined ? undefined : String(args["value"]);
+    if (path === "" || value === undefined) return "已拒绝：缺少 path 或 value 参数。";
+
+    const policy = isConfigSetPathAllowed(path);
+    if (!policy.ok) return policy.reason ?? "已拒绝：该字段不可写。";
+
+    const parts = path.split(".");
+    const key = parts.pop();
+    if (key === undefined || parts.length === 0) {
+      return `已拒绝：路径 "${path}" 至少要包含 section 与字段名。`;
+    }
+
+    // 先用写前校验拦一道（坏值不落盘），再交给 reloadConfig 分级应用
+    const writeRes = patchTomlField(parts, key, toTomlLiteral(value), runtimeContext());
+    if (!writeRes.ok) {
+      return [
+        `已拒绝：写入会使 config.toml 校验失败，未做任何改动。`,
+        ...formatConfigDiags(writeRes.diagnostics),
+        `被拒内容已留证：${writeRes.rejectedPath}`,
+      ].join("\n");
+    }
+
+    const applied = await reloadConfig("tool", runtimeContext());
+    const cls = applied.plan.cls;
+    return [
+      `已设置 ${path} = ${value}`,
+      `备份：${writeRes.backupPath ?? "无（文件原本不存在）"}`,
+      `变更分级：${cls}${cls === "restart" ? "（已请求受控重启）" : "（已热应用）"}`,
+      applied.message,
+    ].join("\n");
   },
 });

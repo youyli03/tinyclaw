@@ -93,6 +93,7 @@ const HARD_DENY_REACT_UNATTENDED = new Set([
   "mcp_server_set_enabled",
   "mcp_reload",
   "config_reload",
+  "config_set",
 ]);
 
 /** 硬禁止工具的解释（拒绝文案用） */
@@ -113,6 +114,9 @@ const HARD_DENY_REASON: Record<string, string> = {
   config_reload:
     "无人值守时禁止热重载 config.toml：配置里含 MFA / 沙箱 / 无人值守白名单本身，模型在没人看着时改这些" +
     "等于绕过监督。请在有人值守的会话里执行（会走 MFA 确认），或自己改文件后重启服务。",
+  config_set:
+    "无人值守时禁止让模型改 config.toml（哪怕是安全段的白名单字段）：无人看着时不该由模型改自己的运行配置。" +
+    "请在有人值守的会话里让它执行（会走 MFA 确认）。",
 };
 
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {

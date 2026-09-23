@@ -68,7 +68,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 |---|---|
 | `src/main.ts` | 服务入口：配置 → LLM 注册表 → MCP → QQBot → IPC → Cron/Loop → 消息总线 |
 | `src/main-supervisor.ts` | 进程守护：崩溃退避重启 + **配置 quick-fail 自动回退**（LKG 覆盖）+ 代码 git 回退 |
-| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) · `reload-plan.ts`/`reload.ts`/`watcher.ts`(分级热重载) · `safe-mode.ts`(最小配置启动) |
+| `src/config/` | `schema.ts`(唯一真相) · `loader.ts` · `writer.ts`(写前校验的 TOML 补丁) · `validate.ts`(写前校验) · `settable-paths.ts`(`config_set` 字段白名单) · `safe-write.ts`(备份/原子写/留证) · `state.ts`(LKG/pending/回退) · `reload-plan.ts`/`reload.ts`/`watcher.ts`(分级热重载) · `safe-mode.ts`(最小配置启动) |
 | `src/health/` | `config-health.ts`(离线自检，CLI 可复用) · `llm-probe.ts`(在线探测 + 错误分流) |
 | `src/core/agent.ts` | **ReAct 主循环**（prepare → preamble → 循环 → finalize）、MFA 检查、文本模式、auto-fork |
 | `src/core/session.ts` | `messages[]` + JSONL 持久化 + 压缩触发 + 并发控制 + **统一 run 队列**（`runExclusive()` / `waitIdle()`） |
@@ -78,7 +78,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | `src/core/project-router.ts` · `project-memory.ts` | Code 模式项目绑定、锁、项目记忆 |
 | `src/llm/` | `client.ts`(流式+重试+idle)、`registry.ts`(多后端)、`copilot*.ts`、`responses-ws.ts` |
 | `src/memory/` | `qmd.ts`(向量库)、`summarizer.ts`(压缩/蒸馏，2056 行)、`cards.ts`、`entry-scorer.ts` |
-| `src/tools/` | 工具实现 + `registry.ts`(注册表)。**新增工具必须走 `registerTool()`** |
+| `src/tools/` | 工具实现 + `registry.ts`(注册表)。**新增工具必须走 `registerTool()`**；`agent-binding.ts` 管"自我管理工具默认只给 default agent" |
 | `src/auth/` | `guard.ts`(MFA 判定)、`mfa.ts`(MSAL)、`totp.ts`、`prompt-integrity.ts`(金丝雀) |
 | `src/security/injection-detector.ts` | 工具结果提示注入检测 |
 | `src/connectors/` | `base.ts`(接口) + `qqbot/`(gateway/api/outbound/transcribe) + `utils/`(渲染) |
@@ -191,6 +191,16 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **`spec.function.description` 必须与实现一致**。已知反例：`exec_shell` 描述写"需要 MFA 确认"，实际 `requiresMFA: false`（`system.ts:151-158`）——修实现或修描述，不要留着。
 - 所有工具结果统一经 `sanitizeToolResult()` 收口（`registry.ts:219`），不要在工具内部自己截断后再拼超长内容。
 - 涉及文件写入的工具**必须**调用 `checkWritePath()`（`tools/path-guard.ts`）；涉及读取的**必须**调用 `checkReadPath()`（它只拦密钥与 `.ssh`/`.git`，**没有**工作区白名单，见 §7.1），新增读类工具请自行加校验。
+- **"自我管理"工具的按 agent 绑定**（`tools/agent-binding.ts`）：**会改运行配置的**工具默认只给 `default` agent ——
+  `config_set`/`config_reload`/`config_validate` 与写 `mcp.toml` 的 `mcp_server_add`/`mcp_server_remove`/
+  `mcp_server_set_enabled`/`mcp_reload`（纯开关类的 `mcp_list_servers`/`mcp_enable_server`/`mcp_disable_server` 不绑）。
+  新增同类"改自己运行配置"的工具时：① 加进 `DEFAULT_AGENT_ONLY_TOOLS`；② 在 `execute` 里调
+  `guardSelfManagement(name, ctx?.agentId)`（**执行层必须自己兜住** —— cron/loop 的声明式步骤按名字直接
+  `executeTool`，绕过可见性过滤）；③ 加进 `auth/tool-policy.ts` 的 `HARD_DENY_REACT_UNATTENDED`。
+  授权方式：`[tools.selfManagement] agents = [...]`（`["*"]` = 全部，`[]` = 谁都不给）。
+- **`config_set` 只能改白名单字段**（`config/settable-paths.ts`）：模型/单后端参数、模型别名、轮次与截断上限、
+  重试节奏、交互提醒。**管着 agent 的规则一律拒**（auth/sandbox/selfAccess/health/channels/web/providers/
+  memory/submitter/agent/tools.http_request/llm.premiumAllowlist）—— 放行等于让模型拆自己的护栏。
 
 ### 错误处理
 
@@ -273,7 +283,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   - `channel: "steps"` = job / loop 配置里**声明式写死**的 tool 步骤（用户显式设计，可审计）→ 按白名单放行，**`agent_fork` 允许**
     （`~/.tinyclaw/cron/jobs/` 里 `2quff5jh`、`hs5xjebl` 两个股市日报就是这样按市场 fan-out 的）
   - `channel: "react"` = ReAct 循环里**模型临场挑选**的工具 → 命中 `HARD_DENY_REACT_UNATTENDED` 的一律拒绝
-    （目前只有 `agent_fork`），且**不受 `allowedTools` / `mode=all` 影响**
+    （目前有 `agent_fork`、MCP 自管理四件套 `mcp_server_add/remove/set_enabled`/`mcp_reload`、以及
+    `config_reload`/`config_set`），且**不受 `allowedTools` / `mode=all` 影响**
   新增"无人值守能调工具"的入口时，必须显式选择通道：声明式步骤传 `channel: "steps"`，模型驱动传 `"react"`（默认）。
 - **MFA 兜底已改为 fail-closed**：无人值守（cron/loop）且无交互回调时按 `[sandbox.unattended].mfaFallback`
   处理，默认 `deny`（历史行为是 `mfaPassed = true` 静默放行）。交互式运行（chat/cli）无回调时仍按旧行为放行，

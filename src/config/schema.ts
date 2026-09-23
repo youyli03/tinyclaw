@@ -822,6 +822,18 @@ const ToolsSchema = z
         allowPrivateHosts: z.boolean().default(false),
       })
       .default({}),
+    /**
+     * "自我管理"类工具（`config_set` / `config_reload` / `config_validate` 与 MCP 配置检查/管理工具）
+     * 的**按 agent 绑定**：默认只有 `default` 能用。
+     *
+     * 这些工具改的是"跑着 agent 的那套配置"，普通 agent 不该有改自己（和别的 agent）运行配置的能力；
+     * `default` 通常就是管家角色，所以默认给它。`["*"]` = 放开给所有 agent；`[]` = 谁都不给。
+     */
+    selfManagement: z
+      .object({
+        agents: z.array(z.string()).default(["default"]),
+      })
+      .default({}),
     /** 工具返回值安全检测配置 */
     security: z
       .object({

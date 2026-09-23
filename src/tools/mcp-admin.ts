@@ -15,6 +15,7 @@
  */
 
 import { registerTool } from "./registry.js";
+import { guardSelfManagement } from "./agent-binding.js";
 import { mcpManager, sanitizeMcpName } from "../mcp/client.js";
 import { analyzeMcpTomlText, mcpConfigPath } from "../config/loader.js";
 import { formatDiagnostics } from "../mcp/load-report.js";
@@ -139,7 +140,9 @@ registerTool({
       },
     },
   },
-  execute: async (args) => {
+  execute: async (args, ctx) => {
+    const denied = guardSelfManagement("mcp_server_add", ctx?.agentId);
+    if (denied !== null) return denied;
     const name = String(args["name"] ?? "").trim();
     if (!MCP_SERVER_NAME_RE.test(name)) {
       return `已拒绝：server 名 "${name}" 非法（只允许字母/数字/下划线/连字符，长度 1-32）。`;
@@ -223,7 +226,9 @@ registerTool({
       },
     },
   },
-  execute: async (args) => {
+  execute: async (args, ctx) => {
+    const denied = guardSelfManagement("mcp_server_remove", ctx?.agentId);
+    if (denied !== null) return denied;
     const name = String(args["name"] ?? "").trim();
     if (name === "") return "已拒绝：缺少 name 参数。";
 
@@ -265,7 +270,9 @@ registerTool({
       },
     },
   },
-  execute: async (args) => {
+  execute: async (args, ctx) => {
+    const denied = guardSelfManagement("mcp_server_set_enabled", ctx?.agentId);
+    if (denied !== null) return denied;
     const name = String(args["name"] ?? "").trim();
     if (name === "") return "已拒绝：缺少 name 参数。";
     if (typeof args["enabled"] !== "boolean") return "已拒绝：enabled 必须是布尔值。";
@@ -305,7 +312,9 @@ registerTool({
       },
     },
   },
-  execute: async () => {
+  execute: async (_args, ctx) => {
+    const denied = guardSelfManagement("mcp_reload", ctx?.agentId);
+    if (denied !== null) return denied;
     const summary = await mcpManager.reload("tool");
     const report = mcpManager.getLoadReport();
     const diagLines = formatDiagnostics(report.diagnostics, "error");

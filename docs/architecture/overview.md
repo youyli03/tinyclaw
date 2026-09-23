@@ -217,6 +217,14 @@ ttlDays        = 7                         # 临时区保留天数(0 = 不清理
 tinyclaw/
 ├── src/
 │   ├── main.ts               # 入口：加载配置 → 启动 QQBot → IPC server → Cron → 优雅退出
+│   ├── config/               # 配置（schema 是唯一真相）
+│   │   ├── schema.ts         # Zod 唯一真相
+│   │   ├── validate.ts       # 写前校验（语法/schema/交叉引用）
+│   │   ├── settable-paths.ts # config_set 的字段白名单（防自我提权）
+│   │   ├── safe-write.ts     # 备份/原子写/留证
+│   │   ├── state.ts          # LKG / pending / 回退记录
+│   │   └── reload-plan.ts    # 变更分级（hot/soft/restart）
+│   ├── health/               # 启动健康自检（离线项 + LLM 探测）
 │   ├── main-supervisor.ts    # 进程守护：crash 退避重启（≤20 次）+ 配置 quick-fail 自动回退 + 代码 git 回退
 │   ├── core/
 │   │   ├── agent.ts          # ReAct 主循环（think → tool_call → observe → respond）
@@ -270,6 +278,7 @@ tinyclaw/
 │   │   ├── session-bridge.ts # session_get / session_send(跨 session 消息互传,双向 allow-list 权限)
 │   │   ├── path-guard.ts     # 路径安全检查(防止越权访问)
 │   │   ├── sanitize.ts       # 工具结果清理与截断
+│   │   ├── agent-binding.ts  # 自我管理工具的按 agent 绑定（默认只给 default）
 │   │   ├── cron.ts           # cron_add / cron_list / cron_remove / cron_enable / cron_disable / cron_run
 │   │   └── mcp-manager.ts    # mcp_list_servers / mcp_enable_server / mcp_disable_server（+ 载入诊断）
 │   │   └── mcp-admin.ts      # mcp_server_add / mcp_server_remove / mcp_server_set_enabled / mcp_reload（写 mcp.toml，MFA）
@@ -586,8 +595,9 @@ mfaFallback = "deny"          # 无人值守且 MFA 无法送达 → 拒绝（�
 报告类工具、`exec_shell`（沙箱内）与子 agent 系列（`agent_fork`/`agent_wait`/`agent_status`/`agent_trace`/`agent_abort`）。
 **不含**破坏性（`delete_file`/`self_runtime_delete`）、特权（`restart_tool`/`cron_add`/`cron_remove`/`mcp_enable_server`…）
 与出网（`read_url`/`web_search`/`http_request`）。**MCP 自管理工具**（`mcp_server_add`/`mcp_server_remove`/
-`mcp_server_set_enabled`/`mcp_reload`）更进一步：它们在 ReAct 通道**硬拒绝**（`HARD_DENY_REACT_UNATTENDED`，
-写进 `allowedTools` 也不放行）—— 新增 server 的 `command` 是任意可执行程序，不能在没人看着时扩大可执行面。
+`mcp_server_set_enabled`/`mcp_reload`）与**配置自管理工具**（`config_reload`/`config_set`）更进一步：它们在
+ReAct 通道**硬拒绝**（`HARD_DENY_REACT_UNATTENDED`，写进 `allowedTools` 也不放行）—— 新增 server 的 `command`
+是任意可执行程序，配置里又装着 MFA / 沙箱 / 无人值守白名单本身，都不能在没人看着时改。
 
 #### 两个通道：声明式 `steps` vs 模型驱动 `react`
 
@@ -1044,6 +1054,26 @@ tinyclaw mo<Tab>
 
 ⚠️ 诊断文本**绝不回显字段原值**：Zod issue 只用 `path` + `code`，语法错误消息会裁剪形似 token 的长串 ——
 否则 `apiKey` 写错类型时 Zod 的 `received` 会把密钥带进日志/CLI/工具返回。
+
+**agent 能改哪些字段（`config_set` 的白名单，`src/config/settable-paths.ts`）**
+
+`config.toml` 里同时装着"模型的参数"和"管着模型的规则"，所以 `config_set` 精确到字段放行：
+
+| 允许 | 拒绝（附原因） |
+|---|---|
+| `llm.backends.<role>.{model,maxTokens,timeoutMs,maxContextWindow,supportsVision,supportsToolCalls,disableThinking,reasoningEffort,thinkingBudget}`、`llm.aliases.*`、`tools.{maxCodeToolRounds,maxChatToolRounds,maxToolResultChars,maxToolCallArgChars}`、`retry.*`、`interactive.*` | `auth.*`（MFA 防线）、`sandbox.*`（沙箱与无人值守白名单）、`selfAccess.*`（特权面）、`health.*`（防呆阈值）、`channels.*`/`web.*`、`providers.*`（apiKey 就是密钥）、`memory.*`（可能触发索引重建/删除）、`submitter.*`、`agent.*`（responseHooks 属注入面）、`tools.http_request.*`（SSRF 开关）、`llm.premiumAllowlist.*`（成本控制） |
+
+**"自我管理"工具的按 agent 绑定**（`src/tools/agent-binding.ts` + `[tools.selfManagement].agents`）
+
+**会改运行配置的**工具默认只绑定 `default` agent：`config_set` / `config_reload` / `config_validate`，以及写
+`mcp.toml` 的 `mcp_server_add` / `mcp_server_remove` / `mcp_server_set_enabled` / `mcp_reload`。
+纯开关类的 MCP 工具（`mcp_list_servers` / `mcp_enable_server` / `mcp_disable_server`）**不绑** —— 它们只是在自己的
+权限范围内开关 MCP 能力，且仍受 per-agent `mcp.toml` 白名单约束。
+
+被绑定的工具对其他 agent **连可见性都不给**（`registry.getAllToolSpecs()` 直接过滤），并且每个工具在 `execute`
+里**再校验一次** `ctx.agentId` —— cron/loop 的**声明式步骤**按名字直接 `executeTool`，绕过可见性过滤，执行层必须
+自己兜住。放开方式：`config.toml` 写 `[tools.selfManagement] agents = ["default", "onlychat"]`（`["*"]` = 全部，
+`[]` = 谁都不给）。
 
 **配置自愈（改坏自动回退）**
 

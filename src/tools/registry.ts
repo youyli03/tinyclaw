@@ -4,6 +4,7 @@ import type { SlaveNotification, SlaveRunFn } from "../core/slave-manager.js";
 import { sanitizeToolResult } from "./sanitize.js";
 import type { ActivityEntry } from "../ipc/server.js";
 import { MCP_META_TOOLS, MCP_ADMIN_TOOLS } from "../mcp/meta-tools.js";
+import { DEFAULT_AGENT_ONLY_TOOLS, isSelfManagementAllowed } from "./agent-binding.js";
 
 /** 跨 session 通信：单个 session 的信息（由 sessionGetFn 返回） */
 export interface SessionInfo {
@@ -206,6 +207,11 @@ export function getAllToolSpecs(agentId?: string): ChatCompletionTool[] {
       if (t.hidden) return false;
       const name = t.spec.function.name;
       if (agentId) {
+        // "自我管理"类工具默认只绑定 default agent（见 tools/agent-binding.ts）：
+        // 连可见性都不给其他 agent，避免模型看到"能改自己配置的工具"却调不动
+        if (DEFAULT_AGENT_ONLY_TOOLS.has(name) && !isSelfManagementAllowed(agentId)) {
+          return false;
+        }
         const isMcp = name.startsWith("mcp_");
         const isMeta = MCP_META_TOOLS.has(name);
         // MCP 工具（非框架 meta 工具）：走 mcp.toml agent 白名单

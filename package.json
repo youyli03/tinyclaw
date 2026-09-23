@@ -23,7 +23,8 @@
     "test:config-state": "node --import tsx/esm tests/config-state.test.ts",
     "test:config-health": "node --import tsx/esm tests/config-health.test.ts",
     "test:config-reload": "node --import tsx/esm tests/config-reload.test.ts",
-    "test:config-safe-mode": "node --import tsx/esm tests/config-safe-mode.test.ts"
+    "test:config-safe-mode": "node --import tsx/esm tests/config-safe-mode.test.ts",
+    "test:config-settable": "node --import tsx/esm tests/config-settable.test.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

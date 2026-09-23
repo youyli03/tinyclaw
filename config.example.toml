@@ -358,3 +358,12 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # enabled       = true    # 关掉则既不跑自检也不自动回退(写前校验仍然生效)
 # probeLlm      = true    # 启动时发一次极小 LLM 请求验证 key/模型名(收到首个 token 立即中断,约 1 token)
 # probeTimeoutMs = 5000   # 探测超时(超时按暂时性故障处理,只告警不回退)
+
+# ── 自我管理工具的按 agent 绑定 ────────────────────────────────────────────────
+# 会改运行配置的工具(config_set / config_reload / config_validate 与写 mcp.toml 的 mcp_server_add/
+# mcp_server_remove/mcp_server_set_enabled/mcp_reload)默认只给 default agent,其他 agent 连"看得到"都不给;
+# 纯开关类的 mcp_list_servers / mcp_enable_server / mcp_disable_server 不受此限。
+# 要放开就显式列出(支持 "*" 表示全部;空数组 = 谁都不给)。
+[tools.selfManagement]
+# agents = ["default"]          # 默认值
+# agents = ["default", "onlychat"]
