@@ -39,6 +39,7 @@ import {
   readJobOutput,
   resolveStaleJob,
   startJob,
+  waiterExitFinalizesJob,
   type JobMeta,
 } from "../src/core/job-manager.js";
 import {
@@ -440,6 +441,27 @@ await test("probeUnit:不存在的 unit → notFound，且不抛错", () => {
 
 await test("systemdRunAvailable:返回布尔值（不抛错）", () => {
   assert.equal(typeof systemdRunAvailable(), "boolean");
+});
+
+// ── waiter 退出时该不该给 job 落终态（重启时 systemd 会连带杀掉等待进程） ──
+
+await test("waiterExitFinalizesJob:普通 job 的 child 就是 job 本体 → 落终态", () => {
+  assert.equal(waiterExitFinalizesJob(baseMeta({}), true, false), true);
+});
+
+await test("waiterExitFinalizesJob:systemd 载体 + unit 还活着 → 不落终态（job 没死）", () => {
+  const m = baseMeta({ detached: true, systemdUnit: "tinyclaw-job-x" });
+  assert.equal(waiterExitFinalizesJob(m, true, false), false);
+});
+
+await test("waiterExitFinalizesJob:systemd 载体 + unit 已结束 → 落终态", () => {
+  const m = baseMeta({ detached: true, systemdUnit: "tinyclaw-job-x" });
+  assert.equal(waiterExitFinalizesJob(m, false, false), true);
+});
+
+await test("waiterExitFinalizesJob:我们主动杀的 → 落终态（收敛成 killed）", () => {
+  const m = baseMeta({ detached: true, systemdUnit: "tinyclaw-job-x" });
+  assert.equal(waiterExitFinalizesJob(m, true, true), true);
 });
 
 // ── 工具面：条件 MFA 与"值不进提示/审计" ──────────────────────────────

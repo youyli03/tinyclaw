@@ -963,7 +963,10 @@ Loop Session 将一个普通 Session 标记为"自主持续运行"模式：服�
 - **重启后的收敛**（`initJobManager()` + `getJob()` 的读盘刷新）：systemd 载体的 job 用
   `systemctl show` 探活 —— 还在跑就保留 `running`（这正是 detach 的意义），已结束就按启动器写的
   `jobs/<id>/rc` 补记 `succeeded`/`failed` 与退出码；**非 detached 的残留进程**（服务被 SIGKILL、
-  崩溃路径没跑到清理时会出现）按"随服务退出"的契约**当场收掉**，不留没人认领的孤儿
+  崩溃路径没跑到清理时会出现）按"随服务退出"的契约**当场收掉**，不留没人认领的孤儿。
+  ⚠️ `systemd-run --wait` 的**等待进程不是 job 本体**：服务自己重启时 systemd 会给整个 cgroup 发 SIGTERM
+  （等待进程也在里面），此时必须先探 unit —— unit 还活着就只记一条备注、继续算 `running`
+  （`waiterExitFinalizesJob()`，纯函数）
 - **env 分层**（低 → 高）：`process.env`（启动时已注入 `~/.tinyclaw/env`）< `agents/<id>/env` < job 的 `env`。
   值支持 `${SECRET:NAME}`（spawn 前解析，复用 `mcp/secret-ref.ts` 的解析器）。
   **只通过 spawn 的 env 传递、绝不拼进命令行 → `ps -ef` 看不到值**。

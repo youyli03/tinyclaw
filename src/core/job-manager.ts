@@ -439,6 +439,21 @@ export async function startJob(opts: StartJobOptions): Promise<StartJobResult> {
     rt.killedIntent === true ? "killed" : code === 0 ? "succeeded" : "failed";
 
   child.on("exit", (code, signal) => {
+    // systemd 载体：这个 child 只是 `systemd-run --wait` 的等待进程，**不是 job 本体**。
+    // 我们要重启时 systemd 会给整个 cgroup 发 SIGTERM（等待进程也在里面），
+    // 而 job 在它自己的 unit/cgroup 里照旧跑 —— 那时候把 job 判死就错了（实测踩到过）。
+    if (meta.systemdUnit !== undefined && rt.killedIntent !== true) {
+      const active = probeUnit(meta.systemdUnit).active;
+      if (!waiterExitFinalizesJob(meta, active, false)) {
+        jobs.delete(id); // 之后由读盘路径的 refreshSystemdJob 负责探活/收敛
+        appendNote(
+          meta,
+          "启动它的服务进程退出了；job 仍在自己的 unit 里运行（不再有等待进程监听退出码）"
+        );
+        persist(meta);
+        return;
+      }
+    }
     finish(statusFor(code), code, signal);
   });
   child.on("error", (err) => {
@@ -674,6 +689,24 @@ export function readJobOutput(
   }
   if (rt) rt.cursor = next;
   return { ok: true, meta, text: outParts.join(""), cursor: next };
+}
+
+/**
+ * `systemd-run --wait` 的等待进程退出时，要不要据此给 job 落终态？
+ *
+ * - 非 systemd 载体（含普通 detach）：这个 child 就是 job 本体 → 要
+ * - 我们主动杀过（`killedIntent`）：让 `finish()` 把状态收敛成 `killed` → 要
+ * - systemd 载体且 unit 还活着：死的只是等待进程（服务自己在退出，systemd 给整个 cgroup
+ *   发了 SIGTERM），job 在它自己的 cgroup 里照常跑 → **不要**
+ */
+export function waiterExitFinalizesJob(
+  meta: JobMeta,
+  unitActive: boolean,
+  killedIntent: boolean
+): boolean {
+  if (meta.systemdUnit === undefined) return true;
+  if (killedIntent) return true;
+  return !unitActive;
 }
 
 /** 给整个进程组发信号（进程组 leader 的 pid 即组 id） */
