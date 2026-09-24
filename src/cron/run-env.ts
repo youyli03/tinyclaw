@@ -34,12 +34,19 @@ import type { RunOrigin } from "../security/audit.js";
  */
 export function buildCronRunEnv(
   agentId: string,
-  opts: { sessionId?: string; origin?: RunOrigin; root?: string } = {}
+  opts: {
+    sessionId?: string;
+    origin?: RunOrigin;
+    root?: string;
+    /** 额外注入的键值（任务自标识等），参与增量计算 */
+    extraEnv?: Record<string, string>;
+  } = {}
 ): Record<string, string> {
   const origin = opts.origin ?? "cron";
   let values: Record<string, string>;
   try {
     values = buildJobEnvBase(process.env, agentId, undefined, opts.root).env;
+    for (const [k, v] of Object.entries(opts.extraEnv ?? {})) values[k] = v;
   } catch (err) {
     console.warn(
       `[cron] 读取 agent "${agentId}" 的 env 失败，本次运行不叠加 agent env：`,

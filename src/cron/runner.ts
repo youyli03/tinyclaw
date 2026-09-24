@@ -19,6 +19,7 @@ import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
 import { buildCronRunEnv } from "./run-env.js";
+import { WAKE_ENV } from "../core/wake-shim.js";
 import {
   parseModelSymbol,
   isPremiumModel,
@@ -377,7 +378,15 @@ async function _runJob(
 
   // ── 额外环境变量：与 job_start 同口径（agents/<id>/env + 显式 ${SECRET:NAME}）──────
   // 只算增量、不改 process.env（worker 跨 agent 共享）；日志只落**键名**不落值。
-  const runEnv = buildCronRunEnv(job.agentId, { sessionId });
+  const runEnv = buildCronRunEnv(job.agentId, {
+    sessionId,
+    // 任务自标识：让 msg step 里 `exec_shell` 调的 `wake` 可以零参数（目标/来源自动带上）
+    extraEnv: {
+      [WAKE_ENV.cronJobId]: job.id,
+      [WAKE_ENV.agent]: job.agentId,
+      [WAKE_ENV.target]: job.output.sessionId ?? sessionId,
+    },
+  });
   const runEnvKeys = Object.keys(runEnv);
   if (runEnvKeys.length > 0) {
     console.log(`[cron] job=${job.id} 注入 env 增量 ${runEnvKeys.length} 项: ${runEnvKeys.join(", ")}`);

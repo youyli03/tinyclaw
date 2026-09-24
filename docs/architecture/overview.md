@@ -381,6 +381,7 @@ tinyclaw/
 │   │       ├── tmp/          # 临时文件
 │   │       └── output/       # 输出文件
 │   └── <custom>/             # 自定义 Agent
+├── bin/                      # wake shim（`wake` 可执行文件；服务启动时物化并前置注入 job/cron/exec_shell 的 PATH）
 ├── sessions/                 # 各 session 的持久化文件
 │   ├── qqbot_c2c_<openid>.jsonl
 │   ├── qqbot_c2c_<openid>.code.jsonl   # Code 模式独立文件

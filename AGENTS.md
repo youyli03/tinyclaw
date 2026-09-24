@@ -234,6 +234,14 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   经 `AgentRunOptions.extraEnv` → `ToolContext.extraEnv` → `exec_shell` 子进程）；**普通 chat/code 会话的
   `exec_shell` 仍不叠加 agent env**（实测），它只有 `process.env` + 按任务声明的 secrets 文件。
   ⚠️ cron 侧只传**增量**且不改 `process.env`：cron worker 是跨 agent 共享的长驻进程，改全局会互相串味。
+- **`wake` shim（`core/wake-shim.ts`）**：服务启动时在 `~/.tinyclaw/bin/wake` 物化一个**只做 wake
+  一个动作**的可执行文件（零依赖、不暴露 `tinyclaw` CLI 的其它命令），并把该目录**前置注入**
+  job / cron / `exec_shell` 的 `PATH`（`withWakeShimPath()`；沙箱内只读可见即可执行，实测 socket 可达）。
+  **job / cron 里零参数**：这两条路径会注入自标识变量 `TINYCLAW_WAKE_TARGET` / `TINYCLAW_AGENT_ID` /
+  `TINYCLAW_JOB_ID`（job-manager）或 `TINYCLAW_CRON_JOB_ID`（`cron/runner.ts`），`wake` 自动取目标与来源标签，
+  所以脚本里就是 `wake "消息"`，或 `tail -50 log | wake --stdin`。⚠️ PATH 查找本质需要目录项，
+  所以拒绝"完全不落盘"的变体（`fexecve` 不做 PATH 查找、memfd 无法按名字解析）；
+  也不要用 `tinyclaw wake` 当脚本入口（job 的 PATH 里没有 `~/.local/bin`）。
 - **密钥（`secrets.toml`）的按 agent 授权**（`auth/secrets-access.ts` + `[secrets].agents`）：密钥名可猜
   （`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*`），而 `${SECRET:NAME}`（job env）、`job_start(secrets:[...])`、
   `exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是**按名字取密钥** —— 这四条入口

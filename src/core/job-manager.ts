@@ -27,6 +27,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { loadConfig } from "../config/loader.js";
 import { buildJobEnvBase } from "../config/agent-env.js";
+import { WAKE_ENV } from "./wake-shim.js";
 import { atomicWriteText } from "../config/safe-write.js";
 import { buildSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
 import { cleanupFilteredSecrets, materializeFilteredSecrets } from "../sandbox/secrets-filter.js";
@@ -254,12 +255,21 @@ export async function startJob(opts: StartJobOptions): Promise<StartJobResult> {
   }
   const jobEnv = resolved.values;
 
+  // ── 任务自标识：让脚本里的 `wake` 能零参数调用 ──────────────────────────────
+  // （目标会话 = 启动这个 job 的会话；来源标签 = job:<id>；同时给出 agent）
+  const wakeEnv: Record<string, string> = {
+    [WAKE_ENV.jobId]: id,
+    [WAKE_ENV.agent]: agentId ?? "default",
+  };
+  if (sessionId) wakeEnv[WAKE_ENV.target] = sessionId;
+  const jobEnvWithWake: Record<string, string> = { ...jobEnv, ...wakeEnv };
+
   // ── 沙箱决策（与 exec_shell 同口径） ──
   const cfg = loadConfig().sandbox;
   const wantSandbox = cfg.enabled && cfg.execShell === "sandbox";
   let spawnCmd = "bash";
   let spawnArgs = ["-c", command];
-  let spawnEnv: NodeJS.ProcessEnv = jobEnv;
+  let spawnEnv: NodeJS.ProcessEnv = jobEnvWithWake;
   let sandboxNote: string | undefined;
   let secretsFile: string | null = null;
 
@@ -315,7 +325,7 @@ export async function startJob(opts: StartJobOptions): Promise<StartJobResult> {
       spawnCmd = head ?? "bwrap";
       spawnArgs = tail;
       // 沙箱可能按配置收敛继承环境；显式管理的 agent/job 变量仍然注入（用户要求"env 都要能注入"）
-      spawnEnv = plan.env ? { ...plan.env, ...jobEnv } : jobEnv;
+      spawnEnv = plan.env ? { ...plan.env, ...jobEnvWithWake } : jobEnvWithWake;
       sandboxNote = plan.env ? "沙箱内（环境已按配置收敛 + 显式 env）" : "沙箱内";
     }
   }

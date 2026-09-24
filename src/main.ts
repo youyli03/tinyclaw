@@ -61,6 +61,7 @@ import "./tools/code-project.js";
 import { getTool } from "./tools/registry.js";
 import { setWakeFn } from "./tools/registry.js";
 import { auditToolCall } from "./auth/tool-policy.js";
+import { ensureWakeShim } from "./core/wake-shim.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 import { setActiveSessionsRef } from "./tools/restart.js";
@@ -173,6 +174,15 @@ async function main(): Promise<void> {
     );
   }
   console.log("[tinyclaw] Config loaded");
+
+  // 1.5 物化 `wake` shim：让脚本 / cron / job / 沙箱里"喊一声 wake 就有"
+  //     （只做 wake 一件事，不暴露 tinyclaw CLI 的其它命令；见 core/wake-shim.ts）
+  {
+    const shim = ensureWakeShim();
+    console.log(
+      `[tinyclaw] wake shim ${shim.written ? "已生成" : "已就绪"}: ${shim.path}（PATH 里的 \`wake\`）`
+    );
+  }
 
   // 2. 预初始化 LLM 后端（Copilot 后端需异步 token 换取 + 模型发现）
   await llmRegistry.init();

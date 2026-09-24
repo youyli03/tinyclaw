@@ -228,6 +228,7 @@ tinyclaw cron list                     # 定时任务列表
 tinyclaw cron add / remove / run <id>  # 添加 / 删除 / 立即触发
 
 tinyclaw wake -s <sessionId> <消息>    # 唤醒 LLM：注入消息并触发一轮 agent（受理即返回，脚本/job 用）
+                                       # 脚本 / cron / job / 沙箱里可直接裸喊 `wake …`（服务启动时物化到 ~/.tinyclaw/bin/ 并注入 PATH）
 tinyclaw send <消息>                   # 一次性 LLM 调用（无历史、无工具）
 
 tinyclaw chat loop list                    # 查看所有 loop session

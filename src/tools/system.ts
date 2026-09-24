@@ -7,6 +7,7 @@ import { registerTool, type ToolContext } from "./registry.js";
 import { checkWritePath, checkExecCommand, checkReadPath } from "./path-guard.js";
 import { buildSandboxPlan, describeSandboxPlan, sandboxAvailable } from "../sandbox/bwrap.js";
 import { materializeFilteredSecrets, cleanupFilteredSecrets } from "../sandbox/secrets-filter.js";
+import { withWakeShimPath } from "../core/wake-shim.js";
 import { canReadSecrets } from "../auth/secrets-access.js";
 import { announceElevation, requestElevation } from "../sandbox/elevation.js";
 import { auditToolCall } from "../auth/tool-policy.js";
@@ -253,9 +254,11 @@ export async function execShellImpl(
     // 额外环境变量（cron/loop 的 agent env 增量）：只叠加增量，不改宿主 process.env。
     // 沙箱路径下不能整份覆盖 plan.env —— 它可能被 [sandbox].network="deny" 收敛过。
     const extraEnv = ctx?.extraEnv;
-    if (extraEnv && Object.keys(extraEnv).length > 0) {
-      spawnEnv = spawnEnv ? { ...spawnEnv, ...extraEnv } : { ...process.env, ...extraEnv };
-    }
+    const baseEnv: Record<string, string | undefined> = spawnEnv ?? process.env;
+    const merged: Record<string, string | undefined> =
+      extraEnv && Object.keys(extraEnv).length > 0 ? { ...baseEnv, ...extraEnv } : { ...baseEnv };
+    // 让 shell 里"喊一声 wake 就有"：把 wake shim 目录前置到 PATH（见 core/wake-shim.ts）
+    spawnEnv = withWakeShimPath(merged);
 
     const child = spawn(spawnCmd, spawnArgs, {
       stdio: ["ignore", "pipe", "pipe"],

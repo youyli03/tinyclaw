@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { atomicWriteText } from "../config/safe-write.js";
+import { withWakeShimPath } from "../core/wake-shim.js";
 
 /** agent 目录根（与 core/agent-manager.ts 的 AGENTS_ROOT 一致；此处不 import 它以免循环依赖） */
 export function agentsRoot(): string {
@@ -156,7 +157,8 @@ export function buildJobEnvBase(
   for (const [k, v] of Object.entries(overrideEntries)) env[k] = v;
 
   return {
-    env,
+    // 让 job / cron 的 shell 里"喊一声 wake 就有"（shim 目录前置到 PATH，见 core/wake-shim.ts）
+    env: withWakeShimPath(env),
     agentKeys: [...agentEntries.keys()],
     overrideKeys: Object.keys(overrideEntries),
   };

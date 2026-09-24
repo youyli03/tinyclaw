@@ -280,21 +280,36 @@ cron 的每一次运行（单步与 Pipeline 都一样）会组装一份**额外
   需要环境变量请显式写 `${SECRET:NAME}`。
 - ⚠️ 与 `job_start` 一样，密钥只给 `[secrets].agents` 里授权的 agent（默认 `default`）。
 
-### 把结果交给 LLM：`tinyclaw wake`
+### 把结果交给 LLM：`wake`（环境里自带的小命令）
 
 cron 的 `tool` step 只能干活、`msg` step 才能起 LLM，而**外部脚本 / 后台 job** 想"做完事叫醒 agent"
-时用 `wake`（IPC 请求 / CLI）：
+时用 `wake` —— 服务启动时会在 `~/.tinyclaw/bin/` 物化一个**只做 wake 这一个动作**的可执行文件
+（`core/wake-shim.ts`，零依赖、不暴露 `tinyclaw` CLI 的其它命令），并把它**前置注入**到
+job / cron / `exec_shell` 的 `PATH`（沙箱内同样可见、socket 实测可达）。
+
+**job / cron 里零参数**：这类运行环境会被注入自标识变量，`wake` 自动取用，所以脚本里就一句话：
 
 ```bash
-# 脚本 / job 结尾：把结果交给指定会话的 agent 去判断并汇报
-tinyclaw wake -s "qqbot:c2c:<openid>" --source "train-job" "训练跑完了，看下最后的指标并汇报"
-tinyclaw wake -a default --source "backup" "备份完成，检查一下有没有失败项"
+# 目标会话 = TINYCLAW_WAKE_TARGET（启动该 job 的会话 / cron 绑定的 output.sessionId）
+# 来源标签 = job:<TINYCLAW_JOB_ID> 或 cron:<TINYCLAW_CRON_JOB_ID>
+wake "训练跑完了，看下最后的指标并汇报"
+
+# 把日志尾部直接交给 agent（不必自己拼长文本）
+tail -n 50 train.log | wake --stdin
+
+# 在 job/cron 之外（比如你手动 ssh 上去跑）才需要显式指定目标
+wake -s "qqbot:c2c:<openid>" --source manual "……"
 ```
+
+注入给任务的变量：`TINYCLAW_WAKE_TARGET` / `TINYCLAW_AGENT_ID` / `TINYCLAW_JOB_ID`（job）、
+`TINYCLAW_CRON_JOB_ID`（cron）。等价的显式入口（交互终端里）：`tinyclaw wake …`（同一实现）。
 
 - 注入文本带 `[wake from <source> @ …]` 前缀，让模型知道这不是用户在说话；
 - **受理即返回**，不等那一轮 LLM；agent 的最终回复由服务端推给该会话绑定的通道（QQ 会推到对应聊天）；
 - ⚠️ 被唤醒的那一轮按 **`origin=cron`（无人值守）** 跑：工具走 `[sandbox.unattended]` 白名单、
   MFA 无法送达即拒绝 —— 唤醒可能来自任意脚本，不能当"用户在场"；
+- ⚠️ **`job_*` 工具不在白名单里**：被唤醒的 agent 读不到那个 job 的日志。
+  要么把要点写进消息，要么让 job 把摘要落到 workspace 文件、在消息里给路径（`read_file` 在白名单内）；
 - 同一 session 3 秒内只受理一次（防脚本死循环刷 LLM）；
 - 只要一次纯 LLM 调用（无工具、无历史）用 `tinyclaw send`；agent 侧另有同名工具 `wake`
   （但它被列入 `HARD_DENY_REACT_UNATTENDED`：无人值守的 ReAct 循环里**模型不能**自我唤醒）。
