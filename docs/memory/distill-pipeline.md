@@ -266,7 +266,38 @@ if there is nothing new.
 
 ---
 
-## 八、相关文档
+## 八、chat 模式的每日提炼与"原文不丢"
+
+与 Code 模式的压缩蒸馏（一～七节）并行，chat 模式走**每日维护**（`src/core/memory-maintenance.ts`）：
+
+| 步骤 | 做什么 | 触发 |
+|---|---|---|
+| 1 | QMD 向量索引全量重建 | `[memory].dailyMaintenanceEnabled`（默认 true）到点 `dailyMaintenanceTime`（默认 04:00） |
+| 2 | diary → **MEM.md** 增量提炼（`DISTILL_MEM_SYSTEM`） | 同上；也可随时 `tinyclaw memory maintain [-a <agentId>]` 手动跑一次 |
+| 3 | diary → ACTIVE.md | 同上 |
+| 4 | diary → cards/ | 同上 |
+| 5 | 老化 `open_loop` 卡片 | 同上 |
+| 6 | 压缩 feedback.md | 同上 |
+
+第 2 步的 prompt 里有一条 **retrospective rule**：日记里出现"用户纠正过我 / 否掉了我的做法 / 让我重说"
+时，要把它提炼成**可复用的规则**写进对应章节（偏好 → `## 👤 用户偏好`，根因+修法 → `## 🐛 踩坑记录`），
+写规则而不是写事件（"优先用 X 而不是 Y" 有用，"9 月 1 日用户要了 Y" 没用）——
+这是"偏好能自我提炼"的实现方式，配合 `memory_append_feedback` 的行为纠正记录一起用。
+
+写 MEM.md 前会备份到 `memory/mem-backup/`（保留最近 `MEM_BACKUP_KEEP = 10` 份），
+输出缺任一固定章节（`src/memory/mem-budget.ts` 的 `MEM_SECTION_KEYS`）则拒绝写入。
+
+**原文不丢**（与提炼互补，二者缺一不可）：
+
+- 提炼产物（MEM.md / diary / 卡片）是**有损摘要**，只回答"结论是什么"；
+- 每条消息的**逐字原文**另记在 `<session>.journal.jsonl`（只追加，`src/memory/journal.ts`），
+  压缩/剪枝只改 `session.jsonl` 视图，账本不动 → 用 `memory_recall` 关键词检索、
+  `memory_expand` 按 `seq` 取回原话；
+- 由 `[memory].journalEnabled` 控制（默认 true）。
+
+---
+
+## 九、相关文档
 
 - [QMD + RKLLM Embed 架构](./qmd-embed.md)：向量索引与 embed 后端
 - [MEM.md（chat 模式跨 session 记忆）](../architecture/overview.md)：架构总览

@@ -201,6 +201,11 @@ embedModel     = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gg
 tokenThreshold = 0.8    # 达到 contextWindow 的 80% 时触发摘要压缩
 # contextWindow = 128000  # 可选，默认 128000
 
+# ── 原文账本（journal）与 MEM.md 注入预算 ──────────────────────────────────────
+# journalEnabled = true        # 每条消息原文另记一份只追加的 <session>.journal.jsonl；压缩/剪枝只改视图，
+#                              # 原文仍可被 memory_recall / memory_expand 取回（关闭后压缩即永久丢失原文，默认 true）
+# memInjectionMaxChars = 8000  # MEM.md 注入 system prompt 的字符预算，0 = 整篇注入（默认 8000）
+
 # ── 混合搜索（BM25 + 向量语义）─────────────────────────────────────────────────
 # hybridSearchEnabled = true   # 开启后同时跑 BM25 和向量搜索再融合（默认 true）
 # bm25Weight          = 0.3    # BM25 权重，向量权重 = 1 - bm25Weight（默认 0.3）

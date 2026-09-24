@@ -45,6 +45,7 @@ cli:<uuid>               CLI tinyclaw chat
 |---|---|
 | system prompt | session 内**冻结**：`applySystemPrompt()` 内容相同则完全不动；变化时**追加**一条 `<!-- system-prompt-update -->` 消息（`[上下文更新] …`），不回写 `messages[0]` |
 | 记忆注入 / skill reminder | `appendMemoryContext()` / `appendSkillReminder()` **只追加**；与最近一条同类注入逐字节相同则跳过 |
+| MEM.md（持久记忆） | 拼在 system prompt 里，**按预算裁剪**：`renderMemForPrompt(MEM.md, memInjectionMaxChars)`（默认 8000 字符）按固定优先级保留章节、其余切片 + 省略提示。渲染是 `(内容, 预算)` 的纯函数 —— 不依赖时间/随机，同一份 MEM.md 永远产出同一串字节 |
 | 压缩 | **唯一**允许重写前缀的时机：`_foldPreambleInjections()` 把 system prompt 更新折叠回 `messages[0]`，并把同类注入收敛为最新一条 |
 | 异常工具链修复 | `sanitizeMessages()` **优先补全**：末尾缺 tool result → 追加占位结果（仅追加，前缀不变）；只有位于历史中间的不完整链才删除（会破坏前缀缓存并打 warning） |
 
@@ -53,21 +54,30 @@ cli:<uuid>               CLI tinyclaw chat
 **如何验证**：每次 run 结束的日志尾部与 `/status` 都会显示 `cache N%`（= 命中 token / 本轮输入 token），
 `agent:end` 事件的 `stats.cacheHitRate` 同样带该值。前缀稳定时该比例应显著高于优化前。
 
-**Session 持久化（JSONL 崩溃恢复）**
+**Session 持久化（JSONL 崩溃恢复 + 原文账本）**
 
-每个 session 对应一个 JSONL 文件：
+每个 session 对应两个文件（code 模式另有 `.code.jsonl` / `.code.journal.jsonl` 变体）：
 
 ```
-~/.tinyclaw/sessions/<sanitized-sessionId>.jsonl
+~/.tinyclaw/sessions/<sanitized-sessionId>.jsonl           # 视图：会被压缩/剪枝覆写
+~/.tinyclaw/sessions/<sanitized-sessionId>.journal.jsonl   # 原文账本：只追加，永不覆写（0600）
 ```
 
 - 构造函数启动时检查 JSONL 是否存在，若存在则读取并重建 `messages[]`（进程崩溃恢复）
-- 每轮对话结束后，`appendLastTurnToJsonl()` 异步追加最后一对 user/assistant（fire-and-forget）：
+- 每条消息产生时由 `_appendMsgToJsonl()` **同步增量追加**（`_persistReady` 门控，避免恢复时重复追加）：
   ```jsonl
   {"role":"user","content":"...","ts":"2026-03-15T12:34:56.789Z"}
   {"role":"assistant","content":"...","ts":"2026-03-15T12:34:57.123Z"}
   ```
-- 压缩触发后，`rewriteJsonl()` 整体覆盖写入，只保留 system messages + 摘要（丢弃原始对话行）
+- **同一次落盘会往账本写一行原文**（`src/memory/journal.ts`）：`{v,seq,kind:"msg",ts,role,msg}`。
+  `seq` 单调递增、跨进程从文件尾部续号；loop task 的载荷（`_loopTaskRef` 指向的 TASK 文件内容）
+  在写入时展开固化，TASK 文件之后被改也不影响历史。`updateToolResult()` 的原地回填在账本里是
+  `kind:"patch"` 记录，而不是改历史行。可用 `[memory].journalEnabled = false` 关闭。
+- 压缩触发后 `rewriteJsonl()` 整体覆盖**视图**，只保留 system messages + 摘要（丢弃原始对话行）——
+  但**原文仍在账本里**：`memory_recall` 可按关键词检索（`scope=all` 跨会话）、
+  `memory_expand` 可按 `seq` 区间取回逐字原文。这是"压缩不等于销毁"的实现方式。
+- 会话整体废弃时账本随之删除（`deleteJsonl()`）；`pruneOldByPrefix()` 按**会话基名**分组保留，
+  避免 keep=1 只删掉一半（视图留下、账本被删）。
 
 **Session 并发控制字段**
 

@@ -31,6 +31,7 @@ import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown, insertTokenUsageOnly } from "../web/backend/db.js";
 import { breakdownMessages, classifyTokenSource } from "../memory/token-estimate.js";
+import { renderMemForPrompt } from "../memory/mem-budget.js";
 import {
   MAX_EMPTY_REPLY_RETRIES,
   detectReasoningRepetition,
@@ -84,6 +85,7 @@ import "../tools/search-newsnow.js";
 import "../tools/read-url.js";
 import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
+import "../tools/recall.js";
 import "../tools/self-status.js";
 import "../tools/self-runtime.js";
 import "../tools/fs-grant-tool.js";
@@ -522,12 +524,29 @@ function loadUserSystemPrompt(): string | undefined {
   return content.length > 0 ? content : undefined;
 }
 
-/** 读取 Agent 的 MEM.md（文件不存在时返回 undefined） */
+/**
+ * 读取 Agent 的 MEM.md（文件不存在时返回 undefined）。
+ *
+ * MEM.md 是**只增**的长期文件，整篇拼进 system prompt 等于每次 LLM 调用都付一遍
+ * （本机 default agent 已达 4 万+字符）。这里按 `[memory].memInjectionMaxChars` 预算渲染：
+ * 优先级内整段保留、放不下的段落切片并留省略提示，完整内容仍可用 `memory_read_mem` 读取。
+ * 渲染是 (内容, 预算) 的纯函数 —— 同一份 MEM.md 永远产出同一串字节，前缀不会无谓抖动。
+ */
 function loadAgentMem(agentId: string): string | undefined {
   const p = agentManager.memPath(agentId);
   if (!existsSync(p)) return undefined;
   const content = readFileSync(p, "utf-8").trim();
-  return content.length > 0 ? content : undefined;
+  if (content.length === 0) return undefined;
+  const budget = loadConfig().memory.memInjectionMaxChars;
+  const rendered = renderMemForPrompt(content, budget);
+  if (rendered.truncated) {
+    // 只在真正裁剪时留一行日志，避免每轮刷屏
+    console.log(
+      `[agent] MEM.md 注入裁剪：agent=${agentId} 省略 ${rendered.omittedLines} 行` +
+        `（预算 ${budget} 字符，原文 ${content.length} 字符）`
+    );
+  }
+  return rendered.text;
 }
 
 /** 读取 Agent 的 SKILLS.md 文本（供 system prompt 使用，走缓存） */
@@ -2110,6 +2129,7 @@ async function runAgentInner(
               ? session.codeWorkdir
               : agentManager.workspaceDir(session.agentId),
           sessionId: session.sessionId,
+          sessionJsonlPath: session.jsonlPath,
           mode: isCodeMode ? "code" : "chat",
           agentId: session.agentId,
           ...(opts.botId !== undefined ? { botId: opts.botId } : {}),

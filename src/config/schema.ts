@@ -704,6 +704,21 @@ const MemorySchema = z.object({
    */
   codeInjectionMaxEntries: z.number().int().min(5).default(30),
 
+  // ── 原文账本（journal）与 MEM.md 注入预算 ─────────────────────────────────
+  /**
+   * 是否把每条消息的**原文**追加到 `<session>.journal.jsonl`（只追加、永不覆写），默认 true。
+   * 开启后：压缩/剪枝只影响"发给模型的视图"，原文仍可被 memory_expand / memory_recall 取回。
+   * 关闭后：压缩会像以前一样永久丢失被压掉的原文（省下一份磁盘占用）。
+   */
+  journalEnabled: z.boolean().default(true),
+  /**
+   * MEM.md 注入 system prompt 的字符预算，默认 8000；0 = 不裁剪（整篇注入）。
+   * MEM.md 是只增的长期文件，整篇注入等于每次 LLM 调用都付一遍。
+   * 超出预算时按固定优先级裁剪（见 `src/memory/mem-budget.ts`），
+   * 被裁掉的部分仍留在磁盘上，可用 memory_read_mem 读全文。
+   */
+  memInjectionMaxChars: z.number().int().min(0).max(200000).default(8000),
+
   // ── MMR 多样性重排（去除冗余结果） ───────────────────────────────────────
   /**
    * 是否启用 MMR（Maximal Marginal Relevance）多样性重排（默认 true）。

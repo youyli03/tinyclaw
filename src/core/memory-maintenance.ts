@@ -24,15 +24,8 @@ import { cronScheduler } from "../cron/scheduler.js";
 import { parseCardJson, saveCards, ageOpenLoopCards } from "../memory/cards.js";
 import { summarizeActiveSections } from "../memory/summarizer.js";
 import { compactFeedback } from "./feedback-writer.js";
-
-const MEM_SECTION_KEYS = [
-  "👤 用户偏好",
-  "🎯 当前任务",
-  "🗂️ 常用技能与任务",
-  "🐛 踩坑记录",
-  "✅ 已完成大事",
-  "📝 近期变更",
-] as const;
+// 章节名是数据键（MEM.md 的固定小节），单一真相放在 mem-budget.ts —— 注入侧按同一份清单排优先级
+import { MEM_SECTION_KEYS } from "../memory/mem-budget.js";
 
 const ACTIVE_SECTION_KEYS = [
   "最近活跃话题",
@@ -67,6 +60,11 @@ Goals:
    long-term preferences, habits, relationships and stable facts from everyday conversation
 4. Add newly appearing long-term stable information from the diary to the matching section
 5. Do not create sections that MEM.md does not already have
+6. Retrospective rule (this is how preferences get learned): when the diary shows that the user corrected
+   you, rejected your approach, or had to re-explain something, record the **durable lesson** in the
+   matching section — a preference or working habit goes to ## 👤 用户偏好, a root cause + fix goes to
+   ## 🐛 踩坑记录. Record the rule, not the incident: "prefer X over Y" is useful, "on 2026-09-01 the user
+   asked for Y" is not. Skip one-off noise; only promote something that is likely to recur.
 
 Output the full de-duplicated MEM.md directly (including the # 持久记忆 heading and all ## sections).
 Do not output any prefix or explanatory text. Refer to the memory content itself in the user's own language.`;

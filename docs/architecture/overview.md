@@ -271,6 +271,7 @@ tinyclaw/
 │   │   ├── db-write.ts       # db_write(业务指标写入 dashboard.db,Dashboard 折线图展示)
 │   │   ├── search-store.ts   # search_store(向量语义搜索本地知识库,如 news)
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
+│   │   ├── recall.ts         # memory_recall(账本关键词检索) · memory_expand(按 seq 取回逐字原文)
 │   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务/运行时占用)
 │   │   ├── self-runtime.ts   # self_runtime_scan/read/delete(自指：读写删自己的运行时目录，密钥除外)
 │   │   ├── fs-grant-tool.ts  # fs_grant(路径级无感授权：$HOME 内非密钥路径，带 TTL + 审计)
@@ -382,6 +383,7 @@ tinyclaw/
 ├── sessions/                 # 各 session 的持久化文件
 │   ├── qqbot_c2c_<openid>.jsonl
 │   ├── qqbot_c2c_<openid>.code.jsonl   # Code 模式独立文件
+│   ├── <sanitized-sessionId>.journal.jsonl  # 原文账本（只追加，0600；压缩/剪枝不动它，memory_recall/expand 用它）
 │   ├── cli_<uuid>.jsonl
 │   └── <sanitized-sessionId>.toml      # Loop 配置（[loop] 块，chat loop 命令管理）
 ├── cron/
@@ -485,10 +487,36 @@ is_chat_default → versatile+picker → powerful+picker → any picker → 第�
 
 - 每轮对话追加写入 `~/.tinyclaw/memory/sessions/YYYY-MM-DD.md`
 - 新对话开始前自动 `qmd.search(userInput)` 注入相关历史记忆
-- token 超 80% 阈值 → summarizer LLM 生成摘要 → 归档进 QMD → 无缝开新 session
+- token 超阈值（`tokenThreshold`，默认 0.6）→ summarizer LLM 生成摘要 → 归档进 QMD → 无缝开新 session
 - Embedding 后端（二选一）：
   - **RKLLM NPU HTTP embed**（推荐，RK3588 板子）：`rkllmEmbed.enabled = true`，1024 dim，启动 `~/rkllm-embed-server/start.sh`
   - **本地 GGUF**（默认，CPU）：`rkllmEmbed.enabled = false`（默认），`embedModel = "hf:..."` 指定模型（~380MB）
+
+#### 原文账本（`src/memory/journal.ts`）与检索
+
+向量记忆检索的是**蒸馏后的摘要/日记**；原文另有一条独立链路，保证"压缩不等于销毁"：
+
+- 每条消息经 `Session._appendMsgToJsonl()` 落盘时，**同写一行**到 `<session>.journal.jsonl`
+  （只追加、永不覆写；0600；loop task 的载荷在写入时展开固化，TASK 文件后来被改也不影响历史记录）。
+  原地回填（`updateToolResult()`）在账本里追加一条 `kind:"patch"` 记录，而不是改历史行。
+- 记录的 `seq` 单调递增，跨进程重启从文件尾部续号；压缩 / 剪枝 / sanitize 只改视图，账本不受影响。
+- 消费方两个工具：`memory_recall`（关键词 AND 检索，`scope=session|all`，有文件数/字节数/条数硬上限）
+  与 `memory_expand`（按 `from_seq`/`to_seq` 取回逐字原文，带字符预算）。
+- 关闭方式：`[memory].journalEnabled = false`（关闭后压缩会像以前一样永久丢失原文）。
+- 会话整体废弃时账本随之删除（`deleteJsonl()`）；`pruneOldByPrefix()` 按**会话基名**分组保留，避免只删掉一半。
+
+#### MEM.md 注入预算（`src/memory/mem-budget.ts`）
+
+`MEM.md` 是只增的长期文件，整篇拼进 system prompt 等于每次 LLM 调用都付一遍。注入侧改为确定性裁剪：
+
+- 章节按固定优先级（👤 用户偏好 > 🐛 踩坑记录 > 🎯 当前任务 > 🗂️ 常用技能与任务 > ✅ 已完成大事 > 📝 近期变更）；
+- 先把预算**均分**给各段保证每段都露面，余量再按优先级补给高优先级段；
+  放不下的段落按"日志类取尾部 / 陈述类取头部"切片并附省略提示；
+- 预算小到每段都放不下标题 + 提示时（`每段份额 < 320` 字符），只注入**最高优先级那一段**，
+  其余整段省略并由顶部提示说明 —— 不产出"只剩标题"的碎片；
+- **输出顺序仍按原文**（章节顺序是 distill prompt 的约束，不重排）；
+- 输出完全由 `(文件内容, memInjectionMaxChars)` 决定 —— 同一份 MEM.md 永远渲染同一串字节，前缀不会无谓抖动；
+- 被裁掉的段落仍留在磁盘上，模型可 `memory_read_mem` 读全文（省略提示里写明了这一点）。
 
 ### Microsoft MFA
 
@@ -1284,7 +1312,9 @@ clientSecret = "your-client-secret"
 [memory]
 rkllmEmbed.enabled = true
 rkllmEmbed.port    = 11434
-tokenThreshold = 0.8   # 达到上下文 80% 时触发摘要压缩
+tokenThreshold = 0.6   # 达到上下文 60% 时触发摘要压缩（schema 默认值）
+journalEnabled = true  # 每条消息原文另记一份只追加的 <session>.journal.jsonl（压缩不再等于销毁）
+memInjectionMaxChars = 8000  # MEM.md 注入 system prompt 的字符预算；0 = 整篇注入
 
 # Subagent（agent_fork）上下文继承预算与模式，见「Agent Fork」节
 slaveContextRatio = 0.05        # 预算 = clamp(窗口 × 比例, 8000, 窗口 − 8000)

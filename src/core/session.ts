@@ -20,6 +20,7 @@ import {
   pruneToolResults as pruneMessagesToolResults,
   type PruneOptions,
 } from "../memory/tool-result-pruner.js";
+import { appendJournalMsg, appendJournalPatch, journalPathFor } from "../memory/journal.js";
 import { agentManager } from "./agent-manager.js";
 import { loadConfig } from "../config/loader.js";
 import { InboundMessageBus } from "./inbound-bus.js";
@@ -687,9 +688,19 @@ export class Session {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
+      // 账本是 append-only：原地更新以 patch 记录追加，而不是改历史行
+      appendJournalPatch(filePath, callId, content);
     } catch (err) {
       console.error("[session] updateToolResult JSONL rewrite failed:", err);
     }
+  }
+
+  /**
+   * 当前 session 实际使用的 JSONL 路径（chat / code / project 三态都已解析）。
+   * 供工具定位同目录的原文账本（`*.journal.jsonl`）。
+   */
+  get jsonlPath(): string {
+    return this._getJsonlPath();
   }
 
   addSystemMessage(content: string): void {
@@ -1466,6 +1477,12 @@ export class Session {
         Session.serializeMsgFull(msg, new Date().toISOString()) + "\n",
         "utf-8"
       );
+      // 原文账本：JSONL 视图会被压缩/剪枝覆写，账本只追加 —— 保证原文还能被
+      // memory_expand / memory_recall 取回（见 src/memory/journal.ts）。
+      // 可用 [memory].journalEnabled 关闭；这里是"用时现读"，改配置立即生效。
+      if (loadConfig().memory.journalEnabled) {
+        appendJournalMsg(filePath, msg as unknown as Record<string, unknown>);
+      }
     } catch (err) {
       console.error("[session] JSONL incremental append failed:", err);
     }
@@ -1844,6 +1861,11 @@ export class Session {
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
+      // 原文账本随之删除：会话整体废弃时不留孤儿账本，否则 memory_recall 会命中已删会话
+      const journalPath = journalPathFor(filePath);
+      if (fs.existsSync(journalPath)) {
+        fs.unlinkSync(journalPath);
+      }
     } catch (err) {
       console.error("[session] deleteJsonl failed:", err);
     }
@@ -1852,21 +1874,34 @@ export class Session {
   /**
    * 清理同前缀的旧 session JSONL，只保留最新 `keep` 个（默认 1）。
    * 适用于带时间戳的 cron/skill session（前缀如 `cron_ftbg5yiv_`）。
+   *
+   * 每个会话现在有两个文件（视图 `<base>.jsonl` + 原文账本 `<base>.journal.jsonl`），
+   * 因此按**会话基名**分组保留，而不是按文件计数 —— 否则 keep=1 会把账本和视图各留一半。
+   *
    * @param sanitizedPrefix  形如 `cron_ftbg5yiv_` 的前缀（下划线结尾）
-   * @param keep             保留最新几个，默认 1
+   * @param keep             保留最新几个会话，默认 1
    */
   static pruneOldByPrefix(sanitizedPrefix: string, keep = 1): void {
+    /** 去掉会话文件后缀，得到可比较的基名（时间戳等长，字典序即时间序）。 */
+    const baseOf = (file: string): string => {
+      for (const suffix of [".journal.jsonl", ".code.jsonl", ".jsonl"]) {
+        if (file.endsWith(suffix)) return file.slice(0, -suffix.length);
+      }
+      return file;
+    };
     try {
       const dir = path.join(os.homedir(), ".tinyclaw", "sessions");
       if (!fs.existsSync(dir)) return;
       const files = fs
         .readdirSync(dir)
-        .filter((f) => f.startsWith(sanitizedPrefix) && f.endsWith(".jsonl"))
-        .sort() // 字典序即时间序（时间戳为 13 位数字，等长可字典排序）
-        .reverse(); // 最新的排前面
-      for (let i = keep; i < files.length; i++) {
+        .filter((f) => f.startsWith(sanitizedPrefix) && f.endsWith(".jsonl"));
+      // 字典序即时间序（时间戳为 13 位数字，等长可字典排序）→ 最新的排前面
+      const bases = [...new Set(files.map(baseOf))].sort().reverse();
+      const kept = new Set(bases.slice(0, Math.max(keep, 0)));
+      for (const file of files) {
+        if (kept.has(baseOf(file))) continue;
         try {
-          fs.unlinkSync(path.join(dir, files[i]!));
+          fs.unlinkSync(path.join(dir, file));
         } catch {
           /* 忽略 */
         }

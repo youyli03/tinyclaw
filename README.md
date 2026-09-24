@@ -21,6 +21,10 @@
   一次性令牌绑定命令、无人值守一律不许);所有工具调用落入 `~/.tinyclaw/audit/` 审计流(参数已脱敏);
   cron/loop 等无人值守路径按工具白名单放行,且 MFA 无法送达时默认**拒绝**而非放行
 - **向量记忆**:对话摘要自动向量化,token 超阈值时自动压缩;`/compact` 手动压缩;多 Agent 独立命名空间
+- **原文账本**:每条消息另记一份**只追加**的 `<session>.journal.jsonl` —— 压缩/剪枝只影响"发给模型的视图",
+  原文仍可用 `memory_recall`(关键词,可跨会话)与 `memory_expand`(按 seq 取回逐字原文)找回
+- **MEM.md 预算注入**:持久记忆按优先级 + 字符预算注入 system prompt(默认 8000 字符),
+  超出部分留省略提示、可用 `memory_read_mem` 读全文 —— 记忆可以长,但不会每轮都付整篇的钱
 - **Dashboard**:内置 Web UI(`tinyclaw web`),展示指标趋势图、日报存档、Cron 任务状态
 - **Code 模式**:`/code` 切换代码专注会话,内置 Plan / Auto 子模式,滑动窗口压缩保留最近上下文
 - **语音输入**:QQBot 收到语音消息自动转写(本地 faster-whisper)
@@ -78,6 +82,12 @@ agent 侧另有 `http_request` 的 header `$NAME`、job/agent env 的 `${SECRET:
 `hot`(retry/tools/mfa/沙箱策略等"用时现读"的段)换缓存即生效;`soft`(LLM 后端/并发/记忆阈值)重新 init 子系统;
 `restart`(channels/voice/web.port/sandbox 开关)走受控重启 —— 证明不了会立即生效的段一律归 restart。
 手动触发:agent 工具 `config_reload`(MFA)或 `tinyclaw config reload`;`config_validate` 只读校验。
+
+**记忆相关的开关**(都在 `[memory]`,详见 [config.example.toml](config.example.toml)):
+`enabled`/`embedModel`(向量记忆与 embedding 后端)、`tokenThreshold`/`contextWindow`(压缩阈值)、
+`journalEnabled`(默认 `true`:每条消息原文另记一份只追加的 `<session>.journal.jsonl`,压缩不再等于销毁)、
+`memInjectionMaxChars`(默认 `8000`:MEM.md 注入 system prompt 的字符预算,`0` = 整篇注入)。
+`journalEnabled` 与 `memInjectionMaxChars` 都是**用时现读**,改完 `hot` 生效,不必重启。
 
 **agent 能改什么**:`config_set`(**MFA**)只允许改白名单字段 —— 模型/单后端参数(`llm.backends.*`)、模型别名
 (`llm.aliases.*`)、轮次与截断上限(`tools.max*`)、重试节奏(`retry.*`)、交互提醒(`interactive.*`);
@@ -302,6 +312,8 @@ tinyclaw completions install           # 安装 tab 补全
 | `memory_append_card` | 主动追加一张结构化记忆卡片(可带原文引用) |
 | `memory_append` | 追加一条记忆到当日历史存档并触发向量索引更新 |
 | `memory_search` | 手动触发 QMD 向量搜索历史记忆 |
+| `memory_recall` | 在**原文账本**里按关键词检索历史对话(可跨会话;`scope=all` 扫本机全部账本),返回 hit + seq 摘录 |
+| `memory_expand` | 按 seq 区间从原文账本取回某个会话的**逐字原文**(压缩/剪枝掉的也还在) |
 | `search_store` | 在本地知识库(如 `news`)做语义向量搜索 |
 
 ### 可视化与报告
@@ -392,7 +404,7 @@ env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<i
 │   └── workspace/       # Shell 命令默认 cwd
 │       ├── tmp/         # 临时文件
 │       └── output/      # 输出文件
-├── sessions/            # 对话 JSONL(崩溃恢复)+ loop 配置 .toml
+├── sessions/            # 对话 JSONL(崩溃恢复)+ 原文账本 <id>.journal.jsonl(只追加)+ loop 配置 .toml
 ├── cron/
 │   ├── jobs/            # 定时任务持久化(<id>.json)
 │   └── logs/            # 每次 run 的结果日志

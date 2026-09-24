@@ -24,6 +24,11 @@ export interface ToolContext {
   cwd?: string;
   /** 当前 session 的 ID（供 cron_add 等工具自动绑定 output.sessionId） */
   sessionId?: string;
+  /**
+   * 当前 session 实际使用的 JSONL 路径（chat / code / project 三态都已解析）。
+   * 供 `memory_expand` / `memory_recall` 定位同目录的**原文账本**（`*.journal.jsonl`）。
+   */
+  sessionJsonlPath?: string;
   /** 当前 session 的模式（chat / code），用于 MCP 持久化 */
   mode?: string;
   /** 当前 Agent 的 ID */
