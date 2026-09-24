@@ -1221,15 +1221,12 @@ ${message}`;
       throw new Error("sessionId 与 agentId 至少要给一个");
     }
 
+    // 节流改为**服务端延迟**：同一 session 的多次唤醒按 ≥WAKE_MIN_INTERVAL_MS 间隔排开，
+    // 但绝不给调用方报错 —— 脚本不该因为"喊得太快"而失败（用户口径 2026-09-25）。
     const now = Date.now();
     const prev = wakeLastAt.get(target.sessionId) ?? 0;
-    if (now - prev < WAKE_MIN_INTERVAL_MS) {
-      throw new Error(
-        `唤醒过于频繁（同一 session ${WAKE_MIN_INTERVAL_MS}ms 内只受理一次），已忽略本次；` +
-          "若是脚本循环触发，请先在脚本侧去重"
-      );
-    }
-    wakeLastAt.set(target.sessionId, now);
+    const waitMs = Math.max(0, WAKE_MIN_INTERVAL_MS - (now - prev));
+    wakeLastAt.set(target.sessionId, now + waitMs);
 
     // 审计只落来源与长度，不落文本内容（job 输出可能很长/带敏感数据）
     auditToolCall({
@@ -1251,6 +1248,21 @@ ${message}`;
     // 错误必须自己吞掉并写日志 —— 没有调用方在等这个 Promise。
     void (async () => {
       try {
+        // 节流：需要等待时在**这里**等（调用方已经拿到 ack 了）
+        if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+
+        // 插队（实时性）：目标会话正在跑就先打断当前轮，让本次唤醒立刻执行 ——
+        // 与 IPC `chat` 同款软中断（abortRequested + abort 在途请求 + 放掉待审批）。
+        if (waking.running) {
+          console.log(`[wake] session=${waking.sessionId} 正在运行 → 打断当前轮以插队`);
+          waking.abortRequested = true;
+          waking.llmAbortController?.abort();
+          waking.abortPendingApproval();
+          waking.abortPendingPlanApproval();
+          waking.abortPendingAskUser();
+          await waking.waitIdle();
+        }
+
         const { content } = await waking.runExclusive(() =>
           runAgent(waking, text, {
             origin: "cron",
@@ -1270,7 +1282,9 @@ ${message}`;
 
     return {
       sessionId: target.sessionId,
-      note: "该轮按无人值守规则运行（工具走白名单、无交互审批），最终回复会推到该会话绑定的通道。",
+      note:
+        "已插队执行（若该会话正在跑，会打断当前轮）；" +
+        "该轮按无人值守规则运行（工具走白名单、无交互审批），最终回复推到该会话绑定的通道。",
     };
   };
 

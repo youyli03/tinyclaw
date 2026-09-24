@@ -12,6 +12,13 @@
  * 那里的文件名是 fd 号，`wake` 这个名字永远解析不到）。所以"能被 PATH 找到"就必须落一个
  * 可执行文件；这里落在 tinyclaw 自己的运行时目录 `~/.tinyclaw/bin/`，随服务启动重建。
  *
+ * 投递语义（用户口径，2026-09-25）：
+ *   - **投递不到就丢弃**：服务没在跑 / socket 连不上 / 服务端拒绝 → **静默退出（exit 0）**，
+ *     不打印、不落盘、不重试（没有离线队列）。
+ *   - **只有投递的时候可以投递**：不做任何"事后补投"，要再送就再喊一次 `wake`。
+ *   - 参数错误（job/cron 之外既没给 `-s` 也没给 `-a`、消息为空）仍然报错 —— 那是脚本的 bug，
+ *     与"投递"无关，必须让作者看见。
+ *
  * 简洁性（job / cron 里零参数）：
  * job / cron 的运行环境里会被注入三个自标识变量（见 `job-manager.ts` / `cron/runner.ts`）：
  *   - `TINYCLAW_WAKE_TARGET`：该任务"天然该唤醒的会话"
@@ -29,7 +36,7 @@ import * as path from "node:path";
 import { IPC_SOCKET_PATH } from "../ipc/protocol.js";
 
 /** shim 内容版本；改动生成脚本时递增，服务启动会据此重写。 */
-export const WAKE_SHIM_VERSION = 3;
+export const WAKE_SHIM_VERSION = 4;
 
 /** shim 所在目录（注入 PATH 的就是它）。 */
 export function wakeShimDir(): string {
@@ -48,6 +55,7 @@ function renderWakeShim(nodePath: string): string {
     `#!${nodePath}`,
     `// tinyclaw \`wake\` shim — 自动生成，请勿手改（版本 ${WAKE_SHIM_VERSION}）。`,
     "// 只做一件事：把参数转成 IPC wake 请求（不暴露 tinyclaw CLI 的其它命令）。",
+    "// 投递不到就丢弃：静默退出 0，不打印、不落盘、不重试。",
     '"use strict";',
     'const net = require("node:net");',
     'const fs = require("node:fs");',
@@ -115,12 +123,14 @@ function renderWakeShim(nodePath: string): string {
     '      process.stdout.write("✅ 已唤醒 " + resp.sessionId + "\\n" + (resp.note || "") + "\\n");',
     "      finish(0);",
     '    } else if (resp.type === "error") {',
-    "      fail(resp.message);",
+    "      // 服务端拒绝（含处理器未注册）也属于投递不了 → 丢弃",
+    "      finish(0);",
     "    }",
     "  }",
     "});",
-    'sock.on("error", function (err) { fail(err.message + "（socket: " + SOCKET + "）"); });',
-    'sock.on("close", function () { if (!done) fail("连接已关闭（服务在跑吗？socket: " + SOCKET + "）"); });',
+    '// 服务没在跑 / socket 连不上 → 投递不到，静默丢弃',
+    'sock.on("error", function () { finish(0); });',
+    'sock.on("close", function () { finish(0); });',
     "",
   ].join("\n");
 }

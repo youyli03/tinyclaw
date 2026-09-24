@@ -239,9 +239,12 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   job / cron / `exec_shell` 的 `PATH`（`withWakeShimPath()`；沙箱内只读可见即可执行，实测 socket 可达）。
   **job / cron 里零参数**：这两条路径会注入自标识变量 `TINYCLAW_WAKE_TARGET` / `TINYCLAW_AGENT_ID` /
   `TINYCLAW_JOB_ID`（job-manager）或 `TINYCLAW_CRON_JOB_ID`（`cron/runner.ts`），`wake` 自动取目标与来源标签，
-  所以脚本里就是 `wake "消息"`，或 `tail -50 log | wake --stdin`。⚠️ PATH 查找本质需要目录项，
-  所以拒绝"完全不落盘"的变体（`fexecve` 不做 PATH 查找、memfd 无法按名字解析）；
-  也不要用 `tinyclaw wake` 当脚本入口（job 的 PATH 里没有 `~/.local/bin`）。
+  所以脚本里就是 `wake "消息"`，或 `tail -50 log | wake --stdin`。
+  ⚡ **投递语义（用户口径）**：目标会话正在跑 → **打断当前轮插队**（实时优先，会抢占用户正在进行的回合）；
+  同一会话多次 wake → 服务端按 ≥3s **延迟排开**，调用方永远 exit 0（不报错）；
+  投递不到（服务没在跑 / socket 连不上）→ **静默丢弃**（exit 0、无输出、**不落盘、无离线队列**），
+  要再送就再喊一次。⚠️ PATH 查找本质需要目录项，所以拒绝"完全不落盘"的变体（`fexecve` 不做 PATH 查找、
+  memfd 无法按名字解析）；也不要用 `tinyclaw wake` 当脚本入口（job 的 PATH 里没有 `~/.local/bin`）。
 - **密钥（`secrets.toml`）的按 agent 授权**（`auth/secrets-access.ts` + `[secrets].agents`）：密钥名可猜
   （`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*`），而 `${SECRET:NAME}`（job env）、`job_start(secrets:[...])`、
   `exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是**按名字取密钥** —— 这四条入口
