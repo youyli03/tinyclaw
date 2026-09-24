@@ -272,6 +272,7 @@ tinyclaw/
 │   │   ├── search-store.ts   # search_store(向量语义搜索本地知识库,如 news)
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
 │   │   ├── recall.ts         # memory_recall(账本关键词检索) · memory_expand(按 seq 取回逐字原文)
+│   │   ├── wake.ts           # wake(唤醒另一个会话的 agent：注入消息 + 起一轮，受理即返回)
 │   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务/运行时占用)
 │   │   ├── self-runtime.ts   # self_runtime_scan/read/delete(自指：读写删自己的运行时目录，密钥除外)
 │   │   ├── fs-grant-tool.ts  # fs_grant(路径级无感授权：$HOME 内非密钥路径，带 TTL + 审计)
@@ -1339,6 +1340,7 @@ autoForkThresholdMs = 120000   # 毫秒；ReAct 轮次超时后把剩余任务�
 | 请求类型 | 参数 | 说明 |
 |---|---|---|
 | `chat` | `sessionId`, `message` | 向会话发送消息（流式回复） |
+| `wake` | `sessionId?`, `agentId?`, `message`, `source?` | 唤醒 LLM：注入消息并触发一轮 agent（**受理即返回**；该轮按 `origin=cron` 无人值守规则跑，回复推给会话绑定的通道） |
 | `list` | — | 获取所有内存中的会话快照 |
 | `new` | `agentId?` | 创建新终端会话 |
 | `memory_rebuild` | `agentId?` | 在服务进程内重建 QMD 向量索引(读取 memstores.toml,使用 RKLLM embed) |
@@ -1349,6 +1351,7 @@ autoForkThresholdMs = 120000   # 毫秒；ReAct 轮次超时后把剩余任务�
 | `done` | — | 本次回复结束 |
 | `error` | `message` | 错误信息 |
 | `sessions` | `sessions[]` | 会话列表（响应 `list`） |
+| `woken` | `sessionId`, `note` | 唤醒已受理（响应 `wake`；agent 的回复异步推给通道） |
 | `created` | `sessionId` | 新会话 ID（响应 `new`） |
 
 ---

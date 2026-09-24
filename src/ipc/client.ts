@@ -303,6 +303,68 @@ export async function abortSession(
 }
 
 /**
+ * 唤醒 LLM：把一段文本注入某个 session 并触发一次 runAgent（受理即返回，不等回复）。
+ *
+ * 供 `tinyclaw wake`（脚本 / job / cron step 均可调用）使用。
+ * `sessionId` 与 `agentId` 至少给一个；只给 agentId 时复用该 agent 最近活跃的会话。
+ *
+ * ⚠️ 被唤醒的那一轮按无人值守规则运行（`origin=cron`），最终回复由服务端推给该会话绑定的通道。
+ */
+export async function wakeSession(opts: {
+  sessionId?: string;
+  agentId?: string;
+  message: string;
+  source?: string;
+}): Promise<{ sessionId: string; note: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(IPC_SOCKET_PATH);
+    let buf = "";
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      fn();
+    };
+
+    socket.on("connect", () => {
+      const req: IpcRequest = {
+        type: "wake",
+        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.agentId ? { agentId: opts.agentId } : {}),
+        message: opts.message,
+        ...(opts.source ? { source: opts.source } : {}),
+      };
+      socket.write(JSON.stringify(req) + "\n");
+    });
+
+    socket.on("data", (data) => {
+      buf += data.toString("utf-8");
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let resp: IpcResponse;
+        try {
+          resp = JSON.parse(line) as IpcResponse;
+        } catch {
+          continue;
+        }
+        if (resp.type === "woken") {
+          settle(() => resolve({ sessionId: resp.sessionId, note: resp.note }));
+        } else if (resp.type === "error") {
+          settle(() => reject(new Error(resp.message)));
+        }
+      }
+    });
+
+    socket.on("error", (err) => settle(() => reject(err)));
+    socket.on("close", () => settle(() => reject(new Error("Connection closed unexpectedly"))));
+  });
+}
+
+/**
  * 立即触发指定 loop session 的一次 tick（不影响定时计划）。
  * 返回 found=true 表示该 session 有有效 loop 配置并已触发。
  */

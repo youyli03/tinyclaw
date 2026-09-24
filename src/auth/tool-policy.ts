@@ -95,6 +95,8 @@ const HARD_DENY_REACT_UNATTENDED = new Set([
   "config_reload",
   "config_set",
   "job_start",
+  // 唤醒会**再起一轮 agent run**：无人值守下由模型临场决定"再跑一轮自己"等于自我复制执行
+  "wake",
 ]);
 
 /** 硬禁止工具的解释（拒绝文案用） */
@@ -121,6 +123,9 @@ const HARD_DENY_REASON: Record<string, string> = {
   job_start:
     "无人值守时禁止启动后台 job：后台进程会活过这一轮（detach 甚至活过服务重启），等于把执行挪到监督窗口之外。" +
     "确需长任务请用 cron job 的声明式 steps（exec_shell）或把它写成 job 配置里的声明式步骤。",
+  wake:
+    "无人值守时禁止由模型临场唤醒 LLM（会再起一轮 agent run，等于在没人看着时自我复制执行）。" +
+    "需要「任务完成后叫醒 agent」的场景，请用 `tinyclaw wake`（脚本 / job 自己调用）或 IPC wake 请求。",
 };
 
 function auditOpts(cfg: SandboxConfig): { dir?: string; enabled: boolean } {

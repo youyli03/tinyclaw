@@ -262,6 +262,45 @@ Agent 会自动构建 steps 数组并调用 `cron_add`。
 
 ---
 
+## 运行环境与密钥
+
+cron 的每一次运行（单步与 Pipeline 都一样）会组装一份**额外环境变量**给 job 的 agent，口径与
+`job_start` 一致：`process.env`（含服务启动时载入的 `~/.tinyclaw/env`）< `~/.tinyclaw/agents/<id>/env`。
+
+- **agent env 叠加**：`env_set` 写进 `agents/<id>/env` 的变量，cron 的 `exec_shell` 现在也能看到
+  （实现见 `src/cron/run-env.ts` 的 `buildCronRunEnv()`）。
+- **`${SECRET:NAME}` 引用**：agent env 里值写成 `${SECRET:NAME}` 的键，会在**过 `[secrets].agents` 授权闸**
+  后从 `secrets.toml` 取值注入；未授权的 agent 不会解析这些键（留 warning + 审计 deny），其余变量照常注入。
+- **只传增量、不改全局**：cron worker 是**跨 agent 共享**的长驻进程，可能并发跑多个 job，所以 env 走
+  `AgentRunOptions.extraEnv` → `ToolContext.extraEnv` → `exec_shell` 子进程，**不修改 `process.env`**；
+  沙箱路径下也只叠加增量（不能用整份 `process.env` 覆盖 bwrap 的 `plan.env`，那会抹掉
+  `[sandbox].network = "deny"` 的环境收敛）。日志只落**键名**不落值。
+- **声明式密钥（`secrets: [...]`）仍是文件形态**：它经 `sandbox/secrets-filter.ts` 物化成只含这几个 key 的
+  临时 `secrets.toml` 并在沙箱内 bind（脚本零改动），**不会**自动变成环境变量 ——
+  需要环境变量请显式写 `${SECRET:NAME}`。
+- ⚠️ 与 `job_start` 一样，密钥只给 `[secrets].agents` 里授权的 agent（默认 `default`）。
+
+### 把结果交给 LLM：`tinyclaw wake`
+
+cron 的 `tool` step 只能干活、`msg` step 才能起 LLM，而**外部脚本 / 后台 job** 想"做完事叫醒 agent"
+时用 `wake`（IPC 请求 / CLI）：
+
+```bash
+# 脚本 / job 结尾：把结果交给指定会话的 agent 去判断并汇报
+tinyclaw wake -s "qqbot:c2c:<openid>" --source "train-job" "训练跑完了，看下最后的指标并汇报"
+tinyclaw wake -a default --source "backup" "备份完成，检查一下有没有失败项"
+```
+
+- 注入文本带 `[wake from <source> @ …]` 前缀，让模型知道这不是用户在说话；
+- **受理即返回**，不等那一轮 LLM；agent 的最终回复由服务端推给该会话绑定的通道（QQ 会推到对应聊天）；
+- ⚠️ 被唤醒的那一轮按 **`origin=cron`（无人值守）** 跑：工具走 `[sandbox.unattended]` 白名单、
+  MFA 无法送达即拒绝 —— 唤醒可能来自任意脚本，不能当"用户在场"；
+- 同一 session 3 秒内只受理一次（防脚本死循环刷 LLM）；
+- 只要一次纯 LLM 调用（无工具、无历史）用 `tinyclaw send`；agent 侧另有同名工具 `wake`
+  （但它被列入 `HARD_DENY_REACT_UNATTENDED`：无人值守的 ReAct 循环里**模型不能**自我唤醒）。
+
+---
+
 ## 注意事项
 
 1. **`message` 字段仍为必填**（schema 约束），Pipeline 模式下它仅作为任务描述，不触发 LLM

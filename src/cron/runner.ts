@@ -18,6 +18,7 @@ import { auditToolCall, enforceUnattendedTool, unattendedMfaFallback } from "../
 import type { InboundMessage } from "../connectors/base.js";
 import { updateJob, appendLog } from "./store.js";
 import type { CronJob } from "./schema.js";
+import { buildCronRunEnv } from "./run-env.js";
 import {
   parseModelSymbol,
   isPremiumModel,
@@ -177,10 +178,13 @@ async function runPipelineJob(
       ) => Promise<{ answer: string; isFreeform: boolean }>)
     | undefined,
   overrideClient: AnyLLMClient | undefined,
-  systemPrompt: string
+  systemPrompt: string,
+  /** 本次运行的额外环境变量增量（见 `buildCronRunEnv`）；空对象 = 不叠加 */
+  runEnv: Record<string, string>
 ): Promise<string> {
   const steps = job.steps!;
   let lastResult = "";
+  const runEnvOpts = Object.keys(runEnv).length > 0 ? { extraEnv: runEnv } : {};
 
   // 构建工具执行上下文（pipeline tool steps 使用）
   // 必须包含 masterSession 和 slaveRunFn，否则 agent_fork / agent_wait 工具会因缺少上下文而返回错误字符串
@@ -200,6 +204,8 @@ async function runPipelineJob(
         // 子 Agent 审批策略钉死为 never（对齐 DSH 委派语义）：不允许弹 MFA / 提权
         approvalPolicy: "never",
         ...(notifyFn ? { onNotify: notifyFn } : {}),
+        // fork 出来的 slave 同样继承本次运行的 env 增量
+        ...runEnvOpts,
       }),
     // cron pipeline 用 result_mode="wait" + agent_wait 汇总结果，inject 回调保持 no-op
     onSlaveComplete: async (_notif) => {
@@ -211,6 +217,8 @@ async function runPipelineJob(
     ...(job.writablePaths.length > 0 ? { sandboxExtraRwPaths: job.writablePaths } : {}),
     // 该 job 声明要读的密钥（方案 B：沙箱内只暴露这几把 key）
     ...(job.secrets.length > 0 ? { sandboxSecretNames: job.secrets } : {}),
+    // 额外 env 增量（agents/<id>/env + 显式 ${SECRET:NAME}）：tool step 的 exec_shell 也要拿到
+    ...runEnvOpts,
   };
 
   for (let i = 0; i < steps.length; i++) {
@@ -303,6 +311,7 @@ async function runPipelineJob(
         onSlaveComplete: async (_notif) => {
           /* no-op for cron pipeline: use result_mode="wait" + agent_wait instead */
         },
+        ...runEnvOpts,
       });
       lastResult = result.content;
       console.log(`[cron] job=${job.id} ${stepLabel} 完成，输出长度: ${result.content.length}`);
@@ -365,6 +374,15 @@ async function _runJob(
   }
 
   const session = new Session(sessionId, { agentId: job.agentId });
+
+  // ── 额外环境变量：与 job_start 同口径（agents/<id>/env + 显式 ${SECRET:NAME}）──────
+  // 只算增量、不改 process.env（worker 跨 agent 共享）；日志只落**键名**不落值。
+  const runEnv = buildCronRunEnv(job.agentId, { sessionId });
+  const runEnvKeys = Object.keys(runEnv);
+  if (runEnvKeys.length > 0) {
+    console.log(`[cron] job=${job.id} 注入 env 增量 ${runEnvKeys.length} 项: ${runEnvKeys.join(", ")}`);
+  }
+  const runEnvOpts = runEnvKeys.length > 0 ? { extraEnv: runEnv } : {};
 
   // MFA 处理：exempt = 自动通过；可交互时透传给 connector；
   // **既未豁免又无法送达用户时不再自动通过**（见 [sandbox.unattended].mfaFallback）
@@ -464,7 +482,8 @@ ${message}`;
         notifyFn,
         onAskUserFn,
         overrideClient,
-        systemPrompt
+        systemPrompt,
+        runEnv
       );
     } else {
       // ── 单步模式（向后兼容）────────────────────────────────────────────────
@@ -476,6 +495,7 @@ ${message}`;
         ...(notifyFn ? { onNotify: notifyFn } : {}),
         ...(onAskUserFn ? { onAskUser: onAskUserFn } : {}),
         ...(overrideClient ? { overrideClient } : {}),
+        ...runEnvOpts,
       });
       resultText = result.content;
     }

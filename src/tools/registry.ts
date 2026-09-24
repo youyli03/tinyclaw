@@ -29,6 +29,12 @@ export interface ToolContext {
    * 供 `memory_expand` / `memory_recall` 定位同目录的**原文账本**（`*.journal.jsonl`）。
    */
   sessionJsonlPath?: string;
+  /**
+   * 本次运行的额外环境变量（**增量**，由 cron / loop 从 `agents/<id>/env` 组装）。
+   * 只用于给子进程（`exec_shell`）叠加，**不修改 `process.env`** ——
+   * cron worker 是跨 agent 共享进程，改全局 env 会互相串味。
+   */
+  extraEnv?: Record<string, string>;
   /** 当前 session 的模式（chat / code），用于 MCP 持久化 */
   mode?: string;
   /** 当前 Agent 的 ID */
@@ -198,6 +204,31 @@ let _builtinAgentFilter: ((toolName: string, agentId: string) => boolean) | unde
  */
 export function setBuiltinAgentFilter(fn: (toolName: string, agentId: string) => boolean): void {
   _builtinAgentFilter = fn;
+}
+
+/**
+ * 唤醒能力（`wake` 工具用）：由 `main.ts` 启动时注入，避免 `tools → main` 的循环依赖。
+ *
+ * 它是**服务级能力**而不是"每次 run 的闭包"，所以走模块级 setter（同 `setMcpAgentFilter`），
+ * 不塞进 `ToolContext` —— cron / loop 的声明式步骤直接 `executeTool` 时也走同一个实现。
+ */
+let _wakeFn:
+  | ((opts: {
+      sessionId?: string;
+      agentId?: string;
+      message: string;
+      source?: string;
+    }) => Promise<{ sessionId: string; note: string }>)
+  | undefined;
+
+/** 注入唤醒实现（服务启动时调用一次）。 */
+export function setWakeFn(fn: typeof _wakeFn): void {
+  _wakeFn = fn;
+}
+
+/** 读取唤醒实现（未注入时返回 undefined —— 工具会给出可读错误）。 */
+export function getWakeFn(): typeof _wakeFn {
+  return _wakeFn;
 }
 
 /** 注册工具 */

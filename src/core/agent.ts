@@ -86,6 +86,7 @@ import "../tools/read-url.js";
 import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
 import "../tools/recall.js";
+import "../tools/wake.js";
 import "../tools/self-status.js";
 import "../tools/self-runtime.js";
 import "../tools/fs-grant-tool.js";
@@ -745,6 +746,14 @@ export interface AgentRunOptions {
   sandboxExtraRwPaths?: string[];
   /** 本次运行声明要读的密钥名（cron/loop 的 `secrets`），传给 exec_shell 做按任务过滤 */
   sandboxSecretNames?: string[];
+  /**
+   * 本次运行的额外环境变量（**增量**，cron/loop 由 `buildCronRunEnv()` 从 `agents/<id>/env`
+   * 组装，值里的 `${SECRET:NAME}` 已按 `[secrets].agents` 授权解析）。
+   *
+   * 透传到 `ToolContext.extraEnv`，由 `exec_shell` 叠加到子进程环境 ——
+   * **不修改宿主 `process.env`**：cron worker 跨 agent 共享，改全局会互相串味。
+   */
+  extraEnv?: Record<string, string>;
   /** 替换 Agent SYSTEM.md 的自定义 prompt（优先级高于文件） */
   systemPrompt?: string;
   /** 追加到 Agent SYSTEM.md 之后的额外 prompt（不替换，适合 slave 注入规则） */
@@ -2130,6 +2139,7 @@ async function runAgentInner(
               : agentManager.workspaceDir(session.agentId),
           sessionId: session.sessionId,
           sessionJsonlPath: session.jsonlPath,
+          ...(opts.extraEnv ? { extraEnv: opts.extraEnv } : {}),
           mode: isCodeMode ? "code" : "chat",
           agentId: session.agentId,
           ...(opts.botId !== undefined ? { botId: opts.botId } : {}),

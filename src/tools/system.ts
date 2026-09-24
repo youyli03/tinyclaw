@@ -250,6 +250,13 @@ export async function execShellImpl(
       resolve(message);
     };
 
+    // 额外环境变量（cron/loop 的 agent env 增量）：只叠加增量，不改宿主 process.env。
+    // 沙箱路径下不能整份覆盖 plan.env —— 它可能被 [sandbox].network="deny" 收敛过。
+    const extraEnv = ctx?.extraEnv;
+    if (extraEnv && Object.keys(extraEnv).length > 0) {
+      spawnEnv = spawnEnv ? { ...spawnEnv, ...extraEnv } : { ...process.env, ...extraEnv };
+    }
+
     const child = spawn(spawnCmd, spawnArgs, {
       stdio: ["ignore", "pipe", "pipe"],
       detached: true, // 让 bash 成为新进程组 leader，kill 时可杀整组

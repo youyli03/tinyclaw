@@ -99,11 +99,16 @@ agent 侧另有 `http_request` 的 header `$NAME`、job/agent env 的 `${SECRET:
 `mcp_enable_server`/`mcp_disable_server` 不绑),其他 agent 要放开需显式写
 `[tools.selfManagement] agents = ["default", "<agentId>"]`。
 
-**密钥只给 default**:`secrets.toml` 的键名是可猜的,而 `${SECRET:NAME}`(job env)、`job_start(secrets:[...])`、
-`exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是"按名字取密钥" —— 所以默认只有
-`default` agent 能读:其他 agent 调这些入口会被**拒绝**(理由进审计流),`env_list` 也不给它显示键名。
+**密钥只给 default**:`secrets.toml` 的键名是可猜的,而 `${SECRET:NAME}`(job env / **cron env**)、
+`job_start(secrets:[...])`、`exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是"按名字取密钥" ——
+所以默认只有 `default` agent 能读:其他 agent 调这些入口会被**拒绝**(理由进审计流),`env_list` 也不给它显示键名。
 放开写 `[secrets] agents = ["default", "<agentId>"]`(`["*"]` = 全部,`[]` = 谁都不给);没有 agent 上下文的
 调用(CLI、cron 无绑定)视为放行。
+
+**cron 的 env 与密钥**(与 `job_start` 同口径):cron 每次运行会叠加 `~/.tinyclaw/agents/<id>/env`
+(即 `env_set` 写的变量),其中值写成 `${SECRET:NAME}` 的键在**过 `[secrets].agents` 授权闸**后从
+`secrets.toml` 取值注入子进程(`exec_shell`) —— 密钥**不会**因为写在 `job.secrets` 里就自动进环境变量,
+那种声明仍然只以**文件**形态出现在沙箱内(见 `docs/commands/cron-pipeline.md`)。
 
 **LKG 也坏时**:`tinyclaw config rollback --list / --lkg / --to <备份>` 可手动回退;若自动回退后仍起不来,supervisor 会打开 **SAFE MODE**(标记文件 `~/.tinyclaw/.safe_config`):
 用最小配置启动(只保留 `providers`/`llm`,不接 QQBot、不跑 cron/loop、不写 LKG、不带特权面),
@@ -222,6 +227,9 @@ tinyclaw model set [daily|code|summarizer]  # 交互式切换模型
 tinyclaw cron list                     # 定时任务列表
 tinyclaw cron add / remove / run <id>  # 添加 / 删除 / 立即触发
 
+tinyclaw wake -s <sessionId> <消息>    # 唤醒 LLM：注入消息并触发一轮 agent（受理即返回，脚本/job 用）
+tinyclaw send <消息>                   # 一次性 LLM 调用（无历史、无工具）
+
 tinyclaw chat loop list                    # 查看所有 loop session
 tinyclaw chat loop enable <sessionId>      # 启用(或新建)loop
 tinyclaw chat loop disable <sessionId>     # 禁用 loop
@@ -283,6 +291,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `agent_abort` | 软中断 Slave |
 | `session_get` | 列举对当前 Agent 可见的所有活跃 session |
 | `session_send` | 向指定 session 注入消息,触发 Agent 处理 |
+| `wake` | 唤醒另一个会话的 agent(注入消息 + 起一轮,受理即返回);被唤醒那轮按无人值守规则跑 |
 | `ask_user` | 暂停并向用户提问(含预设选项) |
 
 ### 自省

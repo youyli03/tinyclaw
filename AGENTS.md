@@ -230,8 +230,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   并注意**按 agent 的 `tools.toml`** 会决定模型看不看得到这些工具（`allowlist` 里没列的看不到）。
 - **agent 环境变量**（`config/agent-env.ts` + `tools/env-admin.ts`）：文件 `~/.tinyclaw/agents/<id>/env`（0600，
   沙箱掩码）；分层 `process.env` < agent env < 单次覆盖；**没有** `env_get`，值永不回给模型。
-  ⚠️ 这套 env **只注入 job**（`job_start`）；`exec_shell` 不叠加 agent env（实测），它只有 `process.env` +
-  按任务声明的 secrets 文件。
+  ⚠️ 这套 env 会叠加到 **`job_start`** 与 **cron job**（`cron/run-env.ts` 的 `buildCronRunEnv()`，
+  经 `AgentRunOptions.extraEnv` → `ToolContext.extraEnv` → `exec_shell` 子进程）；**普通 chat/code 会话的
+  `exec_shell` 仍不叠加 agent env**（实测），它只有 `process.env` + 按任务声明的 secrets 文件。
+  ⚠️ cron 侧只传**增量**且不改 `process.env`：cron worker 是跨 agent 共享的长驻进程，改全局会互相串味。
 - **密钥（`secrets.toml`）的按 agent 授权**（`auth/secrets-access.ts` + `[secrets].agents`）：密钥名可猜
   （`DEEPSEEK_API_KEY` / `GITHUB_TOKEN` / `QQBOT_*`），而 `${SECRET:NAME}`（job env）、`job_start(secrets:[...])`、
   `exec_shell` 的声明式 secrets、`http_request` 的 header `$NAME` 都是**按名字取密钥** —— 这四条入口

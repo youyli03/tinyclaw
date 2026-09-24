@@ -130,6 +130,12 @@ import {
   usage as mcpUsage,
   subcommands as mcpSubs,
 } from "./commands/mcp.js";
+import {
+  run as wakeRun,
+  description as wakeDesc,
+  usage as wakeUsage,
+  subcommands as wakeSubs,
+} from "./commands/wake.js";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { bold, dim, cyan, red, closeRl } from "./ui.js";
@@ -170,6 +176,7 @@ const COMMANDS: Record<string, CommandModule> = {
   },
   logs: { description: logsDesc, usage: logsUsage, run: logsRun, subcommands: logsSubs },
   db: { description: dbDesc, usage: dbUsage, run: dbRun, subcommands: dbSubs },
+  wake: { description: wakeDesc, usage: wakeUsage, run: wakeRun, subcommands: wakeSubs },
   web: { description: webDesc, usage: webUsage, run: webRun, subcommands: webSubs },
   completions: {
     description: completionsDesc,

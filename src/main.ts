@@ -35,7 +35,7 @@ import { transcribeAudio } from "./connectors/qqbot/transcribe.js";
 import { validateMediaContent, extractTextContent } from "./connectors/qqbot/outbound.js";
 import { splitMediaText, stripMediaForStream } from "./connectors/utils/media-parser.js";
 import { looksLikeMarkdown, mdToImage } from "./connectors/utils/md-to-image.js";
-import { startIpcServer, broadcastActivity, getActivityLog } from "./ipc/server.js";
+import { startIpcServer, broadcastActivity, getActivityLog, setWakeHandler } from "./ipc/server.js";
 import { cronScheduler } from "./cron/scheduler.js";
 import { loopRunner } from "./core/loop-runner.js";
 import { loopTriggerManager } from "./core/loop-trigger.js";
@@ -59,6 +59,8 @@ import "./tools/loop-exit.js";
 import "./tools/loop-control.js";
 import "./tools/code-project.js";
 import { getTool } from "./tools/registry.js";
+import { setWakeFn } from "./tools/registry.js";
+import { auditToolCall } from "./auth/tool-policy.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 import { setActiveSessionsRef } from "./tools/restart.js";
@@ -1075,6 +1077,25 @@ ${message}`;
 
   // ── 跨 session 通信（session_send / session_get）────────────────────────
   // 双向 access.toml 权限检查：发送方 can_access 包含接收方 agentId，且接收方 allow_from 包含发送方 agentId。
+  /**
+   * 把"回复推给这个 session 绑定的通道"包成回调（只有 QQ 系会话有；其它渠道返回 undefined）。
+   * `session_send` 与 `wake` 共用 —— 各写一份，推送语义迟早分叉。
+   */
+  const notifyForSession = (
+    sessionId: string
+  ): ((message: string) => Promise<void>) | undefined => {
+    const m = sessionId.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
+    if (!m) return undefined;
+    const [, type, peerId] = m;
+    const conn = sessionConnectorMap.get(sessionId) ?? connectors[0] ?? null;
+    if (!conn) return undefined;
+    return async (notifMsg: string) => {
+      await conn
+        .send(peerId!, type as import("./connectors/base.js").InboundMessage["type"], notifMsg)
+        .catch(() => {});
+    };
+  };
+
   const sessionSendFn = async (
     targetSessionId: string,
     message: string,
@@ -1107,24 +1128,8 @@ ${message}`;
     // 注入消息，走完整 runAgent 路径
     const nowStr = new Date().toLocaleString() + " UTC+8";
 
-    // 尝试从 targetSessionId 解析 qqbot peerId，构建 onNotify 推送回调
-    let targetOnNotify: ((msg: string) => Promise<void>) | undefined;
-    const targetSessionMatch = targetSessionId.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
-    if (targetSessionMatch) {
-      const [, targetType, targetPeerId] = targetSessionMatch;
-      const targetConnector = sessionConnectorMap.get(targetSessionId) ?? connectors[0] ?? null;
-      if (targetConnector) {
-        targetOnNotify = async (notifMsg: string) => {
-          await targetConnector
-            .send(
-              targetPeerId!,
-              targetType! as import("./connectors/base.js").InboundMessage["type"],
-              notifMsg
-            )
-            .catch(() => {});
-        };
-      }
-    }
+    // 回复推给该 session 绑定的通道（QQ 会话才有）
+    const targetOnNotify = notifyForSession(targetSessionId);
 
     const { content: finalContent } = await targetSession.runExclusive(() =>
       runAgent(targetSession, `[来自 ${fromAgentId} @ ${nowStr}] ${message}`, {
@@ -1170,6 +1175,98 @@ ${message}`;
   // 注册到模块级变量，供 handleMessage 中的 opts 引用
   _sessionSendFn = sessionSendFn;
   _sessionGetFn = sessionGetFn;
+
+  // ── 唤醒 LLM（IPC `wake` / `tinyclaw wake` / agent 工具 `wake`）─────────────
+  // "进程类任务"通向"LLM 类任务"的通用口：job / cron step / 外部脚本做完事，
+  // 把一段文本注入某个 session 并触发一次 runAgent（不等回复，立即 ack）。
+  //
+  // 该轮按 **origin=cron（无人值守）** 跑：工具走 [sandbox.unattended] 白名单、
+  // MFA 无法送达时 fail-closed —— 唤醒可能来自任意脚本，绝不能当"用户在场"。
+  // agent 的最终回复由框架推给该会话绑定的通道（session_send 同款推送）。
+  /** sessionId → 上次唤醒时间（节流用，防脚本死循环刷 LLM） */
+  const wakeLastAt = new Map<string, number>();
+  const WAKE_MIN_INTERVAL_MS = 3000;
+
+  const wakeSession = async (opts: {
+    sessionId?: string;
+    agentId?: string;
+    message: string;
+    source?: string;
+  }): Promise<{ sessionId: string; note: string }> => {
+    const message = opts.message?.trim();
+    if (!message) throw new Error("message 不能为空");
+
+    // 目标会话：显式 sessionId > 该 agent 最近活跃的会话 > 新建
+    let target: Session | undefined;
+    if (opts.sessionId) {
+      target = getSession(opts.sessionId);
+    } else if (opts.agentId) {
+      let latest: Session | undefined;
+      for (const s of sessions.values()) {
+        if (s.agentId !== opts.agentId) continue;
+        if (!latest || (s.lastResponseAt ?? 0) > (latest.lastResponseAt ?? 0)) latest = s;
+      }
+      target = latest ?? getSession(`wake:${opts.agentId}:${Date.now()}`);
+    } else {
+      throw new Error("sessionId 与 agentId 至少要给一个");
+    }
+
+    const now = Date.now();
+    const prev = wakeLastAt.get(target.sessionId) ?? 0;
+    if (now - prev < WAKE_MIN_INTERVAL_MS) {
+      throw new Error(
+        `唤醒过于频繁（同一 session ${WAKE_MIN_INTERVAL_MS}ms 内只受理一次），已忽略本次；` +
+          "若是脚本循环触发，请先在脚本侧去重"
+      );
+    }
+    wakeLastAt.set(target.sessionId, now);
+
+    // 审计只落来源与长度，不落文本内容（job 输出可能很长/带敏感数据）
+    auditToolCall({
+      event: "policy",
+      origin: "cron",
+      agentId: target.agentId,
+      sessionId: target.sessionId,
+      tool: "wake",
+      decision: "info",
+      reason: `唤醒来源：${opts.source ?? "unknown"}`,
+      args: { source: opts.source ?? "unknown", messageChars: message.length },
+    });
+
+    const onNotify = notifyForSession(target.sessionId);
+    const text = `[wake${opts.source ? ` from ${opts.source}` : ""} @ ${new Date().toLocaleString()} UTC+8] ${message}`;
+    const waking = target;
+
+    // fire-and-forget：唤醒是"受理即返回"，让脚本/job 不必等一整轮 LLM。
+    // 错误必须自己吞掉并写日志 —— 没有调用方在等这个 Promise。
+    void (async () => {
+      try {
+        const { content } = await waking.runExclusive(() =>
+          runAgent(waking, text, {
+            origin: "cron",
+            sessionSendFn,
+            sessionGetFn,
+            ...(onNotify ? { onNotify } : {}),
+          })
+        );
+        if (onNotify && content?.trim()) await onNotify(content.trim());
+      } catch (err) {
+        console.error(
+          `[wake] session=${waking.sessionId} 唤醒后执行失败:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    })();
+
+    return {
+      sessionId: target.sessionId,
+      note: "该轮按无人值守规则运行（工具走白名单、无交互审批），最终回复会推到该会话绑定的通道。",
+    };
+  };
+
+  // 注入给 agent 工具（tools/wake.ts）与 IPC 服务端（CLI `tinyclaw wake` 走 IPC）
+  setWakeFn(wakeSession);
+  setWakeHandler(wakeSession);
 
   const loopTick = async (
     sessionId: string,

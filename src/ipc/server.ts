@@ -78,6 +78,26 @@ export function broadcastActivity(sessionId: string, event: ActivityEvent) {
   }
 }
 
+/**
+ * wake 处理器：由 `main.ts` 注入（`setWakeHandler`）。
+ *
+ * 之所以用注入而不是在这里实现：唤醒要复用 main 里的 `getSession` / connector 映射 /
+ * `sessionSendFn` 闭包，否则权限检查与"回复推给用户"的语义会和 `session_send` 分叉。
+ */
+export type WakeHandler = (req: {
+  sessionId?: string;
+  agentId?: string;
+  message: string;
+  source?: string;
+}) => Promise<{ sessionId: string; note: string }>;
+
+let wakeHandler: WakeHandler | null = null;
+
+/** 注册/清除 wake 处理器（服务启动时调用一次；测试可传 null 复位）。 */
+export function setWakeHandler(handler: WakeHandler | null): void {
+  wakeHandler = handler;
+}
+
 export function startIpcServer(
   sessions: Map<string, Session>,
   connector: QQBotConnector | null,
@@ -186,6 +206,35 @@ async function handleRequest(
     req = JSON.parse(line) as IpcRequest;
   } catch {
     send({ type: "error", message: "invalid JSON request" });
+    return;
+  }
+
+  // ── wake 请求：唤醒某个 session 的 agent（不等回复，立即 ack）─────────────
+  // 处理函数由 main.ts 注入：它需要拿到 sessions / connectors / sessionSendFn 的闭包，
+  // 在 ipc/server 里重复实现会与 session_send 的权限与推送语义分叉。
+  if (req.type === "wake") {
+    const { sessionId, agentId, message, source } = req as {
+      type: "wake";
+      sessionId?: string;
+      agentId?: string;
+      message: string;
+      source?: string;
+    };
+    if (!wakeHandler) {
+      send({ type: "error", message: "wake 处理器未注册（服务未完成启动？）" });
+      return;
+    }
+    try {
+      const result = await wakeHandler({
+        ...(sessionId ? { sessionId } : {}),
+        ...(agentId ? { agentId } : {}),
+        message,
+        ...(source ? { source } : {}),
+      });
+      send({ type: "woken", sessionId: result.sessionId, note: result.note });
+    } catch (err) {
+      send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    }
     return;
   }
 

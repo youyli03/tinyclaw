@@ -58,6 +58,19 @@ export type IpcRequest =
       botId?: string;
     }
   | { type: "memorize"; sessionId: string }
+  /**
+   * 唤醒 LLM：把一段文本注入指定 session 并触发一次 runAgent（**不等回复**，立即 ack）。
+   *
+   * 用途：后台 job / cron 步骤 / 外部脚本 做完事之后"叫醒"agent 去做判断与汇报 ——
+   * 这是"进程类任务"通向"LLM 类任务"的通用口（`tinyclaw wake`）。
+   *
+   * - `sessionId` 与 `agentId` 至少给一个：给 sessionId 就注入该会话；只给 agentId 时
+   *   复用该 agent 最近的会话，没有则新建一个。
+   * - 该 run 按 **origin=cron（无人值守）** 处理：工具走 `[sandbox.unattended]` 白名单、
+   *   MFA 无法送达时 fail-closed —— 唤醒可能来自任意脚本，不能当"用户在场"。
+   * - `source` 只进日志与审计（例如 job id / 脚本名），不会注入给模型当指令。
+   */
+  | { type: "wake"; sessionId?: string; agentId?: string; message: string; source?: string }
   /** 立即触发指定 loop session 的一次 tick（不影响定时计划） */
   | { type: "loop_trigger"; sessionId: string }
   /** 暂停指定 loop session 的定时触发（不重启，立即生效） */
@@ -127,6 +140,8 @@ export type IpcResponse =
     }
   /** 手动记忆压缩完成，包含生成的摘要文本 */
   | { type: "memorized"; summary: string }
+  /** wake 请求的响应：已受理并开始跑（agent 模式的回复异步推给会话绑定的通道） */
+  | { type: "woken"; sessionId: string; note: string }
   /** abort_session 请求的响应 */
   | { type: "session_aborted"; sessionId: string; found: boolean }
   /** memory_rebuild 完成响应 */
