@@ -31,6 +31,13 @@ const MAX_UNIT_LEN = 24;
 const MIN_REPEATS = 12;
 
 /**
+ * 同一轮 run 里允许为**连续空回复**重试的次数（2026-09-24 起由"只救一次"改为可连续重试）。
+ * 实测（金融会话，254k 上下文）一次 run 里会连着空两三轮：第一轮空被救回后模型接着又空，
+ * 而"只救一次"会让第二次空正文 + 循环思考直接落库，下一轮当成范例照抄。
+ */
+export const MAX_EMPTY_REPLY_RETRIES = 3;
+
+/**
  * 把 reasoning 切成"单元"：优先按行；行太长时按中英文句末标点切，
  * 这样 `好。好。好。好。` 这种**同一行内**的重复也能被抓住。
  */
@@ -92,5 +99,62 @@ export function emptyReplyNudge(kind: "length" | "degenerate" | "silent"): strin
   return (
     `${head}Reply now with the concrete result for the user (a few short sentences). ` +
     "If a tool already delivered the result, just say what was delivered."
+  );
+}
+
+/** 落库前的 reasoning 净化结果 */
+export interface StorageReasoning {
+  /** 实际落库的值（退化时为截断后的前缀；原文为空时 undefined） */
+  value: string | undefined;
+  /** 是否检测到重复退化 */
+  degenerate: boolean;
+  /** 退化时的重复单元（未退化时为空串） */
+  repeatedLine: string;
+  /** 该单元的重复次数 */
+  repeats: number;
+}
+
+/**
+ * 截到重复单元**第一次**出现为止（至少保留该单元本身，保证结果非空）。
+ * 纯函数，便于探针断言。
+ */
+export function trimAtFirstRepeat(text: string, unit: string): string {
+  if (!unit) return text;
+  const first = text.indexOf(unit);
+  if (first < 0) return text;
+  const head = text.slice(0, first + unit.length).trim();
+  return head || unit;
+}
+
+/**
+ * 落库前净化 reasoning：退化 → 只留重复开始前的前缀。
+ *
+ * ⚠️ **不能整条丢弃**：DeepSeek 思考模式下只要请求带 `tools`，后续所有请求都必须完整回传
+ * 历史轮次的 `reasoning_content`，缺失会直接 400（官方《思考模式》文档「工具调用」节）。
+ * 所以这里保留"重复开始之前"的合法前缀，而不是删掉整个字段。
+ * 纯函数，无副作用、无 IO。
+ */
+export function sanitizeReasoningForStorage(reasoning: string | undefined): StorageReasoning {
+  if (!reasoning || !reasoning.trim()) {
+    return { value: undefined, degenerate: false, repeatedLine: "", repeats: 0 };
+  }
+  const verdict = detectReasoningRepetition(reasoning);
+  if (!verdict.degenerate) {
+    return { value: reasoning, degenerate: false, repeatedLine: "", repeats: 0 };
+  }
+  return {
+    value: trimAtFirstRepeat(reasoning, verdict.repeatedLine),
+    degenerate: true,
+    repeatedLine: verdict.repeatedLine,
+    repeats: verdict.repeats,
+  };
+}
+
+/** reasoning 退化被截断后注入的纠偏提示（英文，见 AGENTS.md §6 语言约定：面向模型的文本用英文） */
+export function reasoningLoopNudge(): string {
+  return (
+    "[reasoning loop] Your previous reasoning degenerated into repeating the same short phrase; " +
+    "it has been trimmed from the conversation. Do not restate the plan — go straight to the " +
+    "concrete next step, or write the final answer now."
   );
 }

@@ -420,10 +420,15 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   flash 级模型把输出预算全烧在 `reasoning_content` 里并**退化成同一句的无限重复**（`好。写。好。发送。…`，
   同句上百次），`content` 为空 → 旧行为把"无 tool_calls"当成最终回复 → 用户只收到 `✅ 已完成`。
   现在的处理链：`finish_reason` 已捕获（`ChatResult.finishReason`）→ `llm/reasoning-guard.ts` 分三态
-  （`length` / `degenerate` / `silent`）→ `agent.ts` 注入纠偏提示并**重试本轮一次**（`emptyRetryPending` 只救一次）
+  （`length` / `degenerate` / `silent`）→ `agent.ts` 注入纠偏提示并**连续重试最多 `MAX_EMPTY_REPLY_RETRIES`（=3）次**
   + 日志点名 + 指标 `llm/empty_reply` → 仍为空则 `AgentRunResult.emptyReplyKind` 交给 `main.ts` 发**诚实**兜底
   （`⚠️ 模型这轮没有产出正文…`），`✅ 已完成` 只留给"工具已交付、模型确实没补充"的情形。
-  ⚠️ 改 `agent.ts` 循环或 `main.ts` 兜底时**不要**把空正文当成正常收尾。
+  ⚠️ **空正文与退化的 reasoning 都不许落库**：2026-09-24 实测（金融会话 254k 上下文、
+  `finish_reason` 全为 `stop`）一次 run 里连着空三轮，旧实现"只救一次"会让第二轮的空 assistant 消息
+  + `好。` 循环写进 history，下一轮当成范例照抄；但带 `tools` 时又**不能整条丢 `reasoning_content`**
+  （DeepSeek 思考模式要求历史轮次完整回传，缺一个就 400）→ 退化时只截到**重复开始之前**的前缀
+  （`sanitizeReasoningForStorage()`），且纠偏提示必须等工具结果写完再补。
+  改 `agent.ts` 循环或 `main.ts` 兜底时**不要**把空正文当成正常收尾、也不要让空 assistant 消息进 history。
 - **思考档位的线级枚举与 DSH 不一样，别照抄（实测）**：`api.deepseek.com/v1` 的 `reasoning_effort`
   只认 **`none|minimal|low|medium|high|xhigh|max`**；DSH 内部的 `off` **不是**合法值——发 `off` 直接
   400 `unknown variant "off", expected one of none, minimal, low, medium, high, xhigh, max`。

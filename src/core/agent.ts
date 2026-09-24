@@ -31,7 +31,13 @@ import { verifyTOTP } from "../auth/totp.js";
 import { loadConfig } from "../config/loader.js";
 import { insertMetric, isMetricKeyAllowed, addMetricKey, insertTokenBreakdown, insertTokenUsageOnly } from "../web/backend/db.js";
 import { breakdownMessages, classifyTokenSource } from "../memory/token-estimate.js";
-import { detectReasoningRepetition, emptyReplyNudge } from "../llm/reasoning-guard.js";
+import {
+  MAX_EMPTY_REPLY_RETRIES,
+  detectReasoningRepetition,
+  emptyReplyNudge,
+  reasoningLoopNudge,
+  sanitizeReasoningForStorage,
+} from "../llm/reasoning-guard.js";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isAbsolute, resolve as resolvePath } from "path";
@@ -1498,10 +1504,12 @@ async function runAgentInner(
   let totalCacheCreationTokens = 0; // cache creation token 累计
   // 文字模式格式纠错标记：true = 已注入纠错提示并重试，再次失败则直接返回原始输出
   let formatRetryPending = false;
-  // 空回复守卫：true = 已为"空正文"重试过一次（每次 run 只救一次，避免死循环）
-  let emptyRetryPending = false;
+  // 空回复守卫：本轮 run 已为"空正文"重试过的次数（上限 MAX_EMPTY_REPLY_RETRIES）
+  let emptyReplyAttempts = 0;
   /** 空回复的性质（写入指标 / 交给 main.ts 决定兜底文案）：length=被长度截断，degenerate=思考退化，silent=模型就是没说话 */
   let emptyReplyKind: "length" | "degenerate" | "silent" | undefined;
+  /** reasoning 退化过且已落库（截断后）：等工具结果写完再补纠偏提示，避免插进 tool_call/tool_result 之间 */
+  let reasoningLoopPending = false;
 
   // 轮次上限：0 = 无限制（用 Infinity 表示）；chat/cron 模式读取 maxChatToolRounds，code 模式读取 maxCodeToolRounds
   const configuredRounds = isCodeMode
@@ -1937,21 +1945,29 @@ async function runAgentInner(
           content = stripCanary(content);
         }
       }
-      // ── 空回复守卫（2026-09-13）──────────────────────────────────────────
+      // ── 空回复守卫（2026-09-13，2026-09-24 扩展）────────────────────────
       // 模型**没有工具调用但正文为空**时不能当作最终回复：实测 flash 级模型在超长会话里
-      // 会把输出预算全用在思考里、甚至退化成同一句的无限重复（reasoning_content 里
-      // "好。写。好。发送。…"），content 为空 —— 旧行为直接收尾，用户只看到兜底「✅ 已完成」。
-      // 这里：记日志（含 finish_reason / 退化检测）+ 注入纠偏提示**重试本轮一次**。
-      if (!emptyRetryPending && !content.trim()) {
+      // 会退化成同一句的无限重复（reasoning_content 里 "好。写。好。发送。…"），content 为空。
+      // 规则：
+      //   ① 连续空最多重试 MAX_EMPTY_REPLY_RETRIES 次，每次只注入纠偏提示、**不落库**——
+      //      实测一次 run 里会连着空好几轮，只救一次会让下一次的空正文 + 循环思考落库；
+      //   ② 用尽重试也不落库空 assistant 消息（空正文进 history 会被下一轮当范例照抄）；
+      //   ③ 用户可见文案由 main.ts 依据 emptyReplyKind 发（不能报「✅ 已完成」）。
+      if (!content.trim()) {
         const reasoning = _parsed.reasoningContent ?? "";
         const rep = detectReasoningRepetition(reasoning);
-        emptyReplyKind =
+        const kind: "length" | "degenerate" | "silent" =
           response.finishReason === "length" ? "length" : rep.degenerate ? "degenerate" : "silent";
+        emptyReplyKind = kind;
+        const willRetry = emptyReplyAttempts < MAX_EMPTY_REPLY_RETRIES;
         console.warn(
           `${logPrefix} ⚠️ 收到空回复（finish_reason=${response.finishReason ?? "?"}, ` +
             `reasoning=${reasoning.length} 字符, 单元=${rep.units}/去重=${rep.uniqueUnits}` +
             `${rep.degenerate ? `, **reasoning 重复退化**："${rep.repeatedLine}" ×${rep.repeats}` : ""}）` +
-            `→ 注入纠偏提示并重试本轮`
+            `第 ${emptyReplyAttempts + 1}/${MAX_EMPTY_REPLY_RETRIES + 1} 次，` +
+            (willRetry
+              ? "注入纠偏提示并重试本轮（不落库空正文与循环思考）"
+              : "重试次数用尽，不落库空 assistant 消息")
         );
         try {
           const KEY = "empty_reply";
@@ -1962,13 +1978,27 @@ async function runAgentInner(
         } catch {
           /* 指标写入失败不影响主流程 */
         }
-        emptyRetryPending = true;
-        session.addSystemMessage(emptyReplyNudge(emptyReplyKind));
-        continue;
+        if (willRetry) {
+          emptyReplyAttempts++;
+          session.addSystemMessage(emptyReplyNudge(kind));
+          continue;
+        }
+        finalContent = "";
+        bus.emit({ type: "turn:assistant", content: "", hasToolCalls: false });
+        break;
       }
 
+      // 成功产出正文：落库前净化 reasoning（退化 → 只留重复开始前的前缀 + 下一轮纠偏）
+      const storedReasoning = sanitizeReasoningForStorage(_parsed.reasoningContent);
       finalContent = content;
-      session.addAssistantMessage(finalContent, _parsed.reasoningContent);
+      session.addAssistantMessage(finalContent, storedReasoning.value);
+      if (storedReasoning.degenerate) {
+        console.warn(
+          `${logPrefix} ⚠️ 落库前检测到 reasoning 重复退化（"${storedReasoning.repeatedLine}" ` +
+            `×${storedReasoning.repeats}），只保留重复开始前的前缀并注入纠偏提示`
+        );
+        session.addSystemMessage(reasoningLoopNudge());
+      }
       bus.emit({ type: "turn:assistant", content, hasToolCalls: false });
       break;
     }
@@ -1979,10 +2009,21 @@ async function runAgentInner(
     // 过滤掉 null/undefined（LLM 返回稀疏 index 时可能出现），避免孤立 tool_call_id
     const validToolCalls = toolCalls.filter(Boolean);
     let interruptEmitted = false;
+    // 落库前净化 reasoning：退化只留重复开始前的前缀（整条丢弃会 400 —— 带 tools 时 DeepSeek
+    // 要求完整回传 reasoning_content）；纠偏提示必须等工具结果写完后补，否则会插进
+    // assistant.tool_calls 与 tool 消息之间，破坏 tool_call_id 配对。
+    const storedReasoning = sanitizeReasoningForStorage(_parsed.reasoningContent);
+    if (storedReasoning.degenerate) {
+      console.warn(
+        `${logPrefix} ⚠️ 落库前检测到 reasoning 重复退化（"${storedReasoning.repeatedLine}" ` +
+          `×${storedReasoning.repeats}），只保留重复开始前的前缀，工具批次结束后补纠偏提示`
+      );
+      reasoningLoopPending = true;
+    }
     if (!textMode) {
-      session.addAssistantWithToolCalls(content || "", validToolCalls, _parsed.reasoningContent);
+      session.addAssistantWithToolCalls(content || "", validToolCalls, storedReasoning.value);
     } else {
-      session.addAssistantMessage(content || "", _parsed.reasoningContent);
+      session.addAssistantMessage(content || "", storedReasoning.value);
     }
     bus.emit({ type: "turn:assistant", content: content || "", hasToolCalls: true });
 
@@ -2642,6 +2683,12 @@ async function runAgentInner(
 
     // 一整批工具处理完，若已中断则退出轮次循环
     if (session.abortRequested) break;
+
+    // reasoning 退化过：工具批次已写完，现在才补纠偏提示（见落库处的注释）
+    if (reasoningLoopPending) {
+      session.addSystemMessage(reasoningLoopNudge());
+      reasoningLoopPending = false;
+    }
 
     // ── Auto-fork 检查：超过阈值时将剩余任务交给 Slave 继续执行 ──────────
     // Code 模式是有状态的交互会话（工作区、plan 子模式等），不应 auto-fork

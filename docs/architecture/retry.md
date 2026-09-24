@@ -153,18 +153,37 @@ idle timeout (0 chunks)
 
 **策略**：一轮 LLM 调用若 `content` 为空且没有 tool_calls，就**不能**当作最终回复：
 
-| 判定（`llm/reasoning-guard.ts`） | 纠偏提示（英文，注入后**重试本轮一次**） |
+| 判定（`llm/reasoning-guard.ts`） | 纠偏提示（英文，注入后重试本轮） |
 |---|---|
 | `finish_reason === "length"` | 点明"输出被长度上限截断"，要求只给最终答案 |
 | reasoning 重复退化（同一短单元 ≥12 次） | 点明"思考在重复"，要求停止规划、直接给结果 |
 | 其余（模型确实没说话） | 要求直接给具体结果；若工具已交付，说明交付了什么 |
 
-- 每次 run 只救一次（`emptyRetryPending`），避免死循环
-- 日志点名原因：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）→ 注入纠偏提示并重试本轮`
+- **一轮 run 里连续空最多重试 `MAX_EMPTY_REPLY_RETRIES`（=3）次**：实测（2026-09-24，金融会话 254k
+  上下文，`finish_reason` 全为 `stop`）一次 run 会连着空两三轮，第一轮被救回后模型接着又空；
+  旧实现"只救一次"会让第二轮的空正文 + 循环思考直接落库，下一轮当成范例照抄
+- **重试与最终失败都不落库空 assistant 消息**（空正文进 history 会自我强化）
+- 日志点名原因（含第几次）：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）第 1/4 次，…`
 - 计数写入指标 `llm/empty_reply`（`note` = 三态之一），在 Dashboard「指标」页可见，便于统计发生率
 - 为区分三态，`ChatResult` 现在带 `finishReason`（流式从最后一个 chunk 取，非流式取 `choice.finish_reason`）
 - 重试仍为空 → 结果带 `emptyReplyKind`，`main.ts` 给出**诚实**兜底：退化/截断时发
   `⚠️ 模型这轮没有产出正文（思考退化成了重复）…`，而不是 `✅ 已完成`（后者只留给"工具已交付、模型确实没补充"的情形）
+
+### reasoning 落库净化（`sanitizeReasoningForStorage()`）
+
+**问题（2026-09-24）**：即使这一轮产出了正文或工具调用，退化的 reasoning 也会被
+`session.addAssistant*()` 原样写进 history；而 DeepSeek 思考模式下**只要请求带 `tools`，
+历史轮次的 `reasoning_content` 就会被拼接进上下文** → 上一轮的 `好。好。好。` 成为下一轮的范例。
+
+**策略**：落库前过一遍 `sanitizeReasoningForStorage()`：
+
+- 未退化 → 原样保留；
+- 退化 → 只保留**重复开始之前**的前缀（`trimAtFirstRepeat()`，至少保留该单元本身以保证非空），
+  并注入 `reasoningLoopNudge()`；
+- ⚠️ **不能整条丢弃**：带 `tools` 时 DeepSeek 要求历史 `reasoning_content` 完整回传，缺一个就 400
+  （官方《思考模式》文档「工具调用」节）；
+- 纠偏提示的注入位置：无工具调用时紧随该条 assistant 消息；有工具调用时**必须等工具结果写完**
+  （否则会插进 `assistant.tool_calls` 与 `tool` 消息之间，破坏 `tool_call_id` 配对）。
 
 ---
 

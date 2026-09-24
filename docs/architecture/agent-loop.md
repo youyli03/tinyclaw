@@ -404,13 +404,18 @@ runAgent() 恢复
 
 1. **判定三态**：`finish_reason === "length"` → 长度截断；reasoning 重复退化
    （同一 ≤24 字单元 ≥12 次，`detectReasoningRepetition()`）→ `degenerate`；其余 → `silent`；
-2. **纠偏重试一次**：注入英文纠偏提示（`emptyReplyNudge(kind)`）后 `continue` 重试本轮
-   （`emptyRetryPending` 保证每次 run 只救一次，不会死循环）；
-3. **点名日志**：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）`；
+2. **连续空最多重试 `MAX_EMPTY_REPLY_RETRIES`（=3）次**：每次注入英文纠偏提示（`emptyReplyNudge(kind)`）后
+   `continue` 重试本轮；**重试与最终失败都不落库空 assistant 消息**（2026-09-24 前是"只救一次"，
+   第二次空正文 + 循环思考会落库并被下一轮照抄）；
+3. **点名日志**：`⚠️ 收到空回复（finish_reason=…, reasoning=N 字符, 单元=x/去重=y, **reasoning 重复退化**："好。" ×N）第 1/4 次，…`；
 4. **可观测**：计数写入指标 `llm/empty_reply`（`note` = 三态），Dashboard「指标」页可见；
 5. **诚实兜底**：重试仍为空时结果带 `emptyReplyKind`，`main.ts` 对 `degenerate` / `length`
    发 `⚠️ 模型这轮没有产出正文（…），请再问一次或换个模型`；`✅ 已完成` 只留给
    "工具已交付结果、模型确实没有补充"的情形。
+6. **reasoning 落库净化**：产出正文/工具调用的轮次，落库前过 `sanitizeReasoningForStorage()` ——
+   退化时只保留**重复开始之前**的前缀并注入 `reasoningLoopNudge()`（带 `tools` 时 DeepSeek 要求
+   历史 `reasoning_content` 完整回传，整条丢弃会 400）；有工具调用时纠偏提示延到**工具结果写完**之后，
+   避免插进 `assistant.tool_calls` 与 `tool` 消息之间破坏配对。
 
 ---
 
