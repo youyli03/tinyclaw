@@ -243,6 +243,25 @@ runAgent(session, userContent, opts)
      abortRequested == false → 见第四节
 ```
 
+### 工具结果的落盘视图 vs 内存视图（临时结果）
+
+历史里有两类消息内容**只该活在内存里**：声明了 `ToolDef.ephemeralResult` 的工具结果（当前唯一使用者
+`manual` —— 按需拉取的英文操作手册，见 `docs/manual/`）。处理方式是一条规则、一个出口：
+
+| 视图 | 内容 |
+|---|---|
+| 内存 `session.messages` | 完整保留 assistant.tool_calls + role:"tool" —— 本轮请求的配对链必须完整，否则上游 400 |
+| 落盘（JSONL / 账本 / transcript） | 结果**不写**；对应的 `tool_call_id` 也从 assistant 的 `tool_calls` 里摘掉（否则重启后成孤立调用） |
+
+实现入口：`src/core/session.ts` 的 `_ephemeralCallIds`（id 由 `runAgent` 依据
+`isEphemeralResultTool()` 登记）+ `_serializeForPersist()`（唯一的落盘序列化出口）。
+压缩时 `dropEphemeralMessages()` 在摘要**之前**把它们整体摘除（连带修链），
+所以临时内容既不会被蒸馏进长期记忆，也不会逐字留在保留尾部 —— 详见
+[蒸馏管线 §八](../memory/distill-pipeline.md)。
+
+> 缓存一致性：临时内容唯一的消失点是压缩，而压缩本来就要重写整段历史（摘要 + 保留尾部），
+> 因此不额外破坏服务端前缀缓存；在轮次中途丢弃反而会让"稳定前缀"位移，把后续 token 全变成 miss。
+
 ---
 
 ## 四、Token 超限时的自动压缩

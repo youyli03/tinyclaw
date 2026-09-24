@@ -172,6 +172,25 @@ export interface ToolDef {
   execute: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
   /** 是否对 LLM 隐藏（不出现在 getAllToolSpecs() 返回值中），默认 false */
   hidden?: boolean;
+  /**
+   * 结果"只在本轮活着"：不进 JSONL / 原文账本 / 会话转录，压缩时被丢弃，因此**永远不会**
+   * 成为长期记忆（见 `Session.dropEphemeralMessages`）。
+   *
+   * 适用场景：按需拉取的参考资料 —— 模型读完把结论写进自己的回复即可，原文没有留存的必要；
+   * 而留在上下文里既占预算、又会在压缩时被蒸馏成"用户说过的话"，属于污染。
+   *
+   * 缓存代价：结果会在上下文里活到下一次压缩为止，期间它是"稳定前缀"的一部分（可命中
+   * 服务端 KV cache）；唯一的消失点是压缩，而那时整段历史本来就要重写，故不额外破坏缓存。
+   */
+  ephemeralResult?: boolean;
+}
+
+/**
+ * 该工具的结果是否临时（见 `ToolDef.ephemeralResult`）。
+ * 调用方（runAgent 的落盘逻辑）据此把 tool_call_id 登记进 Session。
+ */
+export function isEphemeralResultTool(name: string): boolean {
+  return tools.get(name)?.ephemeralResult === true;
 }
 
 const tools = new Map<string, ToolDef>();

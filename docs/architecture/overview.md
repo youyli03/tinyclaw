@@ -273,6 +273,7 @@ tinyclaw/
 │   │   ├── memory.ts         # memory_read/write_mem · read/write_active · append_feedback · append_card · append · search
 │   │   ├── recall.ts         # memory_recall(账本关键词检索) · memory_expand(按 seq 取回逐字原文)
 │   │   ├── wake.ts           # wake(唤醒另一个会话的 agent：注入消息 + 起一轮，受理即返回)
+│   │   ├── manual.ts         # manual(按需拉取英文操作手册 docs/manual/*.md;ephemeralResult=不落盘、压缩即弃)
 │   │   ├── self-status.ts    # self_status(自省：模型/上下文/缓存命中率/记忆规模/定时任务/运行时占用)
 │   │   ├── self-runtime.ts   # self_runtime_scan/read/delete(自指：读写删自己的运行时目录，密钥除外)
 │   │   ├── fs-grant-tool.ts  # fs_grant(路径级无感授权：$HOME 内非密钥路径，带 TTL + 审计)

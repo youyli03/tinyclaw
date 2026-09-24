@@ -352,8 +352,25 @@ export interface OpenAIToolCall {
 export type ChatMessage =
   | { role: "system"; content: string | ContentPart[] }
   | { role: "user"; content: string | ContentPart[] }
-  | { role: "assistant"; content: string | ContentPart[]; tool_calls?: OpenAIToolCall[]; reasoning_content?: string }
-  | { role: "tool"; tool_call_id: string; content: string };
+  | {
+      role: "assistant";
+      content: string | ContentPart[];
+      tool_calls?: OpenAIToolCall[];
+      reasoning_content?: string;
+    }
+  | { role: "tool"; tool_call_id: string; content: string; _ephemeral?: boolean };
+
+/**
+ * `_ephemeral`（仅 tool 消息）= **只在本轮活着**的工具结果：由声明了 `ToolDef.ephemeralResult`
+ * 的工具产生（第一个使用者是 `manual`，按需拉取英文手册）。
+ *
+ * - 不落盘：`Session._serializeForPersist()` 会跳过它，因此 JSONL 与原文账本（journal）都没有；
+ * - 不留孤立调用：登记在 `Session._ephemeralCallIds` 里的 tool_call_id 会同时从
+ *   assistant 的 `tool_calls` 中摘掉（否则重启加载后 tool_call 无结果 → 上游 400）；
+ * - 压缩即弃：`Session.compress()` / `compressForCode()` 在摘要**之前**调用
+ *   `dropEphemeralMessages()`，所以它既不会被摘要蒸馏进长期记忆，也不会逐字留在保留尾部；
+ * - 缓存友好：它唯一的消失点是"历史本来就要被重写"的压缩时刻，因此不额外破坏前缀缓存。
+ */
 
 /**
  * 发送给 LLM 前的消息形态。

@@ -39,7 +39,8 @@ const TriggerConfigSchema = z.object({
   agentId: z.string().default("default"),
   /**
    * 沙箱可写豁免：本 trigger 的 `exec_shell` 额外允许写入的目录（默认空）。
-   * 无人值守任务在沙箱里默认只能写自己的 agent 目录；脚本需要写别处时显式列出。支持 `~` 前缀。
+   * 无人值守任务里子进程默认只能写自己的 workspace（`agents/<id>/workspace`）与系统临时目录；
+   * 脚本需要写别处时显式列出。支持 `~` 前缀。
    */
   writablePaths: z.array(z.string()).default([]),
   /** 该 trigger 声明要读取的密钥名（同 cron job 的 `secrets`，见 src/cron/schema.ts 注释） */

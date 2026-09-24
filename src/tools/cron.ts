@@ -163,9 +163,9 @@ registerTool({
             type: "array",
             items: { type: "string" },
             description:
-              "Sandbox write exemptions (default empty). In the sandbox an unattended task " +
-              "can only write its own agent directory by default; when a script needs to " +
-              "write elsewhere, list it **explicitly**, e.g. " +
+              "Sandbox write exemptions (default empty). For a spawned process an unattended task " +
+              "can only write its own workspace (agents/<id>/workspace) plus the temp dir; when a " +
+              "script needs to write elsewhere, list it **explicitly**, e.g. " +
               '["~/.tinyclaw/data", "~/.tinyclaw/dashboard.db", "~/FinanceSkill"]. ' +
               "Applies only to this job and does not relax the secret mask.",
           },

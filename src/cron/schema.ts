@@ -120,9 +120,9 @@ export const CronJobSchema = z
   /**
    * **沙箱可写豁免**：此 job 的 `exec_shell`（及其 LLM 步骤里的 shell）额外允许写入的目录。
    *
-   * 无人值守任务在沙箱里默认只能写**自己的 agent 目录**（`~/.tinyclaw/agents/<id>`）。
-   * 脚本需要写别处时**显式列在这里** —— 例如交易类任务要写
-   * `~/.tinyclaw/data`（`options_monitor.db`）、`~/.tinyclaw/dashboard.db`、`~/FinanceSkill`。
+   * 无人值守任务里**子进程**默认只能写自己的 workspace（`~/.tinyclaw/agents/<id>/workspace`）
+   * 与系统临时目录（见 `sandbox/bwrap.ts` 的 rwPaths）。脚本需要写别处时**显式列在这里** —— 例如交易类
+   * 任务要写 `~/.tinyclaw/data`（`options_monitor.db`）、`~/.tinyclaw/dashboard.db`、`~/FinanceSkill`。
    *
    * 支持 `~` 前缀；只对**这个 job** 生效，不影响其他任务与 chat 模式。
    * 注意：这里只放宽"可写"，不放宽密钥掩码（密钥例外见 `[sandbox].readableSecretPaths`）。

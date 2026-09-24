@@ -380,6 +380,25 @@ env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<i
 | 默认(非 detached) | 随服务退出:服务退出/重启时被收掉;下次启动若发现**残留进程**也会按契约收掉(不会变成孤儿) |
 | `detach=true` | 放进**独立的 systemd transient unit**(独立 cgroup),因此能活过 `systemctl --user restart tinyclaw`;重启后 `job_status` 直接查 unit 探活,靠启动器写的 `rc` 文件补记退出码。无 `systemd-run` 的环境回落到 `setsid`+`unref`(只活过前台重启,活不过 `systemctl restart`) |
 
+### 模型手册（按需拉取，用完即弃）
+
+| 工具 | 说明 |
+|------|------|
+| `manual` | 按需拉取 tinyclaw 的**英文操作手册**（`topic`: `cron` / `jobs` / `loop` / `env`;不传则返回主题索引），内容在 `docs/manual/*.md` |
+
+为什么要它:cron / loop / job / env 的规则又长又互相牵连(谁能写哪里、密钥怎么声明、脚本里怎么唤醒 LLM),
+全塞进 system prompt 等于每轮都为一个偶尔才用的功能付 token。所以改成"要用时喊一声"。
+
+**结果是一次性的**(`ToolDef.ephemeralResult`,当前唯一使用者就是它):
+
+- 不进 JSONL、不进原文账本、不进 transcript → 不落盘;
+- 压缩时(`Session.compress()` / `compressForCode()`)在摘要**之前**被摘掉 → 不会被蒸馏进长期记忆;
+- 摘除时同步修链(把对应的 `tool_call_id` 从 assistant 的 `tool_calls` 里去掉),所以不会留下孤立调用;
+- 缓存友好:唯一的消失点是"历史本来就要重写"的压缩时刻,不额外破坏前缀缓存。
+
+因此模型必须在**自己的回复里**留下结论 —— 手册内容下一次压缩后就不在上下文里了。
+手册进仓库(`docs/manual/`),改代码时同步改手册;`manual.ts` 的 `MANUAL_VERSION` 随之 +1。
+
 ### Code 模式专用
 
 | 工具 | 说明 |
@@ -457,6 +476,13 @@ env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<i
 
 - [mcp/news.md](docs/mcp/news.md) — 多源新闻抓取/存档/检索
 - [mcp/notes.md](docs/mcp/notes.md) — 结构化笔记知识库
+
+**给模型看的手册（不是用户文档）**
+
+- [manual/cron.md](docs/manual/cron.md) — 定时任务的模式/调度字段/推送策略/沙箱与密钥声明
+- [manual/jobs.md](docs/manual/jobs.md) — 后台 job 生命周期、detach、读输出、从脚本唤醒 LLM
+- [manual/loop.md](docs/manual/loop.md) — loop 触发器(watch 语义)、loop_control、已知限制
+- [manual/env.md](docs/manual/env.md) — 环境变量分层、密钥、沙箱可写范围、`wake` 命令
 
 ## License
 

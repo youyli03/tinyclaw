@@ -295,6 +295,13 @@ if there is nothing new.
   `memory_expand` 按 `seq` 取回原话；
 - 由 `[memory].journalEnabled` 控制（默认 true）。
 
+**临时内容不进这条管线**（2026-09-25 起）：声明了 `ToolDef.ephemeralResult` 的工具（当前唯一使用者是
+`manual`，即按需拉取的英文操作手册）的结果**不写** JSONL、**不写**账本、**不写** transcript，
+并且在 `compress()` / `compressForCode()` 调用 `summarizeAndCompress*` **之前**由
+`Session.dropEphemeralMessages()` 摘掉。理由是：这类内容是"查阅资料"而不是"发生过的事"，
+留在上下文里既占预算，又会在压缩时被当成对话内容蒸馏进 MEM/摘要 —— 那就等于把一份手册写进用户偏好。
+模型必须在自己的回复里留下结论（`src/core/session.ts` 的 `_ephemeralCallIds` 注释有完整说明）。
+
 ---
 
 ## 九、相关文档

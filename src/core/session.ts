@@ -377,6 +377,16 @@ export class Session {
   /** 构造函数完成加载后置为 true；为 false 时不写 JSONL（避免加载历史时重复追加） */
   private _persistReady = false;
 
+  /**
+   * 属于"临时工具调用"的 tool_call_id 集合（见 `dropEphemeralMessages`）。
+   *
+   * 这是临时性的**唯一真相来源**：assistant 侧由 `addAssistantWithToolCalls` 登记（调用方
+   * 依据工具声明 `ToolDef.ephemeralResult` 传入），role:"tool" 侧按 id 归属自动判定，
+   * 因此两侧的"落盘视图"永远一致 —— 不会出现磁盘上留下孤立 tool_call 的情况。
+   * 空集合 = 该会话从未用过临时工具，所有持久化路径行为与从前完全一致。
+   */
+  private _ephemeralCallIds = new Set<string>();
+
   // ── Agent Bind（父子关系）──────────────────────────────────────────────────
   /** 父 Session ID(由 agent_fork 等创建时设置) */
   parentId?: string;
@@ -627,7 +637,12 @@ export class Session {
    * 添加 assistant 消息并附带 tool_calls（function calling 模式专用）。
    * 仅在 textMode=false（模型支持原生 function calling）时调用。
    */
-  addAssistantWithToolCalls(content: string, calls: ToolCallResult[], reasoningContent?: string): void {
+  addAssistantWithToolCalls(
+    content: string,
+    calls: ToolCallResult[],
+    reasoningContent?: string,
+    ephemeralCallIds?: Iterable<string>
+  ): void {
     const maxArgChars = (() => {
       try {
         return loadConfig().tools.maxToolCallArgChars;
@@ -658,6 +673,10 @@ export class Session {
       tool_calls,
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     });
+    // 登记临时调用 id：落盘视图会摘掉它们（内存视图保留，保证本轮请求链完整）
+    if (ephemeralCallIds) {
+      for (const id of ephemeralCallIds) this._ephemeralCallIds.add(id);
+    }
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
   }
 
@@ -666,9 +685,125 @@ export class Session {
    * tool_call_id 必须与对应 assistant.tool_calls[].id 匹配。
    * 仅在 textMode=false 时调用；文本模型继续使用 addSystemMessage。
    */
-  addToolResultMessage(toolCallId: string, content: string): void {
-    this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+  addToolResultMessage(toolCallId: string, content: string, opts?: { ephemeral?: boolean }): void {
+    const msg: ChatMessage = { role: "tool", tool_call_id: toolCallId, content };
+    if (opts?.ephemeral) msg._ephemeral = true;
+    this.messages.push(msg);
     this._appendMsgToJsonl(this.messages[this.messages.length - 1]!);
+  }
+
+  /**
+   * 该消息是否"只在本轮活着"（不落盘、压缩即弃）。判定来源取并集：
+   *  1. `tool_call_id ∈ _ephemeralCallIds`：function calling 路径，id 由 assistant 侧登记；
+   *  2. tool 消息自带 `_ephemeral` 标记：调用方显式声明的临时结果（`addToolResultMessage` 的 opts）。
+   * 两条都覆盖，是为了让"临时"既能按工具声明自动生效，也能被单独指定。
+   * 文本模型（textMode）不使用 tool 角色，故不参与该机制。
+   */
+  private _isEphemeralMsg(m: ChatMessage): boolean {
+    if (m.role !== "tool") return false;
+    return m._ephemeral === true || this._ephemeralCallIds.has(m.tool_call_id);
+  }
+
+  /**
+   * 复制一条 assistant 消息但**不带 tool_calls**（用于摘掉临时调用后仍保留其文本内容）。
+   * 不用 `{...m, tool_calls: undefined}`：`exactOptionalPropertyTypes` 下显式 undefined 不合法，
+   * 而下游（API 序列化 / sanitizeMessages）判断的是"数组存在且非空"，留空数组反而可能被判为异常。
+   */
+  private static withoutToolCalls(
+    m: ChatMessage & { role: "assistant" }
+  ): { role: "assistant"; content: string | ContentPart[]; reasoning_content?: string } {
+    const copy: { role: "assistant"; content: string | ContentPart[]; reasoning_content?: string } = {
+      role: "assistant",
+      content: m.content,
+    };
+    if (m.reasoning_content) copy.reasoning_content = m.reasoning_content;
+    return copy;
+  }
+
+  /**
+   * 落盘序列化：临时的部分在这里被摘掉，**内存视图不受影响**。
+   *
+   * 关键约束（前缀缓存一致性）：只允许摘掉「本来就是本轮新增的临时内容」，
+   * 不能顺手改动任何历史消息 —— assistant 摘掉临时 `tool_calls` 是必需的，
+   * 否则磁盘上会留下没有 tool result 的孤立 tool_call，重启加载后必然 400。
+   *
+   * @returns 序列化后的行；`null` = 这条消息不应出现在磁盘上。
+   */
+  private _serializeForPersist(m: ChatMessage & { _loopTaskRef?: string }, ts?: string): string | null {
+    if (this._isEphemeralMsg(m)) return null;
+    if (m.role === "assistant" && m.tool_calls?.length && this._ephemeralCallIds.size > 0) {
+      const kept = m.tool_calls.filter((c) => !this._ephemeralCallIds.has(c.id));
+      if (kept.length !== m.tool_calls.length) {
+        const hasText =
+          typeof m.content === "string" ? m.content.trim().length > 0 : m.content.length > 0;
+        // 整条都是临时调用且无文本 → 这条 assistant 本身也是临时的，不落盘
+        if (kept.length === 0 && !hasText) return null;
+        return Session.serializeMsgFull(
+          kept.length === 0 ? Session.withoutToolCalls(m) : { ...m, tool_calls: kept },
+          ts
+        );
+      }
+    }
+    return Session.serializeMsgFull(m, ts);
+  }
+
+  /**
+   * 摘掉所有临时消息（"用完即弃"的工具结果，例如按需拉取的手册）。
+   *
+   * **只在压缩前调用**，理由是前缀缓存：临时内容通常位于上下文尾部，
+   * 压缩本来就要重写整段历史（摘要 + 保留尾部），此时丢弃它不额外损失任何缓存；
+   * 而在轮次中途丢弃会让"稳定前缀"发生位移，反而把后续所有 token 变成 cache miss。
+   * 换句话说：临时内容唯一的消失点，就是历史本来就要被改写的那个时刻。
+   *
+   * 调用时机必须在 `summarizeAndCompress*` **之前** —— 否则临时内容会进入摘要，
+   * 那就等于"蒸馏进长期记忆"，与"临时"的语义相反。
+   *
+   * 链条修复：删掉 role:"tool" 会留下没有结果的 `tool_calls`，上游会以 400 拒绝，
+   * 因此同步从 assistant 里摘掉这些 id；若摘完既无文本也无调用，整条 assistant 删除。
+   *
+   * @returns 实际删除的消息条数（0 表示本来就没有）。
+   */
+  dropEphemeralMessages(): number {
+    const hasAny =
+      this._ephemeralCallIds.size > 0 || this.messages.some((m) => this._isEphemeralMsg(m));
+    if (!hasAny) return 0;
+
+    const doomed = new Set(this._ephemeralCallIds);
+    for (const m of this.messages) {
+      if (m.role === "tool" && m._ephemeral) doomed.add(m.tool_call_id);
+    }
+
+    const kept: ChatMessage[] = [];
+    let removed = 0;
+    for (const m of this.messages) {
+      if (this._isEphemeralMsg(m)) {
+        removed++;
+        continue;
+      }
+      if (m.role === "assistant" && m.tool_calls?.length) {
+        const remaining = m.tool_calls.filter((c) => !doomed.has(c.id));
+        if (remaining.length === m.tool_calls.length) {
+          kept.push(m);
+          continue;
+        }
+        const hasText =
+          typeof m.content === "string" ? m.content.trim().length > 0 : m.content.length > 0;
+        if (remaining.length === 0 && !hasText) {
+          removed++;
+          continue;
+        }
+        kept.push(
+          remaining.length === 0 ? Session.withoutToolCalls(m) : { ...m, tool_calls: remaining }
+        );
+        continue;
+      }
+      kept.push(m);
+    }
+    this._ephemeralCallIds.clear();
+    if (removed === 0) return 0;
+    this.messages.length = 0;
+    this.messages.push(...kept);
+    return removed;
   }
 
   /**
@@ -682,11 +817,17 @@ export class Session {
     ) as { role: "tool"; tool_call_id: string; content: string } | undefined;
     if (!msg) return;
     msg.content = content;
+    // 临时结果根本不在磁盘上：只更新内存即可，否则会把它"复活"成历史消息
+    if (this._isEphemeralMsg(msg as ChatMessage)) return;
     // 全量覆写 JSONL，使磁盘与内存一致
     try {
       const filePath = this._getJsonlPath(this.mode === "code" ? "code" : "chat");
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
+      const lines =
+        this.messages
+          .map((m) => this._serializeForPersist(m))
+          .filter((l): l is string => l !== null)
+          .join("\n") + "\n";
       fs.writeFileSync(filePath, lines, "utf-8");
       // 账本是 append-only：原地更新以 patch 记录追加，而不是改历史行
       appendJournalPatch(filePath, callId, content);
@@ -1127,6 +1268,9 @@ export class Session {
    * 返回摘要文本，供调用方通知用户。
    */
   async compress(): Promise<string> {
+    // 临时内容（手册类）在这里退场：必须早于摘要，否则会被蒸馏进长期记忆。
+    // 压缩本来就要重写整段历史，所以此刻丢弃不额外损失前缀缓存（见 dropEphemeralMessages）。
+    this.dropEphemeralMessages();
     // 逐字保留的近期尾部预算 = 上下文窗口 × CHAT_RETAIN_RATIO（对齐 DSH retainRatio 0.16）
     const ctxWindow = llmRegistry.getContextWindow("daily", this.lastResponseAt);
     const retainTokens = Math.max(1, Math.floor(ctxWindow * CHAT_RETAIN_RATIO));
@@ -1169,6 +1313,8 @@ export class Session {
    * 返回 true 表示压缩已执行。
    */
   async compressForCode(): Promise<boolean> {
+    // 同 compress()：临时内容先退场再摘要
+    this.dropEphemeralMessages();
     const compressed = await summarizeAndCompressCode(
       this.messages,
       this.agentId,
@@ -1471,12 +1617,14 @@ export class Session {
     if (!this._persistReady) return;
     try {
       const filePath = this._getJsonlPath();
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.appendFileSync(
-        filePath,
-        Session.serializeMsgFull(msg, new Date().toISOString()) + "\n",
-        "utf-8"
+      // 临时消息（_ephemeral / _ephemeralCallIds）在这里被挡下：JSONL 与原文账本都不写。
+      const line = this._serializeForPersist(
+        msg as ChatMessage & { _loopTaskRef?: string },
+        new Date().toISOString()
       );
+      if (line === null) return;
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, line + "\n", "utf-8");
       // 原文账本：JSONL 视图会被压缩/剪枝覆写，账本只追加 —— 保证原文还能被
       // memory_expand / memory_recall 取回（见 src/memory/journal.ts）。
       // 可用 [memory].journalEnabled 关闭；这里是"用时现读"，改配置立即生效。
@@ -1509,11 +1657,12 @@ export class Session {
     if (!hasAssistantAfter) return;
 
     const ts = new Date().toISOString();
-    // 序列化从 user 消息开始到末尾的完整工具调用链
+    // 序列化从 user 消息开始到末尾的完整工具调用链（临时消息被 _serializeForPersist 摘掉）
     const lines =
       msgs
         .slice(userIdx)
-        .map((m) => Session.serializeMsgFull(m, ts))
+        .map((m) => this._serializeForPersist(m, ts))
+        .filter((l): l is string => l !== null)
         .join("\n") + "\n";
 
     try {
@@ -1535,7 +1684,11 @@ export class Session {
     try {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
+      const lines =
+        this.messages
+          .map((m) => this._serializeForPersist(m))
+          .filter((l): l is string => l !== null)
+          .join("\n") + "\n";
       // 重写后追加 _meta:promptTokens + _meta:lastResponseAt,确保压缩后不丢失
       const metaLines: string[] = [];
       if (this.lastPromptTokens > 0) {
@@ -1576,7 +1729,11 @@ export class Session {
     try {
       const filePath = this._getJsonlPath();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const lines = this.messages.map((m) => Session.serializeMsgFull(m)).join("\n") + "\n";
+      const lines =
+        this.messages
+          .map((m) => this._serializeForPersist(m))
+          .filter((l): l is string => l !== null)
+          .join("\n") + "\n";
       const metaLine =
         this.lastResponseAt > 0
           ? JSON.stringify({

@@ -10,7 +10,13 @@ import { acquireLLMSlot, releaseLLMSlot } from "../llm/concurrency.js";
 import { searchMemory } from "../memory/qmd.js";
 import { appendTranscript } from "../memory/transcript.js";
 import { shouldSummarize, shouldSummarizeCode, distillTurnToDiary } from "../memory/summarizer.js";
-import { getAllToolSpecs, getTool, executeTool, setBuiltinAgentFilter } from "../tools/registry.js";
+import {
+  getAllToolSpecs,
+  getTool,
+  executeTool,
+  setBuiltinAgentFilter,
+  isEphemeralResultTool,
+} from "../tools/registry.js";
 import {
   injectPurposeParam,
   normalizePurpose,
@@ -87,6 +93,7 @@ import "../tools/ask-user-tool.js";
 import "../tools/memory.js";
 import "../tools/recall.js";
 import "../tools/wake.js";
+import "../tools/manual.js";
 import "../tools/self-status.js";
 import "../tools/self-runtime.js";
 import "../tools/fs-grant-tool.js";
@@ -2049,7 +2056,14 @@ async function runAgentInner(
       reasoningLoopPending = true;
     }
     if (!textMode) {
-      session.addAssistantWithToolCalls(content || "", validToolCalls, storedReasoning.value);
+      // 临时工具（ephemeralResult）的 call_id 在这里登记：落盘视图会摘掉这些调用，
+      // 避免磁盘上留下没有 tool result 的孤立 tool_call（重启加载会 400）。
+      session.addAssistantWithToolCalls(
+        content || "",
+        validToolCalls,
+        storedReasoning.value,
+        validToolCalls.filter((c) => isEphemeralResultTool(c.name)).map((c) => c.callId)
+      );
     } else {
       session.addAssistantMessage(content || "", storedReasoning.value);
     }
@@ -2110,7 +2124,9 @@ async function runAgentInner(
         : undefined;
 
       const callSummary = toolCallSummary(call.name, toolArgs);
-      toolCallSummaries.push(callSummary);
+      // 临时工具（ephemeralResult）不进 transcript：它是一次"按需查阅"，不是这轮做过的事。
+      // 与 JSONL / 原文账本一致 —— 临时即不进入任何持久层（内容与痕迹都不留）。
+      if (!isEphemeralResultTool(call.name)) toolCallSummaries.push(callSummary);
       console.log(`${logPrefix} tool: ${callSummary}${purpose ? ` 「${purpose}」` : ""}`);
       bus.emit({
         type: "tool:call",
@@ -2334,7 +2350,12 @@ async function runAgentInner(
               }
             }
           } else {
-            session.addToolResultMessage(call.callId, result);
+            // ephemeralResult 工具（如 manual）：结果只在本轮活着，不落盘、不转录、压缩即弃
+            session.addToolResultMessage(
+              call.callId,
+              result,
+              isEphemeralResultTool(call.name) ? { ephemeral: true } : undefined
+            );
           }
           // MCP tool 返回了图片(如截图),直接注入视觉上下文
           if (result.includes("__MCP_IMAGE__:")) {

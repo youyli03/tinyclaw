@@ -113,6 +113,8 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | Loop（runner / trigger） | `docs/commands/loop-session.md` / `docs/commands/loop-trigger.md` |
 | Code 模式（命令 / prompt / 子模式） | `docs/commands/code-mode.md` |
 | 记忆 / 压缩 / 蒸馏 | `docs/memory/qmd-embed.md` / `docs/memory/distill-pipeline.md` |
+| 模型手册（`docs/manual/*.md`、`src/tools/manual.ts`） | 手册正文即文档本身；改规则必须同时改手册，并把 `MANUAL_VERSION` +1 |
+| 工具结果落盘视图（`ToolDef.ephemeralResult` / `Session._serializeForPersist`） | `docs/architecture/agent-loop.md`「工具结果的落盘视图 vs 内存视图」+ `README.md` 工具表 |
 | 工作区指令装载（`src/instructions/`） | `docs/commands/code-mode.md` 的「工作区指令注入」节 |
 | Web Dashboard（`src/web/backend/**`、`src/web/frontend/**`） | `docs/architecture/overview.md` 的「Dashboard(Web UI)」节 |
 | 重试 / 超时 / 流式稳定性 | `docs/architecture/retry.md` |
@@ -468,6 +470,17 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   - auto-fork 触发时（`agent.ts` 读 `agent.autoForkThresholdMs`，默认 120000ms，0 = 关闭）Master 当前轮**直接 break**，其手上的中间结论不随上下文交给 continuation Slave
   - `tools/skill-run.ts` 的 skill 临时 session 在**失败路径不清理** JSONL（`deleteJsonl` 只在成功分支），且 300s 超时用的是 `Promise.race`，**不取消**后台仍在跑的 Slave
   - **子 Agent 拿不到声明式密钥**：按任务声明的密钥（`sandbox/secrets-filter.ts` 方案 B）目前只有 cron job / loop trigger 能声明，`agent_fork` 与 `skill_run` 的子 Agent **无处声明、也不继承父的声明** → 它们在沙箱里 `exec_shell` 读 `~/.tinyclaw/secrets.toml` 一律是**空文件**。要让子 Agent 用密钥，需给 `agent_fork` 加 `secrets: [...]`（按任务声明 + 审计），暂未做
+- **工具结果有"落盘视图"和"内存视图"之分，`_ephemeral` 不是 bug（2026-09-25）**：`ToolDef.ephemeralResult`
+  的工具（`manual`）结果**只活在内存里** —— 不写 JSONL / 原文账本 / transcript，`compress*()` 会在摘要前
+  `dropEphemeralMessages()` 摘掉它。**落盘时还必须从 assistant 的 `tool_calls` 里摘掉它的 `tool_call_id`**
+  （`Session._serializeForPersist()` 是唯一出口），否则磁盘上留下"有 tool_call 没结果"的孤立链，重启加载后必 400。
+  同理 `updateToolResult()` 对临时结果是 no-op —— 它不在盘上，回写等于把它复活成历史。
+  ⚠️ 别把它"修"成持久化，也别在轮次中途丢它：唯一安全的消失点是压缩（那时历史本来就要重写），
+  中途丢弃会让稳定前缀位移、把后续 token 全变成 cache miss。
+- **沙箱对子进程只给 workspace 可写，不是整个 agent 目录**：`sandbox/bwrap.ts` 的 rwPaths = `agents/<id>/workspace`
+  + 系统临时目录 + 声明的 `writablePaths`/`extraRwPaths`。`agents/<id>/memory`、`agents/<id>/env`、`~/.tinyclaw`
+  其余部分**默认不可写**（此前 schema 注释写成"agent 目录"，已按代码修正）。另外沙箱只包**子进程**，
+  agent 自己的 `write_file`/`edit_file` 走 path-guard + `fs_grant`，两者不是一个口径。
 
 ### 7.5 Loop 引擎（确认存在、影响真实运行）
 

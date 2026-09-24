@@ -449,6 +449,9 @@ const SandboxSchema = z
           "self_runtime_scan",
           "self_runtime_read",
           "search_store",
+          // 按需拉取的英文操作手册（cron/loop/job/env）：无人值守的自动化最需要它，
+          // 结果用完即弃（ToolDef.ephemeralResult），不会污染历史
+          "manual",
           // 只读自省（不含 cron_add/remove/enable/disable 这类改动调度状态的）
           "cron_list",
           "mcp_list_servers",
