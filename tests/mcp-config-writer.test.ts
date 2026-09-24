@@ -50,7 +50,7 @@ test("renderServerBlock:stdio（含 args / env / description）能被解析回�
   const block = renderServerBlock("exa", {
     transport: "stdio",
     command: "bun",
-    args: ["/home/lyy/tinyclaw/mcp-servers/exa/index.ts"],
+    args: ["mcp-servers/exa/index.ts"],
     env: { EXA_API_KEY: "${SECRET:EXA_API_KEY}" },
     description: "Exa 搜索",
   });
@@ -61,7 +61,7 @@ test("renderServerBlock:stdio（含 args / env / description）能被解析回�
   assert.equal(srv.transport, "stdio");
   if (srv.transport === "stdio") {
     assert.equal(srv.command, "bun");
-    assert.deepEqual(srv.args, ["/home/lyy/tinyclaw/mcp-servers/exa/index.ts"]);
+    assert.deepEqual(srv.args, ["mcp-servers/exa/index.ts"]);
     assert.equal(srv.env?.["EXA_API_KEY"], "${SECRET:EXA_API_KEY}");
   }
   assert.equal(srv.description, "Exa 搜索");
@@ -106,7 +106,7 @@ const USER_FILE = `# 我的 MCP 配置（这段注释必须活着）
 enabled   = false
 transport = "stdio"
 command   = "bun"
-args      = ["/home/lyy/tinyclaw/mcp-servers/notes/index.ts"]
+args      = ["mcp-servers/notes/index.ts"]
 
 # 自定义段落，写入器不该碰
 [custom]
