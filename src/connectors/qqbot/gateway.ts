@@ -23,7 +23,14 @@ const INTENTS = {
   GROUP_AND_C2C: 1 << 25,
 } as const;
 
-/** 三档权限，从高到低依次尝试，失败自动降级 */
+/**
+ * 三档权限，从高到低。
+ *
+ * ⚠️ **只有 close code 4013（Invalid intent）才允许降档**。op 9（Invalid session）是
+ * 会话层问题，和"意图是否被授权"无关 —— 早期版本在 op 9 时递增档位，于是偶发掉线会把
+ * bot 永久砍成"仅频道消息"（不含 `GROUP_AND_C2C`），QQ 不再推单聊/群消息，而发送走
+ * REST 不受影响，表现为**只能发不能收**。降档还会被写进 session 文件，重启也救不回来。
+ */
 const INTENT_LEVELS = [
   {
     name: "full",
@@ -49,6 +56,14 @@ const RATE_LIMIT_DELAY = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 100;
 const QUICK_DISCONNECT_THRESHOLD = 5000;
 const MAX_QUICK_DISCONNECT_COUNT = 3;
+
+/**
+ * 降档后的回升节奏。降档的唯一理由是服务端明确拒绝意图（4013），而权限可能被重新授予，
+ * 所以降档不是终点：到点先用**最高档**重试，再被拒则退避翻倍（10min → 20min → … → 6h）。
+ * 回升只发生在一次新的 Identify 上，连接本身不会因此被打断。
+ */
+const INTENT_RETRY_BASE_MS = 10 * 60_000;
+const INTENT_RETRY_MAX_MS = 6 * 60 * 60_000;
 
 // ── 消息队列参数 ──────────────────────────────────────────────────────────────
 
@@ -81,7 +96,6 @@ import * as path from "node:path";
 interface SessionState {
   sessionId: string;
   lastSeq: number | null;
-  intentLevelIndex: number;
   appId: string;
 }
 
@@ -101,6 +115,11 @@ function loadSession(appId: string): SessionState | null {
   }
 }
 
+/**
+ * ⚠️ 这里**刻意不持久化意图档位**（旧版本写过 `intentLevelIndex` 字段，现在读出来直接忽略，
+ * 下次 saveSession 会把它抹掉）：进程启动一律从最高档试起，历史文件里冻结的降档状态
+ * 是"重启也恢复不了收消息"的根因。
+ */
 function saveSession(s: SessionState): void {
   try {
     const p = getSessionPath(s.appId);
@@ -142,14 +161,14 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   let shouldRefreshToken = false;
   let intentLevelIndex = 0;
   let lastSuccessfulIntentLevel = -1;
+  let intentRetryDelayMs = INTENT_RETRY_BASE_MS;
+  let nextIntentRetryAt = 0;
 
-  // 恢复持久化 Session
+  // 恢复持久化 Session（只恢复 Resume 所需的 sessionId/seq，不含意图档位）
   const saved = loadSession(appId);
   if (saved) {
     sessionId = saved.sessionId;
     lastSeq = saved.lastSeq;
-    intentLevelIndex = saved.intentLevelIndex;
-    lastSuccessfulIntentLevel = saved.intentLevelIndex;
     log?.info(`[qqbot] Restored session: ${sessionId}, seq=${lastSeq}`);
   }
 
@@ -274,12 +293,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
           if (s !== undefined && s !== null) {
             lastSeq = s;
             if (sessionId) {
-              saveSession({
-                sessionId,
-                lastSeq,
-                intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel),
-                appId,
-              });
+              saveSession({ sessionId, lastSeq, appId });
             }
           }
 
@@ -306,6 +320,14 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
                   })
                 );
               } else {
+                // 降档到点后先回到最高档重试：权限可能已被重新授予
+                if (intentLevelIndex > 0 && Date.now() >= nextIntentRetryAt) {
+                  log?.info(
+                    `[qqbot] Retrying highest intents after downgrade (was: ${INTENT_LEVELS[intentLevelIndex]!.description})`
+                  );
+                  intentLevelIndex = 0;
+                  lastSuccessfulIntentLevel = -1;
+                }
                 const lvlIdx =
                   lastSuccessfulIntentLevel >= 0 ? lastSuccessfulIntentLevel : intentLevelIndex;
                 const lvl = INTENT_LEVELS[Math.min(lvlIdx, INTENT_LEVELS.length - 1)]!;
@@ -325,19 +347,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               if (t === "READY") {
                 sessionId = (d as { session_id: string }).session_id;
                 lastSuccessfulIntentLevel = intentLevelIndex;
+                // 最高档跑通 → 回升节奏复位（下次再被 4013 降档时仍从 10min 起算）
+                if (intentLevelIndex === 0) intentRetryDelayMs = INTENT_RETRY_BASE_MS;
                 const lvl = INTENT_LEVELS[intentLevelIndex]!;
                 log?.info(`[qqbot] Ready: ${lvl.description}, session: ${sessionId}`);
-                saveSession({ sessionId, lastSeq, intentLevelIndex, appId });
+                saveSession({ sessionId, lastSeq, appId });
                 onReady?.();
               } else if (t === "RESUMED") {
                 log?.debug?.("[qqbot] Session resumed");
-                if (sessionId)
-                  saveSession({
-                    sessionId,
-                    lastSeq,
-                    intentLevelIndex: Math.max(0, lastSuccessfulIntentLevel),
-                    appId,
-                  });
+                if (sessionId) saveSession({ sessionId, lastSeq, appId });
                 onReady?.(); // RESUMED 也视为就绪,触发 restart_tool 续接等逻辑
               } else if (t === "C2C_MESSAGE_CREATE") {
                 const ev = d as C2CMessageEvent;
@@ -434,21 +452,15 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               break;
 
             case 9: {
-              // Invalid session
+              // Invalid session：**会话**层问题（session 过期 / Resume 被拒）。
+              // 处理方式只是清掉 session 后重新 Identify —— 与意图权限无关，
+              // 因此这里既不动 intentLevelIndex，也不换 token。
               const canResume = d as boolean;
               log?.error(`[qqbot] Invalid session, can resume: ${canResume}`);
               if (!canResume) {
                 sessionId = null;
                 lastSeq = null;
                 clearSession(appId);
-                if (intentLevelIndex < INTENT_LEVELS.length - 1) {
-                  intentLevelIndex++;
-                  log?.info(
-                    `[qqbot] Downgrading to: ${INTENT_LEVELS[intentLevelIndex]!.description}`
-                  );
-                } else {
-                  shouldRefreshToken = true;
-                }
               }
               cleanup();
               scheduleReconnect(3000);
@@ -479,6 +491,27 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
         if (code === 4004) {
           shouldRefreshToken = true;
+        }
+        if (code === 4013) {
+          // Invalid intent(s)：**唯一**可以降档的判据（凭据/会话都没问题，是权限不够）
+          sessionId = null;
+          lastSeq = null;
+          clearSession(appId);
+          if (intentLevelIndex < INTENT_LEVELS.length - 1) {
+            intentLevelIndex++;
+            lastSuccessfulIntentLevel = -1;
+            nextIntentRetryAt = Date.now() + intentRetryDelayMs;
+            log?.error(
+              `[qqbot] Invalid intent (4013), downgrading to: ${
+                INTENT_LEVELS[intentLevelIndex]!.description
+              }（${Math.round(intentRetryDelayMs / 60000)} 分钟后重试最高档）`
+            );
+            intentRetryDelayMs = Math.min(intentRetryDelayMs * 2, INTENT_RETRY_MAX_MS);
+          } else {
+            log?.error(
+              "[qqbot] Invalid intent (4013) even at the lowest level; check the bot's permission settings in the QQ console."
+            );
+          }
         }
         if (code === 4006 || code === 4007 || code === 4009 || (code >= 4900 && code <= 4913)) {
           sessionId = null;

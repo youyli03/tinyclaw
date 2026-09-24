@@ -402,8 +402,7 @@ tinyclaw/
 │   ├── seen_urls.db          # L1 URL 精确去重数据库（SQLite）
 │   └── .update-pending       # 存在时触发主进程 QMD 重新索引 news 知识库
 └── qqbot/
-    ├── session.json          # WS Session 持久化（断线续传）
-    └── downloads/            # 附件临时文件
+    └── session-<appId>.json  # WS Session 持久化（仅 sessionId/lastSeq；每个 bot 一份）
 ```
 
 ---
@@ -737,7 +736,8 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 | API | `api.ts` | QQ REST API 封装（token singleflight、send 系列方法；`markdownSupport` 开启时以 `msg_type: 2 + markdown.content` 发送，否则 `msg_type: 0 + content`） |
 | 传输 | `gateway.ts` | WebSocket 协议（Hello/Identify/Resume/Heartbeat/Reconnect） |
 | 队列 | `gateway.ts` | 每 peerId 独立串行队列，跨用户并行（最多 10 并发） |
-| 重连 | `gateway.ts` | 递增延迟重连（1s→60s），三档 Intent 权限自动降级 |
+| 意图档位 | `gateway.ts` | 三档（群聊+私信+频道 / 群聊+频道 / 仅频道消息）。**只有 close code 4013（Invalid intent）才降档**，降档后按 10min→20min→…→6h 退避用最高档重试；op 9（Invalid session）只清 session 重新 Identify，**不降档**；档位不落盘，进程启动一律从最高档试起（早期版本在 op 9 降档且把档位写进 session 文件，会把 bot 永久砍成"仅频道消息"→ 收不到单聊/群消息，而发送走 REST 不受影响，表现为"只能发不能收"） |
+| 重连 | `gateway.ts` | 递增延迟重连（1s→2s→5s→10s，`4008`/频繁快断为 60s） |
 | 发送 | `outbound.ts` | 被动回复限流（1h/4次），超限自动降级主动消息，长文本分块；`C2CStreamSession` 用官方 `/stream_messages` 流式输出**单聊最终回复**（整段只占 1 次额度；失败/前缀不匹配自动回退普通发送）。⚠️ **流式消息有长度预算**：响应里的 `remain_msg_len`（字符数）是硬约束，超限后平台**静默丢弃**后续分片（请求仍 200），消息会停在"生成中"、最后一片 `input_state=10` 也丢——表现为手机只显示开头几个字而 Dashboard 正文完整。因此该会话**读 `remain_msg_len` 建容量**（另加 2048 字节保守上限，实测 585 字≈1755B 通过、778 字≈2334B 被截断），超预算即停止推送，收尾时用**能装下的最长前缀**（优先段落边界）发 `input_state=10`，剩下的正文由 `main.ts` 用普通发送续发（`finish()` 返回 `{streamed, sentText, remainder}` 表达这个分工） |
 | 富媒体 | `utils/media-parser.ts` | `<img>/<audio>/<video>/<file>` 标签解析（含 `qqimg` 等别名与代码块屏蔽）。流式路径额外用 `splitMediaText()` 把正文与媒体标签分开：**正文走流式、媒体单独走普通发送**——`sendMessage()` 才会解析标签并上传文件，若把标签直接流式推给用户，用户只会看到 `<file src=.../>` 裸文本且文件永远发不出去；推送前用 `stripMediaForStream()` 剥离标签并扣住未闭合的标签起始 |
 | 富媒体上传 | `api.ts` | `file_type`：**1=图片(png/jpg)、2=视频(mp4)、3=语音(silk)、4=文件(任意)**（顺序不是"音频在视频前"，改这里前先对官方文档）。**下发用哪个类型由文件格式决定，标签只表达意图**（`outbound.ts` 的 `wireMediaType()`）：`.silk`→3、`.mp4`→2、`.png/.jpg`→1，其余一律 4 —— 所以 `mp3` 标成 `<audio>` 也是**文件附件**，不会被 QQ 塞进语音气泡。**小文件**走 `file_data`（base64 内联单次请求，**编码后约 10 MB 为网关上限 ≈ 原始 7.5 MB**）；**大文件**走官方**分片上传**（`upload_prepare` → 逐片 PUT 预签名 URL → `upload_part_finish` → 携带 `upload_id` 调 `/files` 合并拿 `file_info` → 发 `msg_type:7` 消息），上限 200 MB。被服务端以"格式不支持"(850019) 拒收时改用 `file_type=4` 重发（分片路径在**预上传**阶段就发现，零字节代价） |
@@ -752,7 +752,7 @@ QQBot 是**内置 connector**，无需插件，填配置即用。
 | `DIRECT_MESSAGE_CREATE` | `"dm"` |
 | `GROUP_AT_MESSAGE_CREATE` | `"group"` |
 
-Session 持久化到 `~/.tinyclaw/qqbot/session.json`，重启后自动 Resume，appId 变更自动失效。
+Session 持久化到 `~/.tinyclaw/qqbot/session-<appId>.json`（只存 `sessionId`/`lastSeq`，用于断线 Resume），appId 变更自动失效。**意图档位不在其中**：进程每次启动都从最高档 Identify，避免历史文件里冻结的降档状态让 bot 永远收不到消息。
 
 **多 QQBot 实例支持：**
 
