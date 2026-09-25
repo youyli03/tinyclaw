@@ -27,7 +27,9 @@
     "test:config-settable": "node --import tsx/esm tests/config-settable.test.ts",
     "test:config-secrets": "node --import tsx/esm tests/config-secret-placeholders.test.ts",
     "test:secrets": "node --import tsx/esm tests/secrets-access.test.ts",
-    "test:jobs": "node --import tsx/esm tests/jobs.test.ts"
+    "test:jobs": "node --import tsx/esm tests/jobs.test.ts",
+    "test:text-index": "node --import tsx/esm tests/text-index.test.ts",
+    "text-index": "node --import tsx/esm scripts/text-index.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

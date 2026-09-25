@@ -464,6 +464,7 @@ env 分层(**低 → 高**):`process.env`(已含 `~/.tinyclaw/env`) < `agents/<i
 - [architecture/overview.md](docs/architecture/overview.md) — 整体架构、模块说明、IPC 协议、操作速查
 - [architecture/agent-loop.md](docs/architecture/agent-loop.md) — ReAct 循环、MFA、压缩、并发处理
 - [architecture/retry.md](docs/architecture/retry.md) — 连接稳定性与重试策略(含 WebSocket 路径)
+- [architecture/text-index.md](docs/architecture/text-index.md) — 文案索引:每个功能(21 个主题)的说明都散在哪些层、用什么字面串定位(由 `scripts/text-index.ts` 生成)
 
 **功能命令参考**
 

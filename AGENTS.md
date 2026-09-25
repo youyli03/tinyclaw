@@ -115,6 +115,7 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 | 记忆 / 压缩 / 蒸馏 | `docs/memory/qmd-embed.md` / `docs/memory/distill-pipeline.md` |
 | 模型手册（`docs/manual/*.md`、`src/tools/manual.ts`） | 手册正文即文档本身；改规则必须同时改手册，并把 `MANUAL_VERSION` +1 |
 | 工具结果落盘视图（`ToolDef.ephemeralResult` / `Session._serializeForPersist`） | `docs/architecture/agent-loop.md`「工具结果的落盘视图 vs 内存视图」+ `README.md` 工具表 |
+| 文案落点新增/迁移（任何功能的说明换了文件或新增一层） | `scripts/text-index.ts` 的 `TOPICS` 表 + `npm run text-index -- --write`（生成 `docs/architecture/text-index.md`） |
 | 工作区指令装载（`src/instructions/`） | `docs/commands/code-mode.md` 的「工作区指令注入」节 |
 | Web Dashboard（`src/web/backend/**`、`src/web/frontend/**`） | `docs/architecture/overview.md` 的「Dashboard(Web UI)」节 |
 | 重试 / 超时 / 流式稳定性 | `docs/architecture/retry.md` |
@@ -128,6 +129,32 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
 - **文档必须描述代码事实**，不要写"设计意图"当作"已实现"。凡未落地的能力，明确标注 `（未实现）`。
 - 数字（默认值、阈值、上限、超时）必须与 `schema.ts` 一致；不要手写记忆值。
 - 改行为时同步删除文档里的旧描述，**不要保留"以前是 X，现在是 Y"的历史叙述**。
+
+### 文案索引（改行为前先跑它）
+
+同一件事的文案散落在十几层（实现注释 / 工具 description / 内置 system prompt / schema 与
+`*.example.toml` 字段说明 / `docs/**` / 模型手册 `docs/manual/**` / `README.md` / `AGENTS.md` /
+CLI help / tests）。只 `grep` 主关键词会漏两类地方：**不含主关键词的同一行为描述**（例如讲 wake 权限
+却只写"无人值守 / 白名单"），以及**自己没想到该去改的层**。
+
+**改任何功能的文案前，先跑索引定位全部落点**（21 个主题：cron / loop / job / env / wake / manual /
+origin-permissions / sandbox / secrets / memory-mem / memory-journal / compaction / tokens / mcp /
+config-reload / qqbot / subagent / code-mode / skills / web / instructions）：
+
+```bash
+npm run text-index -- --list          # 列主题
+npm run text-index -- wake            # 定位该主题全部文案（按层分组，file:line）
+npm run text-index -- cron loop job   # 多主题
+npm run text-index -- --all           # 全部
+```
+
+输出末尾有一行**覆盖**：该主题声明了却 0 命中的层 —— **那通常就是你漏掉的那份文案**。
+索引的唯一真相是 `scripts/text-index.ts` 的 `TOPICS` 表；`docs/architecture/text-index.md` 由
+`npm run text-index -- --write` 生成，**不要手改**。新增主题 = 往 `TOPICS` 加一条（`terms` 要具体，
+别写 `env` / `config` 这类泛词）+ 重新生成；这属于新文案落点，同样受 R1 约束。
+
+**改完跑 `npm run test:text-index`**（自检三件事：`canonical` 路径真实存在、每个声明层都有命中、
+生成的 md 与 `TOPICS` 表一致）—— 这三条正是"索引烂掉 / 漏改文案"的机械信号。
 
 ---
 
