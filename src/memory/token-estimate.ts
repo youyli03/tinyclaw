@@ -88,6 +88,8 @@ export const TOKEN_SOURCE_LABELS: Record<TokenSource, string> = {
  *  - sessionId 前缀：`cron:`（含 pipeline 的 msg step）、`slave:`（agent_fork）、`skill:`（skill_run）
  *  - `origin`：loop 触发**复用绑定会话的 id**（没有专属前缀），只能靠 `AgentRunOptions.origin === "loop"` 区分；
  *    cron runner 也会传 `origin: "cron"`，与前缀双保险
+ *  - `origin === "wake"`（唤醒通道注入的一轮）**不单独归类**：它本来就是某个会话的一轮普通对话，
+ *    所以落到下面的模式兜底（chat / code），与用户自己说话算同一笔账
  *  - 都没有则按模式兜底：code 模式 → `code`，其余 → `chat`
  *
  * ⚠️ 顺序：前缀优先于 origin（cron 里 fork 出来的 `slave:` 会话应记成子 Agent，而不是 cron）。

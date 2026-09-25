@@ -66,8 +66,9 @@ export type IpcRequest =
    *
    * - `sessionId` 与 `agentId` 至少给一个：给 sessionId 就注入该会话；只给 agentId 时
    *   复用该 agent 最近的会话，没有则新建一个。
-   * - 该 run 按 **origin=cron（无人值守）** 处理：工具走 `[sandbox.unattended]` 白名单、
-   *   MFA 无法送达时 fail-closed —— 唤醒可能来自任意脚本，不能当"用户在场"。
+   * - 该轮的**权限跟着目标会话**：目标能把审批送到人（qqbot 会话）时按该会话的普通对话权限跑
+   *   （`origin=wake`，全量工具 + 真 MFA 发到该通道）；送不到（`cli:` / 无常驻连接）时退回
+   *   无人值守（`origin=cron`，`[sandbox.unattended]` 白名单 + MFA fail-closed）。
    * - `source` 只进日志与审计（例如 job id / 脚本名），不会注入给模型当指令。
    */
   | { type: "wake"; sessionId?: string; agentId?: string; message: string; source?: string }

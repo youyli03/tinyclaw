@@ -72,3 +72,7 @@ Inside a loop tick you are already in the bound conversation, so an extra `wake`
 `wake` command is still on `PATH` for scripts started by a tick, but a loop tick does **not** inject the
 target/source variables that a background job does — if you truly must call it, pass `-s <session id>`
 explicitly (the trigger's `bindTo`).
+
+The permission of that woken turn follows the **target** session, not the loop: passing the trigger's
+`bindTo` (usually a QQ chat) means the woken turn gets that chat's full tool set with approvals delivered
+there; a target with no reachable channel would fall back to the unattended whitelist.

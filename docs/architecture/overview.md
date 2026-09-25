@@ -192,7 +192,9 @@ ttlDays        = 7                         # 临时区保留天数(0 = 不清理
 - **覆盖范围（全量口径）**：走 ReAct 主循环的请求都记，并按 `classifyTokenSource()` 标注来源 ——
   `chat`（QQ/CLI）/ `code` / `cron`（含 pipeline 的 msg step）/ `loop`（loop 触发复用绑定会话 id，
   只能靠 `origin` 区分）/ `slave`（`agent_fork`）/ `skill`（`skill_run`）；判定顺序是
-  **sessionId 前缀（`cron:`/`slave:`/`skill:`）优先于 `origin`**——cron 里 fork 出来的 `slave:` 记成子 Agent
+  **sessionId 前缀（`cron:`/`slave:`/`skill:`）优先于 `origin`**——cron 里 fork 出来的 `slave:` 记成子 Agent。
+  `origin=wake`（唤醒注入的一轮）**不单独归类**：它本来就是某个会话的一轮普通对话，所以落到模式兜底
+  （`chat` / `code`），与用户自己说话算同一笔账
 - **压缩/蒸馏与图片识别也在内，但只有总量**：这两条是直连 LLM 的独立调用（各自构造内部请求，七分类对它们
   没有意义），走 `insertTokenUsageOnly()` 记 `source=summarizer|vision` 的 prompt/output/cache，
   构成列留空；因此 Token 页的合计**等于全量**，而环形图/单条 Top 只用**最近一次带构成的请求**
@@ -1342,7 +1344,7 @@ autoForkThresholdMs = 120000   # 毫秒；ReAct 轮次超时后把剩余任务�
 | 请求类型 | 参数 | 说明 |
 |---|---|---|
 | `chat` | `sessionId`, `message` | 向会话发送消息（流式回复） |
-| `wake` | `sessionId?`, `agentId?`, `message`, `source?` | 唤醒 LLM：注入消息并触发一轮 agent（**受理即返回**；该轮按 `origin=cron` 无人值守规则跑，回复推给会话绑定的通道） |
+| `wake` | `sessionId?`, `agentId?`, `message`, `source?` | 唤醒 LLM：注入消息并触发一轮 agent（**受理即返回**；该轮**权限跟着目标会话**——目标可送达审批则 `origin=wake` 按该会话普通对话权限跑，否则 `origin=cron` 无人值守；回复推给会话绑定的通道） |
 | `list` | — | 获取所有内存中的会话快照 |
 | `new` | `agentId?` | 创建新终端会话 |
 | `memory_rebuild` | `agentId?` | 在服务进程内重建 QMD 向量索引(读取 memstores.toml,使用 RKLLM embed) |

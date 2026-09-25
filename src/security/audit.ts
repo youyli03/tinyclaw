@@ -20,7 +20,16 @@ import * as path from "node:path";
 import { redactKnownSecrets } from "../utils/redact.js";
 
 /** 一次运行的来源 —— 决定它算不算"无人值守" */
-export type RunOrigin = "chat" | "cron" | "loop" | "slave" | "cli" | "unknown";
+/**
+ * 一次运行的**来源**（审计里的出处）。
+ *
+ * ⚠️ 它与"权限等级"是两件事，别混：
+ * - 权限等级由 `isUnattendedOrigin()` 判定（cron / loop = 无人值守）；
+ * - `wake` = 由唤醒通道（job / cron 脚本调 `tinyclaw wake`、IPC wake、agent 工具 wake）注入的一轮。
+ *   它**不是**无人值守：目标会话若能把审批送到人（如 qqbot 会话），这一轮就按该会话的普通对话权限跑
+ *   （全量工具 + 真 MFA），出处仍由本字段与 wake 审计条目保留 —— 见 `main.ts` 的 `wakeSession`。
+ */
+export type RunOrigin = "chat" | "cron" | "loop" | "slave" | "cli" | "wake" | "unknown";
 
 export type AuditEvent = "tool" | "policy" | "mfa" | "sandbox" | "self";
 
@@ -161,7 +170,8 @@ export function summarizeToolArgs(
   }
 }
 
-/** 审计记录里区分"无人值守"路径（cron/loop）—— 与 policy 模块口径一致 */
+/** 审计记录里区分"无人值守"路径（cron/loop）—— 与 policy 模块口径一致。
+ *  注意 `wake` **不在**此列：唤醒那一轮的权限跟着目标会话走（见 RunOrigin 注释）。 */
 export function isUnattendedOrigin(origin: RunOrigin): boolean {
   return origin === "cron" || origin === "loop";
 }

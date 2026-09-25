@@ -321,6 +321,9 @@ language = "zh"      # 语言代码（ISO 639-1），留空则自动检测
 # allowedTools = [ "read_file", "exec_shell", ... ]   # 默认见 src/config/schema.ts
 #   ⚠️ 两个通道规则不同：声明式步骤（cron/loop 的 steps）里 agent_fork 可用；
 #      无人值守的 ReAct 循环里 agent_fork 硬禁止（不受本白名单与 mode=all 影响）。
+#   ⚠️ 本段**只作用于 cron / loop 这类无人值守运行**。被 `wake` 唤醒的那一轮（脚本/job 干完活叫醒某个
+#      会话）权限跟着**目标会话**走:目标是 qqbot 会话时按该会话的普通对话权限跑(全量工具,审批发到
+#      那个聊天),送不到审批(cli / 无常驻连接)才退回本白名单。见 main.ts 的 mfaForSession()。
 
 # 提权通道:沙箱是默认,提权是例外。agent 用 exec_shell({ elevate: true }) 请求在沙箱外执行一次。
 # 注意与 [sandbox.grant] 的区别:elevate 作用于"一条命令"(脱离沙箱),fs_grant 作用于"一个路径"(仍在沙箱内)。

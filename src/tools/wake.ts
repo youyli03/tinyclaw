@@ -7,7 +7,9 @@
  *
  * 语义与 IPC `wake` 完全一致（同一个实现，`main.ts` 经 `setWakeFn` 注入）：
  * - 注入的文本会带 `[wake ...]` 前缀，让模型知道这不是用户在说话；
- * - 被唤醒的那一轮按 **origin=cron（无人值守）** 跑：工具走白名单、MFA 无法送达即拒绝，
+ * - 被唤醒那一轮的**权限跟着目标会话走**：目标会话能把审批送到人（如 qqbot 会话）时，按该会话的
+ *   普通对话权限跑（全量工具，需要 MFA 时发到该通道等确认）；目标没有交互路径（`cli:` / 无常驻
+ *   连接）时退回无人值守规则（工具走白名单、MFA 一律拒绝）；
  *   agent 的最终回复由框架推给该会话绑定的通道（QQ / CLI）。
  *
  * ⚠️ 因此本工具被列入 `HARD_DENY_REACT_UNATTENDED`：无人值守的 ReAct 循环里**模型不能**
@@ -25,9 +27,11 @@ registerTool({
       description:
         "Wake up the agent of another (or the same agent's) session: inject a message and start a new " +
         "agent turn for it. Use it to hand a finished background job, an external event, or a finding " +
-        "over to another conversation so that agent can act on it. The waking turn runs unattended " +
-        "(whitelisted tools, no interactive approvals), and that agent's final reply is delivered to " +
-        "its own channel (e.g. QQ) — this call itself returns as soon as the wake is accepted. " +
+        "over to another conversation so that agent can act on it. That turn runs with the TARGET " +
+        "session's permissions: if the session has a reachable channel (e.g. a QQ chat) it gets the full " +
+        "tool set and approval prompts are sent there, otherwise it falls back to the unattended " +
+        "whitelist. The target agent's final reply is delivered to its own channel — this call itself " +
+        "returns as soon as the wake is accepted. " +
         "For a plain single LLM call without tools/history use the `send` CLI instead.",
       parameters: {
         type: "object",

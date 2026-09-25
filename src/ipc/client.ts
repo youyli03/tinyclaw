@@ -308,7 +308,10 @@ export async function abortSession(
  * 供 `tinyclaw wake`（脚本 / job / cron step 均可调用）使用。
  * `sessionId` 与 `agentId` 至少给一个；只给 agentId 时复用该 agent 最近活跃的会话。
  *
- * ⚠️ 被唤醒的那一轮按无人值守规则运行（`origin=cron`），最终回复由服务端推给该会话绑定的通道。
+ * ⚠️ 被唤醒那一轮的**权限跟着目标会话**：目标有可交互通道（qqbot 会话）时按该会话的普通对话权限跑
+ * （需要审批会发到该通道等回复）；目标没有交互路径（`cli:` / 无常驻连接）时退回无人值守规则
+ * （`origin=cron`，白名单 + MFA 一律拒绝）。详见 `main.ts` 的 `wakeSession`。
+ * 最终回复由服务端推给该会话绑定的通道。
  */
 export async function wakeSession(opts: {
   sessionId?: string;

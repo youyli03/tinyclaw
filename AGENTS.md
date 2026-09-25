@@ -242,6 +242,10 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   **job / cron 里零参数**：这两条路径会注入自标识变量 `TINYCLAW_WAKE_TARGET` / `TINYCLAW_AGENT_ID` /
   `TINYCLAW_JOB_ID`（job-manager）或 `TINYCLAW_CRON_JOB_ID`（`cron/runner.ts`），`wake` 自动取目标与来源标签，
   所以脚本里就是 `wake "消息"`，或 `tail -50 log | wake --stdin`。
+  🔑 **权限跟着目标会话**（不是跟着调用方）：目标能把审批送到人（qqbot 会话）→ 那一轮按该会话的普通对话
+  权限跑（`origin=wake`，全量工具、审批发到该通道）；送不到（`cli:` / 无常驻连接）→ 退回无人值守
+  （`origin=cron`，白名单 + fail-closed）。所以 job 里裸喊 `wake` 就是"叫醒当初起这个 job 的那个会话"，
+  与用户自己说那句话同权限。⚠️ 实现细节与坑见 §7.4 的 `origin` 条目（改 origin 必须同时挂 MFA 回调）。
   ⚡ **投递语义（用户口径）**：目标会话正在跑 → **打断当前轮插队**（实时优先，会抢占用户正在进行的回合）；
   同一会话多次 wake → 服务端按 ≥3s **延迟排开**，调用方永远 exit 0（不报错）；
   投递不到（服务没在跑 / socket 连不上）→ **静默丢弃**（exit 0、无输出、**不落盘、无离线队列**），
@@ -481,6 +485,13 @@ node --import tsx/esm tests/edit-file-core.test.ts   # 现有唯一测试
   + 系统临时目录 + 声明的 `writablePaths`/`extraRwPaths`。`agents/<id>/memory`、`agents/<id>/env`、`~/.tinyclaw`
   其余部分**默认不可写**（此前 schema 注释写成"agent 目录"，已按代码修正）。另外沙箱只包**子进程**，
   agent 自己的 `write_file`/`edit_file` 走 path-guard + `fs_grant`，两者不是一个口径。
+- **`origin` 是"出处"，不是"权限等级"的唯一来源；改它必须同时给 MFA 回调（2026-09-25）**：
+  无人值守由 `isUnattended(origin)`（cron/loop）派生。唤醒那一轮（`origin = "wake"`）**权限跟着目标会话**：
+  `main.ts` 的 `mfaForSession()` 能拿到目标会话通道时给 `wake` + `onMFARequest`（全量工具、审批发到该通道），
+  拿不到时退回 `cron`（白名单 + fail-closed）。⚠️ 这两者**必须成对**：`unattendedMfaFallback()` 对非无人值守
+  origin 直接 `allow`，所以"非无人值守 + 没回调"= **静默放行**。
+  已知同类路径：`session_send`（`main.ts` 的 `sessionSendFn`）既不传 origin 也不传回调 → 目标会话那一轮是
+  "全量工具 + MFA 静默放行"，属未修的口径不一致（不是"配置问题"）。
 
 ### 7.5 Loop 引擎（确认存在、影响真实运行）
 

@@ -62,6 +62,7 @@ import { getTool } from "./tools/registry.js";
 import { setWakeFn } from "./tools/registry.js";
 import { auditToolCall } from "./auth/tool-policy.js";
 import { ensureWakeShim } from "./core/wake-shim.js";
+import { parseChatSessionId } from "./core/session-channel.js";
 import { startDashboard, stopDashboard } from "./web/backend/server.js";
 import { startCollector, stopCollector } from "./web/backend/collector.js";
 import { setActiveSessionsRef } from "./tools/restart.js";
@@ -1094,15 +1095,47 @@ ${message}`;
   const notifyForSession = (
     sessionId: string
   ): ((message: string) => Promise<void>) | undefined => {
-    const m = sessionId.match(/^qqbot:(c2c|group|guild|dm):(.+)$/);
-    if (!m) return undefined;
-    const [, type, peerId] = m;
+    const ch = parseChatSessionId(sessionId);
+    if (!ch) return undefined;
     const conn = sessionConnectorMap.get(sessionId) ?? connectors[0] ?? null;
     if (!conn) return undefined;
     return async (notifMsg: string) => {
-      await conn
-        .send(peerId!, type as import("./connectors/base.js").InboundMessage["type"], notifMsg)
-        .catch(() => {});
+      await conn.send(ch.peerId, ch.type, notifMsg).catch(() => {});
+    };
+  };
+
+  /**
+   * 目标会话能不能把**审批送到人** —— 决定被唤醒那一轮算不算有人值守（见下方 wakeSession）。
+   *
+   * 只有 qqbot 会话算：它有常驻 connector，能把提示发到那个 peer 并等用户回复（与用户直接发消息时
+   * 走的是同一条 `buildMFARequest`）。`cli:` / IPC 会话没有常驻连接，唤醒时无人可答 → undefined。
+   *
+   * @returns 有交互路径时返回 MFA 回调对（直接展开进 runAgent 的 opts），否则 undefined
+   */
+  const mfaForSession = (
+    sessionId: string
+  ):
+    | {
+        onMFARequest: (
+          warningMessage: string,
+          verifyCode?: (code: string) => boolean
+        ) => Promise<boolean>;
+        onMFAPrompt: (message: string) => void;
+      }
+    | undefined => {
+    const ch = parseChatSessionId(sessionId);
+    if (!ch) return undefined;
+    const conn = sessionConnectorMap.get(sessionId) ?? connectors[0] ?? null;
+    if (!conn) return undefined;
+    const timeoutSecs = loadConfig().auth.mfa?.timeoutSecs ?? 0;
+    return {
+      onMFARequest: (warningMessage, verifyCode) =>
+        conn.buildMFARequest(ch.peerId, ch.type, warningMessage, timeoutSecs * 1000, verifyCode),
+      onMFAPrompt: (message) => {
+        void conn.send(ch.peerId, ch.type, message).catch((e: unknown) =>
+          console.error("[wake] MFA 状态推送失败:", e)
+        );
+      },
     };
   };
 
@@ -1190,9 +1223,11 @@ ${message}`;
   // "进程类任务"通向"LLM 类任务"的通用口：job / cron step / 外部脚本做完事，
   // 把一段文本注入某个 session 并触发一次 runAgent（不等回复，立即 ack）。
   //
-  // 该轮按 **origin=cron（无人值守）** 跑：工具走 [sandbox.unattended] 白名单、
-  // MFA 无法送达时 fail-closed —— 唤醒可能来自任意脚本，绝不能当"用户在场"。
-  // agent 的最终回复由框架推给该会话绑定的通道（session_send 同款推送）。
+  // 该轮的权限**跟着目标会话走**（2026-09-25 修正，用户口径）：
+  // job 是用户在那个会话里起出来办事的（`TINYCLAW_WAKE_TARGET` 就是它），所以"干完活叫醒我"
+  // 不该被硬编码的 cron 降级成无人值守 —— 目标会话能把审批送到人（qqbot）就按该会话的普通对话权限跑
+  // （全量工具 + 真 MFA 发到那个 peer）；送不到（cli / 无常驻连接）才退回无人值守白名单 + fail-closed。
+  // 出处仍可追溯：`origin=wake` + wake 审计条目里的 source + 注入文本的 `[wake from <source>]` 前缀。
   /** sessionId → 上次唤醒时间（节流用，防脚本死循环刷 LLM） */
   const wakeLastAt = new Map<string, number>();
   const WAKE_MIN_INTERVAL_MS = 3000;
@@ -1228,15 +1263,25 @@ ${message}`;
     const waitMs = Math.max(0, WAKE_MIN_INTERVAL_MS - (now - prev));
     wakeLastAt.set(target.sessionId, now + waitMs);
 
+    // 权限等级跟着目标会话：能送达审批 → `wake`（该会话的普通对话级，全量工具 + 真 MFA）；
+    // 送不到 → `cron`（无人值守白名单 + MFA fail-closed）。两者都必须带上匹配的 MFA 回调，
+    // 否则非无人值守 origin 遇上"无回调"会走 `unattendedMfaFallback` 的 allow 分支（静默放行）。
+    const mfa = mfaForSession(target.sessionId);
+    const origin: import("./security/audit.js").RunOrigin = mfa ? "wake" : "cron";
+    console.log(
+      `[wake] session=${target.sessionId} source=${opts.source ?? "unknown"} ` +
+        `origin=${origin}（${mfa ? "目标会话可送达 MFA → 按该会话权限跑" : "目标会话无交互路径 → 无人值守"}）`
+    );
+
     // 审计只落来源与长度，不落文本内容（job 输出可能很长/带敏感数据）
     auditToolCall({
       event: "policy",
-      origin: "cron",
+      origin,
       agentId: target.agentId,
       sessionId: target.sessionId,
       tool: "wake",
       decision: "info",
-      reason: `唤醒来源：${opts.source ?? "unknown"}`,
+      reason: `唤醒来源：${opts.source ?? "unknown"}（${mfa ? "attended：继承目标会话权限" : "unattended：目标不可交互"}）`,
       args: { source: opts.source ?? "unknown", messageChars: message.length },
     });
 
@@ -1265,10 +1310,12 @@ ${message}`;
 
         const { content } = await waking.runExclusive(() =>
           runAgent(waking, text, {
-            origin: "cron",
+            origin,
             sessionSendFn,
             sessionGetFn,
             ...(onNotify ? { onNotify } : {}),
+            // 有交互路径时挂上真回调：需要 MFA 的工具会发到该 peer 并等用户回复（超时=取消）
+            ...(mfa ?? {}),
           })
         );
         if (onNotify && content?.trim()) await onNotify(content.trim());
@@ -1284,7 +1331,10 @@ ${message}`;
       sessionId: target.sessionId,
       note:
         "已插队执行（若该会话正在跑，会打断当前轮）；" +
-        "该轮按无人值守规则运行（工具走白名单、无交互审批），最终回复推到该会话绑定的通道。",
+        (mfa
+          ? "该轮按目标会话的权限运行（全量工具，需要审批时会发到该会话的通道等你确认），"
+          : "该会话没有可交互的通道，该轮退回无人值守规则（工具走白名单、MFA 一律拒绝），") +
+        "最终回复推到该会话绑定的通道。",
     };
   };
 

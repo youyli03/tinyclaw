@@ -70,16 +70,20 @@ Semantics of `wake`:
 
 - It **injects a message and starts an agent turn** for the target session — it is a queue-jump, not a
   notification: if that session is mid-turn, the running turn is interrupted so the new input is handled now.
-- The woken turn runs **unattended** (`origin=cron`): whitelisted tools only, no interactive approvals.
-  Its final reply is delivered to that session's own channel (e.g. QQ).
+- That turn runs with the **target session's permissions**, not the job's: a job started from a QQ chat
+  wakes that QQ chat, so the woken turn gets the full tool set and any approval prompt is sent to that chat
+  and waits for the user's reply. If the target session has no reachable channel (e.g. a `cli:` session),
+  the turn falls back to the unattended whitelist and approvals are refused.
+- The woken session's identity, history and channel are the target's own — the job does not get its own
+  conversation.
 - Delivery is best-effort and **silent on failure**: if nothing can be reached, `wake` exits 0 writing
   nothing. Never rely on it for durability; if the result must not be lost, put it in a file or in the
   job's own log first, then wake.
 - Wakes are throttled per session: a burst collapses into a short delay rather than an error, so a loop of
   `wake` calls is safe but pointless — send one meaningful message, not one per log line.
 
-Because the woken agent runs unattended and may not have job tools available, put the *key facts* in the
-wake message (or in a workspace file it can read) instead of saying "see the job log".
+Because the woken agent starts a fresh turn from your message alone, put the *key facts* in the message
+(or in a workspace file it can read) instead of saying "see the job log".
 
 ## 6. Reporting a job to the user
 

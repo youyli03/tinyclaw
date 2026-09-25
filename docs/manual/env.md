@@ -85,8 +85,13 @@ Outside a job (or in a loop tick, which does not inject a target) pass them expl
 
 Delivery is best-effort and **silent on failure** — undeliverable wakes are dropped, not queued, and the
 command still exits 0. Consequence for task design: the *durable* output of a task must be written to a file,
-a report or the job log first; `wake` only says "look at this now". A woken turn is unattended, so its tool
-set is the whitelist, not your current session's tools — put the facts in the message.
+a report or the job log first; `wake` only says "look at this now".
+
+The woken turn inherits the **target session's** permissions, which is what makes the zero-argument form
+inside a job so useful: the job was started from a chat, so waking that chat runs the turn with that chat's
+full tool set and sends any approval prompt to it. A target with no reachable channel (a `cli:` session)
+instead falls back to the unattended whitelist. Either way, put the facts in the message — the woken agent
+starts from your text, not from your context.
 
 ## 5. Diagnosing "it worked in chat but not in the task"
 

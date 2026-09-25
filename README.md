@@ -292,7 +292,7 @@ tinyclaw completions install           # 安装 tab 补全
 | `agent_abort` | 软中断 Slave |
 | `session_get` | 列举对当前 Agent 可见的所有活跃 session |
 | `session_send` | 向指定 session 注入消息,触发 Agent 处理 |
-| `wake` | 唤醒另一个会话的 agent(注入消息 + 起一轮,受理即返回);被唤醒那轮按无人值守规则跑 |
+| `wake` | 唤醒另一个会话的 agent(注入消息 + 起一轮,受理即返回);**那轮的权限跟着目标会话**——目标可送达审批(如 qqbot 会话)就按该会话普通对话权限跑(全量工具 + 审批发到该通道),无交互路径(cli/无常驻连接)才退回无人值守白名单 |
 | `ask_user` | 暂停并向用户提问(含预设选项) |
 
 ### 自省

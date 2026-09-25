@@ -87,3 +87,12 @@ Both are per-job and take effect immediately; see the `env` manual for how a scr
 1. `cron_list` with `logs: true` and confirm schedule, target and last run status.
 2. For a new pipeline job, run it once with `cron_run` and show the user the real output.
 3. Report to the user: job id, schedule (next fire time), where output goes, and what happens on failure.
+
+## 8. Reporting back from inside a job
+
+`output.notify` decides whether the run's own result is pushed. When the *script* needs to hand something to
+an agent instead (a summary, an alert, a decision), it calls the `wake` command, which is on the job's
+`PATH`: `wake "…"` works with no arguments inside a cron run. That turn runs with the permissions of the
+**session it wakes** — normally the chat the job belongs to — so it can use the full tool set and ask for
+approval there; see the `jobs` manual for the full semantics. The cron job itself keeps running unattended
+(whitelist, no approvals); only the woken turn follows the session.

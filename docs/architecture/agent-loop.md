@@ -356,6 +356,26 @@ patterns = ["rm", "sudo", "chmod", "chown", "dd", "mv"]  # 命令级黑名单（
 同一次 `runAgent()` 调用内，MFA 一旦通过，`session.mfaApprovedForThisRun = true`，
 后续所有高危工具调用直接跳过验证。每次 `runAgent()` 开始时重置为 `false`。
 
+### 运行来源（`origin`）与权限等级
+
+`origin` 是审计里的**出处**；权限等级由它派生（`security/audit.ts` 的 `isUnattendedOrigin()` 与
+`auth/tool-policy.ts` 的 `isUnattended()`，两者口径一致）：
+
+| origin | 出处 | 权限等级 |
+|---|---|---|
+| `cron` / `loop` | cron job / loop tick | **无人值守**：工具按 `[sandbox.unattended]` 白名单放行，MFA 无法送达即拒绝 |
+| `wake` | 唤醒通道注入的一轮（job 脚本裸喊 `wake`、`tinyclaw wake`/IPC、agent 工具 `wake`） | **跟随目标会话**：目标能把审批送到人（qqbot 会话）→ 全量工具 + 真 MFA 发到该通道；送不到（`cli:` / 无常驻连接）→ 退回无人值守 |
+| `chat` / `code` / `cli` / `slave` / `unknown` | 交互会话 / 代码模式 / CLI / 子 Agent | 有交互路径（不套白名单） |
+
+⚠️ 两条容易搞错的约束：
+
+1. **`origin` ≠ "谁调用的"**：`main.ts` 的 `wakeSession()` 按**目标会话**决定这一轮用 `wake` 还是退回
+   `cron`（判据是 `mfaForSession()` 能否拿到该会话的通道）。唤醒的出处由 `source` 保留 —— 它同时进
+   审计条目与注入文本的 `[wake from <source>]` 前缀，所以"谁叫醒的"仍然可追溯。
+2. **改 origin 必须同时挂上 MFA 回调**：`unattendedMfaFallback()` 对**非无人值守**的 origin 直接
+   `return { allow: true }`，所以"非无人值守 + 没有 `onMFARequest`"= **静默放行**（fail-open）。
+   `wakeSession()` 里 `origin` 与 `...(mfa ?? {})` 是成对出现的，不要只改其中一个。
+
 ### 委派运行不审批（`approvalPolicy: "never"`）
 子 Agent（`agent_fork` → `slaveRunFn`）与 cron / loop 的无人值守消息步骤，其 `runAgent()`
 一律带 `AgentRunOptions.approvalPolicy = "never"`。命中 MFA 判定时**在发起任何提示之前**确定性拒绝：
